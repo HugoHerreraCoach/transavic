@@ -1,103 +1,275 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+import { useState, useRef, useEffect, Ref } from 'react';
+import { toPng } from 'html-to-image';
+import {
+  FiUser,
+  FiPhone,
+  FiMapPin,
+  FiClipboard,
+  FiClock,
+  FiEdit2,
+  FiDownload,
+  FiShare2,
+  FiCheckSquare,
+  FiFileText,
+  FiStar,
+  FiCreditCard,
+} from 'react-icons/fi';
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+const datosIniciales = {
+    cliente: '',
+    whatsapp: '',
+    direccion: '',
+    tipoCliente: 'Frecuente',
+    estadoPago: 'Por pagar',
+    detalle: '',
+    horaEntrega: 'Lo antes posible',
+    notas: '',
+};
+
+type TicketData = typeof datosIniciales;
+
+interface TicketPedidoProps {
+  datos: TicketData;
+  referencia?: Ref<HTMLDivElement>;
+}
+
+// --- El Componente del Ticket (CON LA CORRECCIÓN DE HTML) ---
+const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia }) => (
+  <div
+    ref={referencia}
+    className="bg-white p-8 border-2 border-gray-300 rounded-lg text-black w-full"
+  >
+    <div className="text-center pb-4 border-b-2 border-dashed">
+      <h1 className="text-3xl font-bold text-red-600">PEDIDO TRANSAVIC</h1>
     </div>
+    <div className="mt-6 space-y-4 text-lg">
+
+      {/* **CAMBIO: Reemplazamos <p> por <div> para un HTML válido** */}
+      <div className="flex items-start">
+        <FiUser className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Cliente:</span>
+          <span className="break-words">{datos.cliente}</span>
+        </div>
+      </div>
+
+      <div className="flex items-start">
+        <FiPhone className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">WhatsApp:</span>
+          <span className="break-words">{datos.whatsapp}</span>
+        </div>
+      </div>
+
+      <div className="flex items-start">
+        <FiMapPin className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Dirección:</span>
+          <span className="break-words">{datos.direccion}</span>
+        </div>
+      </div>
+
+      <div className="flex items-start">
+        <FiStar className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Tipo:</span>
+          <span className="break-words">{datos.tipoCliente}</span>
+        </div>
+      </div>
+
+      <div className="flex items-start">
+        <FiCreditCard className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Pago:</span>
+          <span className={`font-bold break-words ${datos.estadoPago === 'Pagado' ? 'text-green-600' : 'text-orange-500'}`}>
+              {datos.estadoPago}
+          </span>
+        </div>
+      </div>
+
+      <div className="pt-4 border-t border-dashed">
+        <div className="flex items-start">
+          <FiClipboard className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} />
+          <div className="flex-1 min-w-0">
+            <span className="font-semibold mr-2">Detalle:</span>
+            <span className="whitespace-pre-wrap break-words">{datos.detalle}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-start">
+        <FiClock className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Hora:</span>
+          <span className="break-words">{datos.horaEntrega}</span>
+        </div>
+      </div>
+      
+      <div className="flex items-start">
+        <FiEdit2 className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} />
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold mr-2">Notas:</span>
+          <span className="whitespace-pre-wrap break-words">{datos.notas}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+// --- La Página Principal ---
+export default function Home() {
+  const [formDatos, setFormDatos] = useState<TicketData>(datosIniciales);
+  const [ticketDatos, setTicketDatos] = useState<TicketData>(datosIniciales);
+  const [showTicket, setShowTicket] = useState(false);
+  const [imagenUrl, setImagenUrl] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const exportTicketRef = useRef<HTMLDivElement>(null);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    setFormDatos({ ...formDatos, [e.target.name]: e.target.value });
+  };
+
+  useEffect(() => {
+    if (!cargando) return;
+    const generar = async () => {
+      if (!exportTicketRef.current) return;
+      try {
+        const dataUrl = await toPng(exportTicketRef.current, {
+            quality: 1.0,
+            pixelRatio: 2,
+            width: exportTicketRef.current.offsetWidth,
+        });
+        setImagenUrl(dataUrl);
+      } catch (error) {
+        console.error('Error al generar la imagen:', error);
+        alert('Hubo un error al generar la imagen. Inténtalo de nuevo.');
+      } finally {
+        setCargando(false);
+      }
+    };
+    setTimeout(generar, 50);
+  }, [ticketDatos, cargando]);
+
+  const handleGenerarClick = () => {
+    setShowTicket(true);
+    setImagenUrl(null);
+    setCargando(true);
+    setTicketDatos(formDatos);
+  };
+
+  const descargarImagen = () => {
+    if (!imagenUrl) return;
+    const link = document.createElement('a');
+    link.download = `pedido-transavic-${formDatos.cliente.trim().replace(/\s+/g, '-') || 'cliente'}.png`;
+    link.href = imagenUrl;
+    link.click();
+  };
+
+  const compartirImagen = async () => {
+    if (!imagenUrl) return;
+    try {
+      const response = await fetch(imagenUrl);
+      const blob = await response.blob();
+      const file = new File([blob], `pedido.png`, { type: blob.type });
+      if (navigator.share && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'Pedido TRANSAVIC',
+          text: `Nuevo pedido para: ${formDatos.cliente}`,
+        });
+      } else {
+        alert('Tu navegador no permite compartir archivos directamente.');
+      }
+    } catch (error) {
+      console.error('Error al compartir:', error);
+      alert('No se pudo compartir. Descarga la imagen para enviarla.');
+    }
+  };
+
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center bg-gray-100 p-2 sm:p-8">
+      {/* --- TICKET OCULTO PARA EXPORTACIÓN --- */}
+      <div className="absolute top-0 left-[-9999px] pointer-events-none opacity-0">
+        <div className="w-[500px] bg-white">
+            <TicketPedido datos={ticketDatos} referencia={exportTicketRef} />
+        </div>
+      </div>
+
+      <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
+        {/* --- COLUMNA IZQUIERDA: FORMULARIO --- */}
+        <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg h-fit">
+          <div className="flex items-center mb-6">
+            <FiFileText className="text-red-600 mr-3" size={30} />
+            <h1 className="text-2xl font-bold text-gray-800">Generador de Pedidos</h1>
+          </div>
+          <form className="space-y-4">
+            <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md" />
+            <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md" />
+            <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label>
+                    <select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white">
+                        <option>Frecuente</option>
+                        <option>Nuevo</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Estado de pago</label>
+                    <select name="estadoPago" value={formDatos.estadoPago} onChange={handleChange} className="w-full p-3 border rounded-md bg-white">
+                        <option>Por pagar</option>
+                        <option>Pagado</option>
+                    </select>
+                </div>
+            </div>
+            <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md"></textarea>
+            <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md" />
+            <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md"></textarea>
+            <button
+              type="button"
+              onClick={handleGenerarClick}
+              disabled={cargando}
+              className="w-full bg-red-600 text-white font-bold py-3 px-4 rounded-md hover:bg-red-700 transition-colors disabled:bg-gray-400 flex items-center justify-center"
+            >
+              <FiCheckSquare className="mr-2" />
+              {cargando ? 'Generando...' : 'Generar Pedido'}
+            </button>
+          </form>
+        </div>
+
+        {/* --- COLUMNA DERECHA: VISTA PREVIA Y ACCIONES --- */}
+        <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg flex flex-col items-center">
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Vista Previa del Ticket</h2>
+          <div className="w-full max-w-md">
+            {showTicket ? (
+                <>
+                    {imagenUrl && !cargando && (
+                        <p className="text-center text-green-600 font-semibold mb-4 animate-pulse">
+                        ¡Imagen generada con éxito!
+                        </p>
+                    )}
+                    <TicketPedido datos={ticketDatos} />
+                </>
+            ) : (
+                <div className="w-full border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center min-h-[480px]">
+                    <p className="text-gray-400">El ticket aparecerá aquí</p>
+                </div>
+            )}
+          </div>
+          <div className="mt-6 w-full max-w-md">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <button onClick={descargarImagen} disabled={!imagenUrl || cargando} className="flex-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center disabled:bg-blue-300 disabled:cursor-not-allowed">
+                <FiDownload className="mr-2" /> Descargar
+              </button>
+              <button onClick={compartirImagen} disabled={!imagenUrl || cargando} className="flex-1 bg-green-500 text-white font-bold py-3 px-4 rounded-md hover:bg-green-600 transition-colors flex items-center justify-center disabled:bg-green-300 disabled:cursor-not-allowed">
+                <FiShare2 className="mr-2" /> WhatsApp
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
   );
 }
