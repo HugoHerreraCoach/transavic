@@ -261,9 +261,9 @@ export default function Home() {
                 <option>Avícola de Tony</option>
               </select>
             </div>
-            <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
-            <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
-            <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
+            <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
+            <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
+            <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
 
             {/* CAMBIO: Campo desplegable para Distrito */}
             <div>
@@ -284,9 +284,9 @@ export default function Home() {
                 </select>
               </div>
             </div>
-            <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400"></textarea>
-            <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
-            <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400"></textarea>
+            <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400"></textarea>
+            <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
+            <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400"></textarea>
             <button
               type="button"
               onClick={handleGenerarClick}
