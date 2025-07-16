@@ -256,19 +256,19 @@ export default function Home() {
           <form className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
-              <select name="empresa" value={formDatos.empresa} onChange={handleChange} className="w-full p-3 border rounded-md bg-white">
+              <select name="empresa" value={formDatos.empresa} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black">
                 <option>Transavic</option>
                 <option>Avícola de Tony</option>
               </select>
             </div>
-            <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md" />
-            <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md" />
-            <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md" />
+            <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
+            <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
+            <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
 
             {/* CAMBIO: Campo desplegable para Distrito */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label>
-              <select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white">
+              <select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white  text-black">
                 {distritos.map(distrito => (
                   <option key={distrito} value={distrito}>{distrito}</option>
                 ))}
@@ -278,15 +278,15 @@ export default function Home() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label>
-                <select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white">
+                <select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black">
                   <option>Frecuente</option>
                   <option>Nuevo</option>
                 </select>
               </div>
             </div>
-            <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md"></textarea>
-            <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md" />
-            <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md"></textarea>
+            <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400"></textarea>
+            <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400" />
+            <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md placeholder:text-gray-400"></textarea>
             <button
               type="button"
               onClick={handleGenerarClick}
