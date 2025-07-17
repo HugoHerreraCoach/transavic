@@ -191,6 +191,10 @@ export default function Home() {
     setFormDatos(prevDatos => ({ ...prevDatos, [e.target.name]: e.target.value }));
   };
 
+  const handleEmpresaChange = (empresa: string) => {
+    setFormDatos(prevDatos => ({ ...prevDatos, empresa }));
+  };
+
   // ✅ FUNCIÓN MEJORADA DE GENERAR CLICK
   const handleGenerarClick = () => {
     const fechaActual = new Date().toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
@@ -295,20 +299,23 @@ export default function Home() {
           </div>
           <form ref={formRef}>
             <fieldset disabled={appState !== 'editing'} className="space-y-4">
-              <div className="mb-2 flex justify-center items-center h-[90px] bg-gray-50 p-2 rounded-lg border">
-                {cargandoLogo ? (
-                  <div className="text-gray-500 animate-pulse">Cargando logo...</div>
-                ) : (
-                  logoDataUrl && (
-                    <img
-                      src={logoDataUrl}
-                      alt={`Logo de ${formDatos.empresa}`}
-                      className="max-h-full w-auto object-contain"
-                    />
-                  )
-                )}
+              <div>
+                <label className="block text-base font-medium text-gray-800 mb-2 text-center">Selecciona la empresa:</label>
+                <div className="flex justify-center items-center gap-4">
+                  <div
+                    className={`p-2 border-2 rounded-lg transition-all duration-200 ${formDatos.empresa === 'Transavic' ? 'border-red-600 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
+                    onClick={() => appState === 'editing' && handleEmpresaChange('Transavic')}
+                  >
+                    <img src="/transavic.jpg" alt="Logo de Transavic" className="h-20 w-auto object-contain" />
+                  </div>
+                  <div
+                    className={`p-2 border-2 rounded-lg transition-all duration-200 ${formDatos.empresa === 'Avícola de Tony' ? 'border-red-600 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
+                    onClick={() => appState === 'editing' && handleEmpresaChange('Avícola de Tony')}
+                  >
+                    <img src="/avicola.jpg" alt="Logo de Avícola de Tony" className="h-20 w-auto object-contain" />
+                  </div>
+                </div>
               </div>
-              <div><label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label><select name="empresa" value={formDatos.empresa} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Transavic</option><option>Avícola de Tony</option></select></div>
               <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
               <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
               <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
@@ -336,7 +343,7 @@ export default function Home() {
             {appState === 'previewing' && (
               <div className="space-y-3">
                 <button onClick={handleCambiarDatos} className="w-full bg-yellow-500 text-white font-bold py-3 px-4 rounded-md hover:bg-yellow-600 transition-colors flex items-center justify-center"> <FiEdit2 className="mr-2" /> Cambiar Datos </button>
-                <button onClick={handleConfirmarPedido} disabled={cargandoImagen || !imagenBlob} className="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"> <FiSend className="mr-2" /> Confirmar Pedido </button>
+                <button onClick={handleConfirmarPedido} disabled={cargandoImagen || !imagenBlob} className="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"> <FiSend className="mr-2" /> Registrar Pedido </button>
               </div>
             )}
           </div>
