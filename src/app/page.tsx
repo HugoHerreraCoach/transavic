@@ -92,7 +92,6 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia }) => (
         </div>
       </div>
 
-      {/* CAMBIO: Mostrar el distrito */}
       <div className="flex items-start">
         <FiMap className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
         <div className="flex-1 min-w-0">
@@ -138,7 +137,7 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia }) => (
   </div>
 );
 
-// --- La Página Principal con LÓGICA ACTUALIZADA ---
+//Página Principal
 export default function Home() {
   const [formDatos, setFormDatos] = useState<TicketData>(datosIniciales);
   const [ticketDatos, setTicketDatos] = useState<TicketData>(datosIniciales);
@@ -151,7 +150,7 @@ export default function Home() {
     setFormDatos({ ...formDatos, [e.target.name]: e.target.value });
   };
 
-  // CAMBIO: Función separada para generar la imagen
+  // Función para generar la imagen
   const generarImagen = async () => {
     if (!exportTicketRef.current) return;
     
@@ -165,7 +164,6 @@ export default function Home() {
         quality: 1.0,
         pixelRatio: 2,
         width: exportTicketRef.current.offsetWidth,
-        // Agregar estas opciones para mejorar la captura
         backgroundColor: '#ffffff',
         cacheBust: true,
       });
@@ -180,14 +178,14 @@ export default function Home() {
     }
   };
 
-  // CAMBIO: useEffect mejorado que se ejecuta cuando cambian los datos del ticket
+  // useEffect que se ejecuta cuando cambian los datos del ticket
   useEffect(() => {
     if (showTicket) {
       generarImagen();
     }
   }, [ticketDatos, showTicket]);
 
-  // CAMBIO: La función de generar ahora resetea la imagen antes de crear una nueva
+  // La función de generar ahora resetea la imagen antes de crear una nueva
   const handleGenerarClick = () => {
     // Generar la fecha actual en un formato legible
     const fechaActual = new Date().toLocaleDateString('es-PE', {
@@ -200,7 +198,7 @@ export default function Home() {
     setImagenUrl(null);
     setShowTicket(true);
     
-    // Añadir la fecha a los datos del ticket que se va a generar
+    // Añadir la fecha al ticket
     const nuevosTicketDatos = { ...formDatos, fecha: fechaActual };
     setTicketDatos(nuevosTicketDatos);
   };
@@ -240,12 +238,6 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gray-100 p-2 sm:p-8">
-      <div className="absolute top-0 left-[-9999px] pointer-events-none opacity-0">
-        <div className="w-[500px] bg-white">
-          <TicketPedido datos={ticketDatos} referencia={exportTicketRef} />
-        </div>
-      </div>
-
       <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
         {/* --- COLUMNA IZQUIERDA: FORMULARIO ACTUALIZADO --- */}
         <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg h-fit">
@@ -264,8 +256,6 @@ export default function Home() {
             <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
             <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
             <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400" />
-
-            {/* CAMBIO: Campo desplegable para Distrito */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label>
               <select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white  text-black">
@@ -274,7 +264,6 @@ export default function Home() {
                 ))}
               </select>
             </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label>
@@ -315,7 +304,7 @@ export default function Home() {
                     ¡Imagen generada con éxito!
                   </p>
                 )}
-                <TicketPedido datos={ticketDatos} />
+                <TicketPedido datos={ticketDatos} referencia={exportTicketRef} />
               </>
             ) : (
               <div className="w-full border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center min-h-[480px]">
