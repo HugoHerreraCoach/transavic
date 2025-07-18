@@ -27,7 +27,7 @@ export default function LoginPage() {
     return (
         <main className="flex items-center justify-center min-h-screen bg-gray-100">
             <div className="relative mx-auto flex w-full max-w-[400px] flex-col space-y-3.5 p-6 bg-white rounded-lg shadow-md">
-                <h1 className="text-2xl font-bold text-center">Acceso al Panel</h1>
+                <h1 className="text-2xl font-bold text-black text-center">Acceso al Panel</h1>
 
                 <form action={dispatch} className="space-y-3">
                     <div className="flex-1 rounded-lg px-6 pb-4 pt-8">
@@ -35,7 +35,7 @@ export default function LoginPage() {
                             Usuario
                         </label>
                         <input
-                            className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 placeholder:text-gray-500"
+                            className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 text-black placeholder:text-gray-500"
                             id="email"
                             type="text"
                             name="email"
@@ -46,7 +46,7 @@ export default function LoginPage() {
                             Contraseña
                         </label>
                         <input
-                            className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 placeholder:text-gray-500"
+                            className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 text-black placeholder:text-gray-500"
                             id="password"
                             type="password"
                             name="password"

@@ -4,13 +4,16 @@
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
 
-// La acción authenticate no cambia
 export async function authenticate(
   prevState: string | undefined,
   formData: FormData,
 ) {
   try {
-    await signIn('credentials', formData);
+    // ✅ Se añade el objeto con redirectTo para que funcione en producción
+    await signIn('credentials', {
+      ...Object.fromEntries(formData),
+      redirectTo: '/dashboard',
+    });
   } catch (error) {
     if ((error as Error).message.includes('NEXT_REDIRECT')) {
       throw error;
