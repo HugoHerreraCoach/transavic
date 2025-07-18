@@ -68,7 +68,7 @@ function PesoInput({ pedido, onDelete }: PesoInputProps) {
                 value={peso}
                 onChange={(e) => setPeso(e.target.value)}
                 placeholder="0.00 kg"
-                className="w-24 p-2 border rounded-md text-sm text-center bg-gray-50 focus:ring-2 focus:ring-blue-500 disabled:bg-gray-200"
+                className="w-24 p-2 border rounded-md text-sm text-center bg-gray-50 focus:ring-2 text-gray-900 focus:ring-blue-500 disabled:bg-gray-200"
                 disabled={!isEditing || isSaving}
             />
             {isEditing ? (
