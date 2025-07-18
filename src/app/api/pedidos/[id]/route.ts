@@ -3,17 +3,23 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+export const dynamic = 'force-dynamic';
+
 const UpdateSchema = z.object({
   pesoExacto: z.number().nullable(),
 });
 
-interface RouteContext {
-  params: { id: string };
-}
-
-export async function PATCH(request: Request, { params }: RouteContext) {
-  const { id } = params;
+// ✅ CAMBIO: La función ahora solo recibe "request"
+export async function PATCH(request: Request) {
   try {
+    // Extraemos el ID directamente de la URL
+    const url = new URL(request.url);
+    const id = url.pathname.split('/').pop();
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID del pedido no encontrado' }, { status: 400 });
+    }
+
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
