@@ -3,17 +3,23 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "seed": "node --no-warnings ./scripts/seed.mjs"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.1",
+    "dotenv": "^17.2.0",
     "html-to-image": "^1.11.13",
     "next": "15.3.5",
+    "next-auth": "^5.0.0-beta.29",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-icons": "^5.5.0"
+    "react-icons": "^5.5.0",
+    "use-debounce": "^10.0.5",
+    "zod": "^4.0.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

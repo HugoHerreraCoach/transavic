@@ -32,7 +32,7 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
           className="w-[120px] h-auto mx-auto"
           style={{ display: 'block' }}
           crossOrigin="anonymous"
-          onLoad={onLogoReady} // ✅ Notifica cuando la imagen está completamente cargada
+          onLoad={onLogoReady}
           onError={(e) => {
             console.error('Error al cargar imagen en ticket:', e);
           }}
@@ -64,37 +64,37 @@ export default function Home() {
   const [cargandoImagen, setCargandoImagen] = useState(false);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [cargandoLogo, setCargandoLogo] = useState(true);
-  
-  // ✅ NUEVOS ESTADOS PARA CONTROL DE RACE CONDITION
+
+  // ✅ ESTADOS PARA CONTROL DE RACE CONDITION
   const [logoListo, setLogoListo] = useState(false); // Logo completamente cargado en el DOM
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false); // Generación pendiente
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // ✅ FUNCIÓN MEJORADA DE CARGA DE LOGO
+  // ✅ FUNCIÓN DE CARGA DE LOGO
   const cargarYEstablecerLogo = useCallback(async (empresa: string) => {
     setCargandoLogo(true);
     setLogoDataUrl(null);
     setLogoListo(false); // ✅ Resetear estado de logo listo
-    
+
     try {
       const timestamp = new Date().getTime();
       const logoPath = empresa === 'Transavic'
         ? `/transavic.jpg?v=${timestamp}`
         : `/avicola.jpg?v=${timestamp}`;
-      
+
       const response = await fetch(logoPath, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Error al cargar imagen: ${response.status}`);
-      
+
       const blob = await response.blob();
       const reader = new FileReader();
-      
+
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
         setLogoDataUrl(dataUrl);
         setCargandoLogo(false);
-        
+
         // ✅ PRECARGAR LA IMAGEN EN EL DOM PARA ASEGURAR QUE ESTÉ LISTA
         const img = new Image();
         img.onload = () => {
@@ -107,12 +107,12 @@ export default function Home() {
         };
         img.src = dataUrl;
       };
-      
+
       reader.onerror = (error) => {
         console.error("Error en FileReader:", error);
         setCargandoLogo(false);
       };
-      
+
       reader.readAsDataURL(blob);
     } catch (error) {
       console.error("Error al obtener el logo:", error);
@@ -144,12 +144,12 @@ export default function Home() {
   // ✅ FUNCIÓN MEJORADA DE GENERACIÓN DE IMAGEN
   const generarImagen = useCallback(async (): Promise<void> => {
     const ticketElement = exportTicketRef.current;
-    
+
     if (!ticketElement || !logoDataUrl || !logoListo) {
-      console.warn('Elementos no listos para generar imagen:', { 
-        ticketElement: !!ticketElement, 
-        logoDataUrl: !!logoDataUrl, 
-        logoListo 
+      console.warn('Elementos no listos para generar imagen:', {
+        ticketElement: !!ticketElement,
+        logoDataUrl: !!logoDataUrl,
+        logoListo
       });
       return;
     }
@@ -157,14 +157,14 @@ export default function Home() {
     try {
       // ✅ ESPERAR UN POCO MÁS PARA ASEGURAR QUE TODO ESTÉ RENDERIZADO
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       const dataUrl = await toJpeg(ticketElement, {
         quality: 0.95,
         pixelRatio: 2.5,
         backgroundColor: '#ffffff',
         cacheBust: true,
       });
-      
+
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);
       const blob = await response.blob();
@@ -201,7 +201,7 @@ export default function Home() {
     setTicketDatos({ ...formDatos, fecha: fechaActual });
     setCargandoImagen(true);
     setAppState('previewing');
-    
+
     // ✅ VERIFICAR SI EL LOGO ESTÁ LISTO O ESPERAR
     if (logoListo && logoDataUrl) {
       setPendienteGeneracion(true);
@@ -218,11 +218,43 @@ export default function Home() {
     setPendienteGeneracion(false); // ✅ Cancelar generación pendiente
   };
 
-  const handleConfirmarPedido = () => {
-    if (imagenBlob) {
-      setAppState('confirmed');
-    } else {
+  const handleConfirmarPedido = async () => {
+    if (!imagenBlob) {
       alert("Por favor, espera a que la imagen se genere antes de confirmar.");
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/pedidos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(ticketDatos),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        // ✅ AÑADIMOS ESTO PARA VER EL ERROR REAL EN LA CONSOLA
+        console.error('Error recibido de la API:', errorData);
+
+        let friendlyErrorMessage = 'Error al registrar.';
+        // Intentamos crear un mensaje de error más legible
+        if (errorData.error && typeof errorData.error === 'object') {
+          friendlyErrorMessage = Object.values(errorData.error).flat().join(' ');
+        } else if (errorData.error) {
+          friendlyErrorMessage = errorData.error;
+        }
+
+        throw new Error(friendlyErrorMessage);
+      }
+
+      setAppState('confirmed');
+
+    } catch (error) {
+      console.error('Fallo al confirmar el pedido:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Un error desconocido ocurrió.';
+      alert(`No se pudo registrar el pedido: ${errorMessage}`);
     }
   };
 
@@ -335,9 +367,9 @@ export default function Home() {
                 className="w-full bg-red-600 text-white font-bold py-3 px-4 rounded-md hover:bg-red-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"
               >
                 <FiCheckSquare className="mr-2" />
-                {cargandoLogo ? 'Cargando logo...' : 
-                 !logoListo ? 'Preparando imagen...' : 
-                 'Generar Pedido'}
+                {cargandoLogo ? 'Cargando logo...' :
+                  !logoListo ? 'Preparando imagen...' :
+                    'Generar Pedido'}
               </button>
             )}
             {appState === 'previewing' && (
@@ -365,7 +397,7 @@ export default function Home() {
                 {!cargandoImagen && imagenUrl && (
                   <div><img src={imagenUrl} alt="Vista previa del pedido" /></div>
                 )}
-                 {!cargandoImagen && appState === 'confirmed' && imagenUrl && (<p className="text-center text-green-600 font-semibold mt-4 animate-pulse">¡Pedido Confirmado! Listo para compartir.</p>)}
+                {!cargandoImagen && appState === 'confirmed' && imagenUrl && (<p className="text-center text-green-600 font-semibold mt-4 animate-pulse">¡Pedido Confirmado! Listo para compartir.</p>)}
               </>
             )}
           </div>
