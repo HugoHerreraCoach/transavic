@@ -9,10 +9,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get("query") || "";
     const fecha = searchParams.get("fecha") || "";
+    const currentPage = Number(searchParams.get("page")) || 1;
 
-    const pedidos = await fetchFilteredPedidos(query, fecha);
+    const result = await fetchFilteredPedidos(query, fecha, currentPage);
 
-    return NextResponse.json(pedidos);
+    return NextResponse.json(result);
   } catch (error) {
     console.error("API Error:", error);
     return NextResponse.json(

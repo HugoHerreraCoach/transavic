@@ -1,3 +1,5 @@
+/* src/app/globals.css */
+
 @import "tailwindcss";
 
 :root {
@@ -23,4 +25,52 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+
+/* === INICIO: ESTILOS DE IMPRESIÓN === */
+@media print {
+  .print-hidden {
+    display: none !important;
+  }
+  body, main {
+    width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important; 
+    color: #000000 !important; 
+  }
+ /* Forza que el contenedor de la tabla sea visible y sin estilos de "pantalla". */
+  .print-container {
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    overflow: visible !important; /* Muestra todo el contenido, sin scroll */
+  }
+/* Ajustes cruciales para la tabla */
+  table {
+    width: 100% !important;
+    table-layout: auto !important; /* Permite que el navegador ajuste las columnas */
+    font-size: 9pt !important;/* Reduce el tamaño de la fuente para que quepa más */
+    break-inside: auto;  /* Evita que la tabla se corte entre páginas si es posible */
+  }
+  /* Reduce el padding en las celdas para ganar espacio horizontal */
+  th, td {
+    padding: 4px 6px !important;
+    white-space: normal !important; /* Permite que el texto largo salte de línea */
+    word-break: break-word;/* Rompe palabras largas si es necesario */
+  }
+  /* Asegura que el texto truncado en pantalla se muestre completo */
+  .print\:whitespace-normal {
+    white-space: normal !important;
+  }
+  /* Ocultar el input de peso en la impresión (ya lo haces con Tailwind) */
+  .print\:hidden {
+    display: none !important;
+  }
+  /* Mostrar el texto del peso en la impresión (ya lo haces con Tailwind) */
+  .print\:block {
+    display: block !important;
+  }
 }

@@ -15,12 +15,11 @@ interface TicketPedidoProps {
   datos: TicketData;
   referencia?: Ref<HTMLDivElement>;
   logoDataUrl: string | null;
-  onLogoReady: () => void; // ✅ Callback para notificar cuando la imagen está lista
+  onLogoReady: () => void;
 }
 
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
 
-// ✅ COMPONENTE DEL TICKET CON CALLBACK DE CARGA
 const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoDataUrl, onLogoReady }) => (
   <div ref={referencia} className="bg-white p-8 border-2 border-gray-300 rounded-lg text-black w-full">
     <div className="text-center pb-4 border-b-2 border-dashed">
@@ -33,9 +32,7 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
           style={{ display: 'block' }}
           crossOrigin="anonymous"
           onLoad={onLogoReady}
-          onError={(e) => {
-            console.error('Error al cargar imagen en ticket:', e);
-          }}
+          onError={(e) => console.error('Error al cargar imagen en ticket:', e)}
         />
       )}
       <h1 className="text-3xl font-bold text-red-600">{datos.empresa === 'Transavic' ? 'PEDIDO TRANSAVIC' : 'PEDIDO AVÍCOLA DE TONY'}</h1>
@@ -54,7 +51,6 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
   </div>
 );
 
-// ✅ COMPONENTE PRINCIPAL CON SOLUCIÓN AL RACE CONDITION
 export default function Home() {
   const [appState, setAppState] = useState<AppState>('editing');
   const [formDatos, setFormDatos] = useState<TicketData>(datosIniciales);
@@ -64,55 +60,41 @@ export default function Home() {
   const [cargandoImagen, setCargandoImagen] = useState(false);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [cargandoLogo, setCargandoLogo] = useState(true);
-
-  // ✅ ESTADOS PARA CONTROL DE RACE CONDITION
-  const [logoListo, setLogoListo] = useState(false); // Logo completamente cargado en el DOM
-  const [pendienteGeneracion, setPendienteGeneracion] = useState(false); // Generación pendiente
+  const [errors, setErrors] = useState<Partial<Record<keyof TicketData, string>>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [logoListo, setLogoListo] = useState(false);
+  const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
-  // ✅ FUNCIÓN DE CARGA DE LOGO
   const cargarYEstablecerLogo = useCallback(async (empresa: string) => {
     setCargandoLogo(true);
     setLogoDataUrl(null);
-    setLogoListo(false); // ✅ Resetear estado de logo listo
-
+    setLogoListo(false);
     try {
       const timestamp = new Date().getTime();
-      const logoPath = empresa === 'Transavic'
-        ? `/transavic.jpg?v=${timestamp}`
-        : `/avicola.jpg?v=${timestamp}`;
-
+      const logoPath = empresa === 'Transavic' ? `/transavic.jpg?v=${timestamp}` : `/avicola.jpg?v=${timestamp}`;
       const response = await fetch(logoPath, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Error al cargar imagen: ${response.status}`);
-
       const blob = await response.blob();
       const reader = new FileReader();
-
       reader.onloadend = () => {
         const dataUrl = reader.result as string;
         setLogoDataUrl(dataUrl);
         setCargandoLogo(false);
-
-        // ✅ PRECARGAR LA IMAGEN EN EL DOM PARA ASEGURAR QUE ESTÉ LISTA
         const img = new Image();
-        img.onload = () => {
-          // La imagen está completamente cargada y lista para usar
-          setLogoListo(true);
-        };
+        img.onload = () => setLogoListo(true);
         img.onerror = (error) => {
           console.error("Error al precargar imagen:", error);
           setCargandoLogo(false);
         };
         img.src = dataUrl;
       };
-
       reader.onerror = (error) => {
         console.error("Error en FileReader:", error);
         setCargandoLogo(false);
       };
-
       reader.readAsDataURL(blob);
     } catch (error) {
       console.error("Error al obtener el logo:", error);
@@ -131,56 +113,34 @@ export default function Home() {
       }
     };
     window.addEventListener('pageshow', handlePageShow);
-    return () => {
-      window.removeEventListener('pageshow', handlePageShow);
-    };
+    return () => window.removeEventListener('pageshow', handlePageShow);
   }, [cargarYEstablecerLogo, formDatos.empresa]);
 
-  // ✅ CALLBACK CUANDO LA IMAGEN DEL TICKET ESTÁ LISTA
   const handleLogoReady = useCallback(() => {
     setLogoListo(true);
   }, []);
 
-  // ✅ FUNCIÓN MEJORADA DE GENERACIÓN DE IMAGEN
   const generarImagen = useCallback(async (): Promise<void> => {
     const ticketElement = exportTicketRef.current;
-
-    if (!ticketElement || !logoDataUrl || !logoListo) {
-      console.warn('Elementos no listos para generar imagen:', {
-        ticketElement: !!ticketElement,
-        logoDataUrl: !!logoDataUrl,
-        logoListo
-      });
-      return;
-    }
+    if (!ticketElement || !logoDataUrl || !logoListo) return;
 
     try {
-      // ✅ ESPERAR UN POCO MÁS PARA ASEGURAR QUE TODO ESTÉ RENDERIZADO
       await new Promise(resolve => setTimeout(resolve, 100));
-
-      const dataUrl = await toJpeg(ticketElement, {
-        quality: 0.95,
-        pixelRatio: 2.5,
-        backgroundColor: '#ffffff',
-        cacheBust: true,
-      });
-
+      const dataUrl = await toJpeg(ticketElement, { quality: 0.95, pixelRatio: 2.5, backgroundColor: '#ffffff', cacheBust: true });
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);
       const blob = await response.blob();
       setImagenBlob(blob);
-      setPendienteGeneracion(false); // ✅ Generación completada
     } catch (error) {
       console.error('Error al generar la imagen:', error);
       alert('Hubo un error al generar la imagen. Inténtalo de nuevo.');
       setAppState('editing');
-      setPendienteGeneracion(false);
     } finally {
+      setPendienteGeneracion(false);
       setCargandoImagen(false);
     }
   }, [logoDataUrl, logoListo]);
 
-  // ✅ EFECTO MEJORADO PARA GENERAR IMAGEN CUANDO TODO ESTÉ LISTO
   useEffect(() => {
     if (pendienteGeneracion && logoListo && logoDataUrl && appState === 'previewing') {
       generarImagen();
@@ -188,25 +148,38 @@ export default function Home() {
   }, [pendienteGeneracion, logoListo, logoDataUrl, appState, generarImagen]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    setFormDatos(prevDatos => ({ ...prevDatos, [e.target.name]: e.target.value }));
+    const { name, value } = e.target;
+    let finalValue = value;
+    if (name === 'whatsapp') {
+      // Al pegar, elimina espacios, el signo '+' y cualquier otro carácter que no sea un número.
+      finalValue = value.replace(/[^0-9]/g, '');
+    }
+    setFormDatos(prev => ({ ...prev, [name]: finalValue }));
+    if (errors[name as keyof TicketData]) {
+      setErrors(prev => ({ ...prev, [name]: undefined }));
+    }
   };
 
   const handleEmpresaChange = (empresa: string) => {
-    setFormDatos(prevDatos => ({ ...prevDatos, empresa }));
+    setFormDatos(prev => ({ ...prev, empresa }));
   };
 
-  // ✅ FUNCIÓN MEJORADA DE GENERAR CLICK
+  const validateForm = () => {
+    const newErrors: Partial<Record<keyof TicketData, string>> = {};
+    if (!ticketDatos.cliente.trim()) newErrors.cliente = 'El nombre del cliente es obligatorio.';
+    if (!ticketDatos.detalle.trim()) newErrors.detalle = 'El detalle del pedido es obligatorio.';
+    return newErrors;
+  };
+
   const handleGenerarClick = () => {
+    setErrors({}); // Limpiar errores al generar vista previa
     const fechaActual = new Date().toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
     setTicketDatos({ ...formDatos, fecha: fechaActual });
     setCargandoImagen(true);
     setAppState('previewing');
-
-    // ✅ VERIFICAR SI EL LOGO ESTÁ LISTO O ESPERAR
     if (logoListo && logoDataUrl) {
       setPendienteGeneracion(true);
     } else {
-      // Si el logo no está listo, marcar como pendiente
       setPendienteGeneracion(true);
     }
   };
@@ -215,46 +188,44 @@ export default function Home() {
     setAppState('editing');
     setImagenUrl(null);
     setImagenBlob(null);
-    setPendienteGeneracion(false); // ✅ Cancelar generación pendiente
+    setPendienteGeneracion(false);
   };
 
   const handleConfirmarPedido = async () => {
-    if (!imagenBlob) {
-      alert("Por favor, espera a que la imagen se genere antes de confirmar.");
+    const newErrors = validateForm();
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      setAppState('editing');
+      alert('Por favor, completa los campos obligatorios antes de registrar.');
+      formRef.current?.scrollIntoView({ behavior: 'smooth' });
       return;
     }
 
+    if (!imagenBlob) {
+      alert("La imagen del ticket aún no se ha generado. Por favor, espera un momento.");
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
       const response = await fetch('/api/pedidos', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(ticketDatos),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        // ✅ AÑADIMOS ESTO PARA VER EL ERROR REAL EN LA CONSOLA
         console.error('Error recibido de la API:', errorData);
-
-        let friendlyErrorMessage = 'Error al registrar.';
-        // Intentamos crear un mensaje de error más legible
-        if (errorData.error && typeof errorData.error === 'object') {
-          friendlyErrorMessage = Object.values(errorData.error).flat().join(' ');
-        } else if (errorData.error) {
-          friendlyErrorMessage = errorData.error;
-        }
-
+        const friendlyErrorMessage = errorData.error ? (typeof errorData.error === 'object' ? Object.values(errorData.error).flat().join(' ') : errorData.error) : 'Error al registrar.';
         throw new Error(friendlyErrorMessage);
       }
-
       setAppState('confirmed');
-
     } catch (error) {
       console.error('Fallo al confirmar el pedido:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Un error desconocido ocurrió.';
-      alert(`No se pudo registrar el pedido: ${errorMessage}`);
+      alert(`No se pudo registrar el pedido: ${error instanceof Error ? error.message : 'Un error desconocido ocurrió.'}`);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -266,6 +237,7 @@ export default function Home() {
     setImagenBlob(null);
     setPendienteGeneracion(false);
     setAppState('editing');
+    setErrors({});
     formRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
@@ -290,28 +262,21 @@ export default function Home() {
     const file = new File([imagenBlob], `pedido.jpg`, { type: 'image/jpeg' });
     if (navigator.share && navigator.canShare({ files: [file] })) {
       try {
-        await navigator.share({
-          files: [file],
-          title: `Pedido ${ticketDatos.empresa}`,
-          text: `Nuevo pedido para: ${ticketDatos.cliente}`
-        });
+        await navigator.share({ files: [file], title: `Pedido ${ticketDatos.empresa}`, text: `Nuevo pedido para: ${ticketDatos.cliente}` });
       } catch (error) {
-        if ((error as Error).name !== 'AbortError') {
-          console.error('Error al compartir:', error);
-        }
+        if ((error as Error).name !== 'AbortError') console.error('Error al compartir:', error);
       }
     } else {
       alert('Tu navegador no soporta compartir archivos. Por favor, descarga la imagen y compártela manualmente.');
     }
   };
 
-  // ✅ CONDICIÓN MEJORADA PARA HABILITAR EL BOTÓN
-  const puedeGenerarPedido = !cargandoLogo && logoListo && logoDataUrl;
+  const puedeGenerarPedido = !cargandoLogo && logoListo;
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gray-100 p-2 sm:p-8">
-      {/* ✅ Div oculto para generar la imagen CON CALLBACK */}
-      <div className="absolute top-0 left-0 z-[-1] opacity-0 pointer-events-none">
+      {/* Div oculto para generar la imagen, posicionado fuera de la pantalla para no afectar el layout */}
+      <div className="fixed top-0 left-[-9999px] z-[-1] pointer-events-none">
         <div className="w-[500px] bg-white">
           <TicketPedido
             datos={ticketDatos}
@@ -323,13 +288,12 @@ export default function Home() {
       </div>
 
       <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
-        {/* Columna del Formulario */}
         <div className="bg-white p-6 rounded-xl shadow-lg h-fit">
           <div className="flex items-center mb-6">
             <FiFileText className="text-red-600 mr-3" size={30} />
             <h1 className="text-2xl font-bold text-gray-800">Generador de Pedidos</h1>
           </div>
-          <form ref={formRef}>
+          <form ref={formRef} onSubmit={(e) => e.preventDefault()}>
             <fieldset disabled={appState !== 'editing'} className="space-y-4">
               <div>
                 <label className="block text-base font-medium text-gray-800 mb-2 text-center">Selecciona la empresa:</label>
@@ -348,12 +312,21 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
-              <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
+              <div>
+                <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
+                {errors.cliente && <p className="text-red-500 text-sm mt-1">{errors.cliente}</p>}
+              </div>
+              <div>
+                <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
+                {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
+              </div>
               <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
-              <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200"></textarea>
+              <div>
+                <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
+                {errors.detalle && <p className="text-red-500 text-sm mt-1">{errors.detalle}</p>}
+              </div>
               <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
               <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200"></textarea>
             </fieldset>
@@ -363,25 +336,22 @@ export default function Home() {
               <button
                 type="button"
                 onClick={handleGenerarClick}
-                disabled={!puedeGenerarPedido}
+                disabled={!puedeGenerarPedido || isSubmitting}
                 className="w-full bg-red-600 text-white font-bold py-3 px-4 rounded-md hover:bg-red-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"
               >
                 <FiCheckSquare className="mr-2" />
-                {cargandoLogo ? 'Cargando logo...' :
-                  !logoListo ? 'Preparando imagen...' :
-                    'Generar Pedido'}
+                {cargandoLogo ? 'Cargando logo...' : 'Generar Pedido'}
               </button>
             )}
             {appState === 'previewing' && (
               <div className="space-y-3">
                 <button onClick={handleCambiarDatos} className="w-full bg-yellow-500 text-white font-bold py-3 px-4 rounded-md hover:bg-yellow-600 transition-colors flex items-center justify-center"> <FiEdit2 className="mr-2" /> Cambiar Datos </button>
-                <button onClick={handleConfirmarPedido} disabled={cargandoImagen || !imagenBlob} className="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"> <FiSend className="mr-2" /> Registrar Pedido </button>
+                <button onClick={handleConfirmarPedido} disabled={cargandoImagen || !imagenBlob || isSubmitting} className="w-full bg-green-600 text-white font-bold py-3 px-4 rounded-md hover:bg-green-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"> <FiSend className="mr-2" /> {isSubmitting ? 'Registrando...' : 'Registrar Pedido'} </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Columna de la Vista Previa */}
         <div className="bg-white p-6 sm:p-8 rounded-xl shadow-lg flex flex-col items-center">
           <h2 className="text-xl font-bold text-gray-800 mb-4">Vista Previa del Ticket</h2>
           <div className="w-full max-w-md">
