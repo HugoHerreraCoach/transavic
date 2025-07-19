@@ -1,3 +1,5 @@
+// src/app/page.tsx
+
 'use client';
 
 import { useState, useRef, useEffect, Ref, useCallback } from 'react';
@@ -67,6 +69,7 @@ export default function Home() {
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const empresaSelectorRef = useRef<HTMLDivElement>(null);
 
   const cargarYEstablecerLogo = useCallback(async (empresa: string) => {
     setCargandoLogo(true);
@@ -237,7 +240,7 @@ export default function Home() {
     setPendienteGeneracion(false);
     setAppState('editing');
     setErrors({});
-    formRef.current?.scrollIntoView({ behavior: 'smooth' });
+    empresaSelectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const descargarImagen = () => {
@@ -294,7 +297,7 @@ export default function Home() {
           </div>
           <form ref={formRef} onSubmit={(e) => e.preventDefault()}>
             <fieldset disabled={appState !== 'editing'} className="space-y-4">
-              <div>
+              <div ref={empresaSelectorRef}>
                 <label className="block text-base font-medium text-gray-800 mb-2 text-center">Selecciona la empresa:</label>
                 <div className="flex justify-center items-center gap-4">
                   <div
