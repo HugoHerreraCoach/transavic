@@ -2,15 +2,15 @@
 
 import { useState } from 'react';
 import { Pedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2 } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiTag, FiClock, FiInfo } from 'react-icons/fi';
 
-// ✅ TIPO DE PROPS PARA PesoInput ACTUALIZADO
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
+
 type PesoInputProps = {
     pedido: Pedido;
     onDelete: (id: string) => void;
 };
 
-// ✅ COMPONENTE PesoInput REESCRITO CON LA NUEVA LÓGICA
 function PesoInput({ pedido, onDelete }: PesoInputProps) {
     const [peso, setPeso] = useState<string>(pedido.peso_exacto?.toString() ?? '');
     const [isEditing, setIsEditing] = useState(false);
@@ -51,7 +51,6 @@ function PesoInput({ pedido, onDelete }: PesoInputProps) {
         try {
             const response = await fetch(`/api/pedidos/${pedido.id}`, { method: 'DELETE' });
             if (!response.ok) throw new Error('Error al eliminar');
-            // ✅ CORRECCIÓN: Se pasa el id (string) directamente, sin Number()
             onDelete(pedido.id);
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Error desconocido';
@@ -103,18 +102,20 @@ function PesoInput({ pedido, onDelete }: PesoInputProps) {
     );
 }
 
-// ✅ PROPS ACTUALIZADAS PARA PedidoCard Y PedidosTable
 type PedidoCardProps = {
     pedido: Pedido;
     onPedidoDeleted: (id: string) => void;
+    visibleColumns: Record<Column, boolean>;
 };
 
 type PedidosTableProps = {
     pedidos: Pedido[];
     onPedidoDeleted: (id: string) => void;
+    visibleColumns: Record<Column, boolean>;
 };
 
-function PedidoCard({ pedido, onPedidoDeleted }: PedidoCardProps) {
+// This is the mobile view
+function PedidoCard({ pedido, onPedidoDeleted, visibleColumns }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (numero && numero.length === 9 && numero.startsWith('9')) return `https://wa.me/51${numero}`;
         if (numero) return `https://wa.me/${numero}`;
@@ -141,12 +142,17 @@ function PedidoCard({ pedido, onPedidoDeleted }: PedidoCardProps) {
             <div className="mt-3 flex items-center gap-2 text-sm text-gray-700">
                 <FiTruck /><span>{pedido.empresa}</span>
             </div>
+            {visibleColumns.empresa && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTruck /><span>{pedido.empresa}</span></div>}
+            {visibleColumns.distrito && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiMapPin /><span>{pedido.distrito}</span></div>}
+            {visibleColumns.tipo_cliente && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTag /><span>{pedido.tipo_cliente}</span></div>}
+            {visibleColumns.hora_entrega && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiClock /><span>{pedido.hora_entrega}</span></div>}
             <div className="mt-4 p-3 bg-gray-50 rounded-md">
                 <div className="flex items-start gap-2 text-sm text-gray-800">
                     <FiFileText className="mt-0.5 flex-shrink-0" />
                     <p className="break-words">{pedido.detalle}</p>
                 </div>
             </div>
+            {visibleColumns.notas && <div className="mt-3 flex items-start gap-2 text-sm text-gray-700"><FiInfo className="mt-0.5 flex-shrink-0" /><p>{pedido.notas}</p></div>}
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Peso Exacto (kg)</label>
                 <PesoInput pedido={pedido} onDelete={onPedidoDeleted} />
@@ -155,7 +161,7 @@ function PedidoCard({ pedido, onPedidoDeleted }: PedidoCardProps) {
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, visibleColumns }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos con los filtros actuales.</p>;
     }
@@ -173,20 +179,28 @@ export default function PedidosTable({ pedidos, onPedidoDeleted }: PedidosTableP
 
     return (
         <>
+            {/* Mobile View */}
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} visibleColumns={visibleColumns} />
                 ))}
             </div>
+
+            {/* Desktop and Print View */}
             <div className="hidden sm:block print:block overflow-x-auto print:overflow-visible bg-white rounded-lg shadow border border-gray-200">
                 <table className="min-w-full text-gray-900">
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Cliente</th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Whatsapp</th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Empresa</th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Fecha</th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Pedido</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUser />Cliente</div></th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiPhone />Whatsapp</div></th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTruck />Dirección</div></th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCalendar />Fecha</div></th>
+                            {visibleColumns.empresa && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTruck />Empresa</div></th>}
+                            {visibleColumns.distrito && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMapPin />Distrito</div></th>}
+                            {visibleColumns.tipo_cliente && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTag />Tipo Cliente</div></th>}
+                            {visibleColumns.hora_entrega && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiClock />Hora Entrega</div></th>}
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />Pedido</div></th>
+                            {visibleColumns.notas && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiInfo />Notas</div></th>}
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Peso</th>
                         </tr>
                     </thead>
@@ -195,11 +209,16 @@ export default function PedidosTable({ pedidos, onPedidoDeleted }: PedidosTableP
                             const whatsappLink = getWhatsAppLink(pedido.whatsapp);
                             return (
                                 <tr key={pedido.id} className="hover:bg-gray-50 align-top">
-                                    <td className="px-4 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><FiUser />{pedido.cliente}</div></td>
-                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<div className="flex items-center gap-2"><FiPhone /><a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a></div>) : (<span className="text-gray-400">N/A</span>)}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><FiTruck />{pedido.empresa}</div></td>
-                                    <td className="px-4 py-4 whitespace-nowrap"><div className="flex items-center gap-2"><FiCalendar />{pedido.fecha_pedido}</div></td>
-                                    <td className="px-4 py-4 max-w-sm print:max-w-none"><div className="flex items-start gap-2"><FiFileText className="mt-1 flex-shrink-0" /><p className="break-words print:whitespace-normal" title={pedido.detalle}>{pedido.detalle}</p></div></td>
+                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.cliente}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a>) : (<span className="text-gray-400">N/A</span>)}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.direccion}</td>
+                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.fecha_pedido}</td>
+                                    {visibleColumns.empresa && <td className="px-4 py-4 whitespace-nowrap">{pedido.empresa}</td>}
+                                    {visibleColumns.distrito && <td className="px-4 py-4 whitespace-nowrap">{pedido.distrito}</td>}
+                                    {visibleColumns.tipo_cliente && <td className="px-4 py-4 whitespace-nowrap">{pedido.tipo_cliente}</td>}
+                                    {visibleColumns.hora_entrega && <td className="px-4 py-4 whitespace-nowrap">{pedido.hora_entrega}</td>}
+                                    <td className="px-4 py-4 max-w-sm print:max-w-none"><p className="break-words print:whitespace-normal" title={pedido.detalle}>{pedido.detalle}</p></td>
+                                    {visibleColumns.notas && <td className="px-4 py-4 whitespace-nowrap">{pedido.notas}</td>}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="print:hidden">
                                             <PesoInput pedido={pedido} onDelete={onPedidoDeleted} />

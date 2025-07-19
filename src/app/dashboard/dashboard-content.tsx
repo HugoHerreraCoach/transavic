@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 import { Suspense, useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
@@ -6,7 +6,10 @@ import { Pedido } from '@/lib/types';
 import Search from './search';
 import PedidosTable from './table';
 import PrintButton from './print-button';
+import ColumnCustomizer from './column-customizer';
 import { FiLogOut } from 'react-icons/fi';
+
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -44,6 +47,13 @@ function Dashboard() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [cargando, setCargando] = useState(true);
+  const [visibleColumns, setVisibleColumns] = useState<Record<Column, boolean>>({
+    distrito: false,
+    tipo_cliente: false,
+    hora_entrega: false,
+    notas: false,
+    empresa: false,
+  });
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
 
@@ -69,12 +79,15 @@ function Dashboard() {
   }, [searchParams]);
 
   const handlePedidoDeleted = (deletedId: string) => {
-    // La comparación string === string es correcta y segura
     setPedidos(currentPedidos => currentPedidos.filter(p => p.id !== deletedId));
   };
 
+  const handleColumnChange = (column: Column, visible: boolean) => {
+    setVisibleColumns(prev => ({ ...prev, [column]: visible }));
+  };
+
   return (
-    <main className="container mx-auto bg-white p-4 sm:p-8">
+    <main className="bg-white max-w-[1600px] mx-auto p-4 sm:p-6">
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6 print:hidden">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Dashboard de Pedidos</h1>
@@ -85,6 +98,7 @@ function Dashboard() {
             <FiLogOut /> Cerrar Sesión
           </a>
           <PrintButton />
+          <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
         </div>
       </div>
       <div className="print:hidden">
@@ -94,7 +108,7 @@ function Dashboard() {
         <p className="mt-8 text-center text-gray-500">Cargando pedidos...</p>
       ) : (
         <>
-          <PedidosTable pedidos={pedidos} onPedidoDeleted={handlePedidoDeleted} />
+          <PedidosTable pedidos={pedidos} onPedidoDeleted={handlePedidoDeleted} visibleColumns={visibleColumns} />
           {totalPages > 1 && (
             <PaginationControls currentPage={currentPage} totalPages={totalPages} />
           )}

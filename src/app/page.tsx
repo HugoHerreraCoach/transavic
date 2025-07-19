@@ -196,7 +196,6 @@ export default function Home() {
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       setAppState('editing');
-      alert('Por favor, completa los campos obligatorios antes de registrar.');
       formRef.current?.scrollIntoView({ behavior: 'smooth' });
       return;
     }

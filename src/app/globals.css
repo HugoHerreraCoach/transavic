@@ -56,7 +56,11 @@ body {
     break-inside: auto;  /* Evita que la tabla se corte entre páginas si es posible */
   }
   /* Reduce el padding en las celdas para ganar espacio horizontal */
-  th, td {
+  th {
+    padding: 4px 6px !important;
+    white-space: nowrap !important; /* Evita que los encabezados se rompan */
+  }
+  td {
     padding: 4px 6px !important;
     white-space: normal !important; /* Permite que el texto largo salte de línea */
     word-break: break-word;/* Rompe palabras largas si es necesario */

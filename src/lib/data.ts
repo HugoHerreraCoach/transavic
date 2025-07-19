@@ -38,7 +38,7 @@ export async function fetchFilteredPedidos(
 
     const pedidosQuery = `
       SELECT
-        id, cliente, whatsapp, empresa,
+        id, cliente, whatsapp, empresa, direccion, distrito, tipo_cliente, hora_entrega, notas,
         TO_CHAR(fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
         detalle, peso_exacto
       FROM pedidos
