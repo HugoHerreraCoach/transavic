@@ -1,4 +1,4 @@
-// src/app/dashboard/ticket-share-modal.tsx 
+// src/app/dashboard/ticket-share-modal.tsx (Solución Definitiva)
 
 'use client';
 
@@ -19,7 +19,7 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
   const [cargando, setCargando] = useState(true);
   const [imagenUrl, setImagenUrl] = useState<string | null>(null);
   const [imagenBlob, setImagenBlob] = useState<Blob | null>(null);
-
+  
   const exportTicketRef = useRef<HTMLDivElement>(null);
   
   const ticketData: TicketDisplayData = {
@@ -31,14 +31,17 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
 
   const generarImagen = useCallback(async () => {
     const ticketElement = exportTicketRef.current;
-    // La condición ahora es más simple, solo depende de que el ticket esté montado.
     if (!ticketElement) return;
 
-    setCargando(true);
     try {
-      // Un pequeño delay para asegurar el ciclo de renderizado de React.
-      await new Promise(resolve => setTimeout(resolve, 50));
-      const dataUrl = await toJpeg(ticketElement, { quality: 0.95, pixelRatio: 2.5, backgroundColor: '#ffffff', cacheBust: true });
+      // El setTimeout ya no es necesario aquí
+      const dataUrl = await toJpeg(ticketElement, { 
+        quality: 0.95, 
+        pixelRatio: 2.5, 
+        backgroundColor: '#ffffff',
+        // Forzamos que no use caché interno de la librería
+        cacheBust: true,
+      });
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);
       const blob = await response.blob();
@@ -52,42 +55,35 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
     }
   }, [onClose]);
 
-  // ✅ Lógica de carga de logo mejorada para evitar race conditions
   useEffect(() => {
     const cargarYPrepararLogo = async () => {
       setLogoDataUrl(null);
       setLogoListo(false);
+      setCargando(true);
 
       try {
-        // Usamos force-cache para acelerar cargas subsecuentes
-        const logoPath = pedido.empresa === 'Transavic' ? '/transavic.jpg' : '/avicola.jpg';
-        const response = await fetch(logoPath, { cache: 'force-cache' });
+        // ✅ 1. FORZAR RECARGA (EVITAR CACHÉ)
+        // Añadimos un timestamp para que la URL sea siempre única
+        const timestamp = new Date().getTime();
+        const logoPath = `${pedido.empresa === 'Transavic' ? '/transavic.jpg' : '/avicola.jpg'}?v=${timestamp}`;
+        
+        const response = await fetch(logoPath);
         if (!response.ok) throw new Error('No se pudo cargar el logo');
         
         const blob = await response.blob();
         const reader = new FileReader();
         
-        // El callback se ejecuta cuando el reader termina de leer el blob
         reader.onloadend = () => {
           const dataUrl = reader.result as string;
-          
-          // Creamos un objeto Image en memoria para precargarlo
           const img = new Image();
-          
-          // El callback se ejecuta cuando la imagen está completamente decodificada
           img.onload = () => {
-            // Ahora estamos 100% seguros de que la imagen está lista.
-            // Actualizamos los estados que dispararán la renderización y la generación.
             setLogoDataUrl(dataUrl);
             setLogoListo(true);
           };
-
           img.onerror = () => {
             console.error("Error al precargar el logo en el objeto Image.");
             onClose();
           };
-          
-          // Asignamos el src para iniciar la carga
           img.src = dataUrl;
         };
         
@@ -103,10 +99,13 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
   }, [pedido.empresa, onClose]);
 
 
-  // Este useEffect ahora funciona de manera fiable
+  // ✅ 2. SINCRONIZAR CON EL RENDERIZADO
   useEffect(() => {
     if (logoDataUrl && logoListo) {
-      generarImagen();
+      // Usamos requestAnimationFrame para asegurar que el DOM se haya pintado
+      requestAnimationFrame(() => {
+        generarImagen();
+      });
     }
   }, [logoDataUrl, logoListo, generarImagen]);
 
@@ -146,12 +145,11 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
 
         <div className="fixed top-0 left-[-9999px] z-[-1]">
           <div className="w-[500px]">
-            {/* La prop onLogoReady ya no es necesaria */}
             <TicketPedido
               datos={ticketData}
               referencia={exportTicketRef}
               logoDataUrl={logoDataUrl}
-              onLogoReady={() => {}} 
+              onLogoReady={() => {}}
             />
           </div>
         </div>
