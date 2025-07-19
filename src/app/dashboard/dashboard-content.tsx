@@ -8,6 +8,7 @@ import PedidosTable from './table';
 import PrintButton from './print-button';
 import ColumnCustomizer from './column-customizer';
 import { FiLogOut } from 'react-icons/fi';
+import TicketShareModal from './ticket-share-modal';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
 
@@ -54,6 +55,7 @@ function Dashboard() {
     notas: false,
     empresa: false,
   });
+  const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
 
@@ -77,6 +79,12 @@ function Dashboard() {
     };
     fetchPedidos();
   }, [searchParams]);
+
+  const handlePesoUpdated = (updatedPedido: Pedido) => {
+    setPedidos(currentPedidos =>
+      currentPedidos.map(p => p.id === updatedPedido.id ? updatedPedido : p)
+    );
+  };
 
   const handlePedidoDeleted = (deletedId: string) => {
     setPedidos(currentPedidos => currentPedidos.filter(p => p.id !== deletedId));
@@ -108,12 +116,21 @@ function Dashboard() {
         <p className="mt-8 text-center text-gray-500">Cargando pedidos...</p>
       ) : (
         <>
-          <PedidosTable pedidos={pedidos} onPedidoDeleted={handlePedidoDeleted} visibleColumns={visibleColumns} />
+          <PedidosTable pedidos={pedidos} onPedidoDeleted={handlePedidoDeleted} onPesoUpdated={handlePesoUpdated} onShareClick={setSharingPedido} visibleColumns={visibleColumns} />
           {totalPages > 1 && (
             <PaginationControls currentPage={currentPage} totalPages={totalPages} />
           )}
         </>
       )}
+
+      {/* ⭐ RENDERIZADO CONDICIONAL DEL MODAL */}
+      {sharingPedido && (
+        <TicketShareModal
+          pedido={sharingPedido}
+          onClose={() => setSharingPedido(null)}
+        />
+      )}
+
     </main>
   );
 }
