@@ -66,6 +66,7 @@ export default function Home() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoListo, setLogoListo] = useState(false);
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
+  const [triggerFocus, setTriggerFocus] = useState<boolean>(false);
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -241,11 +242,17 @@ export default function Home() {
     setPendienteGeneracion(false);
     setAppState('editing');
     setErrors({});
-    setTimeout(() => {
-      clienteInputRef.current?.focus();
-      clienteInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 0);
+    setTriggerFocus(true);
   };
+
+  useEffect(() => {
+    if (triggerFocus) {
+      clienteInputRef.current?.focus({ preventScroll: true });
+      formRef.current?.scrollIntoView({ behavior: 'smooth' }); 
+
+      setTriggerFocus(false);
+    }
+  }, [triggerFocus]);
 
   const descargarImagen = () => {
     if (!imagenBlob) return;
