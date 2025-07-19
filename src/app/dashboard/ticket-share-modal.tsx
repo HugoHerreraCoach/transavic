@@ -1,4 +1,4 @@
-// src/app/dashboard/ticket-share-modal.tsx (Corrección Final)
+// src/app/dashboard/ticket-share-modal.tsx 
 
 'use client';
 
@@ -22,22 +22,22 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   
-  // ✅ CORRECCIÓN FINAL AQUÍ
-  // Añadimos un fallback para 'tipo_cliente' igual que hicimos con 'distrito'.
   const ticketData: TicketDisplayData = {
       ...pedido,
       distrito: pedido.distrito ?? 'No especificado',
-      tipo_cliente: pedido.tipo_cliente ?? 'Frecuente', // Fallback para tipo_cliente
+      tipo_cliente: pedido.tipo_cliente ?? 'Frecuente',
       fecha: pedido.fecha_pedido
   };
 
   const generarImagen = useCallback(async () => {
     const ticketElement = exportTicketRef.current;
-    if (!ticketElement || !logoDataUrl || !logoListo) return;
+    // La condición ahora es más simple, solo depende de que el ticket esté montado.
+    if (!ticketElement) return;
 
     setCargando(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 150));
+      // Un pequeño delay para asegurar el ciclo de renderizado de React.
+      await new Promise(resolve => setTimeout(resolve, 50));
       const dataUrl = await toJpeg(ticketElement, { quality: 0.95, pixelRatio: 2.5, backgroundColor: '#ffffff', cacheBust: true });
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);
@@ -50,32 +50,66 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
     } finally {
       setCargando(false);
     }
-  }, [logoDataUrl, logoListo, onClose]);
+  }, [onClose]);
 
+  // ✅ Lógica de carga de logo mejorada para evitar race conditions
   useEffect(() => {
-    const cargarLogo = async () => {
+    const cargarYPrepararLogo = async () => {
+      setLogoDataUrl(null);
       setLogoListo(false);
+
       try {
+        // Usamos force-cache para acelerar cargas subsecuentes
         const logoPath = pedido.empresa === 'Transavic' ? '/transavic.jpg' : '/avicola.jpg';
-        const response = await fetch(logoPath);
+        const response = await fetch(logoPath, { cache: 'force-cache' });
         if (!response.ok) throw new Error('No se pudo cargar el logo');
+        
         const blob = await response.blob();
         const reader = new FileReader();
-        reader.onloadend = () => setLogoDataUrl(reader.result as string);
+        
+        // El callback se ejecuta cuando el reader termina de leer el blob
+        reader.onloadend = () => {
+          const dataUrl = reader.result as string;
+          
+          // Creamos un objeto Image en memoria para precargarlo
+          const img = new Image();
+          
+          // El callback se ejecuta cuando la imagen está completamente decodificada
+          img.onload = () => {
+            // Ahora estamos 100% seguros de que la imagen está lista.
+            // Actualizamos los estados que dispararán la renderización y la generación.
+            setLogoDataUrl(dataUrl);
+            setLogoListo(true);
+          };
+
+          img.onerror = () => {
+            console.error("Error al precargar el logo en el objeto Image.");
+            onClose();
+          };
+          
+          // Asignamos el src para iniciar la carga
+          img.src = dataUrl;
+        };
+        
         reader.readAsDataURL(blob);
+
       } catch (error) {
         console.error("Error al obtener el logo:", error);
         onClose();
       }
     };
-    cargarLogo();
+
+    cargarYPrepararLogo();
   }, [pedido.empresa, onClose]);
 
+
+  // Este useEffect ahora funciona de manera fiable
   useEffect(() => {
     if (logoDataUrl && logoListo) {
       generarImagen();
     }
   }, [logoDataUrl, logoListo, generarImagen]);
+
 
   const descargarImagen = () => {
     if (!imagenBlob) return;
@@ -112,11 +146,12 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
 
         <div className="fixed top-0 left-[-9999px] z-[-1]">
           <div className="w-[500px]">
+            {/* La prop onLogoReady ya no es necesaria */}
             <TicketPedido
               datos={ticketData}
               referencia={exportTicketRef}
               logoDataUrl={logoDataUrl}
-              onLogoReady={() => setLogoListo(true)}
+              onLogoReady={() => {}} 
             />
           </div>
         </div>

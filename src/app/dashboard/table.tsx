@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { Pedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiTag, FiClock, FiInfo, FiShare2  } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2 } from 'react-icons/fi';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
 
@@ -67,50 +67,64 @@ function PesoInput({ pedido, onDelete, onUpdate, onShare }: PesoInputProps) {
     };
 
     return (
-        <div className="flex items-center gap-2 relative">
+        // ✅ Contenedor principal ahora es responsivo
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 relative">
+            
+            {/* --- Input de Peso --- */}
             <input
                 type="number"
                 step="0.01"
                 value={peso}
                 onChange={(e) => setPeso(e.target.value)}
                 placeholder="0.00 kg"
-                className="w-24 p-2 border rounded-md text-sm text-center bg-gray-50 focus:ring-2 text-gray-900 focus:ring-blue-500 disabled:bg-gray-200"
+                className="w-full sm:w-24 p-2 border rounded-md text-sm text-center bg-gray-50 focus:ring-2 text-gray-900 focus:ring-blue-500 disabled:bg-gray-200"
                 disabled={!isEditing || isSaving}
             />
-            {isEditing ? (
+
+            {/* --- Bloque de Botones Responsivo --- */}
+            <div className="flex flex-col sm:flex-row gap-2">
+                {/* --- Fila superior en móvil (Editar / Compartir) --- */}
+                <div className="flex gap-2">
+                    {isEditing ? (
+                        <button
+                            onClick={handleSave}
+                            disabled={isSaving}
+                            className="p-2 flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors cursor-pointer"
+                            aria-label="Guardar peso"
+                        >
+                            <FiSave /> Guardar
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => setIsEditing(true)}
+                            disabled={isSaving}
+                            className="p-2 flex-1 flex items-center justify-center gap-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 disabled:bg-gray-400 transition-colors cursor-pointer"
+                            aria-label="Editar peso"
+                        >
+                            <FiEdit /> Editar
+                        </button>
+                    )}
+                    <button
+                        onClick={() => onShare(pedido)}
+                        className="p-2 flex-1 flex items-center justify-center gap-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:bg-gray-400 cursor-pointer"
+                        aria-label="Compartir pedido"
+                    >
+                        <FiShare2 /> Compartir
+                    </button>
+                </div>
+                
+                {/* --- Fila inferior en móvil (Eliminar) --- */}
                 <button
-                    onClick={handleSave}
+                    onClick={handleDelete}
                     disabled={isSaving}
-                    className="p-2 w-24 flex items-center justify-center gap-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors"
-                    aria-label="Guardar peso"
+                    className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:bg-gray-400 cursor-pointer"
+                    aria-label="Eliminar pedido"
                 >
-                    <FiSave /> Guardar
+                    <FiTrash2 /> 
+                    <span className="sm:hidden">Eliminar Pedido</span> {/* Texto visible en móvil */}
                 </button>
-            ) : (
-                <button
-                    onClick={() => setIsEditing(true)}
-                    disabled={isSaving}
-                    className="p-2 w-24 flex items-center justify-center gap-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 disabled:bg-gray-400 transition-colors"
-                    aria-label="Editar peso"
-                >
-                    <FiEdit /> Editar
-                </button>
-            )}
-            <button
-                onClick={() => onShare(pedido)}
-                className="p-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:bg-gray-400"
-                aria-label="Compartir pedido"
-            >
-                <FiShare2 />
-            </button>
-            <button
-                onClick={handleDelete}
-                disabled={isSaving}
-                className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:bg-gray-400"
-                aria-label="Eliminar pedido"
-            >
-                <FiTrash2 />
-            </button>
+            </div>
+            
             {error && <p className="mt-1 text-xs text-red-500 absolute -bottom-5 left-0">{error}</p>}
         </div>
     );
@@ -158,10 +172,10 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
                 </div>
             )}
             <div className="mt-3 flex items-center gap-2 text-sm text-gray-700">
-                <FiTruck /><span>{pedido.empresa}</span>
+                <FiMapPin /><span>{pedido.direccion}</span>
             </div>
             {visibleColumns.empresa && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTruck /><span>{pedido.empresa}</span></div>}
-            {visibleColumns.distrito && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiMapPin /><span>{pedido.distrito}</span></div>}
+            {visibleColumns.distrito && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiMap /><span>{pedido.distrito}</span></div>}
             {visibleColumns.tipo_cliente && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTag /><span>{pedido.tipo_cliente}</span></div>}
             {visibleColumns.hora_entrega && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiClock /><span>{pedido.hora_entrega}</span></div>}
             <div className="mt-4 p-3 bg-gray-50 rounded-md">
@@ -173,7 +187,7 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
             {visibleColumns.notas && <div className="mt-3 flex items-start gap-2 text-sm text-gray-700"><FiInfo className="mt-0.5 flex-shrink-0" /><p>{pedido.notas}</p></div>}
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Peso Exacto (kg)</label>
-                <PesoInput pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick}  />
+                <PesoInput pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} />
             </div>
         </div>
     );
@@ -211,10 +225,10 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                         <tr>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUser />Cliente</div></th>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiPhone />Whatsapp</div></th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTruck />Dirección</div></th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMapPin />Dirección</div></th>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCalendar />Fecha</div></th>
                             {visibleColumns.empresa && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTruck />Empresa</div></th>}
-                            {visibleColumns.distrito && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMapPin />Distrito</div></th>}
+                            {visibleColumns.distrito && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMap />Distrito</div></th>}
                             {visibleColumns.tipo_cliente && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTag />Tipo Cliente</div></th>}
                             {visibleColumns.hora_entrega && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiClock />Hora Entrega</div></th>}
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />Pedido</div></th>
@@ -239,7 +253,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                                     {visibleColumns.notas && <td className="px-4 py-4 whitespace-nowrap">{pedido.notas}</td>}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="print:hidden">
-                                            <PesoInput pedido={pedido} onDelete={onPedidoDeleted}  onUpdate={onPesoUpdated} onShare={onShareClick} />
+                                            <PesoInput pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} />
                                         </div>
                                         <div className="hidden print:block">
                                             {formatPesoForPrint(pedido.peso_exacto)}

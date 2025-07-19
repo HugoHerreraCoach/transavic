@@ -1,3 +1,5 @@
+// src/app/dashboard/dashboard-content.tsx
+
 "use client";
 
 import { Suspense, useEffect, useState } from 'react';
@@ -96,34 +98,57 @@ function Dashboard() {
 
   return (
     <main className="bg-white max-w-[1600px] mx-auto p-4 sm:p-6">
-      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6 print:hidden">
+      {/* 1. Encabezado Principal (Ahora contiene el botón de logout responsivo) */}
+      <div className="flex justify-between items-center mb-4 print:hidden">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Dashboard de Pedidos</h1>
           <p className="text-gray-600 mt-1">Aquí puedes ver, buscar y gestionar los pedidos.</p>
         </div>
-        <div className="flex items-center gap-4">
-          <a href="/api/auth/logout" className="flex items-center gap-2 px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">
-            <FiLogOut /> Cerrar Sesión
-          </a>
+
+        {/* Botón de Cerrar Sesión único y adaptable */}
+        <a
+          href="/api/auth/logout"
+          className="flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 p-2 text-white hover:bg-red-600 sm:gap-2 sm:rounded-lg sm:px-4 sm:py-2"
+          aria-label="Cerrar Sesión"
+        >
+          <FiLogOut className="h-5 w-5" />
+          <span className="hidden sm:inline text-sm font-medium">Cerrar Sesión</span>
+        </a>
+      </div>
+
+      {/* 2. Filtros (Sin cambios) */}
+      <div className="print:hidden">
+        <Search />
+      </div>
+
+      {/* 3. Acciones de la Lista (Se eliminó el botón de logout para móvil de aquí) */}
+      <div className="mt-4 flex justify-end items-center gap-3 print:hidden">
+        <div className="flex w-full sm:w-auto items-center gap-3">
           <PrintButton />
           <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
         </div>
       </div>
-      <div className="print:hidden">
-        <Search />
-      </div>
-      {cargando ? (
-        <p className="mt-8 text-center text-gray-500">Cargando pedidos...</p>
-      ) : (
-        <>
-          <PedidosTable pedidos={pedidos} onPedidoDeleted={handlePedidoDeleted} onPesoUpdated={handlePesoUpdated} onShareClick={setSharingPedido} visibleColumns={visibleColumns} />
-          {totalPages > 1 && (
-            <PaginationControls currentPage={currentPage} totalPages={totalPages} />
-          )}
-        </>
-      )}
 
-      {/* ⭐ RENDERIZADO CONDICIONAL DEL MODAL */}
+      {/* 4. Contenido de la Tabla (Sin cambios) */}
+      <div className="mt-6">
+        {cargando ? (
+          <p className="mt-8 text-center text-gray-500">Cargando pedidos...</p>
+        ) : (
+          <>
+            <PedidosTable
+              pedidos={pedidos}
+              onPedidoDeleted={handlePedidoDeleted}
+              onPesoUpdated={handlePesoUpdated}
+              onShareClick={setSharingPedido}
+              visibleColumns={visibleColumns}
+            />
+            {totalPages > 1 && (
+              <PaginationControls currentPage={currentPage} totalPages={totalPages} />
+            )}
+          </>
+        )}
+      </div>
+
       {sharingPedido && (
         <TicketShareModal
           pedido={sharingPedido}
