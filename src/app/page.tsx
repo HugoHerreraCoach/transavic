@@ -243,8 +243,7 @@ export default function Home() {
     setErrors({});
     setTimeout(() => {
       clienteInputRef.current?.focus();
-      // Opcionalmente, puedes mantener el scroll si el focus no es suficiente.
-      // clienteInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      clienteInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }, 0);
   };
 
