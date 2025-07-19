@@ -70,6 +70,7 @@ export default function Home() {
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const empresaSelectorRef = useRef<HTMLDivElement>(null);
+  const clienteInputRef = useRef<HTMLInputElement>(null);
 
   const cargarYEstablecerLogo = useCallback(async (empresa: string) => {
     setCargandoLogo(true);
@@ -240,7 +241,11 @@ export default function Home() {
     setPendienteGeneracion(false);
     setAppState('editing');
     setErrors({});
-    empresaSelectorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => {
+      clienteInputRef.current?.focus();
+      // Opcionalmente, puedes mantener el scroll si el focus no es suficiente.
+      // clienteInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 0);
   };
 
   const descargarImagen = () => {
@@ -315,7 +320,7 @@ export default function Home() {
                 </div>
               </div>
               <div>
-                <input type="text" name="cliente" value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
+                <input type="text" name="cliente" ref={clienteInputRef} value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.cliente && <p className="text-red-500 text-sm mt-1">{errors.cliente}</p>}
               </div>
               <div>
