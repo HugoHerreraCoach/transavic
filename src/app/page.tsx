@@ -330,7 +330,7 @@ export default function Home() {
                 {errors.cliente && <p className="text-red-500 text-sm mt-1">{errors.cliente}</p>}
               </div>
               <div>
-                <input type="text" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
+                <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
               </div>
               <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
