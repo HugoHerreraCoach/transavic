@@ -4,13 +4,25 @@
 
 import { useState, useRef, useEffect, Ref, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
-import {
-  FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2,
-  FiDownload, FiShare2, FiCheckSquare, FiFileText, FiStar, FiRotateCcw, FiSend
-} from 'react-icons/fi';
+import { FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiStar, FiRotateCcw, FiSend } from 'react-icons/fi';
+import MapInput from '@/components/MapInput';
 
-const datosIniciales = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: '' };
-type TicketData = typeof datosIniciales;
+type TicketData = {
+  cliente: string;
+  whatsapp: string;
+  direccion: string;
+  distrito: string;
+  tipoCliente: string;
+  detalle: string;
+  horaEntrega: string;
+  notas: string;
+  empresa: string;
+  fecha: string;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: '', latitude: null, longitude: null };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
 interface TicketPedidoProps {
@@ -131,7 +143,13 @@ export default function Home() {
 
     try {
       await new Promise(resolve => setTimeout(resolve, 100));
-      const dataUrl = await toJpeg(ticketElement, { quality: 0.95, pixelRatio: 2.5, backgroundColor: '#ffffff', cacheBust: true });
+      const dataUrl = await toJpeg(ticketElement, {
+        quality: 0.95,
+        pixelRatio: 2.5,
+        backgroundColor: '#ffffff',
+        cacheBust: true,
+        skipFonts: true, // Evita problemas de CORS con las fuentes de Google Maps
+      });
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);
       const blob = await response.blob();
@@ -171,18 +189,22 @@ export default function Home() {
 
   const validateForm = () => {
     const newErrors: Partial<Record<keyof TicketData, string>> = {};
-    if (!ticketDatos.cliente.trim()) newErrors.cliente = 'El nombre del cliente es obligatorio.';
-    if (!ticketDatos.detalle.trim()) newErrors.detalle = 'El detalle del pedido es obligatorio.';
-    if (!ticketDatos.whatsapp.trim()) {
+    if (!ticketDatos.cliente?.trim()) newErrors.cliente = 'El nombre del cliente es obligatorio.';
+    if (!ticketDatos.detalle?.trim()) newErrors.detalle = 'El detalle del pedido es obligatorio.';
+    if (!ticketDatos.whatsapp?.trim()) {
       newErrors.whatsapp = 'El número de WhatsApp es obligatorio.';
     } else if (!/^[0-9]+$/.test(ticketDatos.whatsapp.trim())) {
       newErrors.whatsapp = 'El número de WhatsApp solo debe contener dígitos numéricos.';
     }
 
-    if (!ticketDatos.direccion.trim()) {
+    if (!ticketDatos.direccion?.trim()) {
       newErrors.direccion = 'La dirección es obligatoria.';
     }
     return newErrors;
+  };
+
+  const handleLocationChange = (lat: number, lng: number) => {
+    setFormDatos(prev => ({ ...prev, latitude: lat, longitude: lng }));
   };
 
   const handleGenerarClick = () => {
@@ -345,6 +367,10 @@ export default function Home() {
               <div> 
                 <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.direccion && <p className="text-red-500 text-sm mt-1">{errors.direccion}</p>}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mapa</label>
+                <MapInput onLocationChange={handleLocationChange} />
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>

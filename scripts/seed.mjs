@@ -30,7 +30,9 @@ async function main() {
         empresa VARCHAR(100) NOT NULL,
         fecha_pedido DATE NOT NULL,
         peso_exacto DECIMAL(10, 2),
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        latitude DECIMAL(10, 8),
+        longitude DECIMAL(11, 8)
       );
     `;
 

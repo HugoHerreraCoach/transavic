@@ -47,7 +47,7 @@ export async function fetchFilteredPedidos(
       SELECT
         id, cliente, whatsapp, empresa, direccion, distrito, tipo_cliente, hora_entrega, notas,
         TO_CHAR(fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
-        detalle, peso_exacto, created_at
+        detalle, peso_exacto, created_at, latitude, longitude
       FROM pedidos
       ${whereString}
       ORDER BY fecha_pedido DESC, id DESC

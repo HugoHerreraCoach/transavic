@@ -15,6 +15,8 @@ const PedidoSchema = z.object({
   notas: z.string().optional(),
   empresa: z.string(),
   fecha: z.string(), // Formato "DD de Mes de AAAA"
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 });
 
 // Helper para convertir la fecha del formato '17 de julio de 2025' a '2025-07-17'
@@ -69,6 +71,8 @@ export async function POST(request: Request) {
       notas,
       empresa,
       fecha,
+      latitude,
+      longitude,
     } = parsedData.data;
 
     const fecha_pedido = parseSpanishDate(fecha);
@@ -76,8 +80,8 @@ export async function POST(request: Request) {
 
     // Mapeamos los nombres del formulario a los de la base de datos
     await sql`
-      INSERT INTO pedidos (cliente, whatsapp, direccion, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido)
-      VALUES (${cliente}, ${whatsapp}, ${direccion}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido})
+      INSERT INTO pedidos (cliente, whatsapp, direccion, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido, latitude, longitude)
+      VALUES (${cliente}, ${whatsapp}, ${direccion}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude})
     `;
 
     return NextResponse.json(

@@ -13,4 +13,6 @@ export type Pedido = {
   fecha_pedido: string; // La recibimos como string formateado
   peso_exacto: number | null;
   created_at: Date;
+  latitude: number | null;
+  longitude: number | null;
 };
