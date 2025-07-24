@@ -173,6 +173,15 @@ export default function Home() {
     const newErrors: Partial<Record<keyof TicketData, string>> = {};
     if (!ticketDatos.cliente.trim()) newErrors.cliente = 'El nombre del cliente es obligatorio.';
     if (!ticketDatos.detalle.trim()) newErrors.detalle = 'El detalle del pedido es obligatorio.';
+    if (!ticketDatos.whatsapp.trim()) {
+      newErrors.whatsapp = 'El número de WhatsApp es obligatorio.';
+    } else if (!/^[0-9]+$/.test(ticketDatos.whatsapp.trim())) {
+      newErrors.whatsapp = 'El número de WhatsApp solo debe contener dígitos numéricos.';
+    }
+
+    if (!ticketDatos.direccion.trim()) {
+      newErrors.direccion = 'La dirección es obligatoria.';
+    }
     return newErrors;
   };
 
@@ -248,7 +257,7 @@ export default function Home() {
   useEffect(() => {
     if (triggerFocus) {
       clienteInputRef.current?.focus({ preventScroll: true });
-      formRef.current?.scrollIntoView({ behavior: 'smooth' }); 
+      formRef.current?.scrollIntoView({ behavior: 'smooth' });
 
       setTriggerFocus(false);
     }
@@ -333,7 +342,10 @@ export default function Home() {
                 <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
               </div>
-              <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
+              <div> 
+                <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
+                {errors.direccion && <p className="text-red-500 text-sm mt-1">{errors.direccion}</p>}
+              </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
               <div>
