@@ -36,9 +36,9 @@ export default function LoginPage() {
                         </label>
                         <input
                             className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 text-black placeholder:text-gray-500"
-                            id="email"
+                            id="name"
                             type="text"
-                            name="email"
+                            name="name"
                             placeholder="Ingresa tu usuario"
                             required
                         />

@@ -16,3 +16,9 @@ export type Pedido = {
   latitude: number | null;
   longitude: number | null;
 };
+
+export type User = {
+  id: string;
+  name: string;
+  role: string;
+};

@@ -11,6 +11,7 @@ import PrintButton from './print-button';
 import ColumnCustomizer from './column-customizer';
 import { FiLogOut } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
+import { Session } from "next-auth";
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
 
@@ -18,6 +19,11 @@ interface PaginationControlsProps {
   currentPage: number;
   totalPages: number;
 }
+
+interface DashboardContentProps {
+  session: Session;
+}
+
 
 function PaginationControls({ currentPage, totalPages }: PaginationControlsProps) {
   const pathname = usePathname();
@@ -46,7 +52,7 @@ function PaginationControls({ currentPage, totalPages }: PaginationControlsProps
   );
 }
 
-function Dashboard() {
+function Dashboard({ session }: DashboardContentProps) {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [cargando, setCargando] = useState(true);
@@ -141,6 +147,7 @@ function Dashboard() {
               onPesoUpdated={handlePesoUpdated}
               onShareClick={setSharingPedido}
               visibleColumns={visibleColumns}
+              userRole={session.user.role}
             />
             {totalPages > 1 && (
               <PaginationControls currentPage={currentPage} totalPages={totalPages} />
@@ -160,10 +167,10 @@ function Dashboard() {
   );
 }
 
-export default function DashboardContent() {
+export default function DashboardContent({ session }: DashboardContentProps) {
   return (
     <Suspense fallback={<p className="mt-8 text-center text-gray-500">Cargando dashboard...</p>}>
-      <Dashboard />
+      <Dashboard session={session} />
     </Suspense>
   );
 }

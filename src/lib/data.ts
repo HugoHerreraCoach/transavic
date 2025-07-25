@@ -2,6 +2,7 @@
 
 import { neon } from "@neondatabase/serverless";
 import { Pedido } from "./types";
+import { Session } from "next-auth";
 
 const ITEMS_PER_PAGE = 25;
 
@@ -14,12 +15,18 @@ type PedidoFromDB = Omit<Pedido, 'peso_exacto' | 'created_at'> & {
 export async function fetchFilteredPedidos(
   query: string,
   fecha: string,
-  currentPage: number
+  currentPage: number,
+  session: Session
 ) {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error("DATABASE_URL no está definida");
   }
+
+  // ✅ Extraemos el rol y el ID del usuario de la sesión
+  const userRole = session.user.role;
+  const userId = session.user.id;
+  
   const sql = neon(connectionString);
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
@@ -37,6 +44,13 @@ export async function fetchFilteredPedidos(
     if (fecha) {
       whereClauses.push(`fecha_pedido = $${paramIndex}`);
       params.push(fecha);
+      paramIndex++;
+    }
+
+    // ✅ LÓGICA DE ROLES
+    if (userRole === "asesor") {
+      whereClauses.push(`asesor_id = $${paramIndex}`);
+      params.push(userId);
       paramIndex++;
     }
 
