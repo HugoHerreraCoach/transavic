@@ -409,7 +409,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                   name="fecha"
                   value={formDatos.fecha}
                   onChange={handleChange}
-                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-black disabled:bg-gray-200"
+                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-black disabled:bg-gray-200 appearance-none"
                   required
                 />
               </div>
