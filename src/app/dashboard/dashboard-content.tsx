@@ -13,7 +13,7 @@ import { FiLogOut } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha';
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -23,6 +23,37 @@ interface PaginationControlsProps {
 interface DashboardContentProps {
   session: Session;
 }
+
+
+const getInitialVisibleColumns = (role: string): Record<Column, boolean> => {
+  // Configuración base para todos los roles
+  const baseColumns: Record<Column, boolean> = {
+    distrito: false,
+    tipo_cliente: false,
+    hora_entrega: false,
+    notas: false,
+    empresa: false,
+    asesor: false,
+    entregado: true,
+    navegacion: false, // Navegación visible por defecto para todos
+    fecha: false,     // Fecha oculta por defecto para todos
+  };
+
+  // Si el rol es 'repartidor', sobrescribimos las configuraciones necesarias
+  if (role === 'repartidor') {
+    return {
+      ...baseColumns,
+      distrito: true,
+      hora_entrega: true,
+      notas: true,
+      // 'navegacion' ya es true, pero lo dejamos por claridad
+      navegacion: true,
+    };
+  }
+
+  // Para cualquier otro rol (admin, asesor), devolvemos la configuración base
+  return baseColumns;
+};
 
 
 function PaginationControls({ currentPage, totalPages }: PaginationControlsProps) {
@@ -56,15 +87,9 @@ function Dashboard({ session }: DashboardContentProps) {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [cargando, setCargando] = useState(true);
-  const [visibleColumns, setVisibleColumns] = useState<Record<Column, boolean>>({
-    distrito: false,
-    tipo_cliente: false,
-    hora_entrega: false,
-    notas: false,
-    empresa: false,
-    asesor: true, 
-    entregado: true, 
-  });
+  const [visibleColumns, setVisibleColumns] = useState<Record<Column, boolean>>(
+    getInitialVisibleColumns(session.user.role)
+  );
   const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
@@ -109,7 +134,9 @@ function Dashboard({ session }: DashboardContentProps) {
       {/* 1. Encabezado Principal (Ahora contiene el botón de logout responsivo) */}
       <div className="flex justify-between items-center mb-4 print:hidden">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">Dashboard de Pedidos</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">
+            Dashboard de Pedidos - {session.user.name}
+          </h1>
           <p className="text-gray-600 mt-1">Aquí puedes ver, buscar y gestionar los pedidos.</p>
         </div>
 

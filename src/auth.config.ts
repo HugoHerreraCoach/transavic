@@ -1,25 +1,25 @@
 // src/auth.config.ts
 
-import type { NextAuthConfig } from 'next-auth';
+import type { NextAuthConfig } from "next-auth";
 
-declare module 'next-auth' {
-
+declare module "next-auth" {
   interface User {
+    name?: string;
     role?: string;
   }
 
   interface Session {
     user: {
       role: string;
-    } & {
       id: string;
+      name: string; 
     };
   }
 }
 
 export const authConfig = {
   pages: {
-    signIn: '/login',
+    signIn: "/login",
   },
   callbacks: {
     // This callback adds the role to the JWT
@@ -27,6 +27,7 @@ export const authConfig = {
       if (user) {
         token.id = user.id;
         token.role = user.role;
+        token.name = user.name;
       }
       return token;
     },
@@ -35,20 +36,21 @@ export const authConfig = {
       if (session.user) {
         session.user.id = token.id as string;
         session.user.role = token.role as string;
+        session.user.name = token.name as string;
       }
       return session;
     },
     authorized({ auth, request: { nextUrl } }) {
       const isLoggedIn = !!auth?.user;
-      const isOnDashboard = nextUrl.pathname.startsWith('/dashboard');
+      const isOnDashboard = nextUrl.pathname.startsWith("/dashboard");
 
       if (isOnDashboard) {
         if (isLoggedIn) return true;
         return false; // Redirect unauthenticated users to login page
       } else if (isLoggedIn) {
         // Redirect logged-in users from /login to /dashboard
-        if (nextUrl.pathname === '/login') {
-            return Response.redirect(new URL('/dashboard', nextUrl));
+        if (nextUrl.pathname === "/login") {
+          return Response.redirect(new URL("/dashboard", nextUrl));
         }
       }
       return true;

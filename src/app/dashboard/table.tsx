@@ -4,9 +4,9 @@
 
 import { useState } from 'react';
 import { Pedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiToggleLeft, FiToggleRight, FiUserCheck } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiToggleLeft, FiToggleRight, FiUserCheck, FiXCircle } from 'react-icons/fi';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha';
 
 type PesoInputProps = {
     pedido: Pedido;
@@ -109,10 +109,13 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
                     <button
                         onClick={handleToggleDelivery}
                         disabled={isSaving}
-                        className={`p-2 flex-grow flex items-center justify-center gap-2 text-white rounded-lg transition-colors disabled:bg-gray-400 ${pedido.entregado ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}
+                        className={`p-2 flex-grow flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm cursor-pointer ${pedido.entregado
+                            ? 'bg-yellow-500 hover:bg-yellow-600' // Color para anular
+                            : 'bg-teal-500 hover:bg-teal-600'      // Color para confirmar
+                            }`}
                     >
-                        {pedido.entregado ? <FiToggleLeft /> : <FiToggleRight />}
-                        <span>{pedido.entregado ? 'No Entregado' : 'Entregado'}</span>
+                        {pedido.entregado ? <FiXCircle /> : <FiCheckCircle />}
+                        <span>{pedido.entregado ? 'Anular Entrega' : 'Confirmar Entrega'}</span>
                     </button>
                     {userRole !== 'repartidor' && (
                         <>
@@ -120,7 +123,7 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
                                 <button
                                     onClick={handleSave}
                                     disabled={isSaving}
-                                    className="p-2 flex-1 flex items-center justify-center gap-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 transition-colors cursor-pointer"
+                                    className={`p-2 flex-1 flex items-center justify-center gap-2 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 transition-colors cursor-pointer ${pedido.entregado ? 'bg-blue-700' : 'bg-blue-500'}`}
                                     aria-label="Guardar peso"
                                 >
                                     <FiSave /> Guardar
@@ -129,7 +132,7 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
                                 <button
                                     onClick={() => setIsEditing(true)}
                                     disabled={isSaving}
-                                    className="p-2 flex-1 flex items-center justify-center gap-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 disabled:bg-gray-400 transition-colors cursor-pointer"
+                                    className={`p-2 flex-1 flex items-center justify-center gap-2 text-white rounded-lg hover:bg-gray-700 disabled:bg-gray-400 transition-colors cursor-pointer ${pedido.entregado ? 'bg-gray-700' : 'bg-gray-500'}`}
                                     aria-label="Editar peso"
                                 >
                                     <FiEdit /> Editar
@@ -139,7 +142,7 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
                     )}
                     <button
                         onClick={() => onShare(pedido)}
-                        className="p-2 flex-1 flex items-center justify-center gap-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors disabled:bg-gray-400 cursor-pointer"
+                        className={`p-2 flex-1 flex items-center justify-center gap-2 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 cursor-pointer ${pedido.entregado ? 'bg-green-700' : 'bg-green-500'}`}
                         aria-label="Compartir pedido"
                     >
                         <FiShare2 /> Compartir
@@ -151,7 +154,7 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
                     <button
                         onClick={handleDelete}
                         disabled={isSaving}
-                        className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:bg-gray-400 cursor-pointer"
+                        className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg hover:bg-red-700 transition-colors disabled:bg-gray-400 cursor-pointer ${pedido.entregado ? 'bg-red-700' : 'bg-red-500'}`}
                         aria-label="Eliminar pedido"
                     >
                         <FiTrash2 />
@@ -194,7 +197,7 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
     const whatsappLink = getWhatsAppLink(pedido.whatsapp);
 
     return (
-        <div className={`bg-white rounded-lg shadow-md p-4 border border-gray-200 transition-all ${pedido.entregado ? 'bg-green-50 opacity-70' : ''}`}>
+        <div className={`bg-white rounded-lg shadow-md p-4 border border-gray-200 transition-all ${pedido.entregado ? 'bg-green-100' : ''}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2 text-lg font-bold text-gray-800">
                     <FiUser /><span>{pedido.cliente}</span>
@@ -212,7 +215,7 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
             <div className="mt-3 flex items-center gap-2 text-sm text-gray-700">
                 <FiMapPin /><span>{pedido.direccion}</span>
             </div>
-            {pedido.latitude && pedido.longitude && (
+            {visibleColumns.navegacion && pedido.latitude && pedido.longitude && (
                 <div className="mt-3 flex items-center gap-4 text-sm">
                     <FiMap />
                     <a href={`https://www.google.com/maps/search/?api=1&query=${pedido.latitude},${pedido.longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Abrir en Google Maps</a>
@@ -273,41 +276,41 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUser />Cliente</div></th>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiPhone />Whatsapp</div></th>
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMapPin />Dirección</div></th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMap />Navegación</div></th>
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCalendar />Fecha</div></th>
+                            {visibleColumns.navegacion && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMap />Navegación</div></th>}
+                            {visibleColumns.fecha && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCalendar />Fecha</div></th>}
+
                             {visibleColumns.empresa && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTruck />Empresa</div></th>}
                             {visibleColumns.distrito && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMap />Distrito</div></th>}
                             {visibleColumns.tipo_cliente && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTag />Tipo Cliente</div></th>}
                             {visibleColumns.hora_entrega && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiClock />Hora Entrega</div></th>}
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />Pedido</div></th>
                             {visibleColumns.notas && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiInfo />Notas</div></th>}
-                            {/* Nuevas columnas en el orden correcto */}
                             {visibleColumns.asesor && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUserCheck />Asesor</div></th>}
                             {visibleColumns.entregado && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCheckCircle />Estado</div></th>}
-                            {/* La última columna corresponde a las acciones */}
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Acciones</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Peso Exacto (Kg)</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                         {pedidos.map((pedido) => {
                             const whatsappLink = getWhatsAppLink(pedido.whatsapp);
                             return (
-                                <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-50' : ''}`}>
+                                <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-100' : ''}`}>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.cliente}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a>) : (<span className="text-gray-400">N/A</span>)}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.direccion}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.latitude && pedido.longitude && ( <div className="flex gap-2"><a href={`https://www.google.com/maps/search/?api=1&query=${pedido.latitude},${pedido.longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Maps</a><a href={`https://waze.com/ul?ll=${pedido.latitude},${pedido.longitude}&navigate=yes`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Waze</a></div>)}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.fecha_pedido}</td>
+
+                                    {/* ✅ CAMBIO 4: Hacemos la celda de Navegación y Fecha condicionales */}
+                                    {visibleColumns.navegacion && <td className="px-4 py-4 whitespace-nowrap">{pedido.latitude && pedido.longitude && (<div className="flex gap-2"><a href={`https://www.google.com/maps/search/?api=1&query=${pedido.latitude},${pedido.longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Maps</a><a href={`https://waze.com/ul?ll=${pedido.latitude},${pedido.longitude}&navigate=yes`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Waze</a></div>)}</td>}
+                                    {visibleColumns.fecha && <td className="px-4 py-4 whitespace-nowrap">{pedido.fecha_pedido}</td>}
+
                                     {visibleColumns.empresa && <td className="px-4 py-4 whitespace-nowrap">{pedido.empresa}</td>}
                                     {visibleColumns.distrito && <td className="px-4 py-4 whitespace-nowrap">{pedido.distrito}</td>}
                                     {visibleColumns.tipo_cliente && <td className="px-4 py-4 whitespace-nowrap">{pedido.tipo_cliente}</td>}
                                     {visibleColumns.hora_entrega && <td className="px-4 py-4 whitespace-nowrap">{pedido.hora_entrega}</td>}
                                     <td className="px-4 py-4 max-w-sm print:max-w-none"><p className="break-words print:whitespace-normal" title={pedido.detalle}>{pedido.detalle}</p></td>
                                     {visibleColumns.notas && <td className="px-4 py-4 whitespace-nowrap">{pedido.notas}</td>}
-                                    {/* Nuevas celdas en el orden correcto */}
                                     {visibleColumns.asesor && <td className="px-4 py-4 whitespace-nowrap">{pedido.asesor_name ?? 'N/A'}</td>}
                                     {visibleColumns.entregado && (<td className="px-4 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pedido.entregado ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{pedido.entregado ? 'Entregado' : 'Pendiente'}</span></td>)}
-                                    {/* La última celda corresponde a las acciones */}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="print:hidden">
                                             <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
