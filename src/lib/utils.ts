@@ -1,58 +1,35 @@
-// src/lib/utils.ts
+// Archivo: src/lib/utils.ts
 
 /**
- * Formatea una fecha para el ticket, aceptando múltiples formatos
- * de entrada ('DD/MM/YYYY', 'YYYY-MM-DD', u objeto Date).
- * Devuelve una cadena como "Pedido para: 27 de julio de 2025".
+ * Formatea una fecha para el ticket, aceptando múltiples formatos de
+ * entrada (incluyendo el de iOS 'MMM DD, YYYY').
  */
 export function formatFechaForTicket(dateInput: string | Date | null | undefined): string {
   if (!dateInput) {
     return 'Fecha no especificada';
   }
 
-  let year: number, month: number, day: number;
+  let fechaObj: Date;
+  const dateString = String(dateInput);
 
-  // Normalizamos la entrada a un string para trabajar con ella
-  const dateString = String(dateInput).split('T')[0];
-
-  // 1. Verificamos si el formato es DD/MM/YYYY
+  // 1. Manejar el único formato ambiguo que encontramos ('DD/MM/YYYY') manualmente.
   if (/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.test(dateString)) {
-    const parts = dateString.split('/');
-    day = parseInt(parts[0], 10);
-    month = parseInt(parts[1], 10);
-    year = parseInt(parts[2], 10);
-  }
-  // 2. Si no, verificamos si el formato es YYYY-MM-DD
-  else if (/^(\d{4})-(\d{1,2})-(\d{1,2})$/.test(dateString)) {
-    const parts = dateString.split('-');
-    year = parseInt(parts[0], 10);
-    month = parseInt(parts[1], 10);
-    day = parseInt(parts[2], 10);
-  }
-  // 3. Si no es un formato de string conocido, lo tratamos como objeto Date
-  else {
-    const tempDate = new Date(dateInput);
-    if (isNaN(tempDate.getTime())) {
-      console.error("Error Final: Formato de fecha irreconocible. Valor:", dateInput);
-      return 'Pedido para: Formato Desconocido';
-    }
-    // Si es un objeto Date válido, extraemos sus partes en UTC
-    year = tempDate.getUTCFullYear();
-    month = tempDate.getUTCMonth() + 1; // getUTCMonth() es 0-11
-    day = tempDate.getUTCDate();
+    const [day, month, year] = dateString.split('/').map(Number);
+    // El mes en el constructor es 0-indexado, por eso restamos 1
+    fechaObj = new Date(Date.UTC(year, month - 1, day));
+  } else {
+    // 2. Para TODOS los demás formatos ('YYYY-MM-DD', 'jul 27, 2025', y objetos Date),
+    //    confiamos en el potente conversor nativo de JavaScript.
+    fechaObj = new Date(dateInput);
   }
 
-  // Verificamos que los números extraídos sean válidos
-  if (isNaN(year) || isNaN(month) || isNaN(day)) {
-    console.error("Error de Parseo: No se pudieron extraer los números. Valor:", dateInput);
+  // 3. Verificación final y crucial de validez.
+  if (isNaN(fechaObj.getTime())) {
+    console.error("Error de Parseo: Formato de fecha no reconocido. Valor:", dateInput);
     return 'Pedido para: Fecha Inválida';
   }
 
-  // Creamos el objeto Date final en UTC para evitar problemas de zona horaria
-  // El mes en el constructor es 0-indexado, por eso restamos 1
-  const fechaObj = new Date(Date.UTC(year, month - 1, day));
-
-  // Formateamos la fecha para mostrarla
+  // 4. Formatear la fecha para mostrarla, usando siempre UTC para consistencia.
   const fechaFormateada = fechaObj.toLocaleDateString('es-PE', {
     day: 'numeric',
     month: 'long',
