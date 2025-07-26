@@ -3,6 +3,7 @@
 import { neon } from "@neondatabase/serverless";
 import { Pedido } from "./types";
 import { Session } from "next-auth";
+import { User } from "./types";
 
 const ITEMS_PER_PAGE = 25;
 
@@ -26,7 +27,7 @@ export async function fetchFilteredPedidos(
   // ✅ Extraemos el rol y el ID del usuario de la sesión
   const userRole = session.user.role;
   const userId = session.user.id;
-  
+
   const sql = neon(connectionString);
   const offset = (currentPage - 1) * ITEMS_PER_PAGE;
 
@@ -98,5 +99,27 @@ export async function fetchFilteredPedidos(
   } catch (error) {
     console.error("Database Error:", error);
     throw new Error("Failed to fetch pedidos.");
+  }
+}
+
+
+// ✅ Nueva función para obtener solo los asesores
+export async function fetchAsesores() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error("DATABASE_URL no está definida.");
+    return []; // Devuelve un array vacío si no hay conexión
+  }
+  const sql = neon(connectionString);
+
+  try {
+    const asesores = await sql`
+      SELECT id, name, role FROM users WHERE role = 'asesor' ORDER BY name ASC
+    `;
+    // Aseguramos que el tipo de dato sea el correcto
+    return asesores as User[];
+  } catch (error) {
+    console.error("Error al obtener los asesores:", error);
+    return []; // Devuelve un array vacío en caso de error
   }
 }
