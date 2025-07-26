@@ -257,10 +257,17 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
     setIsSubmitting(true);
     try {
+
+      // con el formato correcto (YYYY-MM-DD) que está en formDatos.
+      const payloadParaApi = {
+        ...ticketDatos,
+        fecha: formDatos.fecha, 
+      };
+
       const response = await fetch('/api/pedidos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ticketDatos),
+        body: JSON.stringify(payloadParaApi),
       });
 
       if (!response.ok) {

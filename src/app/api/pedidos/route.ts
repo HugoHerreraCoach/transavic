@@ -21,28 +21,28 @@ const PedidoSchema = z.object({
 });
 
 // Helper para convertir la fecha del formato '17 de julio de 2025' a '2025-07-17'
-function parseSpanishDate(dateString: string): string {
-  const months: { [key: string]: string } = {
-    enero: "01",
-    febrero: "02",
-    marzo: "03",
-    abril: "04",
-    mayo: "05",
-    junio: "06",
-    julio: "07",
-    agosto: "08",
-    septiembre: "09",
-    octubre: "10",
-    noviembre: "11",
-    diciembre: "12",
-  };
-  const parts = dateString.toLowerCase().split(" de ");
-  if (parts.length < 3) return new Date().toISOString().split("T")[0]; // Fallback
-  const day = parts[0].padStart(2, "0");
-  const month = months[parts[1]];
-  const year = parts[2];
-  return `${year}-${month}-${day}`;
-}
+// function parseSpanishDate(dateString: string): string {
+//   const months: { [key: string]: string } = {
+//     enero: "01",
+//     febrero: "02",
+//     marzo: "03",
+//     abril: "04",
+//     mayo: "05",
+//     junio: "06",
+//     julio: "07",
+//     agosto: "08",
+//     septiembre: "09",
+//     octubre: "10",
+//     noviembre: "11",
+//     diciembre: "12",
+//   };
+//   const parts = dateString.toLowerCase().split(" de ");
+//   if (parts.length < 3) return new Date().toISOString().split("T")[0]; // Fallback
+//   const day = parts[0].padStart(2, "0");
+//   const month = months[parts[1]];
+//   const year = parts[2];
+//   return `${year}-${month}-${day}`;
+// }
 
 export async function POST(request: Request) {
   try {
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
       asesorId,
     } = parsedData.data;
 
-    const fecha_pedido = parseSpanishDate(fecha);
+    const fecha_pedido = fecha; 
     const sql = neon(connectionString);
 
     // Mapeamos los nombres del formulario a los de la base de datos
