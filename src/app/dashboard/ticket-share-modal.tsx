@@ -1,4 +1,4 @@
-// src/app/dashboard/ticket-share-modal.tsx (Solución Definitiva)
+// src/app/dashboard/ticket-share-modal.tsx 
 
 'use client';
 
@@ -7,6 +7,7 @@ import { toJpeg } from 'html-to-image';
 import { Pedido } from '@/lib/types';
 import TicketPedido, { TicketDisplayData } from '@/components/TicketPedido';
 import { FiDownload, FiShare2, FiX, FiLoader } from 'react-icons/fi';
+import { formatFechaForTicket } from '@/lib/utils';
 
 interface TicketShareModalProps {
   pedido: Pedido;
@@ -26,7 +27,7 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
       ...pedido,
       distrito: pedido.distrito ?? 'No especificado',
       tipo_cliente: pedido.tipo_cliente ?? 'Frecuente',
-      fecha: pedido.fecha_pedido
+      fecha: pedido.fecha_pedido ? formatFechaForTicket(pedido.fecha_pedido) : 'Fecha no especificada'
   };
 
   const generarImagen = useCallback(async () => {

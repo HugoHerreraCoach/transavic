@@ -6,7 +6,8 @@ import { useState, useRef, useEffect, Ref, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
 import { FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiStar, FiRotateCcw, FiSend } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
-import { User } from '@/lib/types'; 
+import { User } from '@/lib/types';
+import { formatFechaForTicket } from '@/lib/utils';
 
 type TicketData = {
   cliente: string;
@@ -24,7 +25,8 @@ type TicketData = {
   asesorId: string;
 };
 
-const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: '', latitude: null, longitude: null, asesorId: '' };
+const getTodayString = () => new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
+const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
 interface TicketPedidoProps {
@@ -52,7 +54,11 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
         />
       )}
       <h1 className="text-3xl font-bold text-red-600">{datos.empresa === 'Transavic' ? 'PEDIDO TRANSAVIC' : 'PEDIDO AVÍCOLA DE TONY'}</h1>
-      {datos.fecha && (<p className="text-center text-gray-600 text-md mt-2 font-semibold">{datos.fecha}</p>)}
+      {datos.fecha && (
+        <p className="text-center text-gray-600 text-md mt-2 font-semibold">
+          {datos.fecha}
+        </p>
+      )}
     </div>
     <div className="mt-6 space-y-4 text-lg">
       <div className="flex items-start"><FiUser className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Cliente:</span><span className="break-words">{datos.cliente}</span></p></div>
@@ -216,8 +222,9 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
   const handleGenerarClick = () => {
     setErrors({}); // Limpiar errores al generar vista previa
-    const fechaActual = new Date().toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
-    setTicketDatos({ ...formDatos, fecha: fechaActual });
+    const fechaFormateadaParaTicket = formatFechaForTicket(formDatos.fecha);
+
+    setTicketDatos({ ...formDatos, fecha: fechaFormateadaParaTicket });
     setCargandoImagen(true);
     setAppState('previewing');
     if (logoListo && logoDataUrl) {
@@ -273,8 +280,9 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
   const handleNuevoPedido = () => {
     const empresaActual = formDatos.empresa;
-    setFormDatos({ ...datosIniciales, empresa: empresaActual });
-    setTicketDatos({ ...datosIniciales, empresa: empresaActual });
+    const fechaActual = getTodayString();
+    setFormDatos({ ...datosIniciales, empresa: empresaActual, fecha: fechaActual });
+    setTicketDatos({ ...datosIniciales, empresa: empresaActual, fecha: fechaActual });
     setImagenUrl(null);
     setImagenBlob(null);
     setPendienteGeneracion(false);
@@ -383,6 +391,21 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 </select>
               </div>
 
+              {/* BLOQUE PARA LA FECHA */}
+              <div>
+                <label htmlFor="fecha" className="block text-sm font-medium text-gray-700 mb-1">
+                  Fecha de Entrega:
+                </label>
+                <input
+                  type="date"
+                  id="fecha"
+                  name="fecha"
+                  value={formDatos.fecha}
+                  onChange={handleChange}
+                  className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"
+                  required
+                />
+              </div>
 
               <div>
                 <input type="text" name="cliente" ref={clienteInputRef} value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
@@ -392,7 +415,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
               </div>
-              <div> 
+              <div>
                 <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.direccion && <p className="text-red-500 text-sm mt-1">{errors.direccion}</p>}
               </div>
