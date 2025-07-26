@@ -13,7 +13,7 @@ import { FiLogOut } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado';
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -62,6 +62,8 @@ function Dashboard({ session }: DashboardContentProps) {
     hora_entrega: false,
     notas: false,
     empresa: false,
+    asesor: true, 
+    entregado: true, 
   });
   const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
   const searchParams = useSearchParams();

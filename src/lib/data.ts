@@ -57,15 +57,16 @@ export async function fetchFilteredPedidos(
 
     const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-    // ✅ CORRECCIÓN 1: Añadimos 'created_at' a la consulta SELECT.
     const pedidosQuery = `
       SELECT
-        id, cliente, whatsapp, empresa, direccion, distrito, tipo_cliente, hora_entrega, notas,
-        TO_CHAR(fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
-        detalle, peso_exacto, created_at, latitude, longitude, asesor_id, entregado
-      FROM pedidos
+        p.id, p.cliente, p.whatsapp, p.empresa, p.direccion, p.distrito, p.tipo_cliente, p.hora_entrega, p.notas,
+        TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
+        p.detalle, p.peso_exacto, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
+        u.name as asesor_name
+      FROM pedidos AS p
+      LEFT JOIN users AS u ON p.asesor_id = u.id
       ${whereString}
-      ORDER BY created_at DESC
+      ORDER BY p.created_at DESC -- Se especifica p.created_at
       LIMIT ${ITEMS_PER_PAGE}
       OFFSET ${offset}
     `;

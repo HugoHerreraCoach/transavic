@@ -16,6 +16,8 @@ export type Pedido = {
   latitude: number | null;
   longitude: number | null;
   entregado: boolean;
+  asesor_id: string | null; // Ya debería estar aquí
+  asesor_name: string | null; // ✅ AÑADE ESTA LÍNEA
 };
 
 export type User = {

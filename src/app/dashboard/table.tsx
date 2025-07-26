@@ -4,9 +4,9 @@
 
 import { useState } from 'react';
 import { Pedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiToggleLeft, FiToggleRight, FiUserCheck } from 'react-icons/fi';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado';
 
 type PesoInputProps = {
     pedido: Pedido;
@@ -67,32 +67,21 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
         }
     };
 
-    const handleMarkAsDelivered = async () => {
+    const handleToggleDelivery = async () => {
         if (isSaving) return;
         setIsSaving(true);
+        const newStatus = !pedido.entregado;
         try {
-            const requestBody = { entregado: true };
-            console.log('Enviando a la API:', JSON.stringify(requestBody));
-
             const response = await fetch(`/api/pedidos/${pedido.id}`, {
                 method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody),
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ entregado: newStatus }),
             });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error('Error de la API:', errorData);
-                throw new Error('Error al actualizar');
-            }
-
-            onUpdate({ ...pedido, entregado: true });
+            if (!response.ok) throw new Error('Error al actualizar');
+            onUpdate({ ...pedido, entregado: newStatus });
         } catch (error) {
-            // ✅ CAMBIO AQUÍ: Usamos la variable 'error'.
-            console.error("No se pudo marcar como entregado:", error);
-            alert("No se pudo actualizar el estado del pedido. Revisa la consola.");
+            console.error("No se pudo cambiar el estado de entrega:", error);
+            alert("No se pudo actualizar el estado del pedido.");
         } finally {
             setIsSaving(false);
         }
@@ -117,6 +106,14 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
             <div className="flex flex-col sm:flex-row gap-2">
                 {/* --- Fila superior en móvil (Editar / Compartir) --- */}
                 <div className="flex gap-2">
+                    <button
+                        onClick={handleToggleDelivery}
+                        disabled={isSaving}
+                        className={`p-2 flex-grow flex items-center justify-center gap-2 text-white rounded-lg transition-colors disabled:bg-gray-400 ${pedido.entregado ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}
+                    >
+                        {pedido.entregado ? <FiToggleLeft /> : <FiToggleRight />}
+                        <span>{pedido.entregado ? 'No Entregado' : 'Entregado'}</span>
+                    </button>
                     {userRole !== 'repartidor' && (
                         <>
                             {isEditing ? (
@@ -165,17 +162,6 @@ function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInpu
 
             {error && <p className="mt-1 text-xs text-red-500 absolute -bottom-5 left-0">{error}</p>}
 
-            {/* Solo se muestra si el pedido NO ha sido entregado. */}
-            {!pedido.entregado && (
-                <button
-                    onClick={handleMarkAsDelivered}
-                    disabled={isSaving}
-                    className="w-full sm:w-auto p-2 flex items-center justify-center gap-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors disabled:bg-gray-400"
-                >
-                    <FiCheckCircle />
-                    <span>Entregado</span>
-                </button>
-            )}
         </div>
     );
 }
@@ -237,6 +223,8 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
             {visibleColumns.distrito && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiMap /><span>{pedido.distrito}</span></div>}
             {visibleColumns.tipo_cliente && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTag /><span>{pedido.tipo_cliente}</span></div>}
             {visibleColumns.hora_entrega && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiClock /><span>{pedido.hora_entrega}</span></div>}
+            {visibleColumns.asesor && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiUserCheck /><span>Asesor: {pedido.asesor_name ?? 'N/A'}</span></div>}
+            {visibleColumns.entregado && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700">{pedido.entregado ? <FiToggleRight className="text-green-600" /> : <FiToggleLeft />}<span>Estado: {pedido.entregado ? 'Entregado' : 'Pendiente'}</span></div>}
             <div className="mt-4 p-3 bg-gray-50 rounded-md">
                 <div className="flex items-start gap-2 text-sm text-gray-800">
                     <FiFileText className="mt-0.5 flex-shrink-0" />
@@ -293,25 +281,22 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                             {visibleColumns.hora_entrega && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiClock />Hora Entrega</div></th>}
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />Pedido</div></th>
                             {visibleColumns.notas && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiInfo />Notas</div></th>}
-                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Peso</th>
+                            {/* Nuevas columnas en el orden correcto */}
+                            {visibleColumns.asesor && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUserCheck />Asesor</div></th>}
+                            {visibleColumns.entregado && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCheckCircle />Estado</div></th>}
+                            {/* La última columna corresponde a las acciones */}
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Acciones</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                         {pedidos.map((pedido) => {
                             const whatsappLink = getWhatsAppLink(pedido.whatsapp);
                             return (
-                                <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-50 opacity-70' : ''}`}>
+                                <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-50' : ''}`}>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.cliente}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a>) : (<span className="text-gray-400">N/A</span>)}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.direccion}</td>
-                                    <td className="px-4 py-4 whitespace-nowrap">
-                                        {pedido.latitude && pedido.longitude && (
-                                            <div className="flex gap-2">
-                                                <a href={`https://www.google.com/maps/search/?api=1&query=${pedido.latitude},${pedido.longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Maps</a>
-                                                <a href={`https://waze.com/ul?ll=${pedido.latitude},${pedido.longitude}&navigate=yes`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Waze</a>
-                                            </div>
-                                        )}
-                                    </td>
+                                    <td className="px-4 py-4 whitespace-nowrap">{pedido.latitude && pedido.longitude && ( <div className="flex gap-2"><a href={`https://www.google.com/maps/search/?api=1&query=${pedido.latitude},${pedido.longitude}`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Maps</a><a href={`https://waze.com/ul?ll=${pedido.latitude},${pedido.longitude}&navigate=yes`} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Waze</a></div>)}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.fecha_pedido}</td>
                                     {visibleColumns.empresa && <td className="px-4 py-4 whitespace-nowrap">{pedido.empresa}</td>}
                                     {visibleColumns.distrito && <td className="px-4 py-4 whitespace-nowrap">{pedido.distrito}</td>}
@@ -319,13 +304,15 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                                     {visibleColumns.hora_entrega && <td className="px-4 py-4 whitespace-nowrap">{pedido.hora_entrega}</td>}
                                     <td className="px-4 py-4 max-w-sm print:max-w-none"><p className="break-words print:whitespace-normal" title={pedido.detalle}>{pedido.detalle}</p></td>
                                     {visibleColumns.notas && <td className="px-4 py-4 whitespace-nowrap">{pedido.notas}</td>}
+                                    {/* Nuevas celdas en el orden correcto */}
+                                    {visibleColumns.asesor && <td className="px-4 py-4 whitespace-nowrap">{pedido.asesor_name ?? 'N/A'}</td>}
+                                    {visibleColumns.entregado && (<td className="px-4 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pedido.entregado ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{pedido.entregado ? 'Entregado' : 'Pendiente'}</span></td>)}
+                                    {/* La última celda corresponde a las acciones */}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="print:hidden">
                                             <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
                                         </div>
-                                        <div className="hidden print:block">
-                                            {formatPesoForPrint(pedido.peso_exacto)}
-                                        </div>
+                                        <div className="hidden print:block">{formatPesoForPrint(pedido.peso_exacto)}</div>
                                     </td>
                                 </tr>
                             );
