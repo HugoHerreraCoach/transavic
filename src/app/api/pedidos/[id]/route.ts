@@ -6,14 +6,19 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const UpdateSchema = z.object({
-  pesoExacto: z.number().nullable(),
+  pesoExacto: z.number().nullable().optional(),
+  entregado: z.boolean().optional(),
 });
 
 export async function PATCH(request: Request) {
   try {
-    // Extraemos el ID directamente de la URL
     const url = new URL(request.url);
     const id = url.pathname.split("/").pop();
+
+     // --- INICIO DE DEPURACIÓN ---
+    console.log("--- INICIANDO PETICIÓN PATCH ---");
+    console.log("ID recibido:", id);
+    // --- FIN DE DEPURACIÓN ---
 
     if (!id) {
       return NextResponse.json(
@@ -25,6 +30,7 @@ export async function PATCH(request: Request) {
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
+    const sql = neon(connectionString);
     const body = await request.json();
     const parsedData = UpdateSchema.safeParse(body);
 
@@ -32,19 +38,57 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
     }
 
-    const { pesoExacto } = parsedData.data;
-    const sql = neon(connectionString);
+    // --- INICIO DE DEPURACIÓN ---
+    console.log("Cuerpo de la petición (parseado):", parsedData.data);
+    // --- FIN DE DEPURACIÓN ---
 
-    await sql`
-      UPDATE pedidos
-      SET peso_exacto = ${pesoExacto}
-      WHERE id = ${id}
-    `;
+    const { pesoExacto, entregado } = parsedData.data;
+
+    // ⚙️ Definimos un tipo específico para los valores que podemos actualizar.
+    type UpdateValue = string | number | boolean | null;
+    const updates: Record<string, UpdateValue> = {};
+
+    if (pesoExacto !== undefined) {
+      updates.peso_exacto = pesoExacto;
+    }
+    if (entregado !== undefined) {
+      updates.entregado = entregado;
+    }
+
+    // --- INICIO DE DEPURACIÓN ---
+    console.log("Objeto 'updates' construido:", updates);
+    // --- FIN DE DEPURACIÓN ---
+
+    if (Object.keys(updates).length === 0) {
+      return NextResponse.json(
+        { error: "No se proporcionaron campos para actualizar." },
+        { status: 400 }
+      );
+    }
+
+    // Construimos la consulta SET dinámicamente
+    const setClauses = Object.keys(updates)
+      .map((key, index) => `${key} = $${index + 1}`)
+      .join(', ');
+
+    // ⚙️ El array de parámetros ahora tiene un tipo estricto.
+    const params: UpdateValue[] = Object.values(updates);
+    
+    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
+    params.push(id);
+
+    // --- INICIO DE DEPURACIÓN ---
+    console.log("Consulta SQL a ejecutar:", query);
+    console.log("Parámetros para la consulta:", params);
+    // --- FIN DE DEPURACIÓN ---
+    
+    await sql.query(query, params);
 
     return NextResponse.json(
-      { message: "Pedido actualizado" },
+      { message: "Pedido actualizado exitosamente" },
       { status: 200 }
     );
+
   } catch (error) {
     console.error("Error en API PATCH:", error);
     return NextResponse.json(
@@ -53,6 +97,7 @@ export async function PATCH(request: Request) {
     );
   }
 }
+
 
 export async function DELETE(request: Request) {
   try {

@@ -15,6 +15,7 @@ export type Pedido = {
   created_at: Date;
   latitude: number | null;
   longitude: number | null;
+  entregado: boolean;
 };
 
 export type User = {

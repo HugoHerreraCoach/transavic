@@ -4,19 +4,19 @@
 
 import { useState } from 'react';
 import { Pedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2 } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiSave, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle } from 'react-icons/fi';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa';
 
 type PesoInputProps = {
     pedido: Pedido;
     onDelete: (id: string) => void;
-    onUpdate: (pedido: Pedido) => void; // Prop para notificar la actualización
-    onShare: (pedido: Pedido) => void; // Prop para compartir
+    onUpdate: (pedido: Pedido) => void;
+    onShare: (pedido: Pedido) => void;
     userRole: string;
 };
 
-function PesoInput({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInputProps) {
+function ActionsCell({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInputProps) {
     const [peso, setPeso] = useState<string>(pedido.peso_exacto?.toString() ?? '');
     const [isEditing, setIsEditing] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -67,10 +67,41 @@ function PesoInput({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInputP
         }
     };
 
+    const handleMarkAsDelivered = async () => {
+        if (isSaving) return;
+        setIsSaving(true);
+        try {
+            const requestBody = { entregado: true };
+            console.log('Enviando a la API:', JSON.stringify(requestBody));
+
+            const response = await fetch(`/api/pedidos/${pedido.id}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                console.error('Error de la API:', errorData);
+                throw new Error('Error al actualizar');
+            }
+
+            onUpdate({ ...pedido, entregado: true });
+        } catch (error) {
+            // ✅ CAMBIO AQUÍ: Usamos la variable 'error'.
+            console.error("No se pudo marcar como entregado:", error);
+            alert("No se pudo actualizar el estado del pedido. Revisa la consola.");
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     return (
         // ✅ Contenedor principal ahora es responsivo
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 relative">
-            
+
             {/* --- Input de Peso --- */}
             <input
                 type="number"
@@ -117,7 +148,7 @@ function PesoInput({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInputP
                         <FiShare2 /> Compartir
                     </button>
                 </div>
-                
+
                 {/* ✅ 4. Condición para ocultar el botón de eliminar */}
                 {userRole !== 'repartidor' && (
                     <button
@@ -126,13 +157,25 @@ function PesoInput({ pedido, onDelete, onUpdate, onShare, userRole }: PesoInputP
                         className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors disabled:bg-gray-400 cursor-pointer"
                         aria-label="Eliminar pedido"
                     >
-                        <FiTrash2 /> 
+                        <FiTrash2 />
                         <span className="sm:hidden">Eliminar Pedido</span>
                     </button>
                 )}
             </div>
-            
+
             {error && <p className="mt-1 text-xs text-red-500 absolute -bottom-5 left-0">{error}</p>}
+
+            {/* Solo se muestra si el pedido NO ha sido entregado. */}
+            {!pedido.entregado && (
+                <button
+                    onClick={handleMarkAsDelivered}
+                    disabled={isSaving}
+                    className="w-full sm:w-auto p-2 flex items-center justify-center gap-2 bg-teal-500 text-white rounded-lg hover:bg-teal-600 transition-colors disabled:bg-gray-400"
+                >
+                    <FiCheckCircle />
+                    <span>Entregado</span>
+                </button>
+            )}
         </div>
     );
 }
@@ -165,7 +208,7 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
     const whatsappLink = getWhatsAppLink(pedido.whatsapp);
 
     return (
-        <div className="bg-white rounded-lg shadow-md p-4 border border-gray-200">
+        <div className={`bg-white rounded-lg shadow-md p-4 border border-gray-200 transition-all ${pedido.entregado ? 'bg-green-50 opacity-70' : ''}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2 text-lg font-bold text-gray-800">
                     <FiUser /><span>{pedido.cliente}</span>
@@ -202,8 +245,8 @@ function PedidoCard({ pedido, onPedidoDeleted, onPesoUpdated, onShareClick, visi
             </div>
             {visibleColumns.notas && <div className="mt-3 flex items-start gap-2 text-sm text-gray-700"><FiInfo className="mt-0.5 flex-shrink-0" /><p>{pedido.notas}</p></div>}
             <div className="mt-4 pt-4 border-t border-gray-200">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Peso Exacto (kg)</label>
-                <PesoInput pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
+                <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
             </div>
         </div>
     );
@@ -257,7 +300,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                         {pedidos.map((pedido) => {
                             const whatsappLink = getWhatsAppLink(pedido.whatsapp);
                             return (
-                                <tr key={pedido.id} className="hover:bg-gray-50 align-top">
+                                <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-50 opacity-70' : ''}`}>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.cliente}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a>) : (<span className="text-gray-400">N/A</span>)}</td>
                                     <td className="px-4 py-4 whitespace-nowrap">{pedido.direccion}</td>
@@ -278,7 +321,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPesoUpdated, 
                                     {visibleColumns.notas && <td className="px-4 py-4 whitespace-nowrap">{pedido.notas}</td>}
                                     <td className="px-4 py-4 whitespace-nowrap">
                                         <div className="print:hidden">
-                                            <PesoInput pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
+                                            <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdate={onPesoUpdated} onShare={onShareClick} userRole={userRole} />
                                         </div>
                                         <div className="hidden print:block">
                                             {formatPesoForPrint(pedido.peso_exacto)}

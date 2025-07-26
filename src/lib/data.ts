@@ -62,10 +62,10 @@ export async function fetchFilteredPedidos(
       SELECT
         id, cliente, whatsapp, empresa, direccion, distrito, tipo_cliente, hora_entrega, notas,
         TO_CHAR(fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
-        detalle, peso_exacto, created_at, latitude, longitude
+        detalle, peso_exacto, created_at, latitude, longitude, asesor_id, entregado
       FROM pedidos
       ${whereString}
-      ORDER BY fecha_pedido DESC, id DESC
+      ORDER BY created_at DESC
       LIMIT ${ITEMS_PER_PAGE}
       OFFSET ${offset}
     `;

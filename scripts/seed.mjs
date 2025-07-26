@@ -70,7 +70,8 @@ async function main() {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8),
-        asesor_id UUID REFERENCES users(id)
+        asesor_id UUID REFERENCES users(id),
+        entregado BOOLEAN NOT NULL DEFAULT FALSE
       );
     `;
     console.log('✅ Tabla "pedidos" creada.');
