@@ -2,6 +2,7 @@
 
 "use client";
 
+import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pedido } from '@/lib/types';
@@ -9,7 +10,7 @@ import Search from './search';
 import PedidosTable from './table';
 import PrintButton from './print-button';
 import ColumnCustomizer from './column-customizer';
-import { FiLogOut } from 'react-icons/fi';
+import { FiLogOut, FiUsers } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 
@@ -157,11 +158,15 @@ function Dashboard({ session }: DashboardContentProps) {
       </div>
 
       {/* 3. Acciones de la Lista (Se eliminó el botón de logout para móvil de aquí) */}
-      <div className="mt-4 flex justify-end items-center gap-3 print:hidden">
-        <div className="flex w-full sm:w-auto items-center gap-3">
-          <PrintButton />
-          <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
-        </div>
+      <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-3 print:hidden">
+        <PrintButton />
+        <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
+        {session.user.role === 'admin' && (
+          <Link href="/dashboard/users" className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">
+            <FiUsers className="mr-2 h-5 w-5" />
+            Gestionar Usuarios
+          </Link>
+        )}
       </div>
 
       {/* 4. Contenido de la Tabla (Sin cambios) */}
