@@ -13,6 +13,7 @@ import ColumnCustomizer from './column-customizer';
 import { FiLogOut, FiUsers } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
+import { doLogout } from '@/lib/actions';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha';
 
@@ -142,14 +143,16 @@ function Dashboard({ session }: DashboardContentProps) {
         </div>
 
         {/* Botón de Cerrar Sesión único y adaptable */}
-        <a
-          href="/api/auth/logout"
-          className="flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 p-2 text-white hover:bg-red-600 sm:gap-2 sm:rounded-lg sm:px-4 sm:py-2"
-          aria-label="Cerrar Sesión"
-        >
-          <FiLogOut className="h-5 w-5" />
-          <span className="hidden sm:inline text-sm font-medium">Cerrar Sesión</span>
-        </a>
+        <form action={doLogout}>
+          <button
+            type="submit"
+            className="flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 p-2 text-white transition-colors hover:bg-red-600 sm:gap-2 sm:rounded-lg sm:px-4 sm:py-2 cursor-pointer"
+            aria-label="Cerrar Sesión"
+          >
+            <FiLogOut className="h-5 w-5" />
+            <span className="hidden sm:inline text-sm font-medium">Cerrar Sesión</span>
+          </button>
+        </form>
       </div>
 
       {/* 2. Filtros (Sin cambios) */}

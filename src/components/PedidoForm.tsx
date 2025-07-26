@@ -342,7 +342,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
         <div className="bg-white p-6 rounded-xl shadow-lg h-fit">
           <div className="flex items-center mb-6">
             <FiFileText className="text-red-600 mr-3" size={30} />
-            <h1 className="text-2xl font-bold text-gray-800">Generador de Pedidos</h1>
+            <h1 className="text-2xl font-bold text-gray-800">Datos del Pedido</h1>
           </div>
           <form ref={formRef} onSubmit={(e) => e.preventDefault()}>
             <fieldset disabled={appState !== 'editing'} className="space-y-4">
