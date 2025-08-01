@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { FiSettings } from 'react-icons/fi';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
 interface ColumnCustomizerProps {
   visibleColumns: Record<Column, boolean>;
@@ -26,6 +26,7 @@ export default function ColumnCustomizer({ visibleColumns, onColumnChange }: Col
     entregado: 'Estado',
     navegacion: 'Navegación',
     fecha: 'Fecha',
+    detalle_final: 'Detalle Final',
   };
 
   return (

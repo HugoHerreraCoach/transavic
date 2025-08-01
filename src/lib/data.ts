@@ -7,9 +7,9 @@ import { User } from "./types";
 
 const ITEMS_PER_PAGE = 25;
 
-type PedidoFromDB = Omit<Pedido, 'peso_exacto' | 'created_at'> & {
-  peso_exacto: string | null;
-  created_at: string; // La base de datos devuelve las fechas como texto (ISO string)
+type PedidoFromDB = Omit<Pedido, 'created_at' | 'detalle_final'> & {
+  detalle_final: string | null;
+  created_at: string; 
 };
 
 
@@ -61,7 +61,7 @@ export async function fetchFilteredPedidos(
       SELECT
         p.id, p.cliente, p.whatsapp, p.empresa, p.direccion, p.distrito, p.tipo_cliente, p.hora_entrega, p.notas,
         TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
-        p.detalle, p.peso_exacto, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
+        p.detalle, p.detalle_final, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
         u.name as asesor_name
       FROM pedidos AS p
       LEFT JOIN users AS u ON p.asesor_id = u.id
@@ -85,7 +85,7 @@ export async function fetchFilteredPedidos(
     // ✅ CORRECCIÓN 2: Convertimos el 'created_at' de string a Date.
     const typedPedidos: Pedido[] = rawPedidos.map(pedido => ({
       ...pedido,
-      peso_exacto: pedido.peso_exacto === null ? null : Number(pedido.peso_exacto),
+      detalle_final: pedido.detalle_final,
       created_at: new Date(pedido.created_at)
     }));
 

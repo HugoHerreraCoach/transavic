@@ -40,7 +40,9 @@ async function main() {
       { name: 'Yoshelin', password: 'Yoshelin1414', role: 'asesor' },
       { name: 'Sarai', password: 'Sarai1515', role: 'asesor' },
       { name: 'Yesica', password: 'Yesica1616', role: 'asesor' },
-      { name: 'Reparto', password: 'Reparto2025', role: 'repartidor' },
+      { name: 'Marco', password: 'Marco1717', role: 'repartidor' },
+      { name: 'Yhorner', password: 'Yhorner1818', role: 'repartidor' },
+      { name: 'Anghelo', password: 'Anghelo1919', role: 'repartidor' },
     ];
 
     for (const user of users) {
@@ -66,7 +68,7 @@ async function main() {
         notas TEXT,
         empresa VARCHAR(100) NOT NULL,
         fecha_pedido DATE NOT NULL,
-        peso_exacto DECIMAL(10, 2),
+        detalle_final TEXT,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8),

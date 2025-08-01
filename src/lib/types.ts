@@ -10,14 +10,14 @@ export type Pedido = {
   hora_entrega: string | null;
   notas: string | null;
   empresa: string;
-  fecha_pedido: string; // La recibimos como string formateado
-  peso_exacto: number | null;
+  fecha_pedido: string; 
+  detalle_final: string | null;
   created_at: Date;
   latitude: number | null;
   longitude: number | null;
   entregado: boolean;
-  asesor_id: string | null; // Ya debería estar aquí
-  asesor_name: string | null; // ✅ AÑADE ESTA LÍNEA
+  asesor_id: string | null; 
+  asesor_name: string | null; 
 };
 
 export type User = {

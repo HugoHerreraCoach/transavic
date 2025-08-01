@@ -18,7 +18,7 @@ export interface TicketDisplayData {
     notas?: string | null;
     empresa: string;
     fecha?: string;
-    peso_exacto?: number | null;
+    detalle_final?: string | null;
 }
 
 interface TicketPedidoProps {
@@ -57,13 +57,13 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
             <div className="pt-4 border-t border-dashed"><div className="flex items-start"><FiClipboard className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Detalle:</span><span className="whitespace-pre-wrap break-words">{datos.detalle || ''}</span></p></div></div>
 
             {/* El campo de peso exacto sigue siendo condicional, lo cual es correcto */}
-            {typeof datos.peso_exacto === 'number' && (
+            {datos.detalle_final && (
                 <div className="pt-4 border-t border-dashed">
                     <div className="flex items-start text-red-700 font-bold">
                         <FiArchive className="mr-3 mt-1 flex-shrink-0" size={20} />
                         <p className="flex-1 min-w-0">
-                            <span className="mr-2">Peso Exacto:</span>
-                            <span>{datos.peso_exacto.toFixed(2)} kg</span>
+                            <span className="mr-2">Detalle Final:</span>
+                            <span className="whitespace-pre-wrap break-words">{datos.detalle_final}</span>
                         </p>
                     </div>
                 </div>

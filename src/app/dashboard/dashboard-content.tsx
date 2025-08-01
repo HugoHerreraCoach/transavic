@@ -14,8 +14,9 @@ import { FiLogOut, FiUsers } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 import { doLogout } from '@/lib/actions';
+import EditPedidoModal from './edit-modal';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -39,6 +40,7 @@ const getInitialVisibleColumns = (role: string): Record<Column, boolean> => {
     entregado: true,
     navegacion: false, // Navegación visible por defecto para todos
     fecha: false,     // Fecha oculta por defecto para todos
+    detalle_final: true,
   };
 
   // Si el rol es 'repartidor', sobrescribimos las configuraciones necesarias
@@ -48,12 +50,10 @@ const getInitialVisibleColumns = (role: string): Record<Column, boolean> => {
       distrito: true,
       hora_entrega: true,
       notas: true,
-      // 'navegacion' ya es true, pero lo dejamos por claridad
       navegacion: true,
     };
   }
 
-  // Para cualquier otro rol (admin, asesor), devolvemos la configuración base
   return baseColumns;
 };
 
@@ -93,6 +93,7 @@ function Dashboard({ session }: DashboardContentProps) {
     getInitialVisibleColumns(session.user.role)
   );
   const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
+  const [editingPedido, setEditingPedido] = useState<Pedido | null>(null);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
 
@@ -117,10 +118,11 @@ function Dashboard({ session }: DashboardContentProps) {
     fetchPedidos();
   }, [searchParams]);
 
-  const handlePesoUpdated = (updatedPedido: Pedido) => {
+  const handlePedidoUpdated = (updatedPedido: Pedido) => {
     setPedidos(currentPedidos =>
       currentPedidos.map(p => p.id === updatedPedido.id ? updatedPedido : p)
     );
+    setEditingPedido(null); // Cierra el modal si está abierto
   };
 
   const handlePedidoDeleted = (deletedId: string) => {
@@ -181,7 +183,8 @@ function Dashboard({ session }: DashboardContentProps) {
             <PedidosTable
               pedidos={pedidos}
               onPedidoDeleted={handlePedidoDeleted}
-              onPesoUpdated={handlePesoUpdated}
+              onPedidoUpdated={handlePedidoUpdated}
+              onEditClick={setEditingPedido}
               onShareClick={setSharingPedido}
               visibleColumns={visibleColumns}
               userRole={session.user.role}
@@ -192,6 +195,15 @@ function Dashboard({ session }: DashboardContentProps) {
           </>
         )}
       </div>
+
+      {editingPedido && (
+        <EditPedidoModal
+          pedido={editingPedido}
+          isOpen={!!editingPedido}
+          onClose={() => setEditingPedido(null)}
+          onPedidoUpdated={handlePedidoUpdated}
+        />
+      )}
 
       {sharingPedido && (
         <TicketShareModal

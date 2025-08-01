@@ -6,7 +6,15 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const UpdateSchema = z.object({
-  pesoExacto: z.number().nullable().optional(),
+  cliente: z.string().min(1).optional(),
+  whatsapp: z.string().optional().nullable(),
+  direccion: z.string().optional().nullable(),
+  distrito: z.string().optional(),
+  tipo_cliente: z.string().optional(),
+  detalle: z.string().min(1).optional(),
+  hora_entrega: z.string().optional().nullable(),
+  notas: z.string().optional().nullable(),
+  detalle_final: z.string().optional().nullable(),
   entregado: z.boolean().optional(),
 });
 
@@ -14,11 +22,6 @@ export async function PATCH(request: Request) {
   try {
     const url = new URL(request.url);
     const id = url.pathname.split("/").pop();
-
-     // --- INICIO DE DEPURACIÓN ---
-    console.log("--- INICIANDO PETICIÓN PATCH ---");
-    console.log("ID recibido:", id);
-    // --- FIN DE DEPURACIÓN ---
 
     if (!id) {
       return NextResponse.json(
@@ -38,28 +41,18 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Datos inválidos" }, { status: 400 });
     }
 
-    // --- INICIO DE DEPURACIÓN ---
-    console.log("Cuerpo de la petición (parseado):", parsedData.data);
-    // --- FIN DE DEPURACIÓN ---
+    const dataToUpdate = parsedData.data;
 
-    const { pesoExacto, entregado } = parsedData.data;
-
-    // ⚙️ Definimos un tipo específico para los valores que podemos actualizar.
-    type UpdateValue = string | number | boolean | null;
-    const updates: Record<string, UpdateValue> = {};
-
-    if (pesoExacto !== undefined) {
-      updates.peso_exacto = pesoExacto;
-    }
-    if (entregado !== undefined) {
-      updates.entregado = entregado;
+    if (Object.keys(dataToUpdate).length === 0) {
+      return NextResponse.json(
+        { error: "No se proporcionaron campos para actualizar." },
+        { status: 400 }
+      );
     }
 
-    // --- INICIO DE DEPURACIÓN ---
-    console.log("Objeto 'updates' construido:", updates);
-    // --- FIN DE DEPURACIÓN ---
+    const updateEntries = Object.entries(dataToUpdate).filter(entry => entry[1] !== undefined);
 
-    if (Object.keys(updates).length === 0) {
+    if (updateEntries.length === 0) {
       return NextResponse.json(
         { error: "No se proporcionaron campos para actualizar." },
         { status: 400 }
@@ -67,28 +60,21 @@ export async function PATCH(request: Request) {
     }
 
     // Construimos la consulta SET dinámicamente
-    const setClauses = Object.keys(updates)
-      .map((key, index) => `${key} = $${index + 1}`)
-      .join(', ');
+    const setClauses = updateEntries
+      .map(([key], index) => `${key} = $${index + 1}`)
+      .join(", ");
 
-    // ⚙️ El array de parámetros ahora tiene un tipo estricto.
-    const params: UpdateValue[] = Object.values(updates);
-    
-    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
+    const params = updateEntries.map(entry => entry[1]);
+    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${
+      params.length + 1
+    }`;
     params.push(id);
-
-    // --- INICIO DE DEPURACIÓN ---
-    console.log("Consulta SQL a ejecutar:", query);
-    console.log("Parámetros para la consulta:", params);
-    // --- FIN DE DEPURACIÓN ---
-    
     await sql.query(query, params);
 
     return NextResponse.json(
       { message: "Pedido actualizado exitosamente" },
       { status: 200 }
     );
-
   } catch (error) {
     console.error("Error en API PATCH:", error);
     return NextResponse.json(
@@ -98,22 +84,23 @@ export async function PATCH(request: Request) {
   }
 }
 
-
 export async function DELETE(request: Request) {
   try {
-    // ✅ Se extrae el ID directamente desde la URL de la petición
     const url = new URL(request.url);
-    const id = url.pathname.split('/').pop();
+    const id = url.pathname.split("/").pop();
 
     if (!id) {
-      return NextResponse.json({ error: 'ID del pedido no encontrado' }, { status: 400 });
+      return NextResponse.json(
+        { error: "ID del pedido no encontrado" },
+        { status: 400 }
+      );
     }
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
-    
+
     const result = await sql`
       DELETE FROM pedidos
       WHERE id = ${id}
@@ -121,12 +108,21 @@ export async function DELETE(request: Request) {
     `;
 
     if (result.length === 0) {
-      return NextResponse.json({ error: 'Pedido no encontrado para eliminar' }, { status: 404 });
+      return NextResponse.json(
+        { error: "Pedido no encontrado para eliminar" },
+        { status: 404 }
+      );
     }
 
-    return NextResponse.json({ message: "Pedido eliminado exitosamente" }, { status: 200 });
+    return NextResponse.json(
+      { message: "Pedido eliminado exitosamente" },
+      { status: 200 }
+    );
   } catch (error) {
     console.error("Error en API DELETE:", error);
-    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Error interno del servidor" },
+      { status: 500 }
+    );
   }
 }
