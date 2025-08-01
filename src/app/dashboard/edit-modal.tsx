@@ -4,6 +4,7 @@
 import { useState, useEffect } from 'react';
 import { Pedido } from '@/lib/types';
 import { FiX } from 'react-icons/fi';
+import MapInput from '@/components/MapInput';
 
 interface EditPedidoModalProps {
     pedido: Pedido;
@@ -20,9 +21,15 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        // Asegura que el estado del formulario se actualice si el pedido cambia
         if (pedido) {
-            setFormData(pedido);
+            // ✅ CORRECCIÓN: Convertimos la fecha de DD/MM/YYYY a YYYY-MM-DD para el input
+            const [day, month, year] = pedido.fecha_pedido.split('/');
+            const formattedDateForInput = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+
+            setFormData({
+                ...pedido,
+                fecha_pedido: formattedDateForInput,
+            });
         }
     }, [pedido]);
 
@@ -33,22 +40,20 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
         setFormData(prev => ({ ...prev, [name]: value }));
     };
 
+    const handleLocationChange = (lat: number, lng: number) => {
+        setFormData(prev => ({ ...prev, latitude: lat, longitude: lng }));
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSaving(true);
         setError(null);
 
-        // ✅ MEJORA 1: Preparamos los datos para la API de forma segura y explícita.
         const payload: Partial<Pedido> = { ...formData };
 
-        // ✅ MEJORA 2: Eliminamos las propiedades que no deben ser actualizadas.
-        // Esto soluciona el error de "variables no usadas".
         delete payload.id;
         delete payload.created_at;
         delete payload.asesor_name;
-        delete payload.fecha_pedido;
-
-        // ✅ MEJORA 3: Se eliminó el código redundante que usaba 'any'.
 
         try {
             const response = await fetch(`/api/pedidos/${pedido.id}`, {
@@ -62,8 +67,11 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                 throw new Error(errorData.error?.toString() || 'Error al guardar los cambios');
             }
 
-            onPedidoUpdated(formData); // Actualiza la UI en el dashboard
-            onClose(); // Cierra el modal
+            const [year, month, day] = formData.fecha_pedido.split('-');
+            const displayDate = `${day}/${month}/${year}`;
+
+            onPedidoUpdated({ ...formData, fecha_pedido: displayDate });
+            onClose();
 
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Ocurrió un error desconocido');
@@ -83,6 +91,17 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                 </div>
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
+                        <select name="empresa" value={formData.empresa} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2 bg-white">
+                            <option value="Transavic">Transavic</option>
+                            <option value="Avícola de Tony">Avícola de Tony</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="fecha_pedido" className="block text-sm font-medium text-gray-700">Fecha de Entrega</label>
+                        <input id="fecha_pedido" type="date" name="fecha_pedido" value={formData.fecha_pedido} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" required />
+                    </div>
+                    <div>
                         <label htmlFor="cliente" className="block text-sm font-medium text-gray-700">Cliente</label>
                         <input id="cliente" type="text" name="cliente" value={formData.cliente} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" required />
                     </div>
@@ -93,6 +112,14 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                     <div>
                         <label htmlFor="direccion" className="block text-sm font-medium text-gray-700">Dirección</label>
                         <input id="direccion" type="text" name="direccion" value={formData.direccion ?? ''} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Ubicación en Mapa</label>
+                        <MapInput
+                            onLocationChange={handleLocationChange}
+                            initialLat={formData.latitude}
+                            initialLng={formData.longitude}
+                        />
                     </div>
                     <div>
                         <label htmlFor="distrito" className="block text-sm font-medium text-gray-700">Distrito</label>

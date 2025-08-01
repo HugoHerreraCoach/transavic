@@ -42,6 +42,7 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
         backgroundColor: '#ffffff',
         // Forzamos que no use caché interno de la librería
         cacheBust: true,
+        skipFonts: true,
       });
       setImagenUrl(dataUrl);
       const response = await fetch(dataUrl);

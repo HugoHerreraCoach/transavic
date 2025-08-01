@@ -1,9 +1,5 @@
 // Archivo: src/lib/utils.ts
 
-/**
- * Formatea una fecha para el ticket, aceptando múltiples formatos de
- * entrada (incluyendo el de iOS 'MMM DD, YYYY').
- */
 export function formatFechaForTicket(dateInput: string | Date | null | undefined): string {
   if (!dateInput) {
     return 'Fecha no especificada';

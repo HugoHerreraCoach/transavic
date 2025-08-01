@@ -2,28 +2,36 @@
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
-import { Autocomplete } from '@react-google-maps/api';
+import { GoogleMap, useLoadScript, Marker, Autocomplete } from '@react-google-maps/api';
 
 const libraries: ('places')[] = ['places'];
 const mapContainerStyle = {
-  height: '400px',
+  height: '300px',
   width: '100%',
   borderRadius: '0.5rem',
 };
 
 interface MapInputProps {
   onLocationChange: (lat: number, lng: number) => void;
+  initialLat?: number | null;
+  initialLng?: number | null;
 }
 
-export default function MapInput({ onLocationChange }: MapInputProps) {
+export default function MapInput({ onLocationChange, initialLat, initialLng }: MapInputProps) {
   const { isLoaded, loadError } = useLoadScript({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
     libraries,
   });
 
-  const [marker, setMarker] = useState<{ lat: number; lng: number } | null>(null);
-  const [center, setCenter] = useState({ lat: -12.046374, lng: -77.042793 }); // Centro inicial en Lima
+  const limaCenter = { lat: -12.046374, lng: -77.042793 };
+
+  const [marker, setMarker] = useState<{ lat: number; lng: number } | null>(
+    initialLat && initialLng ? { lat: initialLat, lng: initialLng } : null
+  );
+  const [center, setCenter] = useState(
+    initialLat && initialLng ? { lat: initialLat, lng: initialLng } : limaCenter
+  );
+
   const [autocomplete, setAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -66,7 +74,7 @@ export default function MapInput({ onLocationChange }: MapInputProps) {
       <GoogleMap
         mapContainerStyle={mapContainerStyle}
         center={center}
-        zoom={15}
+        zoom={marker ? 17 : 12} 
       >
         {marker && <Marker position={marker} />}
       </GoogleMap>

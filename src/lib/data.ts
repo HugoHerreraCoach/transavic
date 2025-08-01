@@ -7,11 +7,15 @@ import { User } from "./types";
 
 const ITEMS_PER_PAGE = 25;
 
-type PedidoFromDB = Omit<Pedido, 'created_at' | 'detalle_final'> & {
+type PedidoFromDB = Omit<
+  Pedido,
+  "created_at" | "detalle_final" | "latitude" | "longitude"
+> & {
   detalle_final: string | null;
-  created_at: string; 
+  created_at: string;
+  latitude: string | null;
+  longitude: string | null;
 };
-
 
 export async function fetchFilteredPedidos(
   query: string,
@@ -37,7 +41,9 @@ export async function fetchFilteredPedidos(
     let paramIndex = 1;
 
     if (query) {
-      whereClauses.push(`(cliente ILIKE $${paramIndex} OR detalle ILIKE $${paramIndex} OR whatsapp ILIKE $${paramIndex})`);
+      whereClauses.push(
+        `(cliente ILIKE $${paramIndex} OR detalle ILIKE $${paramIndex} OR whatsapp ILIKE $${paramIndex})`
+      );
       params.push(`%${query}%`);
       paramIndex++;
     }
@@ -55,7 +61,8 @@ export async function fetchFilteredPedidos(
       paramIndex++;
     }
 
-    const whereString = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const whereString =
+      whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     const pedidosQuery = `
       SELECT
@@ -79,14 +86,16 @@ export async function fetchFilteredPedidos(
 
     const totalCount = Number((countResult[0] as { count: string }).count);
     const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE);
-    
+
     const rawPedidos = data as PedidoFromDB[];
 
     // ✅ CORRECCIÓN 2: Convertimos el 'created_at' de string a Date.
-    const typedPedidos: Pedido[] = rawPedidos.map(pedido => ({
+    const typedPedidos: Pedido[] = rawPedidos.map((pedido) => ({
       ...pedido,
       detalle_final: pedido.detalle_final,
-      created_at: new Date(pedido.created_at)
+      created_at: new Date(pedido.created_at),
+      latitude: pedido.latitude ? parseFloat(pedido.latitude) : null,
+      longitude: pedido.longitude ? parseFloat(pedido.longitude) : null,
     }));
 
     return {
@@ -102,7 +111,6 @@ export async function fetchFilteredPedidos(
     throw new Error("Failed to fetch pedidos.");
   }
 }
-
 
 // ✅ Nueva función para obtener solo los asesores
 export async function fetchAsesores() {

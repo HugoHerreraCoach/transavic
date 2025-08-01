@@ -16,6 +16,10 @@ const UpdateSchema = z.object({
   notas: z.string().optional().nullable(),
   detalle_final: z.string().optional().nullable(),
   entregado: z.boolean().optional(),
+  empresa: z.string().optional(),
+  fecha_pedido: z.string().optional(), 
+  latitude: z.number().nullable().optional(),
+  longitude: z.number().nullable().optional(),
 });
 
 export async function PATCH(request: Request) {
