@@ -288,8 +288,15 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const handleNuevoPedido = () => {
     const empresaActual = formDatos.empresa;
     const fechaActual = getTodayString();
-    setFormDatos({ ...datosIniciales, empresa: empresaActual, fecha: fechaActual });
-    setTicketDatos({ ...datosIniciales, empresa: empresaActual, fecha: fechaActual });
+    const primerAsesorId = asesores.length > 0 ? asesores[0].id : '';
+    const nuevoEstadoFormulario = {
+      ...datosIniciales,
+      empresa: empresaActual,
+      fecha: fechaActual,
+      asesorId: primerAsesorId, // Se asegura de que el asesor tenga un ID válido
+    };
+    setFormDatos(nuevoEstadoFormulario);
+    setTicketDatos(datosIniciales);
     setImagenUrl(null);
     setImagenBlob(null);
     setPendienteGeneracion(false);
