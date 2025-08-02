@@ -2,7 +2,7 @@
 
 import { Ref } from 'react';
 import {
-    FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2, FiStar, FiArchive
+    FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2, FiStar, FiArchive, FiUserCheck
 } from 'react-icons/fi';
 
 export interface TicketDisplayData {
@@ -19,6 +19,7 @@ export interface TicketDisplayData {
     empresa: string;
     fecha?: string;
     detalle_final?: string | null;
+    asesor_name?: string | null;
 }
 
 interface TicketPedidoProps {
@@ -47,7 +48,19 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
             {/* ✅ CORRECCIÓN: Usamos el formato de fecha que ya viene del dashboard */}
             <p className="text-center text-gray-600 text-md mt-2 font-semibold">{datos.fecha}</p>
         </div>
+
+
+
         <div className="mt-6 space-y-4 text-lg">
+            {datos.asesor_name && (
+                <div className="flex items-start">
+                    <FiUserCheck className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} />
+                    <p className="flex-1 min-w-0">
+                        <span className="font-semibold mr-2">Asesor:</span>
+                        <span className="break-words">{datos.asesor_name}</span>
+                    </p>
+                </div>
+            )}
             {/* ✅ CORRECCIÓN: Se renderiza siempre la fila, y el valor se muestra si existe */}
             <div className="flex items-start"><FiUser className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Cliente:</span><span className="break-words">{datos.cliente || ''}</span></p></div>
             <div className="flex items-start"><FiPhone className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">WhatsApp:</span><span className="break-words">{datos.whatsapp || ''}</span></p></div>

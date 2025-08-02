@@ -2,12 +2,13 @@
 
 'use client';
 
-import { useState, useRef, useEffect, Ref, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
-import { FiUser, FiPhone, FiMapPin, FiMap, FiClipboard, FiClock, FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiStar, FiRotateCcw, FiSend } from 'react-icons/fi';
+import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import { User } from '@/lib/types';
 import { formatFechaForTicket } from '@/lib/utils';
+import TicketPedido from '@/components/TicketPedido';
 
 type TicketData = {
   cliente: string;
@@ -23,56 +24,16 @@ type TicketData = {
   latitude: number | null;
   longitude: number | null;
   asesorId: string;
+  asesor_name?: string | null;
 };
 
-const getTodayString = () => new Date().toISOString().split('T')[0]; // Formato YYYY-MM-DD
+const getTodayString = () => new Date().toISOString().split('T')[0]; 
 const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
-interface TicketPedidoProps {
-  datos: TicketData;
-  referencia?: Ref<HTMLDivElement>;
-  logoDataUrl: string | null;
-  onLogoReady: () => void;
-}
+
 
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
-
-const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoDataUrl, onLogoReady }) => (
-  <div ref={referencia} className="bg-white p-8 border-2 border-gray-300 rounded-lg text-black w-full">
-    <div className="text-center pb-4 border-b-2 border-dashed">
-      {logoDataUrl && (
-        <img
-          id="ticket-logo"
-          src={logoDataUrl}
-          alt="Logo de la empresa"
-          className="w-[120px] h-auto mx-auto"
-          style={{ display: 'block' }}
-          crossOrigin="anonymous"
-          onLoad={onLogoReady}
-          onError={(e) => console.error('Error al cargar imagen en ticket:', e)}
-        />
-      )}
-      <h1 className="text-3xl font-bold text-red-600">{datos.empresa === 'Transavic' ? 'PEDIDO TRANSAVIC' : 'PEDIDO AVÍCOLA DE TONY'}</h1>
-      {datos.fecha && (
-        <p className="text-center text-gray-600 text-md mt-2 font-semibold">
-          {datos.fecha}
-        </p>
-      )}
-    </div>
-    <div className="mt-6 space-y-4 text-lg">
-      <div className="flex items-start"><FiUser className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Cliente:</span><span className="break-words">{datos.cliente}</span></p></div>
-      <div className="flex items-start"><FiPhone className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">WhatsApp:</span><span className="break-words">{datos.whatsapp}</span></p></div>
-      <div className="flex items-start"><FiMapPin className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Dirección:</span><span className="break-words">{datos.direccion}</span></p></div>
-      <div className="flex items-start"><FiMap className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Distrito:</span><span className="break-words">{datos.distrito}</span></p></div>
-      <div className="flex items-start"><FiStar className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Tipo de cliente:</span><span className="break-words">{datos.tipoCliente}</span></p></div>
-      <div className="pt-4 border-t border-dashed"><div className="flex items-start"><FiClipboard className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Detalle:</span><span className="whitespace-pre-wrap break-words">{datos.detalle}</span></p></div></div>
-      <div className="flex items-start"><FiClock className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Horario de entrega:</span><span className="break-words">{datos.horaEntrega}</span></p></div>
-      <div className="flex items-start"><FiEdit2 className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Notas:</span><span className="whitespace-pre-wrap break-words">{datos.notas}</span></p></div>
-    </div>
-  </div>
-);
-
 
 
 export default function PedidoForm({ asesores }: { asesores: User[] }) {
@@ -221,10 +182,18 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   };
 
   const handleGenerarClick = () => {
-    setErrors({}); // Limpiar errores al generar vista previa
+    setErrors({}); 
     const fechaFormateadaParaTicket = formatFechaForTicket(formDatos.fecha);
 
-    setTicketDatos({ ...formDatos, fecha: fechaFormateadaParaTicket });
+    const asesorSeleccionado = asesores.find(asesor => asesor.id === formDatos.asesorId);
+    const nombreAsesor = asesorSeleccionado ? asesorSeleccionado.name : null;
+
+    setTicketDatos({ 
+      ...formDatos, 
+      fecha: fechaFormateadaParaTicket,
+      asesor_name: nombreAsesor 
+    });
+
     setCargandoImagen(true);
     setAppState('previewing');
     if (logoListo && logoDataUrl) {
