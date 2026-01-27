@@ -173,12 +173,21 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
     if (!ticketDatos.direccion?.trim()) {
       newErrors.direccion = 'La dirección es obligatoria.';
+    } else if (ticketDatos.latitude === null || ticketDatos.longitude === null) {
+      newErrors.direccion = 'Debes seleccionar una ubicación en el mapa.';
     }
     return newErrors;
   };
 
   const handleLocationChange = (lat: number, lng: number) => {
     setFormDatos(prev => ({ ...prev, latitude: lat, longitude: lng }));
+  };
+
+  const handleAddressChange = (address: string) => {
+    setFormDatos(prev => ({ ...prev, direccion: address }));
+    if (errors.direccion) {
+      setErrors(prev => ({ ...prev, direccion: undefined }));
+    }
   };
 
   const handleGenerarClick = () => {
@@ -403,8 +412,8 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 {errors.direccion && <p className="text-red-500 text-sm mt-1">{errors.direccion}</p>}
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mapa</label>
-                <MapInput onLocationChange={handleLocationChange} />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación en el Mapa <span className="text-red-500">*</span></label>
+                <MapInput onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
