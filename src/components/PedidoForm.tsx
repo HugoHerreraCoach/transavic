@@ -197,7 +197,29 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   };
 
   const handleGenerarClick = () => {
-    setErrors({}); 
+    // Validación temprana con formDatos
+    const newErrors: Partial<Record<keyof TicketData | 'ubicacion', string>> = {};
+    if (!formDatos.cliente?.trim()) newErrors.cliente = 'El nombre del cliente es obligatorio.';
+    if (!formDatos.detalle?.trim()) newErrors.detalle = 'El detalle del pedido es obligatorio.';
+    if (!formDatos.whatsapp?.trim()) {
+      newErrors.whatsapp = 'El número de WhatsApp es obligatorio.';
+    } else if (!/^[0-9]+$/.test(formDatos.whatsapp.trim())) {
+      newErrors.whatsapp = 'El número de WhatsApp solo debe contener dígitos numéricos.';
+    }
+    if (!formDatos.direccion?.trim()) {
+      newErrors.direccion = 'La dirección es obligatoria.';
+    }
+    if (formDatos.latitude === null || formDatos.longitude === null) {
+      newErrors.ubicacion = 'Debes seleccionar una ubicación en el mapa.';
+    }
+    
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      formRef.current?.scrollIntoView({ behavior: 'smooth' });
+      return;
+    }
+
+    setErrors({});
     const fechaFormateadaParaTicket = formatFechaForTicket(formDatos.fecha);
 
     const asesorSeleccionado = asesores.find(asesor => asesor.id === formDatos.asesorId);
