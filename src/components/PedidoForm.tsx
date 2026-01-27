@@ -173,7 +173,10 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
     if (!ticketDatos.direccion?.trim()) {
       newErrors.direccion = 'La dirección es obligatoria.';
-    } else if (ticketDatos.latitude === null || ticketDatos.longitude === null) {
+    }
+    
+    // Validación de coordenadas GPS (obligatorio)
+    if (ticketDatos.latitude === null || ticketDatos.longitude === null) {
       newErrors.direccion = 'Debes seleccionar una ubicación en el mapa.';
     }
     return newErrors;
