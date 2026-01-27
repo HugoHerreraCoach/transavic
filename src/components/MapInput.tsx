@@ -173,7 +173,7 @@ export default function MapInput({
           ref={inputRef}
           type="text"
           placeholder="Busca una dirección..."
-          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
+          className="w-full p-2 border border-gray-300 rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
         />
       </Autocomplete>
 

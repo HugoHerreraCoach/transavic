@@ -394,35 +394,35 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                   name="fecha"
                   value={formDatos.fecha}
                   onChange={handleChange}
-                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-black disabled:bg-gray-200 appearance-none"
+                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200 appearance-none"
                   required
                 />
               </div>
 
               <div>
-                <input type="text" name="cliente" ref={clienteInputRef} value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
+                <input type="text" name="cliente" ref={clienteInputRef} value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.cliente && <p className="text-red-500 text-sm mt-1">{errors.cliente}</p>}
               </div>
               <div>
-                <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
+                <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
               </div>
               <div>
-                <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
+                <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.direccion && <p className="text-red-500 text-sm mt-1">{errors.direccion}</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación en el Mapa <span className="text-red-500">*</span></label>
                 <MapInput onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
               </div>
-              <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
-              <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
+              <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
+              <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
               <div>
-                <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
+                <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
                 {errors.detalle && <p className="text-red-500 text-sm mt-1">{errors.detalle}</p>}
               </div>
-              <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200" />
-              <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md text-black placeholder:text-gray-400 disabled:bg-gray-200"></textarea>
+              <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200" />
+              <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200"></textarea>
             </fieldset>
           </form>
           <div className="mt-6 space-y-4">
