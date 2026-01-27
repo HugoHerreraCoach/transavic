@@ -1,18 +1,15 @@
 // src/app/dashboard/page.tsx
 
-import { auth } from "@/auth"; // 👈 Importa 'auth'
+import { auth } from "@/auth";
 import DashboardContent from "./dashboard-content";
-import { redirect } from "next/navigation";
 
 export default async function DashboardPage() {
-  // Obtenemos la sesión del usuario en el servidor
   const session = await auth();
 
-  // Si por alguna razón no hay sesión, redirigimos al login
+  // El layout ya maneja la autenticación, pero necesitamos la sesión para el contenido
   if (!session?.user) {
-    redirect("/login");
+    return null;
   }
 
-  // Pasamos la sesión completa al componente cliente
   return <DashboardContent session={session} />;
 }

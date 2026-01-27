@@ -50,7 +50,7 @@ export const authConfig = {
       } else if (isLoggedIn) {
         // Redirect logged-in users from /login to /dashboard
         if (nextUrl.pathname === "/login") {
-          return Response.redirect(new URL("/dashboard", nextUrl));
+        return Response.redirect(new URL("/dashboard/nuevo-pedido", nextUrl));
         }
       }
       return true;

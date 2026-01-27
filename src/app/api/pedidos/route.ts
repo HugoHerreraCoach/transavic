@@ -2,6 +2,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { auth } from "@/auth";
 
 // Definimos un esquema de validación con Zod para asegurar los datos
 const PedidoSchema = z.object({
@@ -46,6 +47,15 @@ const PedidoSchema = z.object({
 
 export async function POST(request: Request) {
   try {
+    // Verificar autenticación
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: "No autorizado. Debes iniciar sesión." },
+        { status: 401 }
+      );
+    }
+
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       throw new Error("DATABASE_URL no está definida");

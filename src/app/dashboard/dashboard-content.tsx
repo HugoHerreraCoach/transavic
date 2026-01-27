@@ -2,7 +2,6 @@
 
 "use client";
 
-import Link from 'next/link';
 import { Suspense, useEffect, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pedido } from '@/lib/types';
@@ -10,10 +9,8 @@ import Search from './search';
 import PedidosTable from './table';
 import PrintButton from './print-button';
 import ColumnCustomizer from './column-customizer';
-import { FiLogOut, FiUsers } from 'react-icons/fi';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
-import { doLogout } from '@/lib/actions';
 import EditPedidoModal from './edit-modal';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
@@ -135,43 +132,25 @@ function Dashboard({ session }: DashboardContentProps) {
 
   return (
     <main className="bg-white max-w-[1600px] mx-auto p-4 sm:p-6">
-      {/* 1. Encabezado Principal (Ahora contiene el botón de logout responsivo) */}
+      {/* 1. Encabezado Principal */}
       <div className="flex justify-between items-center mb-4 print:hidden">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold text-gray-800">
-            Dashboard de Pedidos - {session.user.name}
+            Lista de Pedidos
           </h1>
           <p className="text-gray-600 mt-1">Aquí puedes ver, buscar y gestionar los pedidos.</p>
         </div>
-
-        {/* Botón de Cerrar Sesión único y adaptable */}
-        <form action={doLogout}>
-          <button
-            type="submit"
-            className="flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 p-2 text-white transition-colors hover:bg-red-600 sm:gap-2 sm:rounded-lg sm:px-4 sm:py-2 cursor-pointer"
-            aria-label="Cerrar Sesión"
-          >
-            <FiLogOut className="h-5 w-5" />
-            <span className="hidden sm:inline text-sm font-medium">Cerrar Sesión</span>
-          </button>
-        </form>
       </div>
 
-      {/* 2. Filtros (Sin cambios) */}
+      {/* 2. Filtros */}
       <div className="print:hidden">
         <Search />
       </div>
 
-      {/* 3. Acciones de la Lista (Se eliminó el botón de logout para móvil de aquí) */}
+      {/* 3. Acciones de la Lista */}
       <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-3 print:hidden">
         <PrintButton />
         <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
-        {session.user.role === 'admin' && (
-          <Link href="/dashboard/users" className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">
-            <FiUsers className="mr-2 h-5 w-5" />
-            Gestionar Usuarios
-          </Link>
-        )}
       </div>
 
       {/* 4. Contenido de la Tabla (Sin cambios) */}
