@@ -48,7 +48,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [cargandoImagen, setCargandoImagen] = useState(false);
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [cargandoLogo, setCargandoLogo] = useState(true);
-  const [errors, setErrors] = useState<Partial<Record<keyof TicketData, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof TicketData | 'ubicacion', string>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [logoListo, setLogoListo] = useState(false);
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
@@ -177,13 +177,16 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     
     // Validación de coordenadas GPS (obligatorio)
     if (ticketDatos.latitude === null || ticketDatos.longitude === null) {
-      newErrors.direccion = 'Debes seleccionar una ubicación en el mapa.';
+      (newErrors as Record<string, string>).ubicacion = 'Debes seleccionar una ubicación en el mapa.';
     }
     return newErrors;
   };
 
   const handleLocationChange = (lat: number, lng: number) => {
     setFormDatos(prev => ({ ...prev, latitude: lat, longitude: lng }));
+    if (errors.ubicacion) {
+      setErrors(prev => ({ ...prev, ubicacion: undefined }));
+    }
   };
 
   const handleAddressChange = (address: string) => {
@@ -417,6 +420,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación en el Mapa <span className="text-red-500">*</span></label>
                 <MapInput onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
+                {errors.ubicacion && <p className="text-red-500 text-sm mt-2">{errors.ubicacion}</p>}
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
