@@ -25,3 +25,21 @@ export type User = {
   name: string;
   role: string;
 };
+
+export type Producto = {
+  id: string;
+  nombre: string;
+  categoria: 'Pollo' | 'Carnes' | 'Huevos';
+  unidad: string;
+  activo: boolean;
+};
+
+export type PedidoItem = {
+  id: string;
+  pedido_id: string;
+  producto_id: string;
+  producto_nombre: string;
+  cantidad: number;
+  unidad: string;
+  notas: string | null;
+};

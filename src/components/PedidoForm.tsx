@@ -6,6 +6,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
 import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
+import ProductSelector, { SelectedItem } from '@/components/ProductSelector';
 import { User } from '@/lib/types';
 import { formatFechaForTicket } from '@/lib/utils';
 import TicketPedido from '@/components/TicketPedido';
@@ -53,6 +54,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [logoListo, setLogoListo] = useState(false);
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
   const [triggerFocus, setTriggerFocus] = useState<boolean>(false);
+  const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -267,7 +269,13 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       // con el formato correcto (YYYY-MM-DD) que está en formDatos.
       const payloadParaApi = {
         ...ticketDatos,
-        fecha: formDatos.fecha, 
+        fecha: formDatos.fecha,
+        items: selectedItems.length > 0 ? selectedItems.map(item => ({
+          productoId: item.productoId,
+          nombre: item.nombre,
+          cantidad: item.cantidad,
+          unidad: item.unidad,
+        })) : undefined,
       };
 
       const response = await fetch('/api/pedidos', {
@@ -367,13 +375,13 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       </div>
 
       <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
-        <div className="bg-white p-6 rounded-xl shadow-lg h-fit">
+        <div className="bg-white p-6 rounded-xl shadow-lg h-fit min-w-0">
           <div className="flex items-center mb-6">
             <FiFileText className="text-red-600 mr-3" size={30} />
             <h1 className="text-2xl font-bold text-gray-800">Datos del Pedido</h1>
           </div>
           <form ref={formRef} onSubmit={(e) => e.preventDefault()}>
-            <fieldset disabled={appState !== 'editing'} className="space-y-4">
+            <fieldset disabled={appState !== 'editing'} className="space-y-4 min-w-0">
               <div ref={empresaSelectorRef}>
                 <label className="block text-base font-medium text-gray-800 mb-2 text-center">Selecciona la empresa:</label>
                 <div className="flex justify-center items-center gap-4">
@@ -446,7 +454,17 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Tipo de cliente</label><select name="tipoCliente" value={formDatos.tipoCliente} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200"><option>Frecuente</option><option>Nuevo</option></select></div>
+              <div className="min-w-0">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Seleccionar Productos del Catálogo</label>
+                <ProductSelector
+                  onChange={(items: SelectedItem[], detalleText: string) => {
+                    setSelectedItems(items);
+                    setFormDatos(prev => ({ ...prev, detalle: detalleText || prev.detalle }));
+                  }}
+                />
+              </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Detalle del Pedido (auto-generado o manual)</label>
                 <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
                 {errors.detalle && <p className="text-red-500 text-sm mt-1">{errors.detalle}</p>}
               </div>

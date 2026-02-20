@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Session } from 'next-auth';
 import { useState } from 'react';
-import { FiPlus, FiList, FiUsers, FiLogOut, FiMenu, FiX } from 'react-icons/fi';
+import { FiPlus, FiList, FiUsers, FiLogOut, FiMenu, FiX, FiPackage, FiBarChart2, FiClipboard } from 'react-icons/fi';
 import { doLogout } from '@/lib/actions';
 
 interface NavItem {
@@ -19,8 +19,12 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: '/dashboard/nuevo-pedido', label: 'Nuevo Pedido', icon: <FiPlus className="h-5 w-5 flex-shrink-0" /> },
   { href: '/dashboard', label: 'Lista de Pedidos', icon: <FiList className="h-5 w-5 flex-shrink-0" /> },
+  { href: '/dashboard/productos', label: 'Productos', icon: <FiPackage className="h-5 w-5 flex-shrink-0" /> },
+  { href: '/dashboard/analytics', label: 'Analítica', icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" /> },
+  { href: '/dashboard/resumen', label: 'Resumen Diario', icon: <FiClipboard className="h-5 w-5 flex-shrink-0" /> },
   { href: '/dashboard/users', label: 'Usuarios', icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
 ];
+
 
 interface DashboardLayoutProps {
   children: React.ReactNode;

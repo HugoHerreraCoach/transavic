@@ -10,15 +10,21 @@ const PedidoSchema = z.object({
   whatsapp: z.string().optional(),
   direccion: z.string().optional(),
   distrito: z.string(),
-  tipoCliente: z.string(), // Viene del formulario
+  tipoCliente: z.string(),
   detalle: z.string().min(1, { message: "El detalle es requerido." }),
-  horaEntrega: z.string().optional(), // Viene del formulario
+  horaEntrega: z.string().optional(),
   notas: z.string().optional(),
   empresa: z.string(),
-  fecha: z.string(), // Formato "DD de Mes de AAAA"
+  fecha: z.string(),
   latitude: z.number().nullable().optional(),
   longitude: z.number().nullable().optional(),
-  asesorId: z.string().uuid({ message: "El ID del asesor no es válido." }), // Valida que sea un UUID
+  asesorId: z.string().uuid({ message: "El ID del asesor no es válido." }),
+  items: z.array(z.object({
+    productoId: z.string().uuid(),
+    nombre: z.string(),
+    cantidad: z.number().positive(),
+    unidad: z.string(),
+  })).optional(),
 });
 
 // Helper para convertir la fecha del formato '17 de julio de 2025' a '2025-07-17'
@@ -85,16 +91,29 @@ export async function POST(request: Request) {
       latitude,
       longitude,
       asesorId,
+      items,
     } = parsedData.data;
 
     const fecha_pedido = fecha; 
     const sql = neon(connectionString);
 
-    // Mapeamos los nombres del formulario a los de la base de datos
-    await sql`
+    // Insert the order and get it back
+    const insertedPedido = await sql`
       INSERT INTO pedidos (cliente, whatsapp, direccion, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
       VALUES (${cliente}, ${whatsapp}, ${direccion}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
+      RETURNING id
     `;
+
+    // If structured items were sent, save them
+    if (items && items.length > 0 && insertedPedido[0]?.id) {
+      const pedidoId = insertedPedido[0].id;
+      for (const item of items) {
+        await sql`
+          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad)
+          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad})
+        `;
+      }
+    }
 
     return NextResponse.json(
       { message: "Pedido creado exitosamente" },
