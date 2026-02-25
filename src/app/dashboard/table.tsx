@@ -15,9 +15,10 @@ type ActionsCellProps = {
     onEdit: (pedido: Pedido) => void;
     onShare: (pedido: Pedido) => void;
     userRole: string;
+    userName: string;
 };
 
-function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole }: ActionsCellProps) {
+function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName }: ActionsCellProps) {
     const [isProcessing, setIsProcessing] = useState(false);
 
     const handleDelete = async () => {
@@ -45,7 +46,12 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                 body: JSON.stringify({ entregado: newStatus }),
             });
             if (!response.ok) throw new Error('Error al actualizar');
-            onUpdateStatus({ ...pedido, entregado: newStatus });
+            onUpdateStatus({
+                ...pedido,
+                entregado: newStatus,
+                entregado_por: newStatus ? userName : null,
+                entregado_at: newStatus ? new Date().toISOString() : null,
+            });
         } catch {
             alert("No se pudo actualizar el estado del pedido.");
         } finally {
@@ -84,6 +90,7 @@ type PedidoCardProps = {
     onShareClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
+    userName: string;
 };
 
 type PedidosTableProps = {
@@ -94,9 +101,10 @@ type PedidosTableProps = {
     onShareClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
+    userName: string;
 };
 
-function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole }: PedidoCardProps) {
+function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (!numero) return '#';
         return `https://wa.me/${numero.replace(/[^0-9]/g, '')}`;
@@ -131,6 +139,9 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
                     <span className={pedido.entregado ? 'text-green-700' : 'text-yellow-700'}>
                         Estado: {pedido.entregado ? 'Entregado' : 'Pendiente'}
                     </span>
+                    {pedido.entregado && pedido.entregado_por && (
+                        <span className="text-xs text-gray-500 ml-1">por {pedido.entregado_por}</span>
+                    )}
                 </div>
             )}
 
@@ -153,13 +164,13 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
 
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
-                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} />
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} />
             </div>
         </div>
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos.</p>;
     }
@@ -172,7 +183,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
         <>
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} />
                 ))}
             </div>
 
@@ -218,11 +229,11 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                                 {visibleColumns.detalle_final && <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.detalle_final}</p></td>}
 
                                 {/* ✅ CORRECCIÓN 3: La celda de la columna Estado ahora es condicional */}
-                                {visibleColumns.entregado && <td className="px-4 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pedido.entregado ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{pedido.entregado ? 'Entregado' : 'Pendiente'}</span></td>}
+                                {visibleColumns.entregado && <td className="px-4 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pedido.entregado ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{pedido.entregado ? 'Entregado' : 'Pendiente'}</span>{pedido.entregado && pedido.entregado_por && <span className="block text-xs text-gray-500 mt-1">por {pedido.entregado_por}</span>}</td>}
 
                                 <td className="px-4 py-4 whitespace-nowrap">
                                     <div className="print:hidden">
-                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} />
+                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} />
                                     </div>
                                     <div className="hidden print:block">{pedido.entregado ? 'Entregado' : 'Pendiente'}</div>
                                 </td>

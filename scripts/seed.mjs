@@ -61,6 +61,7 @@ async function main() {
         cliente VARCHAR(255) NOT NULL,
         whatsapp VARCHAR(50),
         direccion TEXT,
+        direccion_mapa TEXT,
         distrito VARCHAR(100),
         tipo_cliente VARCHAR(50),
         detalle TEXT NOT NULL,
@@ -73,7 +74,9 @@ async function main() {
         latitude DECIMAL(10, 8),
         longitude DECIMAL(11, 8),
         asesor_id UUID REFERENCES users(id),
-        entregado BOOLEAN NOT NULL DEFAULT FALSE
+        entregado BOOLEAN NOT NULL DEFAULT FALSE,
+        entregado_por TEXT,
+        entregado_at TIMESTAMP WITH TIME ZONE
       );
     `;
     console.log('✅ Tabla "pedidos" creada.');

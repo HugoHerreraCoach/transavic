@@ -15,6 +15,7 @@ type TicketData = {
   cliente: string;
   whatsapp: string;
   direccion: string;
+  direccionMapa: string;
   distrito: string;
   tipoCliente: string;
   detalle: string;
@@ -29,7 +30,7 @@ type TicketData = {
 };
 
 const getTodayString = () => new Date().toISOString().split('T')[0]; 
-const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
+const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', direccionMapa: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
 
@@ -192,10 +193,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   };
 
   const handleAddressChange = (address: string) => {
-    setFormDatos(prev => ({ ...prev, direccion: address }));
-    if (errors.direccion) {
-      setErrors(prev => ({ ...prev, direccion: undefined }));
-    }
+    setFormDatos(prev => ({ ...prev, direccionMapa: address }));
   };
 
   const handleGenerarClick = () => {
@@ -270,6 +268,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       const payloadParaApi = {
         ...ticketDatos,
         fecha: formDatos.fecha,
+        direccionMapa: formDatos.direccionMapa,
         items: selectedItems.length > 0 ? selectedItems.map(item => ({
           productoId: item.productoId,
           nombre: item.nombre,

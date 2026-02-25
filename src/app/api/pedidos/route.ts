@@ -9,6 +9,7 @@ const PedidoSchema = z.object({
   cliente: z.string().min(1, { message: "El cliente es requerido." }),
   whatsapp: z.string().optional(),
   direccion: z.string().optional(),
+  direccionMapa: z.string().optional(),
   distrito: z.string(),
   tipoCliente: z.string(),
   detalle: z.string().min(1, { message: "El detalle es requerido." }),
@@ -81,6 +82,7 @@ export async function POST(request: Request) {
       cliente,
       whatsapp,
       direccion,
+      direccionMapa,
       distrito,
       tipoCliente,
       detalle,
@@ -99,8 +101,8 @@ export async function POST(request: Request) {
 
     // Insert the order and get it back
     const insertedPedido = await sql`
-      INSERT INTO pedidos (cliente, whatsapp, direccion, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
-      VALUES (${cliente}, ${whatsapp}, ${direccion}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
+      INSERT INTO pedidos (cliente, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
+      VALUES (${cliente}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
       RETURNING id
     `;
 

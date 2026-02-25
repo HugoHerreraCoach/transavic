@@ -2,6 +2,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { auth } from "@/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +17,8 @@ const UpdateSchema = z.object({
   notas: z.string().optional().nullable(),
   detalle_final: z.string().optional().nullable(),
   entregado: z.boolean().optional(),
+  entregado_por: z.string().optional().nullable(),
+  entregado_at: z.string().optional().nullable(),
   empresa: z.string().optional(),
   fecha_pedido: z.string().optional(), 
   latitude: z.number().nullable().optional(),
@@ -47,6 +50,18 @@ export async function PATCH(request: Request) {
 
     const dataToUpdate = parsedData.data;
 
+    // Si se está marcando como entregado, inyectar quién y cuándo
+    if (dataToUpdate.entregado === true) {
+      const session = await auth();
+      const userName = session?.user?.name || 'Desconocido';
+      dataToUpdate.entregado_por = userName;
+      dataToUpdate.entregado_at = new Date().toISOString();
+    } else if (dataToUpdate.entregado === false) {
+      // Si se anula la entrega, limpiar atribución
+      dataToUpdate.entregado_por = null;
+      dataToUpdate.entregado_at = null;
+    }
+
     if (Object.keys(dataToUpdate).length === 0) {
       return NextResponse.json(
         { error: "No se proporcionaron campos para actualizar." },
@@ -69,9 +84,7 @@ export async function PATCH(request: Request) {
       .join(", ");
 
     const params = updateEntries.map(entry => entry[1]);
-    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${
-      params.length + 1
-    }`;
+    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
     params.push(id);
     await sql.query(query, params);
 

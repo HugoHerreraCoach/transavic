@@ -16,6 +16,8 @@ export type Pedido = {
   latitude: number | null;
   longitude: number | null;
   entregado: boolean;
+  entregado_por: string | null;
+  entregado_at: string | null;
   asesor_id: string | null; 
   asesor_name: string | null; 
 };

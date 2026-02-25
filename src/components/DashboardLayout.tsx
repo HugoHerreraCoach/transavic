@@ -1,13 +1,23 @@
 // src/components/DashboardLayout.tsx
 
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Session } from 'next-auth';
-import { useState } from 'react';
-import { FiPlus, FiList, FiUsers, FiLogOut, FiMenu, FiX, FiPackage, FiBarChart2, FiClipboard } from 'react-icons/fi';
-import { doLogout } from '@/lib/actions';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Session } from "next-auth";
+import { useState } from "react";
+import {
+  FiPlus,
+  FiList,
+  FiUsers,
+  FiLogOut,
+  FiMenu,
+  FiX,
+  FiPackage,
+  FiBarChart2,
+  FiClipboard,
+} from "react-icons/fi";
+import { doLogout } from "@/lib/actions";
 
 interface NavItem {
   href: string;
@@ -17,26 +27,57 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { href: '/dashboard/nuevo-pedido', label: 'Nuevo Pedido', icon: <FiPlus className="h-5 w-5 flex-shrink-0" /> },
-  { href: '/dashboard', label: 'Lista de Pedidos', icon: <FiList className="h-5 w-5 flex-shrink-0" /> },
-  { href: '/dashboard/productos', label: 'Productos', icon: <FiPackage className="h-5 w-5 flex-shrink-0" /> },
-  { href: '/dashboard/analytics', label: 'Analítica', icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" /> },
-  { href: '/dashboard/resumen', label: 'Resumen Diario', icon: <FiClipboard className="h-5 w-5 flex-shrink-0" /> },
-  { href: '/dashboard/users', label: 'Usuarios', icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
+  {
+    href: "/dashboard/nuevo-pedido",
+    label: "Nuevo Pedido",
+    icon: <FiPlus className="h-5 w-5 flex-shrink-0" />,
+  },
+  {
+    href: "/dashboard",
+    label: "Lista de Pedidos",
+    icon: <FiList className="h-5 w-5 flex-shrink-0" />,
+  },
+  {
+    href: "/dashboard/productos",
+    label: "Productos",
+    icon: <FiPackage className="h-5 w-5 flex-shrink-0" />,
+  },
+  {
+    href: "/dashboard/analytics",
+    label: "Analítica",
+    icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
+  {
+    href: "/dashboard/resumen",
+    label: "Resumen Diario",
+    icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
+  {
+    href: "/dashboard/users",
+    label: "Usuarios",
+    icon: <FiUsers className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
 ];
-
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
   session: Session;
 }
 
-export default function DashboardLayout({ children, session }: DashboardLayoutProps) {
+export default function DashboardLayout({
+  children,
+  session,
+}: DashboardLayoutProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const userRole = session.user.role;
 
-  const filteredNavItems = navItems.filter(item => !item.adminOnly || userRole === 'admin');
+  const filteredNavItems = navItems.filter(
+    (item) => !item.adminOnly || userRole === "admin",
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -68,7 +109,7 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
         className={`
           lg:hidden fixed top-0 left-0 z-50 h-full w-64 bg-white border-r border-gray-200 
           transform transition-transform duration-300 ease-in-out
-          ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${mobileOpen ? "translate-x-0" : "-translate-x-full"}
         `}
       >
         <div className="flex flex-col h-full">
@@ -88,10 +129,11 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
 
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
             {filteredNavItems.map((item) => {
-              const isActive = item.href === '/dashboard' 
-                ? pathname === '/dashboard'
-                : pathname.startsWith(item.href);
-              
+              const isActive =
+                item.href === "/dashboard"
+                  ? pathname === "/dashboard"
+                  : pathname.startsWith(item.href);
+
               return (
                 <Link
                   key={item.href}
@@ -99,9 +141,10 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
                   onClick={() => setMobileOpen(false)}
                   className={`
                     flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all duration-200
-                    ${isActive
-                      ? 'bg-red-50 text-red-700 border-l-4 border-red-600'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    ${
+                      isActive
+                        ? "bg-red-50 text-red-700 border-l-4 border-red-600"
+                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                     }
                   `}
                 >
@@ -115,7 +158,9 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
           <div className="border-t border-gray-200 p-4">
             <div className="mb-4 px-4">
               <p className="text-sm text-gray-500">Sesión iniciada como</p>
-              <p className="font-semibold text-gray-800 truncate">{session.user.name}</p>
+              <p className="font-semibold text-gray-800 truncate">
+                {session.user.name}
+              </p>
               <p className="text-xs text-gray-400 capitalize">{userRole}</p>
             </div>
             <form action={doLogout}>
@@ -153,10 +198,11 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
           {/* Navigation */}
           <nav className="flex-1 px-2 py-6 space-y-2 overflow-y-auto overflow-x-hidden">
             {filteredNavItems.map((item) => {
-              const isActive = item.href === '/dashboard' 
-                ? pathname === '/dashboard'
-                : pathname.startsWith(item.href);
-              
+              const isActive =
+                item.href === "/dashboard"
+                  ? pathname === "/dashboard"
+                  : pathname.startsWith(item.href);
+
               return (
                 <Link
                   key={item.href}
@@ -164,13 +210,16 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
                   title={item.label}
                   className={`
                     flex items-center gap-3 px-3 py-3 rounded-lg font-medium transition-all duration-200
-                    ${isActive
-                      ? 'bg-red-50 text-red-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    ${
+                      isActive
+                        ? "bg-red-50 text-red-700"
+                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                     }
                   `}
                 >
-                  <span className={`flex-shrink-0 ${isActive ? 'text-red-600' : ''}`}>
+                  <span
+                    className={`flex-shrink-0 ${isActive ? "text-red-600" : ""}`}
+                  >
                     {item.icon}
                   </span>
                   <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
@@ -186,7 +235,9 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
             {/* User info - visible on hover */}
             <div className="mb-2 px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
               <p className="text-xs text-gray-500">Sesión iniciada como</p>
-              <p className="font-semibold text-gray-800 truncate text-sm">{session.user.name}</p>
+              <p className="font-semibold text-gray-800 truncate text-sm">
+                {session.user.name}
+              </p>
             </div>
             <form action={doLogout}>
               <button
@@ -205,9 +256,7 @@ export default function DashboardLayout({ children, session }: DashboardLayoutPr
       </aside>
 
       {/* Main content - ajustado para sidebar colapsado */}
-      <main className="lg:pl-16 pt-16 lg:pt-0 min-h-screen">
-        {children}
-      </main>
+      <main className="lg:pl-16 pt-16 lg:pt-0 min-h-screen">{children}</main>
     </div>
   );
 }

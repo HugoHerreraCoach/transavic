@@ -69,6 +69,7 @@ export async function fetchFilteredPedidos(
         p.id, p.cliente, p.whatsapp, p.empresa, p.direccion, p.distrito, p.tipo_cliente, p.hora_entrega, p.notas,
         TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
         p.detalle, p.detalle_final, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
+        p.entregado_por, p.entregado_at,
         u.name as asesor_name
       FROM pedidos AS p
       LEFT JOIN users AS u ON p.asesor_id = u.id

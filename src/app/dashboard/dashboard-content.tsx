@@ -167,6 +167,7 @@ function Dashboard({ session }: DashboardContentProps) {
               onShareClick={setSharingPedido}
               visibleColumns={visibleColumns}
               userRole={session.user.role}
+              userName={session.user.name || 'Desconocido'}
             />
             {totalPages > 1 && (
               <PaginationControls currentPage={currentPage} totalPages={totalPages} />
