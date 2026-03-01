@@ -84,12 +84,38 @@ export async function GET(request: NextRequest) {
       LIMIT 10
     `;
 
+    // ── Entregas por persona: Hoy, Esta Semana, Este Mes ──
+    const entregasHoy = await sql`
+      SELECT entregado_por as persona, COUNT(*) as total
+      FROM pedidos
+      WHERE entregado = TRUE AND entregado_por IS NOT NULL
+        AND entregado_at::date = CURRENT_DATE
+      GROUP BY entregado_por ORDER BY total DESC
+    `;
+
+    const entregasSemana = await sql`
+      SELECT entregado_por as persona, COUNT(*) as total
+      FROM pedidos
+      WHERE entregado = TRUE AND entregado_por IS NOT NULL
+        AND entregado_at >= date_trunc('week', CURRENT_DATE)
+      GROUP BY entregado_por ORDER BY total DESC
+    `;
+
+    const entregasMes = await sql`
+      SELECT entregado_por as persona, COUNT(*) as total
+      FROM pedidos
+      WHERE entregado = TRUE AND entregado_por IS NOT NULL
+        AND entregado_at >= date_trunc('month', CURRENT_DATE)
+      GROUP BY entregado_por ORDER BY total DESC
+    `;
+
     return NextResponse.json({
       kpis: kpis[0],
       topProductos,
       ventasPorDia,
       porEmpresa,
       porDistrito,
+      entregasPorPersona: { hoy: entregasHoy, semana: entregasSemana, mes: entregasMes },
       rango: { desde: fechaDesde, hasta: fechaHasta },
     });
   } catch (error) {

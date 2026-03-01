@@ -16,10 +16,12 @@ type ActionsCellProps = {
     onShare: (pedido: Pedido) => void;
     userRole: string;
     userName: string;
+    usuarios: string[];
 };
 
-function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName }: ActionsCellProps) {
+function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName, usuarios }: ActionsCellProps) {
     const [isProcessing, setIsProcessing] = useState(false);
+    const [showDeliverySelector, setShowDeliverySelector] = useState(false);
 
     const handleDelete = async () => {
         if (!window.confirm(`¿Seguro que quieres eliminar el pedido de "${pedido.cliente}"?`)) return;
@@ -35,21 +37,27 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
         }
     };
 
-    const handleToggleDelivery = async () => {
-        if (isProcessing) return;
+    const executeDelivery = async (deliveredBy?: string) => {
         setIsProcessing(true);
+        setShowDeliverySelector(false);
         const newStatus = !pedido.entregado;
+        const finalName = deliveredBy || userName;
         try {
+            const body: Record<string, unknown> = { entregado: newStatus };
+            // Si admin elige un usuario específico, enviar entregado_por override
+            if (newStatus && deliveredBy) {
+                body.entregado_por = deliveredBy;
+            }
             const response = await fetch(`/api/pedidos/${pedido.id}`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entregado: newStatus }),
+                body: JSON.stringify(body),
             });
             if (!response.ok) throw new Error('Error al actualizar');
             onUpdateStatus({
                 ...pedido,
                 entregado: newStatus,
-                entregado_por: newStatus ? userName : null,
+                entregado_por: newStatus ? finalName : null,
                 entregado_at: newStatus ? new Date().toISOString() : null,
             });
         } catch {
@@ -59,26 +67,73 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
         }
     };
 
+    const handleToggleDelivery = () => {
+        if (isProcessing) return;
+        // Si es admin y va a marcar como entregado (no anular), mostrar selector
+        if (userRole === 'admin' && !pedido.entregado) {
+            setShowDeliverySelector(true);
+        } else {
+            executeDelivery();
+        }
+    };
+
     return (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
-            <button onClick={handleToggleDelivery} disabled={isProcessing} className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm ${pedido.entregado ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}>
-                {pedido.entregado ? <FiXCircle /> : <FiCheckCircle />}
-                <span>{pedido.entregado ? 'Anular' : 'Entregar'}</span>
-            </button>
-            {userRole !== 'repartidor' && (
-                <button onClick={() => onEdit(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-blue-500 hover:bg-blue-600 transition-colors text-xs sm:text-sm">
-                    <FiEdit /><span>Editar</span>
-                </button>
+        <>
+            {/* Modal selector de repartidor para admin */}
+            {showDeliverySelector && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowDeliverySelector(false)}>
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+                    <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                        <div className="px-5 pt-5 pb-3">
+                            <h3 className="text-base font-bold text-gray-800">¿Quién realizó la entrega?</h3>
+                            <p className="text-xs text-gray-500 mt-0.5">Pedido de <span className="font-semibold">{pedido.cliente}</span></p>
+                        </div>
+                        <div className="px-3 pb-2 max-h-64 overflow-y-auto">
+                            {usuarios.map((nombre) => (
+                                <button
+                                    key={nombre}
+                                    onClick={() => executeDelivery(nombre)}
+                                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-teal-50 transition-colors group"
+                                >
+                                    <span className="flex-shrink-0 w-9 h-9 rounded-full bg-teal-100 text-teal-700 font-bold text-sm flex items-center justify-center group-hover:bg-teal-200 transition-colors">
+                                        {nombre.charAt(0).toUpperCase()}
+                                    </span>
+                                    <span className="text-sm font-medium text-gray-700 group-hover:text-teal-700 transition-colors">{nombre}</span>
+                                </button>
+                            ))}
+                        </div>
+                        <div className="px-5 py-3 border-t border-gray-100">
+                            <button
+                                onClick={() => setShowDeliverySelector(false)}
+                                className="w-full py-2 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
-            <button onClick={() => onShare(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-green-500 hover:bg-green-600 transition-colors text-xs sm:text-sm">
-                <FiShare2 /><span>Compartir</span>
-            </button>
-            {userRole !== 'repartidor' && (
-                <button onClick={handleDelete} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
-                    <FiTrash2 />
+
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
+                <button onClick={handleToggleDelivery} disabled={isProcessing} className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm ${pedido.entregado ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}>
+                    {pedido.entregado ? <FiXCircle /> : <FiCheckCircle />}
+                    <span>{pedido.entregado ? 'Anular' : 'Entregar'}</span>
                 </button>
-            )}
-        </div>
+                {userRole !== 'repartidor' && (
+                    <button onClick={() => onEdit(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-blue-500 hover:bg-blue-600 transition-colors text-xs sm:text-sm">
+                        <FiEdit /><span>Editar</span>
+                    </button>
+                )}
+                <button onClick={() => onShare(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-green-500 hover:bg-green-600 transition-colors text-xs sm:text-sm">
+                    <FiShare2 /><span>Compartir</span>
+                </button>
+                {userRole !== 'repartidor' && (
+                    <button onClick={handleDelete} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
+                        <FiTrash2 />
+                    </button>
+                )}
+            </div>
+        </>
     );
 }
 
@@ -91,6 +146,7 @@ type PedidoCardProps = {
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
+    usuarios: string[];
 };
 
 type PedidosTableProps = {
@@ -102,9 +158,10 @@ type PedidosTableProps = {
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
+    usuarios: string[];
 };
 
-function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName }: PedidoCardProps) {
+function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (!numero) return '#';
         return `https://wa.me/${numero.replace(/[^0-9]/g, '')}`;
@@ -164,13 +221,13 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
 
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
-                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} />
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
             </div>
         </div>
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos.</p>;
     }
@@ -183,7 +240,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
         <>
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
                 ))}
             </div>
 
@@ -233,7 +290,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
 
                                 <td className="px-4 py-4 whitespace-nowrap">
                                     <div className="print:hidden">
-                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} />
+                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
                                     </div>
                                     <div className="hidden print:block">{pedido.entregado ? 'Entregado' : 'Pendiente'}</div>
                                 </td>

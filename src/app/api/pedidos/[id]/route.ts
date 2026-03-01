@@ -52,9 +52,11 @@ export async function PATCH(request: Request) {
 
     // Si se está marcando como entregado, inyectar quién y cuándo
     if (dataToUpdate.entregado === true) {
-      const session = await auth();
-      const userName = session?.user?.name || 'Desconocido';
-      dataToUpdate.entregado_por = userName;
+      // Si el cliente NO envió entregado_por (override de admin), auto-inyectar desde sesión
+      if (!dataToUpdate.entregado_por) {
+        const session = await auth();
+        dataToUpdate.entregado_por = session?.user?.name || 'Desconocido';
+      }
       dataToUpdate.entregado_at = new Date().toISOString();
     } else if (dataToUpdate.entregado === false) {
       // Si se anula la entrega, limpiar atribución

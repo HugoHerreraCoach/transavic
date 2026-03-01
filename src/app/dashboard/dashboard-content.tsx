@@ -91,6 +91,7 @@ function Dashboard({ session }: DashboardContentProps) {
   );
   const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
   const [editingPedido, setEditingPedido] = useState<Pedido | null>(null);
+  const [usuarios, setUsuarios] = useState<string[]>([]);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
 
@@ -114,6 +115,23 @@ function Dashboard({ session }: DashboardContentProps) {
     };
     fetchPedidos();
   }, [searchParams]);
+
+  // Cargar lista de usuarios para admin (selector de quién entregó)
+  useEffect(() => {
+    if (session.user.role !== 'admin') return;
+    const fetchUsuarios = async () => {
+      try {
+        const res = await fetch('/api/users');
+        if (res.ok) {
+          const data = await res.json();
+          setUsuarios(data.map((u: { name: string }) => u.name));
+        }
+      } catch (e) {
+        console.error('Error al cargar usuarios:', e);
+      }
+    };
+    fetchUsuarios();
+  }, [session.user.role]);
 
   const handlePedidoUpdated = (updatedPedido: Pedido) => {
     setPedidos(currentPedidos =>
@@ -168,6 +186,7 @@ function Dashboard({ session }: DashboardContentProps) {
               visibleColumns={visibleColumns}
               userRole={session.user.role}
               userName={session.user.name || 'Desconocido'}
+              usuarios={usuarios}
             />
             {totalPages > 1 && (
               <PaginationControls currentPage={currentPage} totalPages={totalPages} />

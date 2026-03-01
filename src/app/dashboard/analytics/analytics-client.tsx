@@ -2,7 +2,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FiBarChart2, FiTrendingUp, FiTruck, FiCheckCircle, FiClock, FiCalendar, FiMapPin } from 'react-icons/fi';
+import { FiBarChart2, FiTrendingUp, FiTruck, FiCheckCircle, FiClock, FiCalendar, FiMapPin, FiUsers } from 'react-icons/fi';
 
 type AnalyticsData = {
   kpis: { total_pedidos: string; entregados: string; pendientes: string };
@@ -10,6 +10,11 @@ type AnalyticsData = {
   ventasPorDia: { fecha: string; fecha_corta: string; total: string }[];
   porEmpresa: { empresa: string; total: string }[];
   porDistrito: { distrito: string; total: string }[];
+  entregasPorPersona: {
+    hoy: { persona: string; total: string }[];
+    semana: { persona: string; total: string }[];
+    mes: { persona: string; total: string }[];
+  };
   rango: { desde: string; hasta: string };
 };
 
@@ -190,6 +195,66 @@ export default function AnalyticsClient() {
           <KPICard label="Entregados" value={data.kpis.entregados} icon={<FiCheckCircle className="text-green-600" size={22} />} color="border-green-600" />
           <KPICard label="Pendientes" value={data.kpis.pendientes} icon={<FiClock className="text-yellow-600" size={22} />} color="border-yellow-600" />
         </div>
+
+        {/* Entregas por Persona */}
+        {(() => {
+          const ep = data.entregasPorPersona;
+          const toMap = (arr: { persona: string; total: string }[]) =>
+            Object.fromEntries(arr.map(r => [r.persona, Number(r.total)]));
+          const hoyMap = toMap(ep.hoy);
+          const semanaMap = toMap(ep.semana);
+          const mesMap = toMap(ep.mes);
+          const personas = [...new Set([...Object.keys(hoyMap), ...Object.keys(semanaMap), ...Object.keys(mesMap)])];
+
+          return (
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+              <h2 className="text-lg font-bold text-gray-800 mb-2 flex items-center gap-2">
+                <FiUsers className="text-teal-500" />
+                Entregas por Persona
+              </h2>
+              <p className="text-sm text-gray-500 mb-4">Control de entregas realizadas por cada miembro del equipo</p>
+
+              {personas.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="text-left py-3 px-3 font-semibold text-gray-600">Persona</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-600">Hoy</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-600">Esta Semana</th>
+                        <th className="text-center py-3 px-3 font-semibold text-gray-600">Este Mes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {personas.map(persona => (
+                        <tr key={persona} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="py-3 px-3 font-medium text-gray-800">{persona}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${hoyMap[persona] ? 'bg-teal-100 text-teal-700' : 'bg-gray-100 text-gray-400'}`}>
+                              {hoyMap[persona] || 0}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${semanaMap[persona] ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>
+                              {semanaMap[persona] || 0}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-sm font-bold ${mesMap[persona] ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-400'}`}>
+                              {mesMap[persona] || 0}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-400 text-center py-6 text-sm">Los datos aparecerán cuando se marquen pedidos como entregados desde la lista de pedidos</p>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Charts Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
