@@ -133,6 +133,12 @@ export default function AnalyticsClient() {
   });
   const [hasta, setHasta] = useState(() => new Date().toISOString().split('T')[0]);
 
+  // Despacho stats
+  const [despacho, setDespacho] = useState<{
+    sinAsignar: number; enCamino: number; entregados: number; fallidos: number; total: number;
+    repartidores: { name: string; entregados: number; total: number; estado: string }[];
+  } | null>(null);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
@@ -145,6 +151,43 @@ export default function AnalyticsClient() {
       setLoading(false);
     }
   }, [desde, hasta]);
+
+  // Fetch despacho stats
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/despacho');
+        if (!res.ok) return;
+        const json = await res.json();
+
+        const allPedidos = [
+          ...(json.pendientes || []),
+          ...(json.repartidores?.flatMap((r: { pedidos: { estado: string }[] }) => r.pedidos) || []),
+        ];
+
+        setDespacho({
+          sinAsignar: json.pendientes?.length || 0,
+          enCamino: allPedidos.filter((p: { estado: string }) => p.estado === 'En_Camino').length,
+          entregados: allPedidos.filter((p: { estado: string }) => p.estado === 'Entregado').length,
+          fallidos: allPedidos.filter((p: { estado: string }) => p.estado === 'Fallido').length,
+          total: allPedidos.length,
+          repartidores: (json.repartidores || []).map((r: { name: string; pedidos: { estado: string }[] }) => {
+            const rTotal = r.pedidos.length;
+            const rEntregados = r.pedidos.filter(p => p.estado === 'Entregado').length;
+            const enCamino = r.pedidos.find((p: { estado: string }) => p.estado === 'En_Camino');
+            const proximo = r.pedidos.find((p: { estado: string }) => p.estado === 'Asignado');
+            const completados = r.pedidos.filter(p => p.estado === 'Entregado' || p.estado === 'Fallido').length;
+            return {
+              name: r.name,
+              entregados: rEntregados,
+              total: rTotal,
+              estado: completados === rTotal && rTotal > 0 ? '✅ Completado' : enCamino ? '🚗 En camino' : proximo ? '⏳ Próximo' : 'Sin pedidos',
+            };
+          }),
+        });
+      } catch { /* ignore */ }
+    })();
+  }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -188,6 +231,47 @@ export default function AnalyticsClient() {
             <input type="date" value={hasta} onChange={e => setHasta(e.target.value)} className="px-3 py-2 border rounded-lg text-sm text-gray-900 bg-white" />
           </div>
         </div>
+
+        {/* 🚚 Despacho del Día — compact section */}
+        {despacho && despacho.total > 0 && (
+          <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                <FiTruck className="text-indigo-500" />
+                Despacho del Día
+              </h2>
+              <a href="/dashboard/despacho" className="text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors">
+                Centro de Despacho →
+              </a>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap mb-3">
+              <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-medium">{despacho.sinAsignar} sin asignar</span>
+              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">{despacho.enCamino} en camino</span>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-medium">{despacho.entregados} entregados</span>
+              {despacho.fallidos > 0 && <span className="px-2.5 py-1 rounded-full bg-red-50 text-red-700 text-xs font-medium">{despacho.fallidos} fallidos</span>}
+            </div>
+            {/* Mini progress */}
+            <div className="flex items-center gap-3 mb-3">
+              <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                <div className="h-full rounded-full transition-all duration-700" style={{
+                  width: `${despacho.total > 0 ? ((despacho.entregados + despacho.fallidos) / despacho.total * 100) : 0}%`,
+                  background: despacho.entregados + despacho.fallidos === despacho.total ? '#10b981' : '#6366f1',
+                }} />
+              </div>
+              <span className="text-xs font-semibold text-gray-600">{despacho.entregados + despacho.fallidos}/{despacho.total}</span>
+            </div>
+            {/* Repartidores compact */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {despacho.repartidores.filter(r => r.total > 0).map(r => (
+                <div key={r.name} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 text-xs">
+                  <span className="w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 text-white text-[9px] font-bold flex items-center justify-center flex-shrink-0">{r.name.charAt(0)}</span>
+                  <span className="truncate font-medium text-gray-700">{r.name}</span>
+                  <span className="ml-auto font-bold text-gray-500">{r.entregados}/{r.total}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

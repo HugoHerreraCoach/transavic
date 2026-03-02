@@ -24,12 +24,13 @@ export async function GET(request: NextRequest) {
     const fechaDesde = desde || defaultDesde.toISOString().split("T")[0];
     const fechaHasta = hasta || new Date().toISOString().split("T")[0];
 
-    // ── KPIs ──
+    // ── KPIs (usando estado en vez de entregado boolean) ──
     const kpis = await sql`
       SELECT 
         COUNT(*) as total_pedidos,
-        COUNT(*) FILTER (WHERE entregado = TRUE) as entregados,
-        COUNT(*) FILTER (WHERE entregado = FALSE) as pendientes
+        COUNT(*) FILTER (WHERE estado = 'Entregado') as entregados,
+        COUNT(*) FILTER (WHERE estado NOT IN ('Entregado', 'Fallido')) as pendientes,
+        COUNT(*) FILTER (WHERE estado = 'Fallido') as fallidos
       FROM pedidos
       WHERE fecha_pedido >= ${fechaDesde}::date AND fecha_pedido <= ${fechaHasta}::date
     `;
@@ -88,24 +89,24 @@ export async function GET(request: NextRequest) {
     const entregasHoy = await sql`
       SELECT entregado_por as persona, COUNT(*) as total
       FROM pedidos
-      WHERE entregado = TRUE AND entregado_por IS NOT NULL
-        AND entregado_at::date = CURRENT_DATE
+      WHERE estado = 'Entregado' AND entregado_por IS NOT NULL
+        AND entregado_at::date = (NOW() AT TIME ZONE 'America/Lima')::date
       GROUP BY entregado_por ORDER BY total DESC
     `;
 
     const entregasSemana = await sql`
       SELECT entregado_por as persona, COUNT(*) as total
       FROM pedidos
-      WHERE entregado = TRUE AND entregado_por IS NOT NULL
-        AND entregado_at >= date_trunc('week', CURRENT_DATE)
+      WHERE estado = 'Entregado' AND entregado_por IS NOT NULL
+        AND entregado_at >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
       GROUP BY entregado_por ORDER BY total DESC
     `;
 
     const entregasMes = await sql`
       SELECT entregado_por as persona, COUNT(*) as total
       FROM pedidos
-      WHERE entregado = TRUE AND entregado_por IS NOT NULL
-        AND entregado_at >= date_trunc('month', CURRENT_DATE)
+      WHERE estado = 'Entregado' AND entregado_por IS NOT NULL
+        AND entregado_at >= date_trunc('month', (NOW() AT TIME ZONE 'America/Lima')::date)
       GROUP BY entregado_por ORDER BY total DESC
     `;
 

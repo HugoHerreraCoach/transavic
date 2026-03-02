@@ -9,9 +9,11 @@ import Search from './search';
 import PedidosTable from './table';
 import PrintButton from './print-button';
 import ColumnCustomizer from './column-customizer';
+import VistaImpresion from '@/components/VistaImpresion';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 import EditPedidoModal from './edit-modal';
+import PesoModal from '@/components/PesoModal';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
@@ -91,6 +93,8 @@ function Dashboard({ session }: DashboardContentProps) {
   );
   const [sharingPedido, setSharingPedido] = useState<Pedido | null>(null);
   const [editingPedido, setEditingPedido] = useState<Pedido | null>(null);
+  const [pesoPedido, setPesoPedido] = useState<Pedido | null>(null);
+  const [formatoImpresion, setFormatoImpresion] = useState<'A4' | 'Ticket'>('A4');
   const [usuarios, setUsuarios] = useState<string[]>([]);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
@@ -149,7 +153,8 @@ function Dashboard({ session }: DashboardContentProps) {
   };
 
   return (
-    <main className="bg-white max-w-[1600px] mx-auto p-4 sm:p-6">
+    <>
+    <main className="bg-white max-w-[1600px] mx-auto p-4 sm:p-6 print:hidden">
       {/* 1. Encabezado Principal */}
       <div className="flex justify-between items-center mb-4 print:hidden">
         <div>
@@ -167,12 +172,15 @@ function Dashboard({ session }: DashboardContentProps) {
 
       {/* 3. Acciones de la Lista */}
       <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-3 print:hidden">
-        <PrintButton />
+        <PrintButton onSelectFormat={(fmt) => {
+          setFormatoImpresion(fmt);
+          setTimeout(() => window.print(), 150);
+        }} />
         <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
       </div>
 
-      {/* 4. Contenido de la Tabla (Sin cambios) */}
-      <div className="mt-6">
+      {/* 4. Contenido de la Tabla */}
+      <div className="mt-6 print:hidden">
         {cargando ? (
           <p className="mt-8 text-center text-gray-500">Cargando pedidos...</p>
         ) : (
@@ -183,6 +191,7 @@ function Dashboard({ session }: DashboardContentProps) {
               onPedidoUpdated={handlePedidoUpdated}
               onEditClick={setEditingPedido}
               onShareClick={setSharingPedido}
+              onPesoClick={setPesoPedido}
               visibleColumns={visibleColumns}
               userRole={session.user.role}
               userName={session.user.name || 'Desconocido'}
@@ -210,8 +219,34 @@ function Dashboard({ session }: DashboardContentProps) {
           onClose={() => setSharingPedido(null)}
         />
       )}
+      
+      {pesoPedido && (
+        <PesoModal
+          pedido={pesoPedido}
+          isOpen={!!pesoPedido}
+          onClose={() => setPesoPedido(null)}
+          onGuardar={async (id, detalle) => {
+            const res = await fetch(`/api/pedidos/${id}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ detalle_final: detalle })
+            });
+            if (res.ok) {
+              handlePedidoUpdated({ ...pesoPedido, detalle_final: detalle });
+            } else {
+              throw new Error("Error al consultar la API");
+            }
+          }}
+        />
+      )}
 
     </main>
+
+    {/* Vista de impresión - FUERA del main con print:hidden */}
+    <div className="hidden print:block bg-white w-full">
+      <VistaImpresion pedidos={pedidos} formato={formatoImpresion} />
+    </div>
+    </>
   );
 }
 

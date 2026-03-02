@@ -2,11 +2,46 @@
 'use client';
 
 import { useState } from 'react';
-import { Pedido } from "@/lib/types";
-// ✅ CORRECCIÓN 1: Se reincorporan los íconos para el estado en la vista móvil
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive } from 'react-icons/fi';
+import { Pedido, EstadoPedido } from "@/lib/types";
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle } from 'react-icons/fi';
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
+
+// ── Estado Badge Helper ──
+function getEstadoBadge(estado: EstadoPedido) {
+    const configs: Record<EstadoPedido, { bg: string; text: string; label: string; icon: React.ReactNode }> = {
+        Pendiente: { bg: 'bg-amber-100', text: 'text-amber-800', label: 'Pendiente', icon: <FiClock className="text-amber-600" /> },
+        Asignado: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Asignado', icon: <FiPackage className="text-blue-600" /> },
+        En_Camino: { bg: 'bg-indigo-100', text: 'text-indigo-800', label: 'En Camino', icon: <FiNavigation className="text-indigo-600" /> },
+        Entregado: { bg: 'bg-green-100', text: 'text-green-800', label: 'Entregado', icon: <FiCheckCircle className="text-green-600" /> },
+        Fallido: { bg: 'bg-red-100', text: 'text-red-800', label: 'No Entregado', icon: <FiXCircle className="text-red-600" /> },
+    };
+    return configs[estado] || configs.Pendiente;
+}
+
+function EstadoBadge({ estado, repartidorName, razonFallo }: { estado: EstadoPedido; repartidorName?: string | null; razonFallo?: string | null }) {
+    const config = getEstadoBadge(estado);
+    return (
+        <div>
+            <span className={`px-2.5 py-1 inline-flex items-center gap-1.5 text-xs leading-5 font-semibold rounded-full ${config.bg} ${config.text}`}>
+                {config.icon}
+                {config.label}
+            </span>
+            {repartidorName && (estado === 'Asignado' || estado === 'En_Camino') && (
+                <span className="block text-xs text-gray-500 mt-1">🏍️ {repartidorName}</span>
+            )}
+            {estado === 'Entregado' && repartidorName && (
+                <span className="block text-xs text-gray-500 mt-1">por {repartidorName}</span>
+            )}
+            {estado === 'Fallido' && razonFallo && (
+                <span className="block text-xs text-red-500 mt-1" title={razonFallo}>
+                    <FiAlertTriangle className="inline mr-1" size={10} />
+                    {razonFallo.length > 30 ? razonFallo.substring(0, 30) + '...' : razonFallo}
+                </span>
+            )}
+        </div>
+    );
+}
 
 type ActionsCellProps = {
     pedido: Pedido;
@@ -14,12 +49,13 @@ type ActionsCellProps = {
     onUpdateStatus: (pedido: Pedido) => void;
     onEdit: (pedido: Pedido) => void;
     onShare: (pedido: Pedido) => void;
+    onPesoClick: (pedido: Pedido) => void;
     userRole: string;
     userName: string;
     usuarios: string[];
 };
 
-function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName, usuarios }: ActionsCellProps) {
+function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, onPesoClick, userRole, userName, usuarios }: ActionsCellProps) {
     const [isProcessing, setIsProcessing] = useState(false);
     const [showDeliverySelector, setShowDeliverySelector] = useState(false);
 
@@ -40,12 +76,13 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const executeDelivery = async (deliveredBy?: string) => {
         setIsProcessing(true);
         setShowDeliverySelector(false);
-        const newStatus = !pedido.entregado;
+        const isCurrentlyDelivered = pedido.estado === 'Entregado';
+        const newEstado = isCurrentlyDelivered ? 'Pendiente' : 'Entregado';
         const finalName = deliveredBy || userName;
+
         try {
-            const body: Record<string, unknown> = { entregado: newStatus };
-            // Si admin elige un usuario específico, enviar entregado_por override
-            if (newStatus && deliveredBy) {
+            const body: Record<string, unknown> = { estado: newEstado };
+            if (newEstado === 'Entregado' && deliveredBy) {
                 body.entregado_por = deliveredBy;
             }
             const response = await fetch(`/api/pedidos/${pedido.id}`, {
@@ -56,9 +93,10 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             if (!response.ok) throw new Error('Error al actualizar');
             onUpdateStatus({
                 ...pedido,
-                entregado: newStatus,
-                entregado_por: newStatus ? finalName : null,
-                entregado_at: newStatus ? new Date().toISOString() : null,
+                estado: newEstado as EstadoPedido,
+                entregado: newEstado === 'Entregado',
+                entregado_por: newEstado === 'Entregado' ? finalName : null,
+                entregado_at: newEstado === 'Entregado' ? new Date().toISOString() : null,
             });
         } catch {
             alert("No se pudo actualizar el estado del pedido.");
@@ -69,13 +107,14 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
 
     const handleToggleDelivery = () => {
         if (isProcessing) return;
-        // Si es admin y va a marcar como entregado (no anular), mostrar selector
-        if (userRole === 'admin' && !pedido.entregado) {
+        if (userRole === 'admin' && pedido.estado !== 'Entregado') {
             setShowDeliverySelector(true);
         } else {
             executeDelivery();
         }
     };
+
+    const isDelivered = pedido.estado === 'Entregado';
 
     return (
         <>
@@ -115,9 +154,9 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             )}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
-                <button onClick={handleToggleDelivery} disabled={isProcessing} className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm ${pedido.entregado ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}>
-                    {pedido.entregado ? <FiXCircle /> : <FiCheckCircle />}
-                    <span>{pedido.entregado ? 'Anular' : 'Entregar'}</span>
+                <button onClick={handleToggleDelivery} disabled={isProcessing} className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm ${isDelivered ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}>
+                    {isDelivered ? <FiXCircle /> : <FiCheckCircle />}
+                    <span>{isDelivered ? 'Anular' : 'Entregar'}</span>
                 </button>
                 {userRole !== 'repartidor' && (
                     <button onClick={() => onEdit(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-blue-500 hover:bg-blue-600 transition-colors text-xs sm:text-sm">
@@ -126,6 +165,9 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                 )}
                 <button onClick={() => onShare(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-green-500 hover:bg-green-600 transition-colors text-xs sm:text-sm">
                     <FiShare2 /><span>Compartir</span>
+                </button>
+                <button onClick={() => onPesoClick(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-orange-500 hover:bg-orange-600 transition-colors text-xs sm:text-sm">
+                    <span>⚖️ Peso</span>
                 </button>
                 {userRole !== 'repartidor' && (
                     <button onClick={handleDelete} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
@@ -143,6 +185,7 @@ type PedidoCardProps = {
     onPedidoUpdated: (pedido: Pedido) => void;
     onEditClick: (pedido: Pedido) => void;
     onShareClick: (pedido: Pedido) => void;
+    onPesoClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
@@ -155,13 +198,24 @@ type PedidosTableProps = {
     onPedidoUpdated: (pedido: Pedido) => void;
     onEditClick: (pedido: Pedido) => void;
     onShareClick: (pedido: Pedido) => void;
+    onPesoClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
     usuarios: string[];
 };
 
-function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
+function getRowBgClass(estado: EstadoPedido): string {
+    switch (estado) {
+        case 'Entregado': return 'bg-green-50';
+        case 'Fallido': return 'bg-red-50';
+        case 'En_Camino': return 'bg-indigo-50';
+        case 'Asignado': return 'bg-blue-50';
+        default: return '';
+    }
+}
+
+function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, onPesoClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (!numero) return '#';
         return `https://wa.me/${numero.replace(/[^0-9]/g, '')}`;
@@ -169,7 +223,7 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
     const whatsappLink = getWhatsAppLink(pedido.whatsapp);
 
     return (
-        <div className={`bg-white rounded-lg shadow-md p-4 border border-gray-200 transition-all ${pedido.entregado ? 'bg-green-50' : ''}`}>
+        <div className={`bg-white rounded-lg shadow-md p-4 border border-gray-200 transition-all ${getRowBgClass(pedido.estado)}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2 text-lg font-bold text-gray-800"><FiUser /><span>{pedido.cliente}</span></div>
                 <div className="flex items-center gap-2 text-sm text-gray-600"><FiCalendar /><span>{pedido.fecha_pedido}</span></div>
@@ -189,16 +243,14 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
             {visibleColumns.hora_entrega && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiClock /><span>{pedido.hora_entrega}</span></div>}
             {visibleColumns.asesor && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiUserCheck /><span>Asesor: {pedido.asesor_name ?? 'N/A'}</span></div>}
 
-            {/* ✅ CORRECCIÓN 2: Se agrega el estado en la vista móvil con su condición de visibilidad */}
+            {/* Estado con badge de 5 estados */}
             {visibleColumns.entregado && (
-                <div className="mt-3 flex items-center gap-2 text-sm font-medium">
-                    {pedido.entregado ? <FiCheckCircle className="text-green-600" /> : <FiClock className="text-yellow-600" />}
-                    <span className={pedido.entregado ? 'text-green-700' : 'text-yellow-700'}>
-                        Estado: {pedido.entregado ? 'Entregado' : 'Pendiente'}
-                    </span>
-                    {pedido.entregado && pedido.entregado_por && (
-                        <span className="text-xs text-gray-500 ml-1">por {pedido.entregado_por}</span>
-                    )}
+                <div className="mt-3">
+                    <EstadoBadge
+                        estado={pedido.estado}
+                        repartidorName={pedido.repartidor_name || pedido.entregado_por}
+                        razonFallo={pedido.razon_fallo}
+                    />
                 </div>
             )}
 
@@ -221,13 +273,13 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
 
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
-                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} onPesoClick={onPesoClick} userRole={userRole} userName={userName} usuarios={usuarios} />
             </div>
         </div>
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, onPesoClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos.</p>;
     }
@@ -240,7 +292,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
         <>
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} onPesoClick={onPesoClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
                 ))}
             </div>
 
@@ -261,16 +313,13 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                             {visibleColumns.notas && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiInfo />Notas</div></th>}
                             {visibleColumns.asesor && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUserCheck />Asesor</div></th>}
                             {visibleColumns.detalle_final && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiArchive />Detalle Final</div></th>}
-
-                            {/* ✅ CORRECCIÓN 3: El encabezado de la columna Estado ahora es condicional */}
                             {visibleColumns.entregado && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiCheckCircle />Estado</div></th>}
-
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Acciones</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
                         {pedidos.map((pedido) => (
-                            <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${pedido.entregado ? 'bg-green-50' : ''}`}>
+                            <tr key={pedido.id} className={`hover:bg-gray-50 align-top transition-all ${getRowBgClass(pedido.estado)}`}>
                                 <td className="px-4 py-4 whitespace-nowrap">{pedido.cliente}</td>
                                 <td className="px-4 py-4 whitespace-nowrap">{pedido.whatsapp ? (<a href={getWhatsAppLink(pedido.whatsapp)} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">{pedido.whatsapp}</a>) : (<span className="text-gray-400">N/A</span>)}</td>
                                 <td className="px-4 py-4 max-w-xs"><p className="break-words">{pedido.direccion}</p></td>
@@ -285,14 +334,21 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                                 {visibleColumns.asesor && <td className="px-4 py-4 whitespace-nowrap">{pedido.asesor_name ?? 'N/A'}</td>}
                                 {visibleColumns.detalle_final && <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.detalle_final}</p></td>}
 
-                                {/* ✅ CORRECCIÓN 3: La celda de la columna Estado ahora es condicional */}
-                                {visibleColumns.entregado && <td className="px-4 py-4 whitespace-nowrap"><span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pedido.entregado ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{pedido.entregado ? 'Entregado' : 'Pendiente'}</span>{pedido.entregado && pedido.entregado_por && <span className="block text-xs text-gray-500 mt-1">por {pedido.entregado_por}</span>}</td>}
+                                {visibleColumns.entregado && (
+                                    <td className="px-4 py-4 whitespace-nowrap">
+                                        <EstadoBadge
+                                            estado={pedido.estado}
+                                            repartidorName={pedido.repartidor_name || pedido.entregado_por}
+                                            razonFallo={pedido.razon_fallo}
+                                        />
+                                    </td>
+                                )}
 
                                 <td className="px-4 py-4 whitespace-nowrap">
                                     <div className="print:hidden">
-                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} onPesoClick={onPesoClick} userRole={userRole} userName={userName} usuarios={usuarios} />
                                     </div>
-                                    <div className="hidden print:block">{pedido.entregado ? 'Entregado' : 'Pendiente'}</div>
+                                    <div className="hidden print:block">{pedido.estado}</div>
                                 </td>
                             </tr>
                         ))}

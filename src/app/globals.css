@@ -27,33 +27,59 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Cursor pointer global para elementos interactivos */
+button,
+[role="button"],
+a,
+select,
+input[type="checkbox"],
+input[type="radio"],
+input[type="submit"],
+input[type="button"],
+label[for],
+summary {
+  cursor: pointer;
+}
 
 /* === INICIO: ESTILOS DE IMPRESIÓN === */
 @media print {
   .print-hidden {
     display: none !important;
   }
-  body, main {
+  body,
+  main {
     width: 100% !important;
     min-width: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    background: #ffffff !important; 
-    color: #000000 !important; 
+    background: #ffffff !important;
+    color: #000000 !important;
   }
- /* Forza que el contenedor de la tabla sea visible y sin estilos de "pantalla". */
+  /* Estilos específicos de los formatos insertados mediante Tailwind y este CSS */
+  .formato-a4 {
+    display: block !important;
+    font-size: 10pt;
+  }
+  .formato-ticket {
+    display: block !important;
+    width: 80mm !important;
+    margin: 0 auto !important;
+    font-size: 9pt;
+  }
+  
+  /* Forza que el contenedor de la tabla sea visible y sin estilos de "pantalla". */
   .print-container {
     display: block !important;
     box-shadow: none !important;
     border: none !important;
     overflow: visible !important; /* Muestra todo el contenido, sin scroll */
   }
-/* Ajustes cruciales para la tabla */
+  /* Ajustes cruciales para la tabla */
   table {
     width: 100% !important;
     table-layout: auto !important; /* Permite que el navegador ajuste las columnas */
-    font-size: 9pt !important;/* Reduce el tamaño de la fuente para que quepa más */
-    break-inside: auto;  /* Evita que la tabla se corte entre páginas si es posible */
+    font-size: 9pt !important; /* Reduce el tamaño de la fuente para que quepa más */
+    break-inside: auto; /* Evita que la tabla se corte entre páginas si es posible */
   }
   /* Reduce el padding en las celdas para ganar espacio horizontal */
   th {
@@ -63,7 +89,7 @@ body {
   td {
     padding: 4px 6px !important;
     white-space: normal !important; /* Permite que el texto largo salte de línea */
-    word-break: break-word;/* Rompe palabras largas si es necesario */
+    word-break: break-word; /* Rompe palabras largas si es necesario */
   }
   /* Asegura que el texto truncado en pantalla se muestre completo */
   .print\:whitespace-normal {

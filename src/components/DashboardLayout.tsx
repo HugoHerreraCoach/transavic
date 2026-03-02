@@ -16,6 +16,8 @@ import {
   FiPackage,
   FiBarChart2,
   FiClipboard,
+  FiNavigation,
+  FiTruck,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
 
@@ -24,9 +26,23 @@ interface NavItem {
   label: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
+  repartidorOnly?: boolean;
+  roles?: string[]; // si se define, solo se muestra a estos roles
 }
 
 const navItems: NavItem[] = [
+  {
+    href: "/dashboard/mi-ruta",
+    label: "Mi Ruta",
+    icon: <FiNavigation className="h-5 w-5 flex-shrink-0" />,
+    roles: ["repartidor"],
+  },
+  {
+    href: "/dashboard/despacho",
+    label: "Despacho",
+    icon: <FiTruck className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin"],
+  },
   {
     href: "/dashboard/nuevo-pedido",
     label: "Nuevo Pedido",
@@ -41,6 +57,7 @@ const navItems: NavItem[] = [
     href: "/dashboard/productos",
     label: "Productos",
     icon: <FiPackage className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
   },
   {
     href: "/dashboard/analytics",
@@ -75,9 +92,15 @@ export default function DashboardLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const userRole = session.user.role;
 
-  const filteredNavItems = navItems.filter(
-    (item) => !item.adminOnly || userRole === "admin",
-  );
+  const filteredNavItems = navItems.filter((item) => {
+    // Si tiene roles definidos, solo mostrar a esos roles
+    if (item.roles) return item.roles.includes(userRole);
+    // Si es adminOnly, solo admins
+    if (item.adminOnly) return userRole === "admin";
+    // Si es repartidorOnly, solo repartidores
+    if (item.repartidorOnly) return userRole === "repartidor";
+    return true;
+  });
 
   return (
     <div className="min-h-screen bg-gray-50">

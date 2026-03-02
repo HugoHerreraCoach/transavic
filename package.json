@@ -10,6 +10,7 @@
     "seed": "node --no-warnings ./scripts/seed.mjs"
   },
   "dependencies": {
+    "@hello-pangea/dnd": "^18.0.1",
     "@neondatabase/serverless": "^1.0.1",
     "@react-google-maps/api": "^2.20.7",
     "bcrypt": "^6.0.0",
