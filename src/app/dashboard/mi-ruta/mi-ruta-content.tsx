@@ -81,33 +81,28 @@ function useOnlineStatus() {
   return useSyncExternalStore(subscribe, getSnapshot, () => true);
 }
 
-// ── Hook: Geolocation ──
+// ── Hook: Geolocation (Lazy — solo se activa cuando se necesita) ──
 
-function useGeolocation() {
+function useGeolocation(enabled: boolean) {
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setError("GPS no disponible");
-      return;
-    }
+    if (!enabled || !navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setError(null);
       },
-      (err) => {
-        setError(err.code === 1 ? "Permiso de ubicación denegado" : "Error obteniendo ubicación");
+      () => {
+        // Silencioso — si no hay permiso, el ETA usa otros métodos
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  }, [enabled]);
 
-  return { position, error };
+  return position;
 }
 
 // ── Componentes ──
@@ -678,7 +673,10 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
   const [syncMessage, setSyncMessage] = useState<{ type: string; text: string } | null>(null);
 
   const online = useOnlineStatus();
-  const { position: driverPosition, error: gpsError } = useGeolocation();
+
+  // GPS: solo se activa cuando el mapa está abierto o hay un pedido En_Camino
+  const pedidoEnCaminoExists = pedidos.some(p => p.estado === 'En_Camino');
+  const driverPosition = useGeolocation(showMap || pedidoEnCaminoExists);
 
   const refreshQueueState = useCallback(() => {
     setQueueCount(getQueueCount());
@@ -933,13 +931,6 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
       </div>
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
-        {/* GPS Status */}
-        {gpsError && (
-          <div className="px-3 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-700 flex items-center gap-2">
-            <FiAlertTriangle size={14} />
-            {gpsError}
-          </div>
-        )}
 
         {/* Offline Banner */}
         {!online && (
