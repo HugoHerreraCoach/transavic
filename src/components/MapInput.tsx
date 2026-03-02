@@ -194,7 +194,7 @@ export default function MapInput({
             position={marker}
             draggable={true}
             onDragEnd={handleMarkerDragEnd}
-            animation={google.maps.Animation.DROP}
+            animation={typeof google !== 'undefined' ? google.maps.Animation.DROP : undefined}
           />
         )}
       </GoogleMap>

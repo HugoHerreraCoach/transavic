@@ -19,10 +19,13 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const fechaParam = searchParams.get("fecha");
 
-    // Default: yesterday
+    // Default: yesterday (usando hora local, no UTC)
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    const fecha = fechaParam || yesterday.toISOString().split("T")[0];
+    const yYear = yesterday.getFullYear();
+    const yMonth = String(yesterday.getMonth() + 1).padStart(2, '0');
+    const yDay = String(yesterday.getDate()).padStart(2, '0');
+    const fecha = fechaParam || `${yYear}-${yMonth}-${yDay}`;
 
     // ── Pedidos del día ──
     const pedidos = await sql`

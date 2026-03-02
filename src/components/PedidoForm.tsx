@@ -29,7 +29,14 @@ type TicketData = {
   asesor_name?: string | null;
 };
 
-const getTodayString = () => new Date().toISOString().split('T')[0]; 
+// Usar zona horaria local (no UTC) para evitar que pedidos creados de noche tengan fecha del día siguiente
+const getTodayString = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', direccionMapa: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 

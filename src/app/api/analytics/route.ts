@@ -18,11 +18,12 @@ export async function GET(request: NextRequest) {
     const desde = searchParams.get("desde");
     const hasta = searchParams.get("hasta");
 
-    // Default: last 30 days
+    // Default: last 30 days (usando hora local, no UTC)
     const defaultDesde = new Date();
     defaultDesde.setDate(defaultDesde.getDate() - 30);
-    const fechaDesde = desde || defaultDesde.toISOString().split("T")[0];
-    const fechaHasta = hasta || new Date().toISOString().split("T")[0];
+    const toLocalDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const fechaDesde = desde || toLocalDate(defaultDesde);
+    const fechaHasta = hasta || toLocalDate(new Date());
 
     // ── KPIs (usando estado en vez de entregado boolean) ──
     const kpis = await sql`
