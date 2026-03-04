@@ -48,9 +48,11 @@ export const authConfig = {
         if (isLoggedIn) return true;
         return false; // Redirect unauthenticated users to login page
       } else if (isLoggedIn) {
-        // Redirect logged-in users from /login to /dashboard
+        // Redirect logged-in users from /login to appropriate dashboard page
         if (nextUrl.pathname === "/login") {
-        return Response.redirect(new URL("/dashboard/nuevo-pedido", nextUrl));
+          const role = auth?.user?.role;
+          const target = role === "repartidor" ? "/dashboard/mi-ruta" : "/dashboard/nuevo-pedido";
+          return Response.redirect(new URL(target, nextUrl));
         }
       }
       return true;

@@ -37,16 +37,19 @@ export async function GET(request: NextRequest) {
     `;
 
     // ── Top Productos ──
+    // JOIN con productos para usar el nombre actual del catálogo
+    // COALESCE para fallback a producto_nombre guardado (datos antiguos sin producto_id)
     const topProductos = await sql`
       SELECT 
-        pi.producto_nombre as nombre,
+        COALESCE(prod.nombre, pi.producto_nombre) as nombre,
         pi.unidad,
         SUM(pi.cantidad) as total_cantidad,
         COUNT(DISTINCT pi.pedido_id) as total_pedidos
       FROM pedido_items pi
       JOIN pedidos p ON pi.pedido_id = p.id
+      LEFT JOIN productos prod ON pi.producto_id = prod.id
       WHERE p.fecha_pedido >= ${fechaDesde}::date AND p.fecha_pedido <= ${fechaHasta}::date
-      GROUP BY pi.producto_nombre, pi.unidad
+      GROUP BY COALESCE(prod.nombre, pi.producto_nombre), pi.unidad
       ORDER BY total_cantidad DESC
       LIMIT 15
     `;
@@ -111,6 +114,49 @@ export async function GET(request: NextRequest) {
       GROUP BY entregado_por ORDER BY total DESC
     `;
 
+    // ── 🏆 Analíticas por Asesora ──
+
+    // Ranking general por rango de fechas seleccionado
+    const asesoraRanking = await sql`
+      SELECT u.id, u.name,
+        COUNT(*) as total_pedidos,
+        COUNT(*) FILTER (WHERE p.estado = 'Entregado') as entregados,
+        COUNT(*) FILTER (WHERE p.estado NOT IN ('Entregado', 'Fallido')) as pendientes,
+        COUNT(*) FILTER (WHERE p.estado = 'Fallido') as fallidos
+      FROM pedidos p
+      JOIN users u ON p.asesor_id = u.id
+      WHERE p.fecha_pedido >= ${fechaDesde}::date AND p.fecha_pedido <= ${fechaHasta}::date
+      GROUP BY u.id, u.name
+      ORDER BY total_pedidos DESC
+    `;
+
+    // Top productos por asesora (rango seleccionado)
+    const asesoraProductos = await sql`
+      SELECT u.id as asesor_id,
+        COALESCE(prod.nombre, pi.producto_nombre) as producto,
+        pi.unidad, SUM(pi.cantidad) as total
+      FROM pedido_items pi
+      JOIN pedidos p ON pi.pedido_id = p.id
+      JOIN users u ON p.asesor_id = u.id
+      LEFT JOIN productos prod ON pi.producto_id = prod.id
+      WHERE p.fecha_pedido >= ${fechaDesde}::date AND p.fecha_pedido <= ${fechaHasta}::date
+      GROUP BY u.id, COALESCE(prod.nombre, pi.producto_nombre), pi.unidad
+      ORDER BY total DESC
+    `;
+
+    // Tendencia diaria por asesora (rango seleccionado)
+    const asesoraDiaria = await sql`
+      SELECT u.id as asesor_id, u.name as asesor_name,
+        TO_CHAR(p.fecha_pedido, 'YYYY-MM-DD') as fecha,
+        TO_CHAR(p.fecha_pedido, 'DD/MM') as fecha_corta,
+        COUNT(*) as total
+      FROM pedidos p
+      JOIN users u ON p.asesor_id = u.id
+      WHERE p.fecha_pedido >= ${fechaDesde}::date AND p.fecha_pedido <= ${fechaHasta}::date
+      GROUP BY u.id, u.name, p.fecha_pedido
+      ORDER BY p.fecha_pedido ASC
+    `;
+
     return NextResponse.json({
       kpis: kpis[0],
       topProductos,
@@ -118,6 +164,11 @@ export async function GET(request: NextRequest) {
       porEmpresa,
       porDistrito,
       entregasPorPersona: { hoy: entregasHoy, semana: entregasSemana, mes: entregasMes },
+      porAsesora: {
+        ranking: asesoraRanking,
+        productos: asesoraProductos,
+        diaria: asesoraDiaria,
+      },
       rango: { desde: fechaDesde, hasta: fechaHasta },
     });
   } catch (error) {

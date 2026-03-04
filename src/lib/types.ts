@@ -11,6 +11,8 @@ export type Pedido = {
   tipo_cliente: string | null;
   detalle: string;
   hora_entrega: string | null;
+  razon_social: string | null;
+  ruc_dni: string | null;
   notas: string | null;
   empresa: string;
   fecha_pedido: string;

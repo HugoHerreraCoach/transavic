@@ -15,7 +15,7 @@ import { Session } from "next-auth";
 import EditPedidoModal from './edit-modal';
 import PesoModal from '@/components/PesoModal';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'razon_social' | 'ruc_dni' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
 interface PaginationControlsProps {
   currentPage: number;
@@ -33,6 +33,8 @@ const getInitialVisibleColumns = (role: string): Record<Column, boolean> => {
     distrito: false,
     tipo_cliente: false,
     hora_entrega: false,
+    razon_social: false,
+    ruc_dni: false,
     notas: false,
     empresa: false,
     asesor: false,

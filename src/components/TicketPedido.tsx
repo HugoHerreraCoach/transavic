@@ -7,6 +7,10 @@ import {
 
 export interface TicketDisplayData {
     cliente: string;
+    razonSocial?: string;
+    razon_social?: string | null;
+    rucDni?: string;
+    ruc_dni?: string | null;
     whatsapp?: string | null;
     direccion?: string | null;
     distrito: string;
@@ -47,6 +51,11 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
             <h1 className="text-3xl font-bold text-red-600">{datos.empresa === 'Transavic' ? 'PEDIDO TRANSAVIC' : 'PEDIDO AVÍCOLA DE TONY'}</h1>
             {/* ✅ CORRECCIÓN: Usamos el formato de fecha que ya viene del dashboard */}
             <p className="text-center text-gray-600 text-md mt-2 font-semibold">{datos.fecha}</p>
+            {(datos.hora_entrega || datos.horaEntrega) && (
+                <p className="text-center text-gray-700 text-sm mt-1 font-semibold flex items-center justify-center gap-1">
+                    <FiClock size={14} /> Horario de entrega: {datos.hora_entrega || datos.horaEntrega}
+                </p>
+            )}
         </div>
 
 
@@ -63,6 +72,12 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
             )}
             {/* ✅ CORRECCIÓN: Se renderiza siempre la fila, y el valor se muestra si existe */}
             <div className="flex items-start"><FiUser className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Cliente:</span><span className="break-words">{datos.cliente || ''}</span></p></div>
+            {(datos.razon_social || datos.razonSocial) && (
+                <div className="flex items-start"><FiArchive className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Razón Social:</span><span className="break-words">{datos.razon_social || datos.razonSocial}</span></p></div>
+            )}
+            {(datos.ruc_dni || datos.rucDni) && (
+                <div className="flex items-start"><FiClipboard className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">RUC/DNI:</span><span className="break-words">{datos.ruc_dni || datos.rucDni}</span></p></div>
+            )}
             <div className="flex items-start"><FiPhone className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">WhatsApp:</span><span className="break-words">{datos.whatsapp || ''}</span></p></div>
             <div className="flex items-start"><FiMapPin className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Dirección:</span><span className="break-words">{datos.direccion || ''}</span></p></div>
             <div className="flex items-start"><FiMap className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Distrito:</span><span className="break-words">{datos.distrito || ''}</span></p></div>
@@ -82,7 +97,7 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
                 </div>
             )}
 
-            <div className="flex items-start"><FiClock className="mr-3 text-gray-600 flex-shrink-0 mt-1" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Horario de entrega:</span><span className="break-words">{datos.hora_entrega || datos.horaEntrega || ''}</span></p></div>
+
             <div className="flex items-start"><FiEdit2 className="mr-3 text-gray-600 mt-1 flex-shrink-0" size={20} /><p className="flex-1 min-w-0"><span className="font-semibold mr-2">Notas:</span><span className="whitespace-pre-wrap break-words">{datos.notas || ''}</span></p></div>
         </div>
     </div>

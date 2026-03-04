@@ -45,9 +45,10 @@ export async function GET(request: NextRequest) {
     let items: ItemRow[] = [];
     if (pedidoIds.length > 0) {
       items = await sql`
-        SELECT pedido_id, producto_nombre, cantidad, unidad
-        FROM pedido_items
-        WHERE pedido_id = ANY(${pedidoIds}::uuid[])
+        SELECT pi.pedido_id, COALESCE(prod.nombre, pi.producto_nombre) as producto_nombre, pi.cantidad, pi.unidad
+        FROM pedido_items pi
+        LEFT JOIN productos prod ON pi.producto_id = prod.id
+        WHERE pi.pedido_id = ANY(${pedidoIds}::uuid[])
         ORDER BY producto_nombre ASC
       ` as ItemRow[];
     }
@@ -55,14 +56,15 @@ export async function GET(request: NextRequest) {
     // ── Totales por producto ──
     const totalesPorProducto = await sql`
       SELECT 
-        pi.producto_nombre as nombre,
+        COALESCE(prod.nombre, pi.producto_nombre) as nombre,
         pi.unidad,
         SUM(pi.cantidad) as total
       FROM pedido_items pi
       JOIN pedidos p ON pi.pedido_id = p.id
+      LEFT JOIN productos prod ON pi.producto_id = prod.id
       WHERE p.fecha_pedido = ${fecha}::date
-      GROUP BY pi.producto_nombre, pi.unidad
-      ORDER BY pi.producto_nombre ASC
+      GROUP BY COALESCE(prod.nombre, pi.producto_nombre), pi.unidad
+      ORDER BY COALESCE(prod.nombre, pi.producto_nombre) ASC
     `;
 
     // ── KPIs del día ──

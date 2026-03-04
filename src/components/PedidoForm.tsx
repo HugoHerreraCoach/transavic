@@ -4,15 +4,19 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
-import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend } from 'react-icons/fi';
+import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend, FiStar } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import ProductSelector, { SelectedItem } from '@/components/ProductSelector';
+import TimeRangePicker from '@/components/TimeRangePicker';
+import ClienteAutocomplete, { ClienteData } from '@/components/ClienteAutocomplete';
 import { User } from '@/lib/types';
 import { formatFechaForTicket } from '@/lib/utils';
 import TicketPedido from '@/components/TicketPedido';
 
 type TicketData = {
   cliente: string;
+  razonSocial: string;
+  rucDni: string;
   whatsapp: string;
   direccion: string;
   direccionMapa: string;
@@ -37,7 +41,7 @@ const getTodayString = () => {
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-const datosIniciales: TicketData = { cliente: '', whatsapp: '', direccion: '', direccionMapa: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
+const datosIniciales: TicketData = { cliente: '', razonSocial: '', rucDni: '', whatsapp: '', direccion: '', direccionMapa: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
 
@@ -63,6 +67,9 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
   const [triggerFocus, setTriggerFocus] = useState<boolean>(false);
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
+  const [clienteGuardadoId, setClienteGuardadoId] = useState<string | null>(null);
+  const [showGuardarCliente, setShowGuardarCliente] = useState(false);
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -199,6 +206,61 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     }
   };
 
+  const handleClienteSelected = (cliente: ClienteData) => {
+    setClienteGuardadoId(cliente.id || null);
+    setFormDatos(prev => ({
+      ...prev,
+      cliente: cliente.nombre,
+      razonSocial: cliente.razon_social || '',
+      rucDni: cliente.ruc_dni || '',
+      whatsapp: cliente.whatsapp || '',
+      direccion: cliente.direccion || '',
+      direccionMapa: cliente.direccion_mapa || '',
+      distrito: cliente.distrito || prev.distrito,
+      tipoCliente: cliente.tipo_cliente || prev.tipoCliente,
+      horaEntrega: cliente.hora_entrega || prev.horaEntrega,
+      notas: cliente.notas || prev.notas,
+      empresa: cliente.empresa || prev.empresa,
+      latitude: cliente.latitude || null,
+      longitude: cliente.longitude || null,
+    }));
+  };
+
+  const handleGuardarCliente = async () => {
+    setGuardandoCliente(true);
+    try {
+      const body = {
+        nombre: formDatos.cliente,
+        razon_social: formDatos.razonSocial || null,
+        ruc_dni: formDatos.rucDni || null,
+        whatsapp: formDatos.whatsapp || null,
+        direccion: formDatos.direccion || null,
+        distrito: formDatos.distrito || null,
+        tipo_cliente: formDatos.tipoCliente || null,
+        hora_entrega: formDatos.horaEntrega || null,
+        notas: formDatos.notas || null,
+        empresa: formDatos.empresa || null,
+        latitude: formDatos.latitude,
+        longitude: formDatos.longitude,
+      };
+      const res = await fetch('/api/clientes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setShowGuardarCliente(false);
+        alert('✅ Cliente guardado como frecuente');
+      } else {
+        alert('Error al guardar cliente');
+      }
+    } catch {
+      alert('Error al guardar cliente');
+    } finally {
+      setGuardandoCliente(false);
+    }
+  };
+
   const handleAddressChange = (address: string) => {
     setFormDatos(prev => ({ ...prev, direccionMapa: address }));
   };
@@ -274,6 +336,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       // con el formato correcto (YYYY-MM-DD) que está en formDatos.
       const payloadParaApi = {
         ...ticketDatos,
+        clienteId: clienteGuardadoId || null,
         fecha: formDatos.fecha,
         direccionMapa: formDatos.direccionMapa,
         items: selectedItems.length > 0 ? selectedItems.map(item => ({
@@ -436,14 +499,30 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                   name="fecha"
                   value={formDatos.fecha}
                   onChange={handleChange}
-                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200 appearance-none"
+                  onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+                  className="w-full p-3 border border-gray-300 rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200 appearance-none cursor-pointer"
                   required
                 />
               </div>
 
               <div>
-                <input type="text" name="cliente" ref={clienteInputRef} value={formDatos.cliente} placeholder="Nombre del Cliente" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.cliente ? 'border-red-500' : 'border-gray-300'}`} />
+                <ClienteAutocomplete
+                  value={formDatos.cliente}
+                  onChange={(val) => {
+                    setFormDatos(prev => ({ ...prev, cliente: val }));
+                    if (clienteGuardadoId) setClienteGuardadoId(null);
+                  }}
+                  onClienteSelected={handleClienteSelected}
+                  disabled={appState !== 'editing'}
+                  hasError={!!errors.cliente}
+                />
                 {errors.cliente && <p className="text-red-500 text-sm mt-1">{errors.cliente}</p>}
+              </div>
+              <div>
+                <input type="text" name="razonSocial" value={formDatos.razonSocial} placeholder="Razón Social / Nombre Legal (opcional)" onChange={handleChange} className="w-full p-3 border border-gray-300 rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200" />
+              </div>
+              <div>
+                <input type="text" name="rucDni" value={formDatos.rucDni} placeholder="RUC / DNI (opcional)" onChange={handleChange} className="w-full p-3 border border-gray-300 rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200" />
               </div>
               <div>
                 <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
@@ -455,7 +534,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación en el Mapa <span className="text-red-500">*</span></label>
-                <MapInput onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
+                <MapInput key={`map-${clienteGuardadoId || 'new'}`} initialLat={formDatos.latitude} initialLng={formDatos.longitude} initialAddress={formDatos.direccionMapa} onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
                 {errors.ubicacion && <p className="text-red-500 text-sm mt-2">{errors.ubicacion}</p>}
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
@@ -474,7 +553,11 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
                 {errors.detalle && <p className="text-red-500 text-sm mt-1">{errors.detalle}</p>}
               </div>
-              <input type="text" name="horaEntrega" value={formDatos.horaEntrega} placeholder="Horario de Entrega" onChange={handleChange} className="w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200" />
+              <TimeRangePicker
+                value={formDatos.horaEntrega}
+                onChange={(val) => setFormDatos(prev => ({ ...prev, horaEntrega: val }))}
+                disabled={appState !== 'editing'}
+              />
               <textarea name="notas" value={formDatos.notas} placeholder="Observaciones (Ej: Tocar el timbre...)" rows={3} onChange={handleChange} className="w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200"></textarea>
             </fieldset>
           </form>
@@ -523,7 +606,23 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               <button onClick={descargarImagen} disabled={appState !== 'confirmed' || !imagenBlob} className="flex-1 bg-blue-600 text-white font-bold py-3 px-4 rounded-md hover:bg-blue-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-not-allowed"> <FiDownload className="mr-2" /> Descargar </button>
               <button onClick={compartirImagen} disabled={appState !== 'confirmed' || !imagenBlob} className="flex-1 bg-green-500 text-white font-bold py-3 px-4 rounded-md hover:bg-green-600 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-not-allowed"> <FiShare2 className="mr-2" /> WhatsApp </button>
             </div>
-            {appState === 'confirmed' && (<button onClick={handleNuevoPedido} className="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-md hover:bg-gray-800 transition-colors flex items-center justify-center"> <FiRotateCcw className="mr-2" /> Registrar Nuevo Pedido </button>)}
+            {appState === 'confirmed' && (
+              <>
+                <button onClick={handleNuevoPedido} className="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-md hover:bg-gray-800 transition-colors flex items-center justify-center"> <FiRotateCcw className="mr-2" /> Registrar Nuevo Pedido </button>
+                {!clienteGuardadoId && !showGuardarCliente && (
+                  <button onClick={() => setShowGuardarCliente(true)} className="w-full bg-amber-500 text-white font-bold py-3 px-4 rounded-md hover:bg-amber-600 transition-colors flex items-center justify-center"> <FiStar className="mr-2" /> Guardar como Cliente Frecuente </button>
+                )}
+                {showGuardarCliente && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
+                    <p className="text-sm text-amber-800 font-medium">¿Guardar <strong>{formDatos.cliente}</strong> como cliente frecuente? Sus datos se auto-llenarán en futuros pedidos.</p>
+                    <div className="flex gap-2">
+                      <button onClick={handleGuardarCliente} disabled={guardandoCliente} className="flex-1 bg-amber-500 text-white font-semibold py-2 px-3 rounded-md hover:bg-amber-600 transition-colors text-sm disabled:bg-gray-300">{guardandoCliente ? 'Guardando...' : 'Sí, guardar'}</button>
+                      <button onClick={() => setShowGuardarCliente(false)} className="flex-1 bg-gray-200 text-gray-700 font-semibold py-2 px-3 rounded-md hover:bg-gray-300 transition-colors text-sm">No, gracias</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

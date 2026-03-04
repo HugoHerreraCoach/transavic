@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Pedido, EstadoPedido } from "@/lib/types";
 import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle } from 'react-icons/fi';
 
-type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
+type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'razon_social' | 'ruc_dni' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
 // ── Estado Badge Helper ──
 function getEstadoBadge(estado: EstadoPedido) {
@@ -241,6 +241,8 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
             {visibleColumns.distrito && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiMap /><span>{pedido.distrito}</span></div>}
             {visibleColumns.tipo_cliente && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiTag /><span>{pedido.tipo_cliente}</span></div>}
             {visibleColumns.hora_entrega && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiClock /><span>{pedido.hora_entrega}</span></div>}
+            {visibleColumns.razon_social && pedido.razon_social && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiArchive /><span>R. Social: {pedido.razon_social}</span></div>}
+            {visibleColumns.ruc_dni && pedido.ruc_dni && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiFileText /><span>RUC/DNI: {pedido.ruc_dni}</span></div>}
             {visibleColumns.asesor && <div className="mt-3 flex items-center gap-2 text-sm text-gray-700"><FiUserCheck /><span>Asesor: {pedido.asesor_name ?? 'N/A'}</span></div>}
 
             {/* Estado con badge de 5 estados */}
@@ -309,6 +311,8 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                             {visibleColumns.distrito && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiMap />Distrito</div></th>}
                             {visibleColumns.tipo_cliente && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiTag />Tipo Cliente</div></th>}
                             {visibleColumns.hora_entrega && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiClock />Hora Entrega</div></th>}
+                            {visibleColumns.razon_social && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiArchive />Razón Social</div></th>}
+                            {visibleColumns.ruc_dni && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />RUC/DNI</div></th>}
                             <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiFileText />Pedido</div></th>
                             {visibleColumns.notas && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiInfo />Notas</div></th>}
                             {visibleColumns.asesor && <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600"><div className="flex items-center gap-2"><FiUserCheck />Asesor</div></th>}
@@ -329,6 +333,8 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                                 {visibleColumns.distrito && <td className="px-4 py-4 whitespace-nowrap">{pedido.distrito}</td>}
                                 {visibleColumns.tipo_cliente && <td className="px-4 py-4 whitespace-nowrap">{pedido.tipo_cliente}</td>}
                                 {visibleColumns.hora_entrega && <td className="px-4 py-4 whitespace-nowrap">{pedido.hora_entrega}</td>}
+                                {visibleColumns.razon_social && <td className="px-4 py-4 whitespace-nowrap">{pedido.razon_social || <span className="text-gray-400">—</span>}</td>}
+                                {visibleColumns.ruc_dni && <td className="px-4 py-4 whitespace-nowrap">{pedido.ruc_dni || <span className="text-gray-400">—</span>}</td>}
                                 <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.detalle}</p></td>
                                 {visibleColumns.notas && <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.notas}</p></td>}
                                 {visibleColumns.asesor && <td className="px-4 py-4 whitespace-nowrap">{pedido.asesor_name ?? 'N/A'}</td>}

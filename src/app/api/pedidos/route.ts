@@ -7,6 +7,7 @@ import { auth } from "@/auth";
 // Definimos un esquema de validación con Zod para asegurar los datos
 const PedidoSchema = z.object({
   cliente: z.string().min(1, { message: "El cliente es requerido." }),
+  clienteId: z.string().uuid().nullable().optional(),
   whatsapp: z.string().optional(),
   direccion: z.string().optional(),
   direccionMapa: z.string().optional(),
@@ -14,6 +15,8 @@ const PedidoSchema = z.object({
   tipoCliente: z.string(),
   detalle: z.string().min(1, { message: "El detalle es requerido." }),
   horaEntrega: z.string().optional(),
+  razonSocial: z.string().optional(),
+  rucDni: z.string().optional(),
   notas: z.string().optional(),
   empresa: z.string(),
   fecha: z.string(),
@@ -80,6 +83,7 @@ export async function POST(request: Request) {
 
     const {
       cliente,
+      clienteId,
       whatsapp,
       direccion,
       direccionMapa,
@@ -87,6 +91,8 @@ export async function POST(request: Request) {
       tipoCliente,
       detalle,
       horaEntrega,
+      razonSocial,
+      rucDni,
       notas,
       empresa,
       fecha,
@@ -101,8 +107,8 @@ export async function POST(request: Request) {
 
     // Insert the order and get it back
     const insertedPedido = await sql`
-      INSERT INTO pedidos (cliente, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, detalle, hora_entrega, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
-      VALUES (${cliente}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
+      INSERT INTO pedidos (cliente, cliente_id, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, detalle, hora_entrega, razon_social, ruc_dni, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
+      VALUES (${cliente}, ${clienteId ?? null}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${razonSocial}, ${rucDni}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
       RETURNING id
     `;
 

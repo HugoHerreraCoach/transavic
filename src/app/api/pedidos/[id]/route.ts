@@ -14,6 +14,8 @@ const UpdateSchema = z.object({
   tipo_cliente: z.string().optional(),
   detalle: z.string().min(1).optional(),
   hora_entrega: z.string().optional().nullable(),
+  razon_social: z.string().optional().nullable(),
+  ruc_dni: z.string().optional().nullable(),
   notas: z.string().optional().nullable(),
   detalle_final: z.string().optional().nullable(),
   empresa: z.string().optional(),

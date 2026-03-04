@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react';
 import { Pedido } from '@/lib/types';
 import { FiX } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
+import TimeRangePicker from '@/components/TimeRangePicker';
 
 interface EditPedidoModalProps {
     pedido: Pedido;
@@ -106,6 +107,14 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                         <input id="cliente" type="text" name="cliente" value={formData.cliente} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" required />
                     </div>
                     <div>
+                        <label htmlFor="razon_social" className="block text-sm font-medium text-gray-700">Razón Social / Nombre Legal</label>
+                        <input id="razon_social" type="text" name="razon_social" value={formData.razon_social ?? ''} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" />
+                    </div>
+                    <div>
+                        <label htmlFor="ruc_dni" className="block text-sm font-medium text-gray-700">RUC / DNI</label>
+                        <input id="ruc_dni" type="text" name="ruc_dni" value={formData.ruc_dni ?? ''} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" />
+                    </div>
+                    <div>
                         <label htmlFor="whatsapp" className="block text-sm font-medium text-gray-700">WhatsApp</label>
                         <input id="whatsapp" type="text" name="whatsapp" value={formData.whatsapp ?? ''} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" />
                     </div>
@@ -139,8 +148,10 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                         <textarea id="detalle" name="detalle" value={formData.detalle} onChange={handleChange} rows={4} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" required></textarea>
                     </div>
                     <div>
-                        <label htmlFor="hora_entrega" className="block text-sm font-medium text-gray-700">Hora de Entrega</label>
-                        <input id="hora_entrega" type="text" name="hora_entrega" value={formData.hora_entrega ?? ''} onChange={handleChange} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" />
+                        <TimeRangePicker
+                            value={formData.hora_entrega ?? ''}
+                            onChange={(val) => setFormData(prev => ({ ...prev, hora_entrega: val }))}
+                        />
                     </div>
                     <div>
                         <label htmlFor="notas" className="block text-sm font-medium text-gray-700">Notas Adicionales</label>

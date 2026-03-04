@@ -65,7 +65,7 @@ export async function fetchFilteredPedidos(
 
     const pedidosQuery = `
       SELECT
-        p.id, p.cliente, p.whatsapp, p.empresa, p.direccion, p.distrito, p.tipo_cliente, p.hora_entrega, p.notas,
+        p.id, p.cliente, p.whatsapp, p.empresa, p.direccion, p.distrito, p.tipo_cliente, p.hora_entrega, p.razon_social, p.ruc_dni, p.notas,
         TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
         p.detalle, p.detalle_final, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
         p.entregado_por, p.entregado_at,

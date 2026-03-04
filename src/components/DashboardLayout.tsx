@@ -47,11 +47,18 @@ const navItems: NavItem[] = [
     href: "/dashboard/nuevo-pedido",
     label: "Nuevo Pedido",
     icon: <FiPlus className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "asesor"],
   },
   {
     href: "/dashboard",
     label: "Lista de Pedidos",
     icon: <FiList className="h-5 w-5 flex-shrink-0" />,
+  },
+  {
+    href: "/dashboard/clientes",
+    label: "Clientes",
+    icon: <FiUsers className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "asesor"],
   },
   {
     href: "/dashboard/productos",
