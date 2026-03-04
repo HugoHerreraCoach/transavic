@@ -101,7 +101,9 @@ export default function ProductSelector({ onChange, initialItems }: ProductSelec
   };
 
   const setQty = (productoId: string, qty: number) => {
-    if (qty <= 0) {
+    // Guard against NaN from empty/invalid input (common on mobile keyboards)
+    if (isNaN(qty) || qty < 0) return;
+    if (qty === 0) {
       setItems(prev => prev.filter(i => i.productoId !== productoId));
     } else {
       setItems(prev => prev.map(i => i.productoId === productoId ? { ...i, cantidad: qty } : i));
