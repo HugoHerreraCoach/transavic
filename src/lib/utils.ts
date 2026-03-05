@@ -1,5 +1,35 @@
 // Archivo: src/lib/utils.ts
 
+// ════════════════════════════════════════════════════════════
+// 📅 UTILIDADES DE FECHA — TIMEZONE-SAFE
+// ════════════════════════════════════════════════════════════
+// NUNCA usar new Date().toISOString().split('T')[0] para obtener
+// la fecha local. toISOString() devuelve UTC, y después de las
+// 7 PM en Perú (UTC-5), muestra el día siguiente.
+// Usar SIEMPRE estas funciones en su lugar.
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Convierte una Date a string YYYY-MM-DD en timezone local.
+ * Reemplazo seguro de: date.toISOString().split('T')[0]
+ */
+export function toLocalDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Obtiene la fecha de hoy (o con offset de días) como YYYY-MM-DD en timezone local.
+ * Ejemplos: getLocalDateString(0) = hoy, getLocalDateString(-1) = ayer, getLocalDateString(1) = mañana
+ */
+export function getLocalDateString(offset: number = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return toLocalDateString(d);
+}
+
 export function formatFechaForTicket(dateInput: string | Date | null | undefined): string {
   if (!dateInput) {
     return 'Fecha no especificada';

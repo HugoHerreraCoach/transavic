@@ -51,13 +51,6 @@ export default function VistaImpresion({ pedidos, formato }: VistaImpresionProps
               </div>
             )}
 
-            {pedido.notas && (
-              <div className="mb-2 text-xs">
-                <span className="font-bold">Obs:</span>{' '}
-                <span className="italic">{pedido.notas}</span>
-              </div>
-            )}
-
             <div className="mt-2 text-sm leading-snug">
               <div className="font-bold underline mb-1">Pedido:</div>
               <div className="whitespace-pre-wrap ml-2 mb-2 p-1 border-l-2 border-black bg-gray-50">
@@ -70,6 +63,13 @@ export default function VistaImpresion({ pedidos, formato }: VistaImpresionProps
                 </div>
               )}
             </div>
+
+            {pedido.notas && (
+              <div className="mt-1 text-xs">
+                <span className="font-bold">Obs:</span>{' '}
+                <span className="italic">{pedido.notas}</span>
+              </div>
+            )}
           </div>
         ))}
       </div>

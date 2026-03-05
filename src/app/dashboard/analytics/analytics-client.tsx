@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { FiBarChart2, FiTrendingUp, FiTruck, FiCheckCircle, FiClock, FiCalendar, FiMapPin, FiUsers, FiAward, FiX, FiAlertTriangle } from 'react-icons/fi';
+import { toLocalDateString } from '@/lib/utils';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -327,9 +328,9 @@ export default function AnalyticsClient() {
   const [desde, setDesde] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
+    return toLocalDateString(d);
   });
-  const [hasta, setHasta] = useState(() => new Date().toISOString().split('T')[0]);
+  const [hasta, setHasta] = useState(() => toLocalDateString(new Date()));
   const [selectedAsesora, setSelectedAsesora] = useState<AsesoraRanking | null>(null);
 
   // Advisor section: independent date range

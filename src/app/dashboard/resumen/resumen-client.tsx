@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { FiClipboard, FiCalendar, FiCheckCircle, FiClock, FiTruck, FiUser, FiPhone, FiMapPin, FiChevronLeft, FiChevronRight, FiPackage } from 'react-icons/fi';
+import { toLocalDateString, getLocalDateString } from '@/lib/utils';
 
 type PedidoResumen = {
   id: string;
@@ -39,11 +40,7 @@ function formatDisplayDate(dateStr: string): string {
 export default function ResumenClient() {
   const [data, setData] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [fecha, setFecha] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d.toISOString().split('T')[0];
-  });
+  const [fecha, setFecha] = useState(() => getLocalDateString(-1));
   const [filtro, setFiltro] = useState<'todos' | 'pendientes' | 'entregados'>('todos');
 
   const fetchData = useCallback(async () => {
@@ -64,23 +61,21 @@ export default function ResumenClient() {
   const prevDay = () => {
     const d = new Date(fecha + 'T12:00:00');
     d.setDate(d.getDate() - 1);
-    setFecha(d.toISOString().split('T')[0]);
+    setFecha(toLocalDateString(d));
   };
 
   const nextDay = () => {
     const d = new Date(fecha + 'T12:00:00');
     d.setDate(d.getDate() + 1);
-    setFecha(d.toISOString().split('T')[0]);
+    setFecha(toLocalDateString(d));
   };
 
   const goYesterday = () => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    setFecha(d.toISOString().split('T')[0]);
+    setFecha(getLocalDateString(-1));
   };
 
   const goToday = () => {
-    setFecha(new Date().toISOString().split('T')[0]);
+    setFecha(getLocalDateString(0));
   };
 
   if (loading || !data) {

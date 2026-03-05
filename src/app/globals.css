@@ -66,7 +66,7 @@ summary {
     margin: 0 auto !important;
     font-size: 9pt;
   }
-  
+
   /* Forza que el contenedor de la tabla sea visible y sin estilos de "pantalla". */
   .print-container {
     display: block !important;
@@ -102,5 +102,47 @@ summary {
   /* Mostrar el texto del peso en la impresión (ya lo haces con Tailwind) */
   .print\:block {
     display: block !important;
+  }
+
+  /* === Vista de Impresión (VistaImpresion.tsx) === */
+  /* Cada card de pedido: evita cortes internos donde sea posible */
+  .impresion-container > div > div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    overflow: visible !important;
+  }
+
+  /* Cuando un card no cabe y se va a la siguiente página,
+     asegurar que no quede pegado al borde superior */
+  .impresion-container {
+    overflow: visible !important;
+  }
+
+  /* Grid de 2 columnas: necesita que el navegador no corte filas */
+  .formato-a4 .grid {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    overflow: visible !important;
+  }
+
+  /* Prevenir huérfanos y viudas en el contenido */
+  .impresion-container * {
+    orphans: 3;
+    widows: 3;
+  }
+
+  /* El sidebar NO debe afectar la impresión */
+  aside,
+  header,
+  nav {
+    display: none !important;
+  }
+
+  /* Resetear margins/paddings del layout para impresión */
+  main {
+    padding-left: 0 !important;
+    padding-top: 0 !important;
+    margin: 0 !important;
   }
 }

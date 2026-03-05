@@ -14,13 +14,11 @@ const CreateUserSchema = z.object({
   role: z.enum(['admin', 'asesor', 'repartidor']),
 });
 
-// Función para obtener todos los usuarios (excepto contraseñas)
-export async function GET() {
+// Función para obtener usuarios
+export async function GET(request: Request) {
   const session = await auth();
-
-  // 1. Proteger la ruta: solo los admins pueden acceder
-  if (session?.user?.role !== "admin") {
-    return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+  if (!session?.user) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
 
   try {
@@ -28,10 +26,32 @@ export async function GET() {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
     const sql = neon(connectionString);
 
-    // 2. Consultar usuarios sin la columna de la contraseña
-    const users = await sql`
-      SELECT id, name, role FROM users ORDER BY name ASC
-    `;
+    const { searchParams } = new URL(request.url);
+    const roleFilter = searchParams.get("role");
+
+    // No-admin: solo puede obtener lista filtrada por rol (id + name, sin datos sensibles)
+    // Esto permite a las asesoras ver la lista de asesoras para transferir clientes
+    if (session.user.role !== "admin") {
+      if (!roleFilter) {
+        return NextResponse.json({ error: "No autorizado" }, { status: 403 });
+      }
+      const users = await sql`
+        SELECT id, name FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+      `;
+      return NextResponse.json(users);
+    }
+
+    // Admin: lista completa o filtrada
+    let users;
+    if (roleFilter) {
+      users = await sql`
+        SELECT id, name, role FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+      `;
+    } else {
+      users = await sql`
+        SELECT id, name, role FROM users ORDER BY name ASC
+      `;
+    }
 
     return NextResponse.json(users);
   } catch (error) {

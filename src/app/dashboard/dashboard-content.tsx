@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Pedido } from '@/lib/types';
 import Search from './search';
 import PedidosTable from './table';
-import PrintButton from './print-button';
+import PrintModal from './print-modal';
 import ColumnCustomizer from './column-customizer';
 import VistaImpresion from '@/components/VistaImpresion';
 import TicketShareModal from './ticket-share-modal';
@@ -97,6 +97,9 @@ function Dashboard({ session }: DashboardContentProps) {
   const [editingPedido, setEditingPedido] = useState<Pedido | null>(null);
   const [pesoPedido, setPesoPedido] = useState<Pedido | null>(null);
   const [formatoImpresion, setFormatoImpresion] = useState<'A4' | 'Ticket'>('A4');
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+  const [printPedidos, setPrintPedidos] = useState<Pedido[]>([]);
+  const [asesoras, setAsesoras] = useState<{ id: string; name: string }[]>([]);
   const [usuarios, setUsuarios] = useState<string[]>([]);
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
@@ -122,7 +125,7 @@ function Dashboard({ session }: DashboardContentProps) {
     fetchPedidos();
   }, [searchParams]);
 
-  // Cargar lista de usuarios para admin (selector de quién entregó)
+  // Cargar lista de usuarios para admin (selector de quién entregó + asesoras para print)
   useEffect(() => {
     if (session.user.role !== 'admin') return;
     const fetchUsuarios = async () => {
@@ -131,6 +134,7 @@ function Dashboard({ session }: DashboardContentProps) {
         if (res.ok) {
           const data = await res.json();
           setUsuarios(data.map((u: { name: string }) => u.name));
+          setAsesoras(data.filter((u: { role: string }) => u.role === 'asesor' || u.role === 'admin').map((u: { id: string; name: string }) => ({ id: u.id, name: u.name })));
         }
       } catch (e) {
         console.error('Error al cargar usuarios:', e);
@@ -174,10 +178,12 @@ function Dashboard({ session }: DashboardContentProps) {
 
       {/* 3. Acciones de la Lista */}
       <div className="mt-4 flex flex-col sm:flex-row sm:justify-end items-stretch sm:items-center gap-3 print:hidden">
-        <PrintButton onSelectFormat={(fmt) => {
-          setFormatoImpresion(fmt);
-          setTimeout(() => window.print(), 150);
-        }} />
+        <button
+          onClick={() => setPrintModalOpen(true)}
+          className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors cursor-pointer w-full sm:w-auto"
+        >
+          🖨️ Imprimir
+        </button>
         <ColumnCustomizer visibleColumns={visibleColumns} onColumnChange={handleColumnChange} />
       </div>
 
@@ -244,9 +250,23 @@ function Dashboard({ session }: DashboardContentProps) {
 
     </main>
 
+    {/* Modal de impresión */}
+    <PrintModal
+      isOpen={printModalOpen}
+      onClose={() => setPrintModalOpen(false)}
+      onPrint={(fetchedPedidos, fmt) => {
+        setPrintPedidos(fetchedPedidos);
+        setFormatoImpresion(fmt);
+        setPrintModalOpen(false);
+        setTimeout(() => window.print(), 200);
+      }}
+      userRole={session.user.role}
+      asesoras={asesoras}
+    />
+
     {/* Vista de impresión - FUERA del main con print:hidden */}
     <div className="hidden print:block bg-white w-full">
-      <VistaImpresion pedidos={pedidos} formato={formatoImpresion} />
+      <VistaImpresion pedidos={printPedidos} formato={formatoImpresion} />
     </div>
     </>
   );
