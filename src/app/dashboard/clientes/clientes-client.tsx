@@ -258,7 +258,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
         const newCliente = await res.json();
         setClientes(prev => [newCliente, ...prev]);
         setShowCreateForm(false);
-        setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId });
+        setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null });
       } else {
         alert('Error al crear cliente');
       }
@@ -408,7 +408,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
             <button onClick={handleCreate} disabled={creating} className="flex items-center gap-2 px-5 py-2.5 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors text-sm disabled:bg-gray-300">
               <FiSave size={14} />{creating ? 'Guardando...' : 'Guardar Cliente'}
             </button>
-            <button onClick={() => { setShowCreateForm(false); setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId }); }} className="flex items-center gap-2 px-5 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm">
+            <button onClick={() => { setShowCreateForm(false); setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null }); }} className="flex items-center gap-2 px-5 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm">
               <FiX size={14} />Cancelar
             </button>
           </div>

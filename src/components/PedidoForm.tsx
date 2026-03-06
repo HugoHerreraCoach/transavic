@@ -70,6 +70,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [clienteGuardadoId, setClienteGuardadoId] = useState<string | null>(null);
   const [showGuardarCliente, setShowGuardarCliente] = useState(false);
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+  const [formResetKey, setFormResetKey] = useState(0); // Forces child components to reset
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -376,7 +377,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       ...datosIniciales,
       empresa: empresaActual,
       fecha: fechaActual,
-      asesorId: primerAsesorId, // Se asegura de que el asesor tenga un ID válido
+      asesorId: primerAsesorId,
     };
     setFormDatos(nuevoEstadoFormulario);
     setTicketDatos(datosIniciales);
@@ -385,6 +386,12 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     setPendienteGeneracion(false);
     setAppState('editing');
     setErrors({});
+    // ✅ FIX: Reset ALL state that was previously missed
+    setSelectedItems([]);
+    setClienteGuardadoId(null);
+    setShowGuardarCliente(false);
+    setGuardandoCliente(false);
+    setFormResetKey(prev => prev + 1); // Force child components (ProductSelector) to reset
     setTriggerFocus(true);
   };
 
@@ -534,7 +541,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Ubicación en el Mapa <span className="text-red-500">*</span></label>
-                <MapInput key={`map-${clienteGuardadoId || 'new'}`} initialLat={formDatos.latitude} initialLng={formDatos.longitude} initialAddress={formDatos.direccionMapa} onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
+                <MapInput initialLat={formDatos.latitude} initialLng={formDatos.longitude} initialAddress={formDatos.direccionMapa} onLocationChange={handleLocationChange} onAddressChange={handleAddressChange} />
                 {errors.ubicacion && <p className="text-red-500 text-sm mt-2">{errors.ubicacion}</p>}
               </div>
               <div><label className="block text-sm font-medium text-gray-700 mb-1">Distrito</label><select name="distrito" value={formDatos.distrito} onChange={handleChange} className="w-full p-3 border rounded-md bg-white text-gray-900 font-medium disabled:bg-gray-200">{distritos.map(distrito => (<option key={distrito} value={distrito}>{distrito}</option>))}</select></div>
@@ -542,6 +549,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               <div className="min-w-0">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Seleccionar Productos del Catálogo</label>
                 <ProductSelector
+                  key={formResetKey}
                   onChange={(items: SelectedItem[], detalleText: string) => {
                     setSelectedItems(items);
                     setFormDatos(prev => ({ ...prev, detalle: detalleText || prev.detalle }));

@@ -1,14 +1,14 @@
 // src/components/MapInput.tsx
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   GoogleMap,
   useLoadScript,
   Marker,
   Autocomplete,
 } from "@react-google-maps/api";
-import { FiMapPin, FiCheck } from 'react-icons/fi';
+import { FiMapPin, FiCheck } from "react-icons/fi";
 
 const libraries: "places"[] = ["places"];
 const mapContainerStyle = {
@@ -50,6 +50,31 @@ export default function MapInput({
   const [autocomplete, setAutocomplete] =
     useState<google.maps.places.Autocomplete | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ✅ Reactively sync internal state when parent changes initial props
+  // This allows the parent to reset the map without unmounting/remounting
+  const prevPropsRef = useRef({ initialLat, initialLng, initialAddress });
+  useEffect(() => {
+    const prev = prevPropsRef.current;
+    const latChanged = prev.initialLat !== initialLat;
+    const lngChanged = prev.initialLng !== initialLng;
+    prevPropsRef.current = { initialLat, initialLng, initialAddress };
+
+    if (latChanged || lngChanged) {
+      if (initialLat != null && initialLng != null) {
+        setMarker({ lat: initialLat, lng: initialLng });
+        setCenter({ lat: initialLat, lng: initialLng });
+      } else {
+        // Props reset to null → clear marker and recenter to Lima
+        setMarker(null);
+        setCenter(limaCenter);
+      }
+    }
+    // Update the autocomplete input text when address changes
+    if (inputRef.current) {
+      inputRef.current.value = initialAddress || "";
+    }
+  }, [initialLat, initialLng, initialAddress]);
   const geocoderRef = useRef<google.maps.Geocoder | null>(null);
 
   const onLoad = useCallback(
@@ -167,15 +192,12 @@ export default function MapInput({
       </div>
 
       {/* Barra de búsqueda */}
-      <Autocomplete
-        onLoad={onLoad}
-        onPlaceChanged={onPlaceChanged}
-      >
+      <Autocomplete onLoad={onLoad} onPlaceChanged={onPlaceChanged}>
         <input
           ref={inputRef}
           type="text"
           placeholder="Busca una dirección..."
-          defaultValue={initialAddress || ''}
+          defaultValue={initialAddress || ""}
           className="w-full p-2 border border-gray-300 rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-shadow"
         />
       </Autocomplete>
@@ -197,7 +219,11 @@ export default function MapInput({
             position={marker}
             draggable={true}
             onDragEnd={handleMarkerDragEnd}
-            animation={typeof google !== 'undefined' ? google.maps.Animation.DROP : undefined}
+            animation={
+              typeof google !== "undefined"
+                ? google.maps.Animation.DROP
+                : undefined
+            }
           />
         )}
       </GoogleMap>
