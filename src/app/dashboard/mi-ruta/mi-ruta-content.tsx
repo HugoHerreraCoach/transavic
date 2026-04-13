@@ -235,6 +235,7 @@ function MiniMapaRuta({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
   });
 
+  const [tilesLoaded, setTilesLoaded] = useState(false);
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -270,6 +271,10 @@ function MiniMapaRuta({
           { featureType: "poi", stylers: [{ visibility: "off" }] },
           { featureType: "transit", stylers: [{ visibility: "off" }] },
         ],
+      });
+
+      google.maps.event.addListenerOnce(mapInstance.current, "tilesloaded", () => {
+        setTilesLoaded(true);
       });
     }
 
@@ -401,7 +406,7 @@ function MiniMapaRuta({
       mapInstance.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
     }
 
-  }, [pedidos, driverPosition, baseLocation]);
+  }, [pedidos, driverPosition, baseLocation, isLoaded]);
 
   // Update driver marker separately
   useEffect(() => {
@@ -426,33 +431,35 @@ function MiniMapaRuta({
     driverMarkerRef.current.setPosition(driverPosition);
   }, [driverPosition, isLoaded]);
 
-  if (loadError) {
-    return (
-      <div className="w-full h-full rounded-2xl bg-slate-50 flex flex-col items-center justify-center p-4 border border-slate-200">
-        <FiAlertTriangle className="text-4xl text-amber-500 mb-3" />
-        <p className="text-sm font-medium text-slate-700 text-center mb-4">Error cargando el mapa</p>
-        <button
-          onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2"
-        >
-          <FiRefreshCw />
-          Recargar mapa
-        </button>
-      </div>
-    );
-  }
-
-  if (!isLoaded) {
-    return (
-      <div className="w-full h-full rounded-2xl bg-slate-50 flex flex-col items-center justify-center border border-slate-200">
-        <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
-        <p className="text-sm font-medium text-slate-500 animate-pulse">Cargando mapa interactivo...</p>
-      </div>
-    );
-  }
-
   return (
-    <div ref={mapRef} className="w-full h-full rounded-2xl" />
+    <div className="relative w-full h-full rounded-2xl overflow-hidden bg-slate-50">
+      {/* Loading overlay */}
+      {(!isLoaded || !tilesLoaded) && !loadError && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-50/80 backdrop-blur-sm transition-opacity duration-300">
+          <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
+          <p className="text-sm font-medium text-indigo-700 animate-pulse">Cargando mapa interactivo...</p>
+        </div>
+      )}
+
+      {/* Error state */}
+      {loadError && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4 bg-slate-50">
+          <FiAlertTriangle className="text-4xl text-amber-500 mb-3" />
+          <p className="text-sm font-bold text-slate-700 text-center mb-1">El mapa no pudo cargar</p>
+          <p className="text-xs text-slate-500 text-center mb-4">Revisa tu conexión a internet</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="px-4 py-2 bg-white border border-slate-300 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-indigo-600 transition-all shadow-sm flex items-center gap-2 cursor-pointer"
+          >
+            <FiRefreshCw />
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {/* Map container */}
+      <div ref={mapRef} className="w-full h-full" />
+    </div>
   );
 }
 
