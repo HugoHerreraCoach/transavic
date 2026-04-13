@@ -242,6 +242,36 @@ function MiniMapaRuta({
   const driverMarkerRef = useRef<google.maps.Marker | null>(null);
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const baseMarkerRef = useRef<google.maps.Marker | null>(null);
+  const hasFitBoundsRef = useRef(false);
+
+  const recenterMap = useCallback(() => {
+    if (!mapInstance.current || typeof google === "undefined") return;
+    const activos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Fallido");
+    
+    const bounds = new google.maps.LatLngBounds();
+    let hasPoints = false;
+    
+    if (baseLocation) {
+      bounds.extend({ lat: baseLocation.lat, lng: baseLocation.lng });
+      hasPoints = true;
+    }
+    
+    activos.forEach(p => {
+      if (p.latitude && p.longitude) {
+        bounds.extend({ lat: p.latitude, lng: p.longitude });
+        hasPoints = true;
+      }
+    });
+    
+    if (driverPosition) {
+      bounds.extend(driverPosition);
+      hasPoints = true;
+    }
+
+    if (hasPoints) {
+      mapInstance.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+    }
+  }, [pedidos, driverPosition, baseLocation]);
 
   useEffect(() => {
     if (!isLoaded || !mapRef.current || typeof google === "undefined") return;
@@ -398,12 +428,13 @@ function MiniMapaRuta({
       });
     }
 
-    // Fit bounds to show everything
-    if (routePath.length > 0 && mapInstance.current) {
+    // Fit bounds only once on initial load to avoid annoying zoom resets
+    if (routePath.length > 0 && mapInstance.current && !hasFitBoundsRef.current) {
       const bounds = new google.maps.LatLngBounds();
       routePath.forEach((p) => bounds.extend(p));
       if (driverPosition) bounds.extend(driverPosition);
       mapInstance.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+      hasFitBoundsRef.current = true;
     }
 
   }, [pedidos, driverPosition, baseLocation, isLoaded]);
@@ -455,6 +486,17 @@ function MiniMapaRuta({
             Reintentar
           </button>
         </div>
+      )}
+
+      {/* Recenter Button */}
+      {isLoaded && tilesLoaded && !loadError && (
+        <button
+          onClick={recenterMap}
+          className="absolute bottom-6 right-4 z-10 w-12 h-12 bg-white rounded-full shadow-lg border border-slate-200 flex items-center justify-center text-slate-700 hover:text-indigo-600 hover:bg-slate-50 transition-colors focus:outline-none"
+          title="Centrar mapa en la ruta"
+        >
+          <FiMapPin className="text-xl" />
+        </button>
       )}
 
       {/* Map container */}
