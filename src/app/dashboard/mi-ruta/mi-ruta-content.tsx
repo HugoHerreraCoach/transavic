@@ -30,6 +30,7 @@ import {
   FiRotateCcw,
   FiZap,
 } from "react-icons/fi";
+import { useJsApiLoader } from "@react-google-maps/api";
 
 interface MiRutaContentProps {
   session: Session;
@@ -230,6 +231,10 @@ function MiniMapaRuta({
   driverPosition: { lat: number; lng: number } | null;
   baseLocation: BaseLocation | null;
 }) {
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
+  });
+
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
@@ -238,7 +243,7 @@ function MiniMapaRuta({
   const baseMarkerRef = useRef<google.maps.Marker | null>(null);
 
   useEffect(() => {
-    if (!mapRef.current || typeof google === "undefined") return;
+    if (!isLoaded || !mapRef.current || typeof google === "undefined") return;
 
     // Center: driver position or first active pedido or base or Lima
     const activos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Fallido");
@@ -400,7 +405,7 @@ function MiniMapaRuta({
 
   // Update driver marker separately
   useEffect(() => {
-    if (!mapInstance.current || !driverPosition) return;
+    if (!mapInstance.current || !driverPosition || !isLoaded || typeof google === "undefined") return;
 
     if (!driverMarkerRef.current) {
       driverMarkerRef.current = new google.maps.Marker({
@@ -419,7 +424,32 @@ function MiniMapaRuta({
     }
 
     driverMarkerRef.current.setPosition(driverPosition);
-  }, [driverPosition]);
+  }, [driverPosition, isLoaded]);
+
+  if (loadError) {
+    return (
+      <div className="w-full h-full rounded-2xl bg-slate-50 flex flex-col items-center justify-center p-4 border border-slate-200">
+        <FiAlertTriangle className="text-4xl text-amber-500 mb-3" />
+        <p className="text-sm font-medium text-slate-700 text-center mb-4">Error cargando el mapa</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-sm flex items-center gap-2"
+        >
+          <FiRefreshCw />
+          Recargar mapa
+        </button>
+      </div>
+    );
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="w-full h-full rounded-2xl bg-slate-50 flex flex-col items-center justify-center border border-slate-200">
+        <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3"></div>
+        <p className="text-sm font-medium text-slate-500 animate-pulse">Cargando mapa interactivo...</p>
+      </div>
+    );
+  }
 
   return (
     <div ref={mapRef} className="w-full h-full rounded-2xl" />
