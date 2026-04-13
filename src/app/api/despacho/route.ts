@@ -17,13 +17,20 @@ export async function GET() {
 
     const sql = neon(connectionString);
 
+    // 0. Obtener ubicación base
+    const baseResult = await sql`SELECT value FROM settings WHERE key = 'base_location'`;
+    const baseLocation = baseResult.length > 0
+      ? baseResult[0].value
+      : { lat: -12.0464, lng: -77.0428, address: "Centro de Lima", name: "Local Principal" };
+
     // 1. Pedidos del día de hoy sin asignar (Pendientes)
     const pendientes = await sql`
       SELECT
         p.id, p.cliente, p.direccion, p.distrito, p.whatsapp,
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
-        p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido
+        p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
+        p.distancia_km, p.duracion_estimada_min
       FROM pedidos p
       WHERE p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
         AND p.estado = 'Pendiente'
@@ -38,7 +45,8 @@ export async function GET() {
         p.id, p.cliente, p.direccion, p.distrito, p.whatsapp,
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
-        p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido
+        p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
+        p.distancia_km, p.duracion_estimada_min
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.fecha_pedido < (NOW() AT TIME ZONE 'America/Lima')::date
@@ -55,7 +63,8 @@ export async function GET() {
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
-        p.es_delivery_externo, p.delivery_externo_nombre
+        p.es_delivery_externo, p.delivery_externo_nombre,
+        p.distancia_km, p.duracion_estimada_min
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.es_delivery_externo = true
@@ -74,7 +83,7 @@ export async function GET() {
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
-        p.repartidor_id
+        p.repartidor_id, p.distancia_km, p.duracion_estimada_min
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.repartidor_id IS NOT NULL
@@ -94,6 +103,8 @@ export async function GET() {
       ...p,
       latitude: p.latitude ? parseFloat(p.latitude as string) : null,
       longitude: p.longitude ? parseFloat(p.longitude as string) : null,
+      distancia_km: p.distancia_km ? parseFloat(p.distancia_km as string) : null,
+      duracion_estimada_min: p.duracion_estimada_min ? parseInt(p.duracion_estimada_min as string) : null,
     });
 
     // Agrupar pedidos por repartidor
@@ -109,9 +120,11 @@ export async function GET() {
       pendientesAnteriores: pendientesAnteriores.map(parseCoords),
       pedidosExternos: pedidosExternos.map(parseCoords),
       repartidores: repartidoresConPedidos,
+      baseLocation,
     });
   } catch (error) {
     console.error("Error en despacho:", error);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
   }
 }
+

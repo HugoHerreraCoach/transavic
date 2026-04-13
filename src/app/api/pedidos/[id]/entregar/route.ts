@@ -62,6 +62,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Este pedido no está asignado a ti." }, { status: 403 });
     }
 
+    // Permitir entrega desde Asignado (entrega directa) o En_Camino (flujo normal)
+    const estadosPermitidos = ["Asignado", "En_Camino", "Pendiente"];
+    if (!estadosPermitidos.includes(pedido.estado as string)) {
+      return NextResponse.json(
+        { error: `No se puede entregar desde estado "${pedido.estado}".` },
+        { status: 400 }
+      );
+    }
+
     const now = new Date().toISOString();
     const entregadoPor = session.user.name || "Desconocido";
 
@@ -99,3 +108,67 @@ export async function POST(request: Request) {
     );
   }
 }
+
+// PATCH: Revertir entrega (deshacer Entregado/Fallido → Asignado)
+export async function PATCH(request: Request) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+    }
+
+    const url = new URL(request.url);
+    const segments = url.pathname.split("/");
+    const id = segments[segments.length - 2];
+
+    if (!id) {
+      return NextResponse.json({ error: "ID del pedido no encontrado" }, { status: 400 });
+    }
+
+    const sql = neon(process.env.DATABASE_URL!);
+
+    const pedidoResult = await sql`
+      SELECT id, estado, repartidor_id FROM pedidos WHERE id = ${id}
+    `;
+
+    if (pedidoResult.length === 0) {
+      return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+    }
+
+    const pedido = pedidoResult[0];
+
+    // Solo admin o el repartidor asignado
+    if (session.user.role !== "admin" && pedido.repartidor_id !== session.user.id) {
+      return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+    }
+
+    // Solo se puede revertir Entregado o Fallido
+    if (pedido.estado !== "Entregado" && pedido.estado !== "Fallido") {
+      return NextResponse.json(
+        { error: `Solo se puede revertir desde "Entregado" o "Fallido". Estado actual: "${pedido.estado}"` },
+        { status: 400 }
+      );
+    }
+
+    await sql`
+      UPDATE pedidos
+      SET estado = 'Asignado',
+          entregado = FALSE,
+          entregado_por = NULL,
+          entregado_at = NULL,
+          razon_fallo = NULL,
+          inicio_viaje_at = NULL,
+          hora_llegada_estimada = NULL
+      WHERE id = ${id}
+    `;
+
+    return NextResponse.json({
+      message: "Entrega revertida. El pedido vuelve a Asignado.",
+      estado: "Asignado",
+    });
+  } catch (error) {
+    console.error("Error al revertir entrega:", error);
+    return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
+  }
+}
+

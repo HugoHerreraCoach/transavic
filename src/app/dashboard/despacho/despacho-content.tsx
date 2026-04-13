@@ -24,6 +24,9 @@ import {
   FiMap,
   FiChevronDown,
   FiChevronUp,
+  FiZap,
+  FiSettings,
+  FiX,
 } from "react-icons/fi";
 import { EstadoPedido } from "@/lib/types";
 
@@ -51,6 +54,8 @@ interface PedidoDespacho {
   fecha_pedido?: string;
   es_delivery_externo?: boolean;
   delivery_externo_nombre?: string | null;
+  distancia_km: number | null;
+  duracion_estimada_min: number | null;
 }
 
 interface Repartidor {
@@ -58,6 +63,13 @@ interface Repartidor {
   name: string;
   role: string;
   pedidos: PedidoDespacho[];
+}
+
+interface BaseLocation {
+  lat: number;
+  lng: number;
+  address: string;
+  name: string;
 }
 
 // ── Estado Config ──
@@ -84,6 +96,13 @@ function formatTime(isoString: string | null): string {
   return new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
+function formatDuration(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
+}
+
 // ── Mini Tarjeta de Pedido (Draggable) ──
 
 function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDragging?: boolean }) {
@@ -105,6 +124,9 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
       >
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="text-xs text-gray-400 line-through truncate flex-1">{pedido.cliente}</span>
+        {pedido.distancia_km && (
+          <span className="text-[9px] text-gray-400">{pedido.distancia_km} km</span>
+        )}
         <span className="text-[10px] flex-shrink-0">{pedido.estado === "Entregado" ? "✅" : "❌"}</span>
       </div>
     );
@@ -122,6 +144,11 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
       }`}
     >
       <div className="flex items-center gap-2">
+        {pedido.orden_ruta && (
+          <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+            {pedido.orden_ruta}
+          </span>
+        )}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="font-semibold text-sm text-gray-900 truncate flex-1">{pedido.cliente}</span>
         {pedido.hora_entrega && (
@@ -133,6 +160,13 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
         <span className="text-xs text-gray-500 truncate">
           {pedido.distrito || pedido.direccion || "Sin dirección"}
         </span>
+        {/* Distancia y tiempo */}
+        {(pedido.distancia_km || pedido.duracion_estimada_min) && (
+          <span className="ml-auto text-[10px] text-indigo-500 font-medium flex-shrink-0">
+            {pedido.distancia_km ? `📏 ${pedido.distancia_km} km` : ""}
+            {pedido.duracion_estimada_min ? ` · ~${pedido.duracion_estimada_min} min` : ""}
+          </span>
+        )}
       </div>
       {pedido.estado === "En_Camino" && pedido.hora_llegada_estimada && (
         <div className={`mt-1.5 text-[10px] font-medium flex items-center gap-1 ${overdue ? "text-red-600" : "text-indigo-600"}`}>
@@ -150,18 +184,22 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
   );
 }
 
-// ── Columna de Repartidor (Droppable) ──
+// ── Columna de Repartidor (Droppable) con mejoras ──
 
 function RepartidorColumn({
   repartidor,
   onDesasignar,
+  onOptimizarRuta,
   isCollapsed,
   onToggleCollapse,
+  isOptimizing,
 }: {
   repartidor: Repartidor;
   onDesasignar: (pedidoId: string) => void;
+  onOptimizarRuta: (repartidorId: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
+  isOptimizing: boolean;
 }) {
   const entregados = repartidor.pedidos.filter((p) => p.estado === "Entregado").length;
   const fallidos = repartidor.pedidos.filter((p) => p.estado === "Fallido").length;
@@ -171,10 +209,14 @@ function RepartidorColumn({
     (p) => p.estado === "En_Camino" && isOverdue(p.hora_llegada_estimada)
   );
 
-  // Separar activos de completados para ordenar mejor
+  // Route stats
   const activos = repartidor.pedidos.filter(p => p.estado !== "Entregado" && p.estado !== "Fallido");
   const completados = repartidor.pedidos.filter(p => p.estado === "Entregado" || p.estado === "Fallido");
   const pedidosOrdenados = [...activos, ...completados];
+
+  const distanciaTotal = activos.reduce((s, p) => s + (p.distancia_km || 0), 0);
+  const duracionTotal = activos.reduce((s, p) => s + (p.duracion_estimada_min || 0), 0);
+  const progressPct = total > 0 ? Math.round(((entregados + fallidos) / total) * 100) : 0;
 
   return (
     <div className={`rounded-2xl border-2 transition-all flex flex-col max-h-[calc(100vh-180px)] ${
@@ -205,6 +247,44 @@ function RepartidorColumn({
             {isCollapsed ? <FiChevronDown size={14} /> : <FiChevronUp size={14} />}
           </button>
         </div>
+
+        {/* Barra de progreso mini */}
+        {total > 0 && (
+          <div className="mt-2 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-full transition-all duration-700"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
+
+        {/* Resumen de ruta */}
+        {activos.length > 0 && (distanciaTotal > 0 || duracionTotal > 0) && (
+          <div className="mt-2 flex items-center gap-2 text-[10px] text-gray-500">
+            <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">
+              📏 {Math.round(distanciaTotal * 10) / 10} km
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 font-medium">
+              ⏱️ {formatDuration(duracionTotal)}
+            </span>
+            <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 font-medium">
+              🛑 {activos.length} paradas
+            </span>
+          </div>
+        )}
+
+        {/* Botón Optimizar Ruta */}
+        {activos.length >= 2 && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOptimizarRuta(repartidor.id); }}
+            disabled={isOptimizing}
+            className="mt-2 w-full py-1.5 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 hover:from-violet-600 hover:to-indigo-600 transition-all disabled:opacity-50 shadow-sm cursor-pointer"
+          >
+            <FiZap size={12} />
+            {isOptimizing ? "Optimizando..." : "🧭 Optimizar Ruta"}
+          </button>
+        )}
+
         {enCamino && (
           <div className={`mt-2 px-2.5 py-1 rounded-lg text-xs font-medium flex items-center gap-1.5 ${
             tieneRetraso ? "bg-red-100 text-red-700" : "bg-indigo-100 text-indigo-700"
@@ -433,6 +513,168 @@ ${mapsLink ? `🗺️ *Ruta:* ${mapsLink}` : ""}`.trim();
   );
 }
 
+// ── Modal Configurar Ubicación Base ──
+
+function BaseLocationModal({
+  currentLocation,
+  onSave,
+  onClose,
+}: {
+  currentLocation: BaseLocation;
+  onSave: (loc: BaseLocation) => void;
+  onClose: () => void;
+}) {
+  const [address, setAddress] = useState(currentLocation.address);
+  const [name, setName] = useState(currentLocation.name);
+  const [lat, setLat] = useState(currentLocation.lat);
+  const [lng, setLng] = useState(currentLocation.lng);
+  const [saving, setSaving] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
+
+  const handleGeocode = async () => {
+    if (!address.trim()) return;
+    setGeocoding(true);
+    try {
+      const res = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address + ", Lima, Perú")}&key=${process.env.NEXT_PUBLIC_MAPS_API_KEY}`
+      );
+      const data = await res.json();
+      if (data.status === "OK" && data.results.length > 0) {
+        const loc = data.results[0].geometry.location;
+        setLat(loc.lat);
+        setLng(loc.lng);
+        setAddress(data.results[0].formatted_address);
+      } else {
+        alert("No se encontró la dirección. Intenta con una más específica.");
+      }
+    } catch {
+      alert("Error al buscar dirección.");
+    } finally {
+      setGeocoding(false);
+    }
+  };
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      alert("Tu navegador no soporta geolocalización.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLat(pos.coords.latitude);
+        setLng(pos.coords.longitude);
+        setAddress("Ubicación actual");
+      },
+      () => alert("No se pudo obtener tu ubicación.")
+    );
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          key: "base_location",
+          value: { lat, lng, address, name },
+        }),
+      });
+      if (res.ok) {
+        onSave({ lat, lng, address, name });
+        onClose();
+      } else {
+        alert("Error al guardar.");
+      }
+    } catch {
+      alert("Error de conexión.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+            <FiSettings size={18} /> Ubicación de Inicio
+          </h3>
+          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 cursor-pointer">
+            <FiX size={18} />
+          </button>
+        </div>
+
+        <p className="text-xs text-gray-500 mb-4">
+          Configura la dirección del local desde donde salen los repartidores. Se usa como punto de partida para calcular rutas y tiempos.
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-medium text-gray-700">Nombre del local</label>
+            <input
+              type="text" value={name} onChange={(e) => setName(e.target.value)}
+              className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none"
+              placeholder="Ej: Local Principal, Almacén Surquillo"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-700">Dirección</label>
+            <div className="flex gap-2 mt-1">
+              <input
+                type="text" value={address} onChange={(e) => setAddress(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none"
+                placeholder="Ej: Av. La Marina 2000, San Miguel"
+                onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
+              />
+              <button onClick={handleGeocode} disabled={geocoding}
+                className="px-3 py-2 rounded-xl bg-indigo-100 text-indigo-700 text-xs font-medium hover:bg-indigo-200 transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
+              >
+                {geocoding ? "..." : "🔍 Buscar"}
+              </button>
+            </div>
+          </div>
+
+          <button onClick={handleUseMyLocation}
+            className="w-full py-2 rounded-xl border-2 border-dashed border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 transition-colors cursor-pointer"
+          >
+            📍 Usar mi ubicación actual
+          </button>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[10px] text-gray-400">Latitud</label>
+              <input type="number" step="any" value={lat} onChange={(e) => setLat(Number(e.target.value))}
+                className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs font-mono"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-gray-400">Longitud</label>
+              <input type="number" step="any" value={lng} onChange={(e) => setLng(Number(e.target.value))}
+                className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs font-mono"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3">
+          <button onClick={onClose}
+            className="py-3 rounded-2xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-colors text-sm cursor-pointer"
+          >
+            Cancelar
+          </button>
+          <button onClick={handleSave} disabled={saving}
+            className="py-3 rounded-2xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors text-sm disabled:opacity-50 cursor-pointer"
+          >
+            {saving ? "Guardando..." : "💾 Guardar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Componente Principal ──
 
 export default function DespachoContent({ }: { session: Session }) {
@@ -440,12 +682,16 @@ export default function DespachoContent({ }: { session: Session }) {
   const [pendientesAnteriores, setPendientesAnteriores] = useState<PedidoDespacho[]>([]);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
   const [externosPedidos, setExternosPedidos] = useState<PedidoDespacho[]>([]);
+  const [baseLocation, setBaseLocation] = useState<BaseLocation>({ lat: -12.0464, lng: -77.0428, address: "Centro de Lima", name: "Local Principal" });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroDistrito, setFiltroDistrito] = useState<string>("");
   const [vistaActual, setVistaActual] = useState<"lista" | "mapa">("lista");
   const [showAnteriores, setShowAnteriores] = useState(false);
   const [expandedReps, setExpandedReps] = useState<Set<string>>(new Set());
+  const [optimizingId, setOptimizingId] = useState<string | null>(null);
+  const [showBaseLocationModal, setShowBaseLocationModal] = useState(false);
+  const [optimizeResult, setOptimizeResult] = useState<{ message: string; km: number; min: number } | null>(null);
 
   const fetchData = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -457,6 +703,7 @@ export default function DespachoContent({ }: { session: Session }) {
       setPendientesAnteriores(data.pendientesAnteriores || []);
       setExternosPedidos(data.pedidosExternos || []);
       setRepartidores(data.repartidores);
+      if (data.baseLocation) setBaseLocation(data.baseLocation);
     } catch (err) {
       console.error(err);
     } finally {
@@ -479,6 +726,35 @@ export default function DespachoContent({ }: { session: Session }) {
   const pedidosFiltrados = filtroDistrito
     ? pendientes.filter((p) => p.distrito === filtroDistrito)
     : pendientes;
+
+  // ── Optimizar Ruta ──
+  const handleOptimizarRuta = async (repartidorId: string) => {
+    setOptimizingId(repartidorId);
+    setOptimizeResult(null);
+    try {
+      const res = await fetch("/api/despacho/optimizar-ruta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repartidor_id: repartidorId }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setOptimizeResult({
+          message: data.message,
+          km: data.distancia_total_km,
+          min: data.duracion_total_min,
+        });
+        setTimeout(() => setOptimizeResult(null), 5000);
+        await fetchData();
+      } else {
+        alert(data.error || "Error al optimizar ruta");
+      }
+    } catch {
+      alert("Error de conexión.");
+    } finally {
+      setOptimizingId(null);
+    }
+  };
 
   // ── Quick Assign (sin drag) ──
   const quickAssign = async (pedidoId: string, repartidorId: string, fromList: "pendientes" | "anteriores") => {
@@ -508,7 +784,7 @@ export default function DespachoContent({ }: { session: Session }) {
     setRepartidores((prev) =>
       prev.map((r) =>
         r.id === repartidorId
-          ? { ...r, pedidos: [...r.pedidos, { ...pedido, estado: "Asignado" as EstadoPedido, repartidor_id: repartidorId }] }
+          ? { ...r, pedidos: [...r.pedidos, { ...pedido, estado: "Asignado" as EstadoPedido, repartidor_id: repartidorId } as PedidoDespacho] }
           : r
       )
     );
@@ -568,7 +844,7 @@ export default function DespachoContent({ }: { session: Session }) {
       setRepartidores((prev) =>
         prev.map((r) =>
           r.id === repartidorId
-            ? { ...r, pedidos: [...r.pedidos.slice(0, destination.index), { ...pedido, estado: "Asignado" as EstadoPedido, repartidor_id: repartidorId }, ...r.pedidos.slice(destination.index)] }
+            ? { ...r, pedidos: [...r.pedidos.slice(0, destination.index), { ...pedido, estado: "Asignado" as EstadoPedido, repartidor_id: repartidorId } as PedidoDespacho, ...r.pedidos.slice(destination.index)] }
             : r
         )
       );
@@ -752,6 +1028,14 @@ export default function DespachoContent({ }: { session: Session }) {
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 text-xs font-medium text-emerald-700">
               <FiCheckCircle size={12} /> {totalEntregados}/{totalHoy} entregados
             </div>
+            {/* Base location button */}
+            <button
+              onClick={() => setShowBaseLocationModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 text-xs font-medium text-violet-700 hover:bg-violet-200 transition-colors cursor-pointer"
+              title={`Local: ${baseLocation.name} - ${baseLocation.address}`}
+            >
+              <FiSettings size={12} /> 🏭 {baseLocation.name}
+            </button>
             <button
               onClick={() => fetchData(true)}
               disabled={refreshing}
@@ -764,6 +1048,17 @@ export default function DespachoContent({ }: { session: Session }) {
         </div>
       </div>
 
+      {/* Optimización toast */}
+      {optimizeResult && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl bg-gradient-to-r from-violet-600 to-indigo-600 text-white shadow-2xl flex items-center gap-3 animate-bounce">
+          <FiZap size={18} />
+          <div>
+            <p className="font-semibold text-sm">{optimizeResult.message}</p>
+            <p className="text-xs text-white/80">📏 {optimizeResult.km} km · ⏱️ {formatDuration(optimizeResult.min)}</p>
+          </div>
+        </div>
+      )}
+
       {/* ── Vista: Mapa ── */}
       {vistaActual === "mapa" && (
         <div className="p-4 lg:p-6 h-[calc(100vh-80px)]">
@@ -772,7 +1067,7 @@ export default function DespachoContent({ }: { session: Session }) {
               <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
             </div>
           }>
-            <MapaDespacho pendientes={pendientes} repartidores={repartidores} />
+            <MapaDespacho pendientes={pendientes} repartidores={repartidores} baseLocation={baseLocation} />
           </Suspense>
         </div>
       )}
@@ -961,6 +1256,7 @@ export default function DespachoContent({ }: { session: Session }) {
                       key={repartidor.id}
                       repartidor={repartidor}
                       onDesasignar={handleDesasignar}
+                      onOptimizarRuta={handleOptimizarRuta}
                       isCollapsed={allDone && !expandedReps.has(repartidor.id)}
                       onToggleCollapse={() => {
                         setExpandedReps(prev => {
@@ -970,6 +1266,7 @@ export default function DespachoContent({ }: { session: Session }) {
                           return next;
                         });
                       }}
+                      isOptimizing={optimizingId === repartidor.id}
                     />
                   );
                 });
@@ -994,6 +1291,15 @@ export default function DespachoContent({ }: { session: Session }) {
           </div>
         </div>
       </DragDropContext>
+      )}
+
+      {/* Modal de ubicación base */}
+      {showBaseLocationModal && (
+        <BaseLocationModal
+          currentLocation={baseLocation}
+          onSave={setBaseLocation}
+          onClose={() => setShowBaseLocationModal(false)}
+        />
       )}
     </div>
   );

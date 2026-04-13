@@ -28,6 +28,9 @@ export type Pedido = {
   hora_llegada_estimada: string | null;
   razon_fallo: string | null;
   inicio_viaje_at: string | null;
+  // --- Ruta y distancias ---
+  distancia_km: number | null;
+  duracion_estimada_min: number | null;
   // --- Delivery externo ---
   es_delivery_externo: boolean;
   delivery_externo_nombre: string | null;
@@ -80,4 +83,6 @@ export type PedidoRuta = {
   razon_fallo: string | null;
   detalle: string;
   notas: string | null;
+  distancia_km: number | null;
+  duracion_estimada_min: number | null;
 };

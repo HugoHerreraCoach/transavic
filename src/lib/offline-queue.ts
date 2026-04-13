@@ -81,12 +81,12 @@ export async function syncQueue(): Promise<SyncResult> {
         case "fallido":
           url = `/api/pedidos/${action.pedidoId}/entregar`;
           method = "POST";
-          body = { resultado: "Fallido", razon_fallo: action.payload.razon_fallo };
+          body = { resultado: "Fallido", razon_fallo: action.payload.razon_fallo as string };
           break;
         case "iniciar-viaje":
           url = `/api/pedidos/${action.pedidoId}/iniciar-viaje`;
           method = "POST";
-          body = {};
+          body = action.payload;
           break;
         default:
           removeAction(action.id);

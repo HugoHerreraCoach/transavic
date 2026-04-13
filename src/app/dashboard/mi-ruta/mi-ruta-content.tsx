@@ -27,6 +27,8 @@ import {
   FiMap,
   FiCornerUpLeft,
   FiExternalLink,
+  FiRotateCcw,
+  FiZap,
 } from "react-icons/fi";
 
 interface MiRutaContentProps {
@@ -39,6 +41,19 @@ interface RouteStats {
   fallidos: number;
   completados: number;
   pendientes: number;
+}
+
+interface RutaResumen {
+  paradasRestantes: number;
+  distanciaTotalKm: number;
+  duracionTotalMin: number;
+}
+
+interface BaseLocation {
+  lat: number;
+  lng: number;
+  address: string;
+  name: string;
 }
 
 // ── Helpers ──
@@ -64,6 +79,13 @@ function formatETA(isoString: string | null): string {
 function getMinutesRemaining(isoString: string | null): number | null {
   if (!isoString) return null;
   return Math.round((new Date(isoString).getTime() - Date.now()) / 60000);
+}
+
+function formatDuration(min: number): string {
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m > 0 ? `${h}h ${m}min` : `${h}h`;
 }
 
 // ── Hook: Online Status ──
@@ -107,7 +129,7 @@ function useGeolocation(enabled: boolean) {
 
 // ── Componentes ──
 
-function ProgressBar({ stats }: { stats: RouteStats }) {
+function ProgressBar({ stats, rutaResumen }: { stats: RouteStats; rutaResumen: RutaResumen }) {
   const percentage = stats.total > 0 ? Math.round((stats.completados / stats.total) * 100) : 0;
 
   return (
@@ -140,6 +162,25 @@ function ProgressBar({ stats }: { stats: RouteStats }) {
           <p className="text-[10px] text-gray-400">Fallidos</p>
         </div>
       </div>
+
+      {/* Resumen de ruta */}
+      {rutaResumen.paradasRestantes > 0 && (rutaResumen.distanciaTotalKm > 0 || rutaResumen.duracionTotalMin > 0) && (
+        <div className="mt-3 flex items-center justify-center gap-2 flex-wrap">
+          <span className="px-2 py-1 rounded-lg bg-violet-50 text-violet-700 text-[11px] font-semibold">
+            🛑 {rutaResumen.paradasRestantes} paradas
+          </span>
+          {rutaResumen.distanciaTotalKm > 0 && (
+            <span className="px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[11px] font-semibold">
+              📏 {rutaResumen.distanciaTotalKm} km
+            </span>
+          )}
+          {rutaResumen.duracionTotalMin > 0 && (
+            <span className="px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 text-[11px] font-semibold">
+              ⏱️ ~{formatDuration(rutaResumen.duracionTotalMin)}
+            </span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -178,28 +219,37 @@ function NavButtons({ pedido }: { pedido: PedidoRuta }) {
   );
 }
 
-// ── Mini Mapa Ruta ──
+// ── Mini Mapa Ruta (Mejorado con polyline, marcador base, números) ──
 
 function MiniMapaRuta({
   pedidos,
   driverPosition,
+  baseLocation,
 }: {
   pedidos: PedidoRuta[];
   driverPosition: { lat: number; lng: number } | null;
+  baseLocation: BaseLocation | null;
 }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
   const driverMarkerRef = useRef<google.maps.Marker | null>(null);
+  const polylineRef = useRef<google.maps.Polyline | null>(null);
+  const baseMarkerRef = useRef<google.maps.Marker | null>(null);
 
   useEffect(() => {
     if (!mapRef.current || typeof google === "undefined") return;
 
-    // Center: driver position or first pedido or Lima
+    // Center: driver position or first active pedido or base or Lima
+    const activos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Fallido");
+    const firstWithCoords = activos.find((p) => p.latitude && p.longitude) || pedidos.find((p) => p.latitude && p.longitude);
+
     const center = driverPosition
       ? { lat: driverPosition.lat, lng: driverPosition.lng }
-      : pedidos.find((p) => p.latitude && p.longitude)
-      ? { lat: pedidos.find((p) => p.latitude)!.latitude!, lng: pedidos.find((p) => p.longitude)!.longitude! }
+      : firstWithCoords
+      ? { lat: firstWithCoords.latitude!, lng: firstWithCoords.longitude! }
+      : baseLocation
+      ? { lat: baseLocation.lat, lng: baseLocation.lng }
       : { lat: -12.0553, lng: -77.0451 };
 
     if (!mapInstance.current) {
@@ -210,7 +260,7 @@ function MiniMapaRuta({
         zoomControl: true,
         mapTypeControl: false,
         streetViewControl: false,
-        fullscreenControl: false,
+        fullscreenControl: true,
         styles: [
           { featureType: "poi", stylers: [{ visibility: "off" }] },
           { featureType: "transit", stylers: [{ visibility: "off" }] },
@@ -218,21 +268,56 @@ function MiniMapaRuta({
       });
     }
 
-    // Clear existing markers
+    // Clear existing markers & polyline
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
+    if (polylineRef.current) {
+      polylineRef.current.setMap(null);
+      polylineRef.current = null;
+    }
+    if (baseMarkerRef.current) {
+      baseMarkerRef.current.setMap(null);
+      baseMarkerRef.current = null;
+    }
 
-    // Add pedido markers
-    const activos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Fallido");
+    // ── Base location marker (factory) ──
+    if (baseLocation && mapInstance.current) {
+      baseMarkerRef.current = new google.maps.Marker({
+        position: { lat: baseLocation.lat, lng: baseLocation.lng },
+        map: mapInstance.current,
+        title: `🏭 ${baseLocation.name}`,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 12,
+          fillColor: "#7c3aed",
+          fillOpacity: 1,
+          strokeColor: "white",
+          strokeWeight: 3,
+        },
+        zIndex: 100,
+      });
+    }
+
+    // ── Pedido markers ──
     const completados = pedidos.filter((p) => p.estado === "Entregado" || p.estado === "Fallido");
+
+    // Route path: base → activos (ordered) 
+    const routePath: google.maps.LatLngLiteral[] = [];
+    if (baseLocation) {
+      routePath.push({ lat: baseLocation.lat, lng: baseLocation.lng });
+    }
 
     activos.forEach((pedido, idx) => {
       if (!pedido.latitude || !pedido.longitude) return;
       const isEnCamino = pedido.estado === "En_Camino";
+
+      // Add to route path
+      routePath.push({ lat: pedido.latitude, lng: pedido.longitude });
+
       const marker = new google.maps.Marker({
         position: { lat: pedido.latitude, lng: pedido.longitude },
         map: mapInstance.current!,
-        title: `${idx + 1}. ${pedido.cliente}`,
+        title: `${idx + 1}. ${pedido.cliente}${pedido.distancia_km ? ` (${pedido.distancia_km} km)` : ''}`,
         label: {
           text: String(idx + 1),
           color: "white",
@@ -247,7 +332,22 @@ function MiniMapaRuta({
           strokeColor: "white",
           strokeWeight: 2,
         },
+        zIndex: isEnCamino ? 50 : 10,
       });
+
+      // InfoWindow on click
+      const infoContent = `
+        <div style="font-family: system-ui; max-width: 200px;">
+          <strong style="font-size: 14px;">${pedido.cliente}</strong>
+          <p style="font-size:12px; color:#666; margin: 4px 0;">${pedido.distrito || ''} · ${pedido.direccion || ''}</p>
+          ${pedido.distancia_km ? `<p style="font-size:11px; color:#4f46e5;">📏 ${pedido.distancia_km} km${pedido.duracion_estimada_min ? ` · ~${pedido.duracion_estimada_min} min` : ''}</p>` : ''}
+        </div>
+      `;
+      const infoWindow = new google.maps.InfoWindow({ content: infoContent });
+      marker.addListener("click", () => {
+        infoWindow.open(mapInstance.current!, marker);
+      });
+
       markersRef.current.push(marker);
     });
 
@@ -268,7 +368,35 @@ function MiniMapaRuta({
       });
       markersRef.current.push(marker);
     });
-  }, [pedidos, driverPosition]);
+
+    // ── Draw route polyline ──
+    if (routePath.length >= 2) {
+      polylineRef.current = new google.maps.Polyline({
+        path: routePath,
+        geodesic: true,
+        strokeColor: "#4f46e5",
+        strokeOpacity: 0.7,
+        strokeWeight: 3,
+        icons: [
+          {
+            icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, fillColor: "#4f46e5", fillOpacity: 1 },
+            offset: "50%",
+            repeat: "100px",
+          },
+        ],
+        map: mapInstance.current,
+      });
+    }
+
+    // Fit bounds to show everything
+    if (routePath.length > 0 && mapInstance.current) {
+      const bounds = new google.maps.LatLngBounds();
+      routePath.forEach((p) => bounds.extend(p));
+      if (driverPosition) bounds.extend(driverPosition);
+      mapInstance.current.fitBounds(bounds, { top: 40, right: 40, bottom: 40, left: 40 });
+    }
+
+  }, [pedidos, driverPosition, baseLocation]);
 
   // Update driver marker separately
   useEffect(() => {
@@ -309,6 +437,7 @@ function PedidoCard({
   onEntregar,
   onFallido,
   onCancelarViaje,
+  onRevertir,
   isProcessing,
 }: {
   pedido: PedidoRuta;
@@ -319,6 +448,7 @@ function PedidoCard({
   onEntregar: (id: string) => void;
   onFallido: (id: string) => void;
   onCancelarViaje: (id: string) => void;
+  onRevertir: (id: string) => void;
   isProcessing: boolean;
 }) {
   const config = getEstadoConfig(pedido.estado);
@@ -327,22 +457,35 @@ function PedidoCard({
   const isCompleted = pedido.estado === "Entregado" || pedido.estado === "Fallido";
   const isEnCamino = pedido.estado === "En_Camino";
 
-  // ── Compact mode for completed ──
+  // ── Compact mode for completed (with revert option) ──
   if (isCompleted) {
     return (
-      <div className={`px-4 py-2.5 rounded-xl border flex items-center gap-3 ${
+      <div className={`rounded-xl border overflow-hidden ${
         pedido.estado === "Entregado"
           ? "border-emerald-200/60 bg-emerald-50/40"
           : "border-red-200/60 bg-red-50/40"
       }`}>
-        <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
-          pedido.estado === "Entregado" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
-        }`}>
-          {pedido.estado === "Entregado" ? "✓" : "✗"}
-        </span>
-        <span className="text-sm text-gray-400 line-through truncate flex-1">{pedido.cliente}</span>
-        <span className="text-xs text-gray-400">{pedido.distrito}</span>
-        <span className="text-[10px] flex-shrink-0">{pedido.estado === "Entregado" ? "✅" : "❌"}</span>
+        <div className="px-4 py-2.5 flex items-center gap-3">
+          <span className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+            pedido.estado === "Entregado" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+          }`}>
+            {pedido.estado === "Entregado" ? "✓" : "✗"}
+          </span>
+          <div className="flex-1 min-w-0">
+            <span className="text-sm text-gray-400 line-through truncate block">{pedido.cliente}</span>
+            {pedido.distancia_km && (
+              <span className="text-[10px] text-gray-400">📏 {pedido.distancia_km} km</span>
+            )}
+          </div>
+          <span className="text-xs text-gray-400">{pedido.distrito}</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onRevertir(pedido.id); }}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors flex-shrink-0 cursor-pointer"
+            title="Revertir entrega"
+          >
+            <FiRotateCcw size={14} />
+          </button>
+        </div>
       </div>
     );
   }
@@ -378,7 +521,20 @@ function PedidoCard({
           <p className="font-semibold truncate text-gray-900">
             {pedido.cliente}
           </p>
-          <p className="text-xs text-gray-500 truncate">{pedido.distrito} · {pedido.direccion}</p>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-xs text-gray-500 truncate">{pedido.distrito} · {pedido.direccion}</span>
+          </div>
+          {/* Distancia y tiempo inline */}
+          {(pedido.distancia_km || pedido.duracion_estimada_min) && (
+            <div className="flex items-center gap-1.5 mt-0.5">
+              {pedido.distancia_km && (
+                <span className="text-[10px] text-indigo-600 font-semibold">📏 {pedido.distancia_km} km</span>
+              )}
+              {pedido.duracion_estimada_min && (
+                <span className="text-[10px] text-indigo-600 font-semibold">· ~{pedido.duracion_estimada_min} min</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Estado + ETA badge */}
@@ -466,16 +622,39 @@ function PedidoCard({
 
           {/* ── BOTONES DE ACCIÓN ── */}
           <div className="mt-4 space-y-2">
-            {/* Estado: Asignado o Pendiente → Botón "Ir al Cliente" */}
+            {/* Estado: Asignado o Pendiente → Botones "Ir al Cliente" + "Entregar directo" */}
             {(pedido.estado === "Asignado" || pedido.estado === "Pendiente") && (
-              <button
-                onClick={() => onIniciarViaje(pedido.id)}
-                disabled={isProcessing}
-                className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg flex items-center justify-center gap-3 shadow-lg shadow-blue-200 hover:shadow-xl hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] cursor-pointer"
-              >
-                <FiNavigation className="text-xl" />
-                🚀 Ir al Cliente
-              </button>
+              <>
+                {/* Botón principal: navegar al cliente */}
+                <button
+                  onClick={() => onIniciarViaje(pedido.id)}
+                  disabled={isProcessing}
+                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold text-lg flex items-center justify-center gap-3 shadow-lg shadow-blue-200 hover:shadow-xl hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] cursor-pointer"
+                >
+                  <FiNavigation className="text-xl" />
+                  🚀 Ir al Cliente
+                </button>
+
+                {/* Botones de entrega directa (sin necesidad de "Ir al Cliente") */}
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => onEntregar(pedido.id)}
+                    disabled={isProcessing}
+                    className="py-3 rounded-xl bg-emerald-50 text-emerald-700 font-semibold text-sm flex items-center justify-center gap-1.5 border-2 border-emerald-200 hover:bg-emerald-100 transition-all disabled:opacity-50 active:scale-[0.98] cursor-pointer"
+                  >
+                    <FiCheckCircle size={16} />
+                    ✅ Entregado
+                  </button>
+                  <button
+                    onClick={() => onFallido(pedido.id)}
+                    disabled={isProcessing}
+                    className="py-3 rounded-xl bg-red-50 text-red-700 font-semibold text-sm flex items-center justify-center gap-1.5 border-2 border-red-200 hover:bg-red-100 transition-all disabled:opacity-50 active:scale-[0.98] cursor-pointer"
+                  >
+                    <FiXCircle size={16} />
+                    ❌ No Entregado
+                  </button>
+                </div>
+              </>
             )}
 
             {/* Estado: En Camino → Botones Navigation + Entrega + Cancel */}
@@ -661,16 +840,21 @@ function FailureReasonModal({
 export default function MiRutaContent({ session }: MiRutaContentProps) {
   const [pedidos, setPedidos] = useState<PedidoRuta[]>([]);
   const [stats, setStats] = useState<RouteStats>({ total: 0, entregados: 0, fallidos: 0, completados: 0, pendientes: 0 });
+  const [rutaResumen, setRutaResumen] = useState<RutaResumen>({ paradasRestantes: 0, distanciaTotalKm: 0, duracionTotalMin: 0 });
+  const [baseLocation, setBaseLocation] = useState<BaseLocation | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ pedidoId: string; cliente: string } | null>(null);
   const [failureModal, setFailureModal] = useState<{ pedidoId: string; cliente: string } | null>(null);
-  const [showMap, setShowMap] = useState(false);
+  const [revertModal, setRevertModal] = useState<{ pedidoId: string; cliente: string } | null>(null);
+  const [showMap, setShowMap] = useState(true);
   const [queueCount, setQueueCount] = useState(0);
   const [queuedPedidoIds, setQueuedPedidoIds] = useState<Set<string>>(new Set());
   const [syncMessage, setSyncMessage] = useState<{ type: string; text: string } | null>(null);
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [optimizeResult, setOptimizeResult] = useState<{ message: string; km: number; min: number } | null>(null);
 
   const online = useOnlineStatus();
 
@@ -692,6 +876,8 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
       const data = await res.json();
       setPedidos(data.pedidos);
       setStats(data.stats);
+      if (data.rutaResumen) setRutaResumen(data.rutaResumen);
+      if (data.baseLocation) setBaseLocation(data.baseLocation);
 
       // Auto-expand the En_Camino pedido
       const enCamino = data.pedidos.find((p: PedidoRuta) => p.estado === "En_Camino");
@@ -790,7 +976,8 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     setConfirmModal(null);
 
     if (!isOnline()) {
-      enqueueAction({ type: "entregar", pedidoId, expectedEstado: "En_Camino", payload: {} });
+      const pedido = pedidos.find(p => p.id === pedidoId);
+      enqueueAction({ type: "entregar", pedidoId, expectedEstado: pedido?.estado || "En_Camino", payload: {} });
       refreshQueueState();
       setPedidos((prev) =>
         prev.map((p) => (p.id === pedidoId ? { ...p, estado: "Entregado" as EstadoPedido } : p))
@@ -800,7 +987,11 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     }
 
     try {
-      const res = await fetch(`/api/pedidos/${pedidoId}/entregar`, { method: "POST" });
+      const res = await fetch(`/api/pedidos/${pedidoId}/entregar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resultado: "Entregado" }),
+      });
       if (!res.ok) {
         const data = await res.json();
         alert(data.error || "Error al confirmar entrega");
@@ -819,7 +1010,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     setFailureModal(null);
 
     if (!isOnline()) {
-      enqueueAction({ type: "fallido", pedidoId, expectedEstado: "En_Camino", payload: { razon } });
+      enqueueAction({ type: "fallido", pedidoId, expectedEstado: "En_Camino", payload: { razon_fallo: razon } });
       refreshQueueState();
       setPedidos((prev) =>
         prev.map((p) => (p.id === pedidoId ? { ...p, estado: "Fallido" as EstadoPedido, razon_fallo: razon } : p))
@@ -832,7 +1023,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
       const res = await fetch(`/api/pedidos/${pedidoId}/entregar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fallido: true, razon_fallo: razon }),
+        body: JSON.stringify({ resultado: "Fallido", razon_fallo: razon }),
       });
       if (!res.ok) {
         const data = await res.json();
@@ -874,6 +1065,59 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     }
   };
 
+  const handleRevertirEntrega = async (pedidoId: string) => {
+    setProcessing(true);
+    setRevertModal(null);
+
+    try {
+      const res = await fetch(`/api/pedidos/${pedidoId}/entregar`, { method: "PATCH" });
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Error al revertir");
+        return;
+      }
+      await fetchRuta();
+    } catch {
+      alert("Error de conexión.");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleOptimizarRuta = async () => {
+    if (!online) {
+      alert("Necesitas conexión a internet para optimizar tu ruta.");
+      return;
+    }
+    
+    setIsOptimizing(true);
+    setOptimizeResult(null);
+    try {
+      // session.user.id is the repartidor_id
+      const res = await fetch("/api/despacho/optimizar-ruta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repartidor_id: session.user.id }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setOptimizeResult({
+          message: data.message,
+          km: data.distancia_total_km,
+          min: data.duracion_total_min,
+        });
+        setTimeout(() => setOptimizeResult(null), 5000);
+        await fetchRuta();
+      } else {
+        alert(data.error || "Error al optimizar ruta");
+      }
+    } catch {
+      alert("Error de conexión.");
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
   // ── Render ──
 
   const today = new Date().toLocaleDateString("es-PE", {
@@ -908,16 +1152,6 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
             <p className="text-xs text-gray-500 capitalize">{today}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Toggle mapa */}
-            <button
-              onClick={() => setShowMap(!showMap)}
-              className={`p-2.5 rounded-xl transition-colors cursor-pointer ${
-                showMap ? "bg-indigo-100 text-indigo-700" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
-              }`}
-              title={showMap ? "Ocultar mapa" : "Ver mapa"}
-            >
-              <FiMap className="text-lg" />
-            </button>
             <button
               onClick={() => fetchRuta(true)}
               disabled={refreshing}
@@ -951,15 +1185,48 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
           </div>
         )}
 
-        {/* Mini Mapa */}
-        {showMap && (
-          <div className="h-[280px] rounded-2xl overflow-hidden border border-gray-200 shadow-lg">
-            <MiniMapaRuta pedidos={pedidos} driverPosition={driverPosition} />
+        {/* Mapa de Ruta — visible por defecto para que el repartidor vea el orden */}
+        <div className="rounded-2xl overflow-hidden border border-gray-200 shadow-lg bg-white">
+          <button
+            onClick={() => setShowMap(!showMap)}
+            className="w-full px-4 py-2.5 flex items-center justify-between bg-gradient-to-r from-indigo-50 to-violet-50 border-b border-gray-100 cursor-pointer"
+          >
+            <span className="text-sm font-semibold text-indigo-700 flex items-center gap-2">
+              <FiMap size={15} />
+              🗺️ Mapa de mi ruta
+            </span>
+            <span className="text-xs text-indigo-500 font-medium">
+              {showMap ? "▲ Ocultar" : "▼ Ver mapa"}
+            </span>
+          </button>
+          {showMap && (
+            <div className="h-[300px]">
+              <MiniMapaRuta pedidos={pedidos} driverPosition={driverPosition} baseLocation={baseLocation} />
+            </div>
+          )}
+        </div>
+
+        {/* Progress Bar con resumen de ruta */}
+        <ProgressBar stats={stats} rutaResumen={rutaResumen} />
+
+        {/* Optimize result message */}
+        {optimizeResult && (
+          <div className="px-4 py-3 rounded-2xl bg-violet-50 border border-violet-200 text-violet-800 text-sm font-medium animate-pulse">
+            ✅ {optimizeResult.message}
           </div>
         )}
 
-        {/* Progress Bar */}
-        <ProgressBar stats={stats} />
+        {/* Optimizar Ruta Botón */}
+        {activePedidos.length >= 2 && online && (
+          <button
+            onClick={handleOptimizarRuta}
+            disabled={isOptimizing || processing}
+            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:from-violet-600 hover:to-indigo-600 transition-all disabled:opacity-50 shadow-md cursor-pointer"
+          >
+            <FiZap className="text-lg" />
+            {isOptimizing ? "Optimizando con IA..." : "🧭 Optimizar mi ruta actual"}
+          </button>
+        )}
 
         {/* Sin pedidos */}
         {pedidos.length === 0 ? (
@@ -1014,6 +1281,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
                     if (p) setFailureModal({ pedidoId: id, cliente: p.cliente });
                   }}
                   onCancelarViaje={handleCancelarViaje}
+                  onRevertir={() => {}}
                   isProcessing={processing}
                 />
                 {queuedPedidoIds.has(pedido.id) && (
@@ -1034,7 +1302,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
               </div>
             )}
 
-            {/* Pedidos completados (compactos) */}
+            {/* Pedidos completados (compactos, con botón revertir) */}
             {completedPedidos.map((pedido, index) => (
               <PedidoCard
                 key={pedido.id}
@@ -1046,6 +1314,10 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
                 onEntregar={() => {}}
                 onFallido={() => {}}
                 onCancelarViaje={() => {}}
+                onRevertir={(id) => {
+                  const p = pedidos.find((x) => x.id === id);
+                  if (p) setRevertModal({ pedidoId: id, cliente: p.cliente });
+                }}
                 isProcessing={false}
               />
             ))}
@@ -1081,6 +1353,17 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
           cliente={failureModal.cliente}
           onSubmit={(reason) => handleFallido(failureModal.pedidoId, reason)}
           onCancel={() => setFailureModal(null)}
+        />
+      )}
+
+      {revertModal && (
+        <ConfirmModal
+          title="↩️ Revertir Entrega"
+          message={`¿Estás seguro de revertir la entrega de ${revertModal.cliente}? El pedido volverá a estado "Asignado".`}
+          confirmLabel="Sí, Revertir"
+          confirmColor="bg-amber-500 hover:bg-amber-600"
+          onConfirm={() => handleRevertirEntrega(revertModal.pedidoId)}
+          onCancel={() => setRevertModal(null)}
         />
       )}
     </div>

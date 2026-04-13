@@ -42,9 +42,17 @@ interface Repartidor {
   pedidos: PedidoDespacho[];
 }
 
+interface BaseLocation {
+  lat: number;
+  lng: number;
+  address: string;
+  name: string;
+}
+
 interface MapaDespachoProps {
   pendientes: PedidoDespacho[];
   repartidores: Repartidor[];
+  baseLocation?: BaseLocation;
 }
 
 // ── Constantes ──
@@ -102,7 +110,17 @@ function formatTime(isoString: string | null): string {
 
 // ── Componente Principal ──
 
-export default function MapaDespacho({ pendientes, repartidores }: MapaDespachoProps) {
+function createBaseMarkerIcon(): string {
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="48" viewBox="0 0 40 48">
+      <path d="M20 0C9 0 0 9 0 20c0 15 20 28 20 28s20-13 20-28C40 9 31 0 20 0z" fill="#7c3aed" stroke="#fff" stroke-width="2"/>
+      <circle cx="20" cy="18" r="10" fill="white" opacity="0.9"/>
+      <text x="20" y="22" text-anchor="middle" font-size="14">🏭</text>
+    </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+export default function MapaDespacho({ pendientes, repartidores, baseLocation }: MapaDespachoProps) {
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
   });
@@ -252,6 +270,20 @@ export default function MapaDespacho({ pendientes, repartidores }: MapaDespachoP
               }}
             />
           ))}
+
+          {/* Base location marker */}
+          {baseLocation && (
+            <MarkerF
+              position={{ lat: baseLocation.lat, lng: baseLocation.lng }}
+              icon={{
+                url: createBaseMarkerIcon(),
+                scaledSize: new google.maps.Size(40, 48),
+                anchor: new google.maps.Point(20, 48),
+              }}
+              title={`🏭 ${baseLocation.name} - ${baseLocation.address}`}
+              zIndex={200}
+            />
+          )}
 
           {/* InfoWindow */}
           {selectedPedido && selectedPedido.latitude && selectedPedido.longitude && (
