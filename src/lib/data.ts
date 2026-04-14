@@ -58,6 +58,10 @@ export async function fetchFilteredPedidos(
       whereClauses.push(`p.asesor_id = $${paramIndex}`);
       params.push(userId);
       paramIndex++;
+    } else if (userRole === "repartidor") {
+      whereClauses.push(`p.repartidor_id = $${paramIndex}`);
+      params.push(userId);
+      paramIndex++;
     }
 
     const whereString =

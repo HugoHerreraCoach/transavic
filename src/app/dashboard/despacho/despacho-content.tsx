@@ -1,7 +1,7 @@
 // src/app/dashboard/despacho/despacho-content.tsx
 "use client";
 
-import { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Session } from "next-auth";
 import {
   DragDropContext,
@@ -29,6 +29,14 @@ import {
   FiX,
 } from "react-icons/fi";
 import { EstadoPedido } from "@/lib/types";
+import {
+  GoogleMap,
+  useLoadScript,
+  Marker,
+  Autocomplete,
+} from "@react-google-maps/api";
+
+const GMAP_LIBRARIES: "places"[] = ["places"];
 
 const MapaDespacho = lazy(() => import("./mapa-despacho"));
 
@@ -513,7 +521,7 @@ ${mapsLink ? `🗺️ *Ruta:* ${mapsLink}` : ""}`.trim();
   );
 }
 
-// ── Modal Configurar Ubicación Base ──
+// ── Modal Configurar Ubicación Base (con mapa interactivo) ──
 
 function BaseLocationModal({
   currentLocation,
@@ -529,43 +537,33 @@ function BaseLocationModal({
   const [lat, setLat] = useState(currentLocation.lat);
   const [lng, setLng] = useState(currentLocation.lng);
   const [saving, setSaving] = useState(false);
-  const [geocoding, setGeocoding] = useState(false);
+  const [gettingLocation, setGettingLocation] = useState(false);
 
-  const handleGeocode = async () => {
-    if (!address.trim()) return;
-    setGeocoding(true);
-    try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address + ", Lima, Perú")}&key=${process.env.NEXT_PUBLIC_MAPS_API_KEY}`
-      );
-      const data = await res.json();
-      if (data.status === "OK" && data.results.length > 0) {
-        const loc = data.results[0].geometry.location;
-        setLat(loc.lat);
-        setLng(loc.lng);
-        setAddress(data.results[0].formatted_address);
-      } else {
-        alert("No se encontró la dirección. Intenta con una más específica.");
-      }
-    } catch {
-      alert("Error al buscar dirección.");
-    } finally {
-      setGeocoding(false);
-    }
-  };
+  const handleLocationChange = useCallback((newLat: number, newLng: number) => {
+    setLat(newLat);
+    setLng(newLng);
+  }, []);
+
+  const handleAddressChange = useCallback((newAddress: string) => {
+    setAddress(newAddress);
+  }, []);
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
       alert("Tu navegador no soporta geolocalización.");
       return;
     }
+    setGettingLocation(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setLat(pos.coords.latitude);
         setLng(pos.coords.longitude);
-        setAddress("Ubicación actual");
+        setGettingLocation(false);
       },
-      () => alert("No se pudo obtener tu ubicación.")
+      () => {
+        alert("No se pudo obtener tu ubicación. Verifica los permisos del navegador.");
+        setGettingLocation(false);
+      }
     );
   };
 
@@ -596,81 +594,283 @@ function BaseLocationModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-      <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-4">
+      <div
+        className="relative bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <FiSettings size={18} /> Ubicación de Inicio
           </h3>
-          <button onClick={onClose} className="p-1 rounded-lg hover:bg-gray-100 cursor-pointer">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors">
             <FiX size={18} />
           </button>
         </div>
 
         <p className="text-xs text-gray-500 mb-4">
-          Configura la dirección del local desde donde salen los repartidores. Se usa como punto de partida para calcular rutas y tiempos.
+          Selecciona en el mapa o busca la dirección del local desde donde salen los repartidores.
         </p>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
+          {/* Nombre del local */}
           <div>
             <label className="text-xs font-medium text-gray-700">Nombre del local</label>
             <input
-              type="text" value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full mt-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full mt-1 px-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none transition-all"
               placeholder="Ej: Local Principal, Almacén Surquillo"
             />
           </div>
+
+          {/* Mapa interactivo con búsqueda */}
           <div>
-            <label className="text-xs font-medium text-gray-700">Dirección</label>
-            <div className="flex gap-2 mt-1">
-              <input
-                type="text" value={address} onChange={(e) => setAddress(e.target.value)}
-                className="flex-1 px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 outline-none"
-                placeholder="Ej: Av. La Marina 2000, San Miguel"
-                onKeyDown={(e) => e.key === "Enter" && handleGeocode()}
-              />
-              <button onClick={handleGeocode} disabled={geocoding}
-                className="px-3 py-2 rounded-xl bg-indigo-100 text-indigo-700 text-xs font-medium hover:bg-indigo-200 transition-colors disabled:opacity-50 cursor-pointer whitespace-nowrap"
-              >
-                {geocoding ? "..." : "🔍 Buscar"}
-              </button>
-            </div>
+            <label className="text-xs font-medium text-gray-700 mb-1.5 block">
+              📍 Selecciona la ubicación en el mapa
+            </label>
+            <BaseLocationMapPicker
+              lat={lat}
+              lng={lng}
+              address={address}
+              onLocationChange={handleLocationChange}
+              onAddressChange={handleAddressChange}
+            />
           </div>
 
-          <button onClick={handleUseMyLocation}
-            className="w-full py-2 rounded-xl border-2 border-dashed border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 transition-colors cursor-pointer"
+          {/* Botón usar ubicación actual */}
+          <button
+            onClick={handleUseMyLocation}
+            disabled={gettingLocation}
+            className="w-full py-2.5 rounded-xl border-2 border-dashed border-blue-200 text-blue-600 text-xs font-medium hover:bg-blue-50 hover:border-blue-300 transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
-            📍 Usar mi ubicación actual
+            {gettingLocation ? (
+              <>
+                <span className="w-3.5 h-3.5 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin" />
+                Obteniendo ubicación...
+              </>
+            ) : (
+              <>📍 Usar mi ubicación actual</>
+            )}
           </button>
 
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-[10px] text-gray-400">Latitud</label>
-              <input type="number" step="any" value={lat} onChange={(e) => setLat(Number(e.target.value))}
-                className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs font-mono"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] text-gray-400">Longitud</label>
-              <input type="number" step="any" value={lng} onChange={(e) => setLng(Number(e.target.value))}
-                className="w-full px-2 py-1.5 rounded-lg border border-gray-200 text-xs font-mono"
-              />
+          {/* Coordenadas (colapsadas, solo como referencia) */}
+          <div className="bg-gray-50 rounded-xl p-3">
+            <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wide mb-1.5">Coordenadas seleccionadas</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-400 w-6">Lat:</span>
+                <span className="text-xs font-mono text-gray-700 bg-white px-2 py-1 rounded-lg border border-gray-200 flex-1">
+                  {lat.toFixed(6)}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-gray-400 w-6">Lng:</span>
+                <span className="text-xs font-mono text-gray-700 bg-white px-2 py-1 rounded-lg border border-gray-200 flex-1">
+                  {lng.toFixed(6)}
+                </span>
+              </div>
             </div>
           </div>
         </div>
 
+        {/* Botones */}
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <button onClick={onClose}
+          <button
+            onClick={onClose}
             className="py-3 rounded-2xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-colors text-sm cursor-pointer"
           >
             Cancelar
           </button>
-          <button onClick={handleSave} disabled={saving}
-            className="py-3 rounded-2xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors text-sm disabled:opacity-50 cursor-pointer"
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="py-3 rounded-2xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors text-sm disabled:opacity-50 cursor-pointer flex items-center justify-center gap-1.5"
           >
-            {saving ? "Guardando..." : "💾 Guardar"}
+            {saving ? (
+              <>
+                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                Guardando...
+              </>
+            ) : (
+              "💾 Guardar"
+            )}
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Mapa interactivo para seleccionar ubicación base ──
+
+function BaseLocationMapPicker({
+  lat,
+  lng,
+  address,
+  onLocationChange,
+  onAddressChange,
+}: {
+  lat: number;
+  lng: number;
+  address: string;
+  onLocationChange: (lat: number, lng: number) => void;
+  onAddressChange: (address: string) => void;
+}) {
+  const { isLoaded, loadError } = useLoadScript({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
+    libraries: GMAP_LIBRARIES,
+  });
+
+  const [mapCenter, setMapCenter] = useState({ lat, lng });
+  const [autocompleteInstance, setAutocompleteInstance] =
+    useState<google.maps.places.Autocomplete | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const geocoderRef = useRef<google.maps.Geocoder | null>(null);
+
+  // Sync external lat/lng changes (e.g. from "Usar mi ubicación")
+  useEffect(() => {
+    setMapCenter({ lat, lng });
+  }, [lat, lng]);
+
+  // Set default input value
+  useEffect(() => {
+    if (inputRef.current && address) {
+      inputRef.current.value = address;
+    }
+  }, [address]);
+
+  const reverseGeocode = useCallback(
+    (newLat: number, newLng: number) => {
+      if (!geocoderRef.current) {
+        geocoderRef.current = new google.maps.Geocoder();
+      }
+      geocoderRef.current.geocode(
+        { location: { lat: newLat, lng: newLng } },
+        (results, status) => {
+          if (status === "OK" && results && results[0]) {
+            const addr = results[0].formatted_address;
+            if (inputRef.current) inputRef.current.value = addr;
+            onAddressChange(addr);
+          }
+        }
+      );
+    },
+    [onAddressChange]
+  );
+
+  const handleMapClick = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      const newLat = e.latLng?.lat();
+      const newLng = e.latLng?.lng();
+      if (newLat !== undefined && newLng !== undefined) {
+        onLocationChange(newLat, newLng);
+        setMapCenter({ lat: newLat, lng: newLng });
+        reverseGeocode(newLat, newLng);
+      }
+    },
+    [onLocationChange, reverseGeocode]
+  );
+
+  const handleMarkerDragEnd = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      const newLat = e.latLng?.lat();
+      const newLng = e.latLng?.lng();
+      if (newLat !== undefined && newLng !== undefined) {
+        onLocationChange(newLat, newLng);
+        setMapCenter({ lat: newLat, lng: newLng });
+        reverseGeocode(newLat, newLng);
+      }
+    },
+    [onLocationChange, reverseGeocode]
+  );
+
+  const onPlaceChanged = () => {
+    if (autocompleteInstance) {
+      const place = autocompleteInstance.getPlace();
+      if (place?.geometry?.location) {
+        const newLat = place.geometry.location.lat();
+        const newLng = place.geometry.location.lng();
+        onLocationChange(newLat, newLng);
+        setMapCenter({ lat: newLat, lng: newLng });
+        if (inputRef.current) {
+          inputRef.current.value = place.formatted_address || "";
+        }
+        onAddressChange(place.formatted_address || "");
+      }
+    }
+  };
+
+  if (loadError) {
+    return (
+      <div className="h-[250px] rounded-xl bg-red-50 border border-red-200 flex items-center justify-center text-sm text-red-600">
+        Error al cargar Google Maps
+      </div>
+    );
+  }
+
+  if (!isLoaded) {
+    return (
+      <div className="h-[250px] rounded-xl bg-gray-100 border border-gray-200 flex items-center justify-center">
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <span className="w-4 h-4 border-2 border-gray-300 border-t-indigo-600 rounded-full animate-spin" />
+          Cargando mapa...
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {/* Barra de búsqueda con autocompletado */}
+      <Autocomplete
+        onLoad={(instance) => setAutocompleteInstance(instance)}
+        onPlaceChanged={onPlaceChanged}
+        options={{
+          componentRestrictions: { country: "pe" },
+        }}
+      >
+        <div className="relative">
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Busca una dirección..."
+            defaultValue={address}
+            className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 outline-none transition-all"
+          />
+          <FiMapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
+        </div>
+      </Autocomplete>
+
+      {/* Mapa interactivo */}
+      <div className="rounded-xl overflow-hidden border border-gray-200 shadow-sm">
+        <GoogleMap
+          mapContainerStyle={{ height: "250px", width: "100%", borderRadius: "0.75rem" }}
+          center={mapCenter}
+          zoom={16}
+          onClick={handleMapClick}
+          options={{
+            streetViewControl: false,
+            mapTypeControl: false,
+            fullscreenControl: true,
+            zoomControl: true,
+            gestureHandling: "greedy",
+          }}
+        >
+          <Marker
+            position={{ lat, lng }}
+            draggable={true}
+            onDragEnd={handleMarkerDragEnd}
+            animation={typeof google !== "undefined" ? google.maps.Animation.DROP : undefined}
+          />
+        </GoogleMap>
+      </div>
+
+      {/* Hint */}
+      <p className="text-[10px] text-gray-400 text-center">
+        💡 Busca una dirección, haz clic en el mapa o arrastra el marcador
+      </p>
     </div>
   );
 }
