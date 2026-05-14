@@ -35,6 +35,15 @@ const UpdateSchema = z.object({
 
 export async function PATCH(request: Request) {
   try {
+    // ── Auth: verificar que el usuario esté logueado ──
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: "No autorizado." },
+        { status: 401 }
+      );
+    }
+
     const url = new URL(request.url);
     const id = url.pathname.split("/").pop();
 
@@ -49,6 +58,27 @@ export async function PATCH(request: Request) {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
+
+    // ── Ownership: verificar que el pedido pertenece al usuario (salvo admin) ──
+    if (session.user.role !== "admin") {
+      const pedidoCheck = await sql`
+        SELECT asesor_id, repartidor_id FROM pedidos WHERE id = ${id}
+      `;
+      if (pedidoCheck.length === 0) {
+        return NextResponse.json(
+          { error: "Pedido no encontrado" },
+          { status: 404 }
+        );
+      }
+      const { asesor_id, repartidor_id } = pedidoCheck[0];
+      if (asesor_id !== session.user.id && repartidor_id !== session.user.id) {
+        return NextResponse.json(
+          { error: "No tienes permiso para modificar este pedido." },
+          { status: 403 }
+        );
+      }
+    }
+
     const body = await request.json();
     const parsedData = UpdateSchema.safeParse(body);
 
@@ -139,6 +169,23 @@ export async function PATCH(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    // ── Auth: verificar que el usuario esté logueado ──
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: "No autorizado." },
+        { status: 401 }
+      );
+    }
+
+    // ── Rol: solo admin y asesor pueden eliminar pedidos (no repartidor) ──
+    if (session.user.role === "repartidor") {
+      return NextResponse.json(
+        { error: "No tienes permiso para eliminar pedidos." },
+        { status: 403 }
+      );
+    }
+
     const url = new URL(request.url);
     const id = url.pathname.split("/").pop();
 
@@ -153,6 +200,25 @@ export async function DELETE(request: Request) {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
+
+    // ── Ownership: asesor solo puede eliminar sus propios pedidos (admin: cualquiera) ──
+    if (session.user.role === "asesor") {
+      const pedidoCheck = await sql`
+        SELECT asesor_id FROM pedidos WHERE id = ${id}
+      `;
+      if (pedidoCheck.length === 0) {
+        return NextResponse.json(
+          { error: "Pedido no encontrado para eliminar" },
+          { status: 404 }
+        );
+      }
+      if (pedidoCheck[0].asesor_id !== session.user.id) {
+        return NextResponse.json(
+          { error: "No tienes permiso para eliminar este pedido." },
+          { status: 403 }
+        );
+      }
+    }
 
     const result = await sql`
       DELETE FROM pedidos
