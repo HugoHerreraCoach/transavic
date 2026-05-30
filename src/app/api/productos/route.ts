@@ -4,10 +4,16 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 
+// Vista unificada del catálogo (mayo 2026): un producto entra al sistema con
+// nombre + categoría + unidad obligatorios, y opcionalmente puede nacer con
+// precio_venta y precio_compra. Si no traen precios, quedan "sin precio" y
+// el banner del catálogo lo destaca (no suman a ventas/metas hasta tenerlos).
 const ProductoSchema = z.object({
   nombre: z.string().min(1, { message: "El nombre es requerido." }),
   categoria: z.string().min(1, { message: "La categoría es requerida." }),
   unidad: z.string().min(1, { message: "La unidad es requerida." }),
+  precio_venta: z.number().positive().optional().nullable(),
+  precio_compra: z.number().nonnegative().optional().nullable(),
 });
 
 export async function GET() {
@@ -19,14 +25,15 @@ export async function GET() {
 
     const sql = neon(connectionString);
     const productos = await sql`
-      SELECT id, nombre, categoria, unidad, activo
+      SELECT id, nombre, categoria, unidad, activo,
+        precio_venta, precio_compra, codigo
       FROM productos
       WHERE activo = TRUE
-      ORDER BY 
-        CASE categoria 
-          WHEN 'Pollo' THEN 1 
-          WHEN 'Carnes' THEN 2 
-          WHEN 'Huevos' THEN 3 
+      ORDER BY
+        CASE categoria
+          WHEN 'Pollo' THEN 1
+          WHEN 'Carnes' THEN 2
+          WHEN 'Huevos' THEN 3
         END,
         nombre ASC
     `;
@@ -66,14 +73,47 @@ export async function POST(request: Request) {
       );
     }
 
-    const { nombre, categoria, unidad } = parsedData.data;
+    const { nombre, categoria, unidad, precio_venta, precio_compra } = parsedData.data;
     const sql = neon(connectionString);
 
+    // Código interno estable: prefijo por categoría + siguiente correlativo.
+    const prefijo =
+      categoria === "Pollo"
+        ? "POL"
+        : categoria === "Carnes"
+          ? "CAR"
+          : categoria === "Huevos"
+            ? "HUE"
+            : "PRD";
+    const maxRow = (await sql`
+      SELECT COALESCE(MAX(NULLIF(regexp_replace(codigo, '[^0-9]', '', 'g'), '')::int), 0) AS n
+      FROM productos WHERE codigo LIKE ${prefijo + "%"}
+    `) as Array<{ n: number }>;
+    const codigo = `${prefijo}${String(Number(maxRow[0]?.n ?? 0) + 1).padStart(3, "0")}`;
+
     const result = await sql`
-      INSERT INTO productos (nombre, categoria, unidad)
-      VALUES (${nombre}, ${categoria}, ${unidad})
-      RETURNING id, nombre, categoria, unidad, activo
+      INSERT INTO productos (nombre, categoria, unidad, codigo, precio_venta, precio_compra)
+      VALUES (${nombre}, ${categoria}, ${unidad}, ${codigo},
+              ${precio_venta ?? null}, ${precio_compra ?? null})
+      RETURNING id, nombre, categoria, unidad, activo, codigo, precio_venta, precio_compra
     `;
+
+    // Si el producto nace con precio_venta, abrimos también el primer registro
+    // en el histórico (mismo patrón que /api/precios/[id] PATCH para mantener
+    // la auditoría consistente). No-crítico: si falla, el producto ya quedó OK.
+    if (precio_venta !== undefined && precio_venta !== null && precio_venta > 0) {
+      try {
+        await sql`
+          INSERT INTO precios_productos (producto_id, precio_compra, precio_venta, created_by)
+          VALUES (${result[0].id}, ${precio_compra ?? null}, ${precio_venta}, ${session.user.id})
+        `;
+      } catch (histErr) {
+        console.error(
+          "POST /api/productos: no se pudo registrar histórico de precios (no crítico):",
+          histErr
+        );
+      }
+    }
 
     return NextResponse.json(
       { data: result[0], message: "Producto creado exitosamente" },

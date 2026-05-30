@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/facturas-vencidas",
+      "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/resumen-diario-sunat",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/recordatorios-asesoras",
+      "schedule": "0 17 * * *"
+    },
+    {
+      "path": "/api/cron/daily-digest-admin",
+      "schedule": "30 13 * * *"
+    }
+  ]
+}

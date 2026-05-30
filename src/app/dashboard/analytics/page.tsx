@@ -1,15 +1,7 @@
 // src/app/dashboard/analytics/page.tsx
-
-import { auth } from "@/auth";
+// Ruta legacy: Analítica ahora vive dentro de /dashboard/reportes (pestaña).
 import { redirect } from "next/navigation";
-import AnalyticsClient from "./analytics-client";
 
-export default async function Page() {
-    const session = await auth();
-
-    if (session?.user?.role !== 'admin') {
-        redirect('/dashboard');
-    }
-
-    return <AnalyticsClient />;
+export default function AnalyticsRedirect() {
+  redirect("/dashboard/reportes");
 }

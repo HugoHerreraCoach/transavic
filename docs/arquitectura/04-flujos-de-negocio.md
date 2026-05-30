@@ -1,8 +1,214 @@
 # 04 — Flujos de Negocio
 
 > **Última verificación contra código:** 2026-05-13
+> **Última actualización del flujo real:** 2026-05-13 (post-reunión Antonio)
 > **Commit del proyecto:** `d2a49cd`
 > **Archivos clave:** `src/components/PedidoForm.tsx`, `ClienteAutocomplete.tsx`, `ProductSelector.tsx`, `MapInput.tsx`, `TicketPedido.tsx`, `src/app/dashboard/despacho/despacho-content.tsx`, `mapa-despacho.tsx`, `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`, `src/lib/offline-queue.ts`, `src/app/api/pedidos/[id]/*/route.ts`
+
+---
+
+## 0. El flujo real del negocio (visión humana)
+
+Esta sección documenta **cómo opera realmente el negocio de Antonio en la vida diaria**, según conversaciones con él. Es la fuente de verdad para entender qué tiene que resolver el software. Lo que está implementado hoy (secciones 2-6 de este documento) cubre solo una parte de este flujo — el resto vive en WhatsApp, papeles y cabezas humanas.
+
+### 0.1 Quiénes participan
+
+| Quién | Cuántos | Dónde está físicamente | Qué hace |
+|---|---|---|---|
+| **Antonio (admin)** | 1 | Itinerante — controla desde el celular | Asigna pedidos a motorizados, supervisa, decide compras, mira números del negocio |
+| **Asesoras** | 4 (Leslie, Yoshelin, Sarai, Yesica) | Oficina principal | Reciben pedidos por WhatsApp, los registran en el sistema, **emiten facturas**, **se comunican y cobran al cliente** |
+| **Asistente de producción** | 1 | **En otro distrito** que la oficina | Imprime los pedidos del día, **pesa cada producto manualmente**, anota pesos a mano sobre el papel, **prepara las guías**, empaqueta y entrega todo listo al motorizado |
+| **Motorizados** | 6 (Marco, Yhorner, Anghelo, …) | En la calle, 18 distritos de Lima | Recogen lo empaquetado del local de producción, reparten al cliente, hacen firmar la guía, mandan foto de la guía firmada a la asesora |
+| **Cliente final** | 30 pedidos/día aprox | Cualquiera de los 18 distritos | Pide por WhatsApp a su asesora habitual, recibe el pedido, firma la guía, paga (al momento o a plazo) |
+
+### 0.2 El flujo paso a paso (ejemplo real: Lucy Chiriños)
+
+#### Paso 1 — Pedido entrante (puede ser hoy, mañana, o varios días después)
+
+Lucy le manda WhatsApp a Sarai (su asesora habitual):
+> *"Sarai, necesito para mañana 14 pechugas especiales con hueso, sin alas y sin piel. Entre 8 y 9 AM."*
+
+**Sarai abre el sistema** desde la computadora de la oficina:
+1. Va a "Nuevo Pedido".
+2. Escribe "Lucy" en el buscador → autocompleta dirección, RUC, distrito, WhatsApp, hora de entrega habitual.
+3. Elige los productos del catálogo (Pechuga especial con hueso × 14 unidades).
+4. Define empresa (`Transavic` o `Avícola de Tony`).
+5. Define la fecha de entrega (puede ser **hoy mismo, mañana, o varios días después** — el sistema acepta cualquier fecha).
+6. Crea el pedido. El sistema genera un ticket JPEG con todos los datos.
+7. Sarai reenvía el ticket por WhatsApp a Lucy como confirmación.
+
+El pedido queda en estado `Pendiente`. **Importante:** el pedido **NO se crea para "hoy" por defecto** — los pedidos llegan con varios días de anticipación normalmente, pero también puede haber para el mismo día.
+
+#### Paso 2 — Producción recibe los pedidos del día
+
+La asistente de producción está en otro distrito, separada físicamente de la oficina. **Su rutina actual** (manual):
+
+1. **Entra al sistema** y filtra los pedidos del día.
+2. **Imprime el reporte completo** (la hoja con la lista de los ~13 pedidos del día).
+3. Va al área de pesado del local con el papel.
+4. Por cada pedido:
+   - Lee qué se pidió (ej: "14 unidades de pechuga especial").
+   - **Pesa el producto** físicamente.
+   - **Anota el peso real a mano** sobre el papel impreso (ej: "14.30 kg").
+5. Cuando terminó todos los pesos del día:
+   - Toma una **foto del papel con todos los pesos anotados**.
+   - **La manda al grupo de WhatsApp de las asesoras** para que cada asesora vea los pesos finales de sus clientes.
+
+**Dolor actual:** los pesos viven solo en el papel y la foto. No están en el sistema. Cada asesora tiene que transcribirlos para emitir facturas. Si se pierde el papel o la foto, se pierde la información.
+
+#### Paso 3 — La asistente prepara la guía de remisión y empaqueta
+
+Por cada pedido, la asistente:
+
+1. Toma una hoja preimpresa de "Orden de Pedido" (formato N° 001939 que vimos en foto).
+2. **Llena a mano** los datos: nombre del cliente, dirección, fecha, productos con pesos exactos, monto.
+3. Mete la guía dentro de la bolsa del pedido.
+4. **Empaqueta todo:** pone los stickers, prepara las bolsas, organiza por cliente.
+5. **Entrega todo listo al motorizado** cuando este llega al local de producción.
+
+**Dolor actual:** las guías son 100% manuales. La asistente las escribe a mano para cada pedido del día (~30 guías).
+
+#### Paso 4 — Antonio asigna los pedidos a motorizados
+
+Antonio abre `/dashboard/despacho` desde su celular y ve el tablero kanban:
+
+1. Ve los pedidos del día en la columna "Pendientes".
+2. **Arrastra** cada pedido a la columna del motorizado correspondiente (Marco, Yhorner, Anghelo, …).
+3. Si los motorizados propios no alcanzan, **arrastra al "Delivery externo"** y pone el nombre del delivery contratado.
+4. Toca **"Optimizar Ruta"** por cada motorizado → el sistema reordena los pedidos para minimizar distancia con Google Directions.
+
+**Estado actual del sistema:** esto SÍ está implementado. Funciona bien.
+
+#### Paso 5 — El motorizado reparte
+
+Marco (motorizado) llega al local de producción, **recoge las bolsas ya empaquetadas con sus guías ya escritas por la asistente**, las pone en su moto, y abre `/dashboard/mi-ruta` en el celular.
+
+Por cada pedido:
+1. Toca **"Ir al cliente"** → se abre Google Maps con la dirección, el pedido pasa a `En_Camino`.
+2. Maneja al cliente.
+3. Entrega los productos físicamente.
+4. **Le da la guía al cliente, el cliente la firma.**
+5. **Toma foto de la guía firmada con el celular.**
+6. **Manda la foto por WhatsApp a la asesora correspondiente** (Sarai en este ejemplo).
+7. En su app, toca "✅ Entregado". Si no se pudo entregar, toca "❌ No Entregado" y elige razón.
+
+**Dolor actual:** la foto de la guía firmada vive en el WhatsApp del motorizado y la asesora. No queda registrada en el sistema. Si la asesora elimina el chat, se pierde la prueba de entrega.
+
+#### Paso 6 — La asesora emite la factura y cobra
+
+Sarai (la asesora del pedido) recibe la foto de la guía firmada por WhatsApp. Ahora le toca:
+
+1. **Emitir la factura electrónica** en SUNAT — **hoy esto se hace fuera del sistema**, manualmente en el portal del proveedor de facturación que tenga (o el portal de SUNAT directo).
+2. **Mandar al cliente por WhatsApp dos cosas:**
+   - La foto de la guía firmada.
+   - El XML/PDF de la factura electrónica.
+3. **Esperar el pago** según lo acordado con el cliente.
+
+**Las modalidades de pago son flexibles:**
+- **Al momento de la entrega** (cash en mano del motorizado).
+- **A 1 día, 3 días, 7 días, 15 días, o "los lunes"** (clientes recurrentes con cuenta).
+- Cualquier combinación según el acuerdo histórico con cada cliente.
+
+Si el cliente no paga en el plazo, la asesora debe llamar/escribir para cobrar. **Hoy no hay alerta automática del sistema** — la asesora se entera tarde cuando revisa manualmente.
+
+#### Paso 7 — Caso especial: el cliente no aprueba los pesos
+
+A veces el cliente, al recibir el pedido, dice "este peso no es lo que pedí" o "no acepto cobrarme esa cantidad". En ese caso:
+
+1. La asesora tiene que **negociar con el cliente** un ajuste de peso o precio.
+2. Si llegan a acuerdo, **debe poder modificar los pesos/precios** del pedido en el sistema.
+3. Si ya se emitió factura, **debe emitirse una nota de crédito** y/o nueva factura.
+
+**Esto el sistema debe soportarlo de manera flexible** — no asumir que los pesos del momento de pesado son definitivos.
+
+### 0.3 Las 4 áreas y sus "junturas" con fricción
+
+```
+   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+   │   OFICINA    │ ─[A]─▶│  PRODUCCIÓN  │ ─[B]─▶│   REPARTO    │ ─[C]─▶│   COBRANZA   │
+   │  4 asesoras  │       │  1 asistente │       │ 6 motorizad. │       │  4 asesoras  │
+   │  (PC oficina)│       │ (otro distr.)│       │ (en la calle)│       │  + Antonio   │
+   └──────────────┘       └──────────────┘       └──────────────┘       └──────────────┘
+       Pedido entra            Pesa, arma           Entrega, hace            Emite factura,
+       al sistema              guía a mano,         firmar guía,             cobra al cliente
+                               manda foto WP        manda foto WP            según plazo
+```
+
+**Las 4 junturas con fricción actual:**
+
+| Juntura | Cómo se comunica hoy | Dolor |
+|---|---|---|
+| **[A] Oficina → Producción** | La asistente imprime el reporte del sistema y anota pesos a mano. Después manda foto al grupo WhatsApp. | Pesos viven en papel/foto, no en sistema. Doble digitación si se quiere registrar. |
+| **[B] Producción → Reparto** | Las guías se escriben a mano. El motorizado recoge bolsas + guías físicamente. | Tiempo de escritura manual de 30+ guías por día. Errores de transcripción. |
+| **[C] Reparto → Cobranza** | Motorizado manda foto de guía firmada por WhatsApp a la asesora. | Foto vive en chat, no en sistema. Si se borra el chat, se pierde la prueba. |
+| **[D] Asesora → Cliente final** | Asesora arma la factura manualmente en otro portal. Manda guía + factura por WhatsApp. | Doble trabajo (transcribir pesos, emitir factura, enviar). Sin alerta de pagos vencidos. |
+
+### 0.4 El flujo futuro (con las 8 mejoras integradas)
+
+```
+   ┌──────────────┐       ┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+   │   OFICINA    │       │  PRODUCCIÓN  │       │   REPARTO    │       │   COBRANZA   │
+   │              │       │              │       │              │       │              │
+   │ Asesora crea │       │ Asistente    │       │ Motorizado   │       │ Asesora      │
+   │ pedido en    │       │ entra al     │       │ entrega y    │       │ emite        │
+   │ sistema      │       │ sistema, ve  │       │ sube foto    │       │ factura      │
+   │              │       │ cola del día,│       │ guía firmada │       │ con 1 clic   │
+   │ (precios     │ ───▶ │ pesa con     │ ───▶ │ desde app    │ ───▶ │ (XML+PDF     │
+   │ vigentes     │       │ inputs       │       │              │       │ automático)  │
+   │ aplicados)   │       │ digitales    │       │ Sistema      │       │              │
+   │              │       │              │       │ guarda foto, │       │ Sistema      │
+   │              │       │ Sistema      │       │ NO va a      │       │ avisa a      │
+   │              │       │ calcula      │       │ WhatsApp     │       │ asesora si   │
+   │              │       │ monto auto.  │       │              │       │ vence pago   │
+   │              │       │              │       │ Admin ve GPS │       │              │
+   │              │       │ Sistema imp. │       │ en vivo y    │       │              │
+   │              │       │ guía digital │       │ ETA al cli.  │       │              │
+   └──────┬───────┘       └──────┬───────┘       └──────┬───────┘       └──────┬───────┘
+          │                      │                      │                      │
+          │                      │                      │                      │
+          ▼                      ▼                      ▼                      ▼
+   ┌─────────────────────────────────────────────────────────────────────────────────┐
+   │   🔔 NOTIFICACIONES AUTOMÁTICAS ENTRE ÁREAS                                      │
+   │   Pedido creado → Producción     Pesos listos → Asesora     Entregado → Asesora │
+   └─────────────────────────────────────────────────────────────────────────────────┘
+          │                                                              │
+          └──────────────────────────────┬───────────────────────────────┘
+                                         ▼
+   ┌─────────────────────────────────────────────────────────────────────────────────┐
+   │   🤖 IA COMERCIAL (Gemini Flash Latest, gratis)                                  │
+   │   "A Lucy le toca pedir hace 9 días que no compra" / Resumen semanal / Ranking   │
+   └─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Las 4 junturas resueltas:**
+
+| Juntura | Resolución |
+|---|---|
+| **[A]** | Asistente ingresa pesos directamente en el sistema desde su pantalla. **Mejora 1 + Mejora 4** |
+| **[B]** | Sistema imprime guía digital con pesos exactos automáticamente. Numeración correlativa. **Mejora 2** |
+| **[C]** | Motorizado sube foto de guía firmada desde la app. Queda en sistema, no en WhatsApp. **Mejora 2 (parte final)** |
+| **[D]** | Factura electrónica con 1 clic (SUNAT integrado). Sistema avisa cuando vence pago. **Mejora 6 + Mejora 7** |
+
+### 0.5 Principios de UX que deben regir TODAS las pantallas nuevas
+
+Decisión explícita de Antonio (mayo 2026): aplicar los principios del libro **"No me hagas pensar"** de Steve Krug en todas las pantallas del sistema.
+
+| Principio | Cómo se ve en la práctica |
+|---|---|
+| **Cada pantalla debe ser auto-evidente** | El usuario sabe qué hacer sin leer instrucciones. |
+| **Menos clics, menos decisiones** | Valores por defecto inteligentes (ej: si el cliente paga siempre a 15 días, ese plazo viene pre-cargado). |
+| **El siguiente paso es obvio** | El botón principal está claro, distinto del resto, con texto que dice exactamente lo que va a pasar ("Emitir factura" en vez de "Confirmar"). |
+| **Mensajes accionables** | Si algo sale mal, decir qué hacer ("La SUNAT rechazó la factura porque el RUC tiene 10 dígitos. Verifica con el cliente y corrige."). |
+| **Información donde se necesita** | El monto a cobrar aparece junto al peso, no en una pantalla aparte. |
+| **Reducir fricción** | Acciones repetitivas (emitir factura, mandar guía al cliente) deben requerir 1 clic, no 5. |
+
+### 0.6 Reglas de negocio importantes (flexibilidad requerida)
+
+1. **Fechas de pedido flexibles:** un pedido puede ser para hoy, mañana, o cualquier día futuro. El sistema NO debe asumir "para mañana" por defecto.
+2. **Plazos de pago flexibles:** un cliente puede pagar al momento, a 1 día, 3 días, 7 días, 15 días, "los lunes", etc. Cada cliente puede tener su propio plazo configurado.
+3. **Pesos modificables después de pesado:** si el cliente no acepta los pesos, la asesora debe poder ajustarlos y, si ya se emitió factura, emitir nota de crédito.
+4. **Precios fluctuantes:** los precios del pollo, carne, huevos varían diariamente. Antonio (o quien él designe) debe poder actualizar precios todos los días con pocos clics.
+5. **Dos empresas conviviendo:** todo el flujo soporta `Transavic` y `Avícola de Tony` con sus respectivos RUCs y branding. Cada pedido pertenece a una sola empresa.
 
 ---
 

@@ -34,6 +34,16 @@ yarn-error.log*
 .env
 .env*.local
 
+# credenciales reales (NUNCA subir) — claves SUNAT, SMTP, etc.
+*.local.md
+CREDENCIALES*.md
+.credenciales*
+
+# certificados digitales SUNAT (.p12/.pfx) — JAMÁS subir (contienen llave privada)
+certificados/
+*.p12
+*.pfx
+
 # vercel
 .vercel
 

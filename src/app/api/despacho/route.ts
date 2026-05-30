@@ -33,7 +33,7 @@ export async function GET() {
         p.distancia_km, p.duracion_estimada_min
       FROM pedidos p
       WHERE p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
-        AND p.estado = 'Pendiente'
+        AND p.estado IN ('Pendiente', 'Listo_Para_Despacho')
         AND p.repartidor_id IS NULL
         AND (p.es_delivery_externo = false OR p.es_delivery_externo IS NULL)
       ORDER BY p.created_at ASC
@@ -91,9 +91,11 @@ export async function GET() {
         CASE p.estado
           WHEN 'En_Camino' THEN 0
           WHEN 'Asignado' THEN 1
-          WHEN 'Pendiente' THEN 2
-          WHEN 'Entregado' THEN 3
-          WHEN 'Fallido' THEN 4
+          WHEN 'Listo_Para_Despacho' THEN 2
+          WHEN 'En_Produccion' THEN 3
+          WHEN 'Pendiente' THEN 4
+          WHEN 'Entregado' THEN 5
+          WHEN 'Fallido' THEN 6
         END,
         p.orden_ruta ASC NULLS LAST,
         p.created_at ASC

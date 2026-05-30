@@ -140,10 +140,15 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-75 flex justify-center items-center z-50 p-4">
-      <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg relative p-6">
-        <button onClick={onClose} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800">
+      <div className="bg-white rounded-lg shadow-2xl w-full max-w-lg relative max-h-[90vh] overflow-y-auto">
+        {/* Header sticky: el botón X queda SIEMPRE visible aunque el contenido haga scroll. */}
+        <div className="sticky top-0 z-10 bg-white px-6 pt-5 pb-3 flex items-center justify-between border-b border-gray-100">
+          <h2 className="text-xl font-bold text-gray-800">Compartir Ticket</h2>
+          <button onClick={onClose} aria-label="Cerrar" className="text-gray-500 hover:text-gray-800">
             <FiX size={24} />
-        </button>
+          </button>
+        </div>
+        <div className="px-6 pb-6 pt-4">
 
         <div className="fixed top-0 left-[-9999px] z-[-1]">
           <div className="w-[500px]">
@@ -155,8 +160,6 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
             />
           </div>
         </div>
-
-        <h2 className="text-xl font-bold text-gray-800 mb-4">Compartir Ticket</h2>
 
         <div className="min-h-[300px] flex justify-center items-center">
             {cargando && (
@@ -174,6 +177,7 @@ export default function TicketShareModal({ pedido, onClose }: TicketShareModalPr
               <button onClick={compartirImagen} disabled={!navigator.share} className="flex-1 bg-green-500 text-white font-bold py-3 px-4 rounded-md hover:bg-green-600 transition-colors flex items-center justify-center disabled:bg-gray-400"> <FiShare2 className="mr-2" /> WhatsApp </button>
             </div>
         )}
+        </div>
       </div>
     </div>
   );

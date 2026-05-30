@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { crearNotificacionParaRol } from "@/lib/notificaciones";
 
 // Definimos un esquema de validación con Zod para asegurar los datos
 const PedidoSchema = z.object({
@@ -65,6 +66,13 @@ export async function POST(request: Request) {
         { status: 401 }
       );
     }
+    // Solo admin y asesoras pueden crear pedidos (producción/repartidor no).
+    if (!["admin", "asesor"].includes(session.user.role)) {
+      return NextResponse.json(
+        { error: "No tenés permiso para crear pedidos." },
+        { status: 403 }
+      );
+    }
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
@@ -112,15 +120,38 @@ export async function POST(request: Request) {
       RETURNING id
     `;
 
-    // If structured items were sent, save them
+    // If structured items were sent, save them con SNAPSHOT del precio vigente
     if (items && items.length > 0 && insertedPedido[0]?.id) {
       const pedidoId = insertedPedido[0].id;
       for (const item of items) {
+        // Snapshot del precio vigente al momento de crear el pedido
+        const productoRow = await sql`
+          SELECT precio_venta FROM productos WHERE id = ${item.productoId}
+        `;
+        const precio_unitario = productoRow[0]?.precio_venta
+          ? Number(productoRow[0].precio_venta)
+          : null;
+        const subtotal =
+          precio_unitario !== null
+            ? Number((precio_unitario * item.cantidad).toFixed(2))
+            : null;
+
         await sql`
-          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad)
-          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad})
+          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
+          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${precio_unitario}, ${subtotal})
         `;
       }
+    }
+
+    // Notificar a Producción (no bloqueante: si falla, el pedido ya está creado)
+    if (insertedPedido[0]?.id) {
+      await crearNotificacionParaRol("produccion", {
+        tipo: "pedido_creado",
+        titulo: "Nuevo pedido recibido",
+        mensaje: `Cliente: ${cliente} · ${distrito ?? "sin distrito"} · ${horaEntrega ?? "sin horario"}`,
+        link: "/dashboard/produccion",
+        pedidoId: insertedPedido[0].id as string,
+      });
     }
 
     return NextResponse.json(

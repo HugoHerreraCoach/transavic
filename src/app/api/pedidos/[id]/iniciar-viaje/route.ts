@@ -2,6 +2,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { crearNotificacion } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
 
     // Obtener el pedido y verificar que pertenece al repartidor
     const pedidoResult = await sql`
-      SELECT id, estado, latitude, longitude, repartidor_id, cliente, direccion
+      SELECT id, estado, latitude, longitude, repartidor_id, asesor_id, cliente, direccion
       FROM pedidos WHERE id = ${id}
     `;
 
@@ -125,6 +126,18 @@ export async function POST(request: Request) {
           entregado = FALSE
       WHERE id = ${id}
     `;
+
+    // Avisar a la asesora que su pedido salió a reparto (campanita).
+    if (pedido.asesor_id) {
+      await crearNotificacion({
+        userId: pedido.asesor_id as string,
+        tipo: "pedido_en_camino",
+        titulo: "Pedido en camino",
+        mensaje: `${pedido.cliente} — el repartidor salió a entregar.`,
+        link: "/dashboard",
+        pedidoId: id,
+      });
+    }
 
     // Generar URLs de navegación
     const lat = pedido.latitude;

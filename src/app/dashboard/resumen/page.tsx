@@ -1,15 +1,7 @@
 // src/app/dashboard/resumen/page.tsx
-
-import { auth } from "@/auth";
+// Ruta legacy: Resumen Diario ahora vive dentro de /dashboard/reportes (pestaña).
 import { redirect } from "next/navigation";
-import ResumenClient from "./resumen-client";
 
-export default async function Page() {
-    const session = await auth();
-
-    if (session?.user?.role !== 'admin') {
-        redirect('/dashboard');
-    }
-
-    return <ResumenClient />;
+export default function ResumenRedirect() {
+  redirect("/dashboard/reportes");
 }

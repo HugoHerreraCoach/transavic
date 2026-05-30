@@ -1,0 +1,135 @@
+// src/app/api/comprobantes/export-xlsx/route.ts
+// Exporta comprobantes como reporte contable .xlsx multi-hoja (para el contador).
+//
+// Reporte "inteligente" (mayo 2026, portado de conexipema-eventos):
+//   - Filtra por RANGO DE FECHAS (?desde&hasta en zona Lima, sobre created_at).
+//   - Respeta los filtros de la lista (tipo, empresa, cliente_doc_num).
+//   - Hojas: Resumen · Registro de Ventas · Boletas · Facturas · Notas de Crédito.
+//   - NC restan; rechazado/error/anulado fuera de las sumas.
+//
+// Scope por rol: admin ve todo; asesor solo los comprobantes de sus pedidos.
+
+import { auth } from "@/auth";
+import { neon } from "@neondatabase/serverless";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  generarBufferReporteComprobantes,
+  type FilaComprobante,
+  type PeriodoReporte,
+} from "@/lib/sunat/reporte-excel-comprobantes";
+
+export const dynamic = "force-dynamic";
+
+/** Valida YYYY-MM-DD. */
+const esFecha = (s: string | null): s is string => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/** DD/MM/YYYY para etiquetas legibles. */
+function ddmmyyyy(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+export async function GET(req: NextRequest) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
+  const role = session.user.role;
+  if (role !== "admin" && role !== "asesor") {
+    return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+  }
+  const userId = session.user.id;
+
+  const { searchParams } = new URL(req.url);
+  const tipo = searchParams.get("tipo"); // "01" | "03" | "07" | null
+  const empresa = searchParams.get("empresa"); // "transavic" | "avicola" | null
+  const clienteDocNum = searchParams.get("cliente_doc_num")?.trim();
+  const desdeRaw = searchParams.get("desde"); // YYYY-MM-DD | null
+  const hastaRaw = searchParams.get("hasta"); // YYYY-MM-DD | null
+
+  const sql = neon(process.env.DATABASE_URL!);
+
+  // Query dinámica (mismo patrón que GET /api/comprobantes).
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+
+  if (role === "asesor") {
+    conditions.push(
+      `c.pedido_id IN (SELECT id FROM pedidos WHERE asesor_id = $${i++})`
+    );
+    params.push(userId);
+  }
+  if (tipo && (tipo === "01" || tipo === "03" || tipo === "07" || tipo === "08")) {
+    conditions.push(`c.tipo = $${i++}`);
+    params.push(tipo);
+  }
+  if (empresa && (empresa === "transavic" || empresa === "avicola")) {
+    conditions.push(`c.empresa = $${i++}`);
+    params.push(empresa);
+  }
+  if (clienteDocNum && /^\d{8,11}$/.test(clienteDocNum)) {
+    conditions.push(`c.cliente_doc_num = $${i++}`);
+    params.push(clienteDocNum);
+  }
+  // Rango de fechas: comparamos la fecha (sin hora) de created_at en zona Lima.
+  if (esFecha(desdeRaw)) {
+    conditions.push(`(c.created_at AT TIME ZONE 'America/Lima')::date >= $${i++}`);
+    params.push(desdeRaw);
+  }
+  if (esFecha(hastaRaw)) {
+    conditions.push(`(c.created_at AT TIME ZONE 'America/Lima')::date <= $${i++}`);
+    params.push(hastaRaw);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const rows = (await sql.query(
+    `SELECT c.serie, c.numero, c.serie_numero, c.tipo, c.empresa,
+            c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
+            c.monto_subtotal, c.monto_igv, c.monto_total,
+            c.estado, c.mensaje_sunat, c.created_at, c.forma_pago, c.fecha_vencimiento
+     FROM comprobantes c
+     ${where}
+     ORDER BY c.created_at ASC
+     LIMIT 10000`,
+    params
+  )) as FilaComprobante[];
+
+  // Etiqueta del período para el encabezado de las hojas + el nombre de archivo.
+  const periodo: PeriodoReporte = (() => {
+    if (esFecha(desdeRaw) && esFecha(hastaRaw)) {
+      return {
+        desde: desdeRaw,
+        hasta: hastaRaw,
+        etiqueta: `${ddmmyyyy(desdeRaw)} al ${ddmmyyyy(hastaRaw)}`,
+      };
+    }
+    if (esFecha(desdeRaw)) {
+      return { desde: desdeRaw, hasta: "hoy", etiqueta: `desde ${ddmmyyyy(desdeRaw)}` };
+    }
+    if (esFecha(hastaRaw)) {
+      return { desde: "inicio", hasta: hastaRaw, etiqueta: `hasta ${ddmmyyyy(hastaRaw)}` };
+    }
+    return { desde: "todo", hasta: "todo", etiqueta: "Todos los comprobantes" };
+  })();
+
+  const buf = generarBufferReporteComprobantes(rows, periodo);
+
+  // Nombre de archivo: incluye el rango para que el contador lo identifique.
+  const slug =
+    periodo.desde === "todo"
+      ? new Date().toISOString().slice(0, 10)
+      : `${periodo.desde}_al_${periodo.hasta}`;
+  const filename = `reporte-comprobantes-${slug}.xlsx`;
+
+  return new NextResponse(new Uint8Array(buf), {
+    status: 200,
+    headers: {
+      "Content-Type":
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Length": String(buf.length),
+    },
+  });
+}

@@ -2,8 +2,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Pedido } from '@/lib/types';
-import { FiX } from 'react-icons/fi';
+import { FiX, FiAlertTriangle, FiFileText } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import TimeRangePicker from '@/components/TimeRangePicker';
 
@@ -14,12 +15,25 @@ interface EditPedidoModalProps {
     onPedidoUpdated: (updatedPedido: Pedido) => void;
 }
 
+// P2.11 — Si el pedido ya tiene comprobante emitido (aceptado/pendiente),
+// el comprobante no se modifica al editar el pedido. Avisamos arriba para
+// que el usuario sepa que necesita emitir una Nota de Crédito si los datos
+// del comprobante deben cambiar.
+interface ComprobanteRefMini {
+    id: string;
+    serie_numero: string;
+    tipo: string;
+    estado: string;
+}
+
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
 
 export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdated }: EditPedidoModalProps) {
     const [formData, setFormData] = useState(pedido);
     const [isSaving, setIsSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // P2.11 — Comprobante existente para este pedido (si lo hay).
+    const [comprobante, setComprobante] = useState<ComprobanteRefMini | null>(null);
 
     useEffect(() => {
         if (pedido) {
@@ -34,7 +48,42 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
         }
     }, [pedido]);
 
+    // P2.11 — Cuando se abre el modal, consultamos si este pedido ya tiene
+    // un comprobante emitido. El endpoint /api/comprobantes acepta pedido_id
+    // y aplica scoping por rol; devuelve [] si no hay comprobante o si la
+    // asesora no es dueña del pedido.
+    useEffect(() => {
+        if (!isOpen || !pedido?.id) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch(`/api/comprobantes?pedido_id=${pedido.id}`);
+                if (!res.ok) return;
+                const json = await res.json();
+                const arr = (json.data ?? []) as ComprobanteRefMini[];
+                // Tomamos el más reciente "vivo" (no rechazado/error) — el primero
+                // que devuelve la API ya viene ORDER BY created_at DESC.
+                const vivo = arr.find(
+                    (c) => c.estado !== 'RECHAZADA' && c.estado !== 'ERROR' && c.estado !== 'ANULADO'
+                );
+                if (!cancelled) setComprobante(vivo ?? null);
+            } catch {
+                /* silencioso — peor caso no mostramos el banner */
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, pedido?.id]);
+
     if (!isOpen) return null;
+
+    const yaFacturado = !!comprobante;
+    const tipoLabel: Record<string, string> = {
+        '01': 'Factura',
+        '03': 'Boleta',
+        '07': 'Nota de Crédito',
+    };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -90,6 +139,38 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                         <FiX size={24} />
                     </button>
                 </div>
+
+                {/* P2.11 — Aviso post-emisión: si el pedido ya tiene comprobante,
+                    los cambios en los datos del cliente / detalle / fecha NO se
+                    reflejan en el XML enviado a SUNAT. Para corregir un comprobante
+                    se debe emitir una Nota de Crédito (botón directo al detalle). */}
+                {yaFacturado && comprobante && (
+                    <div className="px-6 pt-4">
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-3">
+                            <FiAlertTriangle className="text-amber-600 mt-0.5 flex-shrink-0" size={18} />
+                            <div className="text-xs text-amber-900 flex-1">
+                                <div className="font-semibold mb-1">
+                                    Este pedido ya tiene {tipoLabel[comprobante.tipo] ?? 'comprobante'} emitido ({comprobante.serie_numero}).
+                                </div>
+                                <p>
+                                    Los cambios <strong>no se reflejarán</strong> en el comprobante
+                                    enviado a SUNAT. Si necesitás corregir importes, cliente o
+                                    detalle del comprobante, emití una <strong>Nota de Crédito</strong>
+                                    y volvé a emitir.
+                                </p>
+                                <Link
+                                    href={`/dashboard/comprobantes?pedido_id=${pedido.id}`}
+                                    className="inline-flex items-center gap-1 mt-2 text-amber-800 hover:text-amber-900 font-medium underline underline-offset-2"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                >
+                                    <FiFileText size={12} /> Ver comprobante
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 <form onSubmit={handleSubmit} className="p-6 space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>

@@ -51,7 +51,9 @@ export const authConfig = {
         // Redirect logged-in users from /login to appropriate dashboard page
         if (nextUrl.pathname === "/login") {
           const role = auth?.user?.role;
-          const target = role === "repartidor" ? "/dashboard/mi-ruta" : "/dashboard/nuevo-pedido";
+          let target = "/dashboard/nuevo-pedido"; // admin / asesor por defecto
+          if (role === "repartidor") target = "/dashboard/mi-ruta";
+          if (role === "produccion") target = "/dashboard/produccion";
           return Response.redirect(new URL(target, nextUrl));
         }
       }

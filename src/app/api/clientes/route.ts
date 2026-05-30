@@ -21,6 +21,7 @@ const CreateSchema = z.object({
   latitude: z.number().nullable().optional(),
   longitude: z.number().nullable().optional(),
   asesor_id: z.string().uuid().optional().nullable(),
+  plazo_pago_dias: z.number().int().min(0).max(90).optional(),
 });
 
 export async function GET(request: Request) {
@@ -157,6 +158,10 @@ export async function POST(request: Request) {
     if (!session?.user) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
+    // Solo admin y asesoras crean clientes (producción/repartidor no).
+    if (!["admin", "asesor"].includes(session.user.role)) {
+      return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    }
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no definida");
@@ -168,7 +173,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id } = parsed.data;
+    const { nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias } = parsed.data;
 
     // Determinar asesor_id:
     // - Admin puede asignar a quien quiera; si no envía, se asigna a sí mismo
@@ -178,8 +183,8 @@ export async function POST(request: Request) {
       : session.user.id;
 
     const result = await sql`
-      INSERT INTO clientes (nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id)
-      VALUES (${nombre}, ${razon_social ?? null}, ${ruc_dni ?? null}, ${whatsapp ?? null}, ${direccion ?? null}, ${direccion_mapa ?? null}, ${distrito ?? 'La Victoria'}, ${tipo_cliente ?? 'Frecuente'}, ${hora_entrega ?? null}, ${notas ?? null}, ${empresa ?? 'Transavic'}, ${latitude ?? null}, ${longitude ?? null}, ${finalAsesorId})
+      INSERT INTO clientes (nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias)
+      VALUES (${nombre}, ${razon_social ?? null}, ${ruc_dni ?? null}, ${whatsapp ?? null}, ${direccion ?? null}, ${direccion_mapa ?? null}, ${distrito ?? 'La Victoria'}, ${tipo_cliente ?? 'Frecuente'}, ${hora_entrega ?? null}, ${notas ?? null}, ${empresa ?? 'Transavic'}, ${latitude ?? null}, ${longitude ?? null}, ${finalAsesorId}, ${plazo_pago_dias ?? 0})
       RETURNING *, (SELECT name FROM users WHERE id = ${finalAsesorId}) as asesor_name
     `;
 

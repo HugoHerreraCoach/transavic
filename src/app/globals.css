@@ -3,6 +3,10 @@
 @import "tailwindcss";
 
 :root {
+  /* La app está diseñada SOLO para modo claro (tarjetas blancas, texto oscuro).
+     Forzamos light-mode: sin esto, el modo oscuro del SO volvía --foreground
+     claro (#ededed) y los textos quedaban casi invisibles sobre fondos blancos. */
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
 }
@@ -14,17 +18,46 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* === Animación de UI (sutil, para producto) ===
+   Curvas y keyframes reutilizables en todo el dashboard. El default es ease-out
+   (arranca rápido, desacelera) — da sensación de respuesta inmediata (Emil
+   Kowalski). Animamos solo opacity/transform (compositan en GPU, 60fps).
+   Duraciones <300ms: en una herramienta de trabajo el movimiento acompaña, no
+   protagoniza. */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modalIn {
+  /* Entra desde 0.96, no desde 0: el movimiento se siente gentil, no brusco. */
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.anim-fade { animation: fadeIn 0.2s cubic-bezier(0.25, 1, 0.5, 1) both; }
+.anim-modal { animation: modalIn 0.2s cubic-bezier(0.25, 1, 0.5, 1) both; }
+.anim-toast { animation: toastIn 0.25s cubic-bezier(0.25, 1, 0.5, 1) both; }
+
+/* Accesibilidad: quien pidió menos movimiento, lo recibe. No eliminamos todo,
+   lo reducimos a casi-instantáneo (los fades quedan, el desplazamiento no marea). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Cursor pointer global para elementos interactivos */

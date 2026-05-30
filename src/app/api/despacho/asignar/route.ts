@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { crearNotificacion } from "@/lib/notificaciones";
 
 const AsignarSchema = z.object({
   pedido_ids: z.array(z.string().uuid()).min(1, "Debes seleccionar al menos un pedido."),
@@ -126,6 +127,19 @@ export async function POST(request: Request) {
           AND fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
       `;
     }
+
+    // Avisar al repartidor que tiene pedidos nuevos asignados (campanita).
+    await crearNotificacion({
+      userId: repartidor_id,
+      tipo: "pedido_asignado",
+      titulo:
+        pedido_ids.length === 1
+          ? "Nuevo pedido asignado"
+          : `${pedido_ids.length} pedidos asignados`,
+      mensaje: "Revisá tu ruta del día en Mi Ruta.",
+      link: "/dashboard/mi-ruta",
+      pedidoId: pedido_ids[0],
+    });
 
     return NextResponse.json({
       message: `${pedido_ids.length} pedido(s) asignado(s) exitosamente.`,

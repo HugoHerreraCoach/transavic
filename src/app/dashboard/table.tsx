@@ -2,8 +2,11 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { Pedido, EstadoPedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical } from 'react-icons/fi';
+import { useRouter } from 'next/navigation';
+import ModalEmitirComprobante from "@/components/ModalEmitirComprobante";
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'razon_social' | 'ruc_dni' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
@@ -11,6 +14,8 @@ type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'razon_social' | 'r
 function getEstadoBadge(estado: EstadoPedido) {
     const configs: Record<EstadoPedido, { bg: string; text: string; label: string; icon: React.ReactNode }> = {
         Pendiente: { bg: 'bg-amber-100', text: 'text-amber-800', label: 'Pendiente', icon: <FiClock className="text-amber-600" /> },
+        En_Produccion: { bg: 'bg-purple-100', text: 'text-purple-800', label: 'En Producción', icon: <FiPackage className="text-purple-600" /> },
+        Listo_Para_Despacho: { bg: 'bg-teal-100', text: 'text-teal-800', label: 'Listo p/ Despacho', icon: <FiArchive className="text-teal-600" /> },
         Asignado: { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Asignado', icon: <FiPackage className="text-blue-600" /> },
         En_Camino: { bg: 'bg-indigo-100', text: 'text-indigo-800', label: 'En Camino', icon: <FiNavigation className="text-indigo-600" /> },
         Entregado: { bg: 'bg-green-100', text: 'text-green-800', label: 'Entregado', icon: <FiCheckCircle className="text-green-600" /> },
@@ -49,15 +54,33 @@ type ActionsCellProps = {
     onUpdateStatus: (pedido: Pedido) => void;
     onEdit: (pedido: Pedido) => void;
     onShare: (pedido: Pedido) => void;
-    onPesoClick: (pedido: Pedido) => void;
     userRole: string;
     userName: string;
     usuarios: string[];
 };
 
-function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, onPesoClick, userRole, userName, usuarios }: ActionsCellProps) {
+function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName, usuarios }: ActionsCellProps) {
+    const router = useRouter();
     const [isProcessing, setIsProcessing] = useState(false);
     const [showDeliverySelector, setShowDeliverySelector] = useState(false);
+    const [showEmitirModal, setShowEmitirModal] = useState(false);
+    const [yaTieneComprobante, setYaTieneComprobante] = useState<boolean | null>(null);
+    const [showMenu, setShowMenu] = useState(false);
+    const isAvicola = (pedido.empresa || "").trim().toLowerCase().startsWith("av");
+
+    // Detectar si ya tiene comprobante emitido (lazy: solo al primer render del botón)
+    const verificarComprobante = async () => {
+        if (yaTieneComprobante !== null) return;
+        try {
+            const res = await fetch(`/api/comprobantes?pedido_id=${pedido.id}`);
+            if (res.ok) {
+                const j = await res.json();
+                setYaTieneComprobante((j.data?.length ?? 0) > 0);
+            }
+        } catch {
+            // silent
+        }
+    };
 
     const handleDelete = async () => {
         if (!window.confirm(`¿Seguro que quieres eliminar el pedido de "${pedido.cliente}"?`)) return;
@@ -153,28 +176,150 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, onPeso
                 </div>
             )}
 
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2">
-                <button onClick={handleToggleDelivery} disabled={isProcessing} className={`p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg transition-colors text-xs sm:text-sm ${isDelivered ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-teal-500 hover:bg-teal-600'}`}>
+            <div className="flex items-center justify-end gap-2 relative">
+                {/* 1. Botón Principal: Entregar/Anular */}
+                <button
+                    onClick={handleToggleDelivery}
+                    disabled={isProcessing}
+                    className={`px-3 py-2 flex items-center justify-center gap-1.5 text-white rounded-lg transition-all text-xs font-bold shadow-sm active:scale-95 cursor-pointer ${
+                        isDelivered 
+                            ? 'bg-amber-500 hover:bg-amber-600' 
+                            : 'bg-teal-600 hover:bg-teal-700'
+                    }`}
+                >
                     {isDelivered ? <FiXCircle /> : <FiCheckCircle />}
                     <span>{isDelivered ? 'Anular' : 'Entregar'}</span>
                 </button>
-                {userRole !== 'repartidor' && (
-                    <button onClick={() => onEdit(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-blue-500 hover:bg-blue-600 transition-colors text-xs sm:text-sm">
-                        <FiEdit /><span>Editar</span>
-                    </button>
+
+                {/* 2. Botón Principal: Facturar / Facturado (con color de marca dinámico) */}
+                {['Entregado', 'Listo_Para_Despacho', 'Asignado', 'En_Produccion'].includes(pedido.estado) && userRole !== 'repartidor' && (
+                    yaTieneComprobante ? (
+                        <Link
+                            href={`/dashboard/comprobantes?pedido_id=${pedido.id}`}
+                            className="px-2.5 py-2 flex items-center justify-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors whitespace-nowrap"
+                            title="Ver el comprobante emitido para este pedido"
+                        >
+                            <FiFileText /> Facturado
+                        </Link>
+                    ) : (
+                        <button
+                            onMouseEnter={verificarComprobante}
+                            onClick={() => {
+                                verificarComprobante();
+                                setShowEmitirModal(true);
+                            }}
+                            disabled={isProcessing}
+                            className={`px-3 py-2 flex items-center justify-center gap-1.5 text-white rounded-lg transition-all text-xs font-bold shadow-sm active:scale-95 cursor-pointer whitespace-nowrap ${
+                                isAvicola 
+                                    ? 'bg-amber-500 hover:bg-amber-600' 
+                                    : 'bg-red-600 hover:bg-red-700'
+                            }`}
+                        >
+                            <FiFileText /><span>Facturar</span>
+                        </button>
+                    )
                 )}
-                <button onClick={() => onShare(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-green-500 hover:bg-green-600 transition-colors text-xs sm:text-sm">
-                    <FiShare2 /><span>Compartir</span>
-                </button>
-                <button onClick={() => onPesoClick(pedido)} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center gap-2 text-white rounded-lg bg-orange-500 hover:bg-orange-600 transition-colors text-xs sm:text-sm">
-                    <span>⚖️ Peso</span>
-                </button>
+
+                {/* 3. Menú de Acciones Secundarias (Stripe/Linear Style Dropdown) */}
                 {userRole !== 'repartidor' && (
-                    <button onClick={handleDelete} disabled={isProcessing} className="p-2 w-full sm:w-auto flex items-center justify-center text-white rounded-lg bg-red-500 hover:bg-red-600 transition-colors">
-                        <FiTrash2 />
-                    </button>
+                    <div className="relative">
+                        <button
+                            onClick={() => setShowMenu(!showMenu)}
+                            className={`p-2 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 transition-all flex items-center justify-center cursor-pointer ${
+                                showMenu ? 'bg-gray-100 text-gray-800' : ''
+                            }`}
+                            title="Acciones adicionales"
+                        >
+                            <FiMoreVertical size={16} />
+                        </button>
+
+                        {showMenu && (
+                            <>
+                                {/* Click-outside overlay backdrop */}
+                                <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
+                                <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
+                                    <button
+                                        onClick={() => {
+                                            setShowMenu(false);
+                                            onEdit(pedido);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                    >
+                                        <FiEdit className="text-gray-400" />
+                                        <span>Editar datos</span>
+                                    </button>
+
+                                    <button
+                                        onClick={() => {
+                                            setShowMenu(false);
+                                            onShare(pedido);
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                    >
+                                        <FiShare2 className="text-gray-400" />
+                                        <span>Compartir ticket</span>
+                                    </button>
+
+                                    <button
+                                        onClick={() => {
+                                            setShowMenu(false);
+                                            const payload = {
+                                                cliente: pedido.cliente,
+                                                whatsapp: pedido.whatsapp,
+                                                direccion: pedido.direccion,
+                                                direccionMapa: pedido.direccion,
+                                                distrito: pedido.distrito,
+                                                tipoCliente: pedido.tipo_cliente,
+                                                rucDni: pedido.ruc_dni,
+                                                razonSocial: pedido.razon_social,
+                                                notas: pedido.notas,
+                                                empresa: pedido.empresa,
+                                                detalle: pedido.detalle,
+                                                latitude: pedido.latitude,
+                                                longitude: pedido.longitude,
+                                            };
+                                            try {
+                                                sessionStorage.setItem('transavic.duplicar', JSON.stringify(payload));
+                                            } catch {}
+                                            router.push('/dashboard/nuevo-pedido');
+                                        }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                    >
+                                        <FiCopy className="text-gray-400" />
+                                        <span>Duplicar pedido</span>
+                                    </button>
+
+                                    {userRole === 'admin' && (
+                                        <div className="h-px bg-gray-100 my-1" />
+                                    )}
+
+                                    {userRole === 'admin' && (
+                                        <button
+                                            onClick={() => {
+                                                setShowMenu(false);
+                                                handleDelete();
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-left cursor-pointer"
+                                        >
+                                            <FiTrash2 className="text-red-400" />
+                                            <span>Eliminar</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
                 )}
             </div>
+
+            {/* Modal emitir comprobante */}
+            {showEmitirModal && (
+                <ModalEmitirComprobante
+                    pedido={pedido}
+                    onClose={() => setShowEmitirModal(false)}
+                    onSuccess={() => setYaTieneComprobante(true)}
+                />
+            )}
         </>
     );
 }
@@ -185,7 +330,6 @@ type PedidoCardProps = {
     onPedidoUpdated: (pedido: Pedido) => void;
     onEditClick: (pedido: Pedido) => void;
     onShareClick: (pedido: Pedido) => void;
-    onPesoClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
@@ -198,7 +342,6 @@ type PedidosTableProps = {
     onPedidoUpdated: (pedido: Pedido) => void;
     onEditClick: (pedido: Pedido) => void;
     onShareClick: (pedido: Pedido) => void;
-    onPesoClick: (pedido: Pedido) => void;
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
@@ -215,7 +358,7 @@ function getRowBgClass(estado: EstadoPedido): string {
     }
 }
 
-function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, onPesoClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
+function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (!numero) return '#';
         return `https://wa.me/${numero.replace(/[^0-9]/g, '')}`;
@@ -275,13 +418,13 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
 
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
-                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} onPesoClick={onPesoClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
             </div>
         </div>
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, onPesoClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos.</p>;
     }
@@ -294,7 +437,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
         <>
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} onPesoClick={onPesoClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
                 ))}
             </div>
 
@@ -335,7 +478,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                                 {visibleColumns.hora_entrega && <td className="px-4 py-4 whitespace-nowrap">{pedido.hora_entrega}</td>}
                                 {visibleColumns.razon_social && <td className="px-4 py-4 whitespace-nowrap">{pedido.razon_social || <span className="text-gray-400">—</span>}</td>}
                                 {visibleColumns.ruc_dni && <td className="px-4 py-4 whitespace-nowrap">{pedido.ruc_dni || <span className="text-gray-400">—</span>}</td>}
-                                <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.detalle}</p></td>
+                                <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap line-clamp-3" title={pedido.detalle}>{pedido.detalle}</p></td>
                                 {visibleColumns.notas && <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.notas}</p></td>}
                                 {visibleColumns.asesor && <td className="px-4 py-4 whitespace-nowrap">{pedido.asesor_name ?? 'N/A'}</td>}
                                 {visibleColumns.detalle_final && <td className="px-4 py-4 max-w-sm"><p className="break-words whitespace-pre-wrap">{pedido.detalle_final}</p></td>}
@@ -352,7 +495,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
 
                                 <td className="px-4 py-4 whitespace-nowrap">
                                     <div className="print:hidden">
-                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} onPesoClick={onPesoClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
                                     </div>
                                     <div className="hidden print:block">{pedido.estado}</div>
                                 </td>

@@ -51,6 +51,8 @@ const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borj
 
 export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [appState, setAppState] = useState<AppState>('editing');
+  const [successToast, setSuccessToast] = useState<string | null>(null);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
   const [formDatos, setFormDatos] = useState<TicketData>({
     ...datosIniciales,
     asesorId: asesores.length > 0 ? asesores[0].id : ''
@@ -71,6 +73,39 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [showGuardarCliente, setShowGuardarCliente] = useState(false);
   const [guardandoCliente, setGuardandoCliente] = useState(false);
   const [formResetKey, setFormResetKey] = useState(0); // Forces child components to reset
+
+  // P1.7 — Duplicar pedido: si veníamos del botón "Duplicar" de la lista, se
+  // guardó un payload en sessionStorage. Lo leemos, prellenamos los campos del
+  // cliente (no los ítems estructurados, que viven aparte) y lo limpiamos para
+  // que un refresh no vuelva a pre-cargar.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('transavic.duplicar');
+      if (!raw) return;
+      sessionStorage.removeItem('transavic.duplicar');
+      const dup = JSON.parse(raw) as Partial<TicketData>;
+      setFormDatos((prev) => ({
+        ...prev,
+        cliente: dup.cliente ?? prev.cliente,
+        whatsapp: dup.whatsapp ?? prev.whatsapp,
+        direccion: dup.direccion ?? prev.direccion,
+        direccionMapa: dup.direccionMapa ?? dup.direccion ?? prev.direccionMapa,
+        distrito: dup.distrito ?? prev.distrito,
+        tipoCliente: dup.tipoCliente ?? prev.tipoCliente,
+        rucDni: dup.rucDni ?? prev.rucDni,
+        razonSocial: dup.razonSocial ?? prev.razonSocial,
+        notas: dup.notas ?? prev.notas,
+        empresa: dup.empresa ?? prev.empresa,
+        detalle: dup.detalle ?? prev.detalle,
+        latitude: dup.latitude ?? prev.latitude,
+        longitude: dup.longitude ?? prev.longitude,
+      }));
+      setSuccessToast('📋 Cliente copiado del pedido anterior — revisá y ajustá lo que necesite.');
+      setTimeout(() => setSuccessToast(null), 4000);
+    } catch {
+      /* sessionStorage no disponible o JSON inválido — ignorar */
+    }
+  }, []);
 
   const exportTicketRef = useRef<HTMLDivElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -360,10 +395,21 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
         const friendlyErrorMessage = errorData.error ? (typeof errorData.error === 'object' ? Object.values(errorData.error).flat().join(' ') : errorData.error) : 'Error al registrar.';
         throw new Error(friendlyErrorMessage);
       }
+      const pedidoCreado = await response.json();
       setAppState('confirmed');
+      // Toast prominente arriba derecha — visible aunque el usuario esté viendo el form izquierdo
+      setSuccessToast(
+        `✅ Pedido registrado: ${pedidoCreado.cliente || ticketDatos.cliente}`
+      );
+      // Scroll arriba para que el usuario vea claramente la confirmación
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setTimeout(() => setSuccessToast(null), 5000);
     } catch (error) {
       console.error('Fallo al confirmar el pedido:', error);
-      alert(`No se pudo registrar el pedido: ${error instanceof Error ? error.message : 'Un error desconocido ocurrió.'}`);
+      setErrorToast(
+        `❌ No se pudo registrar: ${error instanceof Error ? error.message : 'Error desconocido'}`
+      );
+      setTimeout(() => setErrorToast(null), 6000);
     } finally {
       setIsSubmitting(false);
     }
@@ -438,6 +484,17 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gray-100 p-2 sm:p-8">
+      {/* Toast de éxito/error — flotante arriba para visibilidad inmediata */}
+      {successToast && (
+        <div className="fixed top-20 right-4 z-50 max-w-sm bg-green-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-2 animate-bounce-in">
+          <span className="font-medium">{successToast}</span>
+        </div>
+      )}
+      {errorToast && (
+        <div className="fixed top-20 right-4 z-50 max-w-sm bg-red-600 text-white px-4 py-3 rounded-lg shadow-xl flex items-center gap-2">
+          <span className="font-medium">{errorToast}</span>
+        </div>
+      )}
       {/* Div oculto para generar la imagen, posicionado fuera de la pantalla para no afectar el layout */}
       <div className="fixed top-0 left-[-9999px] z-[-1] pointer-events-none">
         <div className="w-[500px] bg-white">
@@ -462,16 +519,16 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 <label className="block text-base font-medium text-gray-800 mb-2 text-center">Selecciona la empresa:</label>
                 <div className="flex justify-center items-center gap-4">
                   <div
-                    className={`p-2 border-2 rounded-lg transition-all duration-200 ${formDatos.empresa === 'Transavic' ? 'border-red-600 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
+                    className={`p-2 border-2 rounded-xl transition-all duration-200 ${formDatos.empresa === 'Transavic' ? 'border-red-600 bg-red-50/20 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
                     onClick={() => appState === 'editing' && handleEmpresaChange('Transavic')}
                   >
-                    <img src="/transavic.jpg" alt="Logo de Transavic" className="h-20 w-auto object-contain" />
+                    <img src="/transavic.jpg" alt="Logo de Transavic" className="h-20 w-auto object-contain rounded-lg" />
                   </div>
                   <div
-                    className={`p-2 border-2 rounded-lg transition-all duration-200 ${formDatos.empresa === 'Avícola de Tony' ? 'border-red-600 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
+                    className={`p-2 border-2 rounded-xl transition-all duration-200 ${formDatos.empresa === 'Avícola de Tony' ? 'border-amber-500 bg-amber-50/20 scale-105' : 'border-transparent'} ${appState !== 'editing' ? 'cursor-not-allowed opacity-75' : 'cursor-pointer'}`}
                     onClick={() => appState === 'editing' && handleEmpresaChange('Avícola de Tony')}
                   >
-                    <img src="/avicola.jpg" alt="Logo de Avícola de Tony" className="h-20 w-auto object-contain" />
+                    <img src="/avicola.jpg" alt="Logo de Avícola de Tony" className="h-20 w-auto object-contain rounded-lg" />
                   </div>
                 </div>
               </div>
@@ -550,6 +607,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Seleccionar Productos del Catálogo</label>
                 <ProductSelector
                   key={formResetKey}
+                  empresa={formDatos.empresa}
                   onChange={(items: SelectedItem[], detalleText: string) => {
                     setSelectedItems(items);
                     setFormDatos(prev => ({ ...prev, detalle: detalleText || prev.detalle }));
@@ -575,7 +633,11 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 type="button"
                 onClick={handleGenerarClick}
                 disabled={!puedeGenerarPedido || isSubmitting}
-                className="w-full bg-red-600 text-white font-bold py-3 px-4 rounded-md hover:bg-red-700 transition-colors flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait"
+                className={`w-full text-white font-bold py-3 px-4 rounded-xl transition-all flex items-center justify-center disabled:bg-gray-400 disabled:cursor-wait cursor-pointer ${
+                  formDatos.empresa === 'Avícola de Tony'
+                    ? 'bg-amber-500 hover:bg-amber-600 shadow-md hover:shadow-lg active:scale-98'
+                    : 'bg-red-600 hover:bg-red-700 shadow-md hover:shadow-lg active:scale-98'
+                }`}
               >
                 <FiCheckSquare className="mr-2" />
                 {cargandoLogo ? 'Cargando logo...' : 'Generar Pedido'}

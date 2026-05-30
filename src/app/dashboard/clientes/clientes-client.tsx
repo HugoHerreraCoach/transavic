@@ -2,11 +2,35 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat } from 'react-icons/fi';
+import Link from 'next/link';
+import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import TimeRangePicker from '@/components/TimeRangePicker';
 
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
+
+// Link directo a WhatsApp (la asesora vive ahí). Limpia el número y antepone 51
+// (Perú) si no lo trae. Devuelve null si no hay número usable.
+function whatsappHref(numero: string | null | undefined): string | null {
+  if (!numero) return null;
+  const clean = numero.replace(/\D/g, '');
+  if (clean.length < 7) return null;
+  return `https://wa.me/${clean.startsWith('51') ? clean : `51${clean}`}`;
+}
+
+// Avatar de color por inicial — escaneo visual rápido en una lista larga.
+// El color se deriva del nombre para que cada cliente tenga un tono estable.
+const AVATAR_COLORS = [
+  'bg-red-100 text-red-700', 'bg-amber-100 text-amber-700', 'bg-teal-100 text-teal-700',
+  'bg-blue-100 text-blue-700', 'bg-purple-100 text-purple-700', 'bg-green-100 text-green-700',
+  'bg-pink-100 text-pink-700', 'bg-indigo-100 text-indigo-700',
+];
+function avatarPara(nombre: string): { inicial: string; clase: string } {
+  const inicial = (nombre.trim()[0] ?? '?').toUpperCase();
+  let h = 0;
+  for (let i = 0; i < nombre.length; i++) h = (h * 31 + nombre.charCodeAt(i)) >>> 0;
+  return { inicial, clase: AVATAR_COLORS[h % AVATAR_COLORS.length] };
+}
 
 interface Asesora {
   id: string;
@@ -49,6 +73,45 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
+  // Consulta RUC/DNI (apisperu) → auto-llena razón social y dirección.
+  const [consultandoDoc, setConsultandoDoc] = useState(false);
+  const [docMsg, setDocMsg] = useState<string | null>(null);
+  const [docMsgError, setDocMsgError] = useState(false);
+
+  async function consultarDoc() {
+    const numero = (form.ruc_dni ?? '').trim();
+    if (!/^\d{8}$|^\d{11}$/.test(numero)) {
+      setDocMsgError(true);
+      setDocMsg('Ingresá un DNI (8) o RUC (11 dígitos).');
+      return;
+    }
+    setConsultandoDoc(true);
+    setDocMsg(null);
+    try {
+      const res = await fetch('/api/consulta-documento', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: numero.length === 11 ? 'ruc' : 'dni', numero }),
+      });
+      const j = await res.json();
+      if (res.ok && j.ok) {
+        const nombre = j.razonSocial || j.nombreCompleto || '';
+        updateField('razon_social', nombre);
+        if (numero.length === 11 && j.direccion) updateField('direccion', j.direccion);
+        setDocMsgError(false);
+        setDocMsg(`✓ ${nombre}${j.estado ? ` · ${j.estado}` : ''}`);
+      } else {
+        setDocMsgError(true);
+        setDocMsg(j.error || 'No se encontró el documento.');
+      }
+    } catch {
+      setDocMsgError(true);
+      setDocMsg('No se pudo consultar. Escribí los datos a mano.');
+    } finally {
+      setConsultandoDoc(false);
+    }
+  }
+
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -62,7 +125,13 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1">RUC / DNI</label>
-          <input value={form.ruc_dni ?? ''} onChange={e => updateField('ruc_dni', e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500" placeholder="RUC o DNI" />
+          <div className="flex gap-1.5">
+            <input value={form.ruc_dni ?? ''} onChange={e => updateField('ruc_dni', e.target.value.replace(/\D/g, ''))} maxLength={11} inputMode="numeric" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); consultarDoc(); } }} className="flex-1 min-w-0 p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500" placeholder="RUC o DNI" />
+            <button type="button" onClick={consultarDoc} disabled={consultandoDoc} title="Consultar en SUNAT / RENIEC" className="px-3 bg-gray-800 text-white rounded-lg text-xs font-medium hover:bg-gray-900 disabled:opacity-50 flex items-center">
+              <FiSearch className={consultandoDoc ? 'animate-pulse' : ''} />
+            </button>
+          </div>
+          {docMsg && <p className={`text-[11px] mt-1 ${docMsgError ? 'text-red-600' : 'text-green-600'}`}>{docMsg}</p>}
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1">WhatsApp</label>
@@ -153,6 +222,8 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [historyPedidos, setHistoryPedidos] = useState<Record<string, unknown[]>>({});
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [filterAsesorId, setFilterAsesorId] = useState<string>('');
+  // Dropdown "⋯" de acciones por tarjeta (Editar · Transferir · Eliminar · Pedidos).
+  const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
   // Transfer modal
   const [transferClienteId, setTransferClienteId] = useState<string | null>(null);
   const [transferTargetId, setTransferTargetId] = useState<string>('');
@@ -346,9 +417,9 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   };
 
   return (
-    <div className="max-w-6xl mx-auto">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-7">
         <div className="flex items-center gap-3 mb-2">
           <FiUsers className="text-red-600" size={28} />
           <h1 className="text-2xl font-bold text-gray-800">
@@ -364,7 +435,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       </div>
 
       {/* Search + Create + Stats + Filter */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row gap-4 mb-7">
         <div className="relative flex-1">
           <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
           <input
@@ -387,7 +458,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
           </select>
         )}
         <button
-          onClick={() => setShowCreateForm(!showCreateForm)}
+          onClick={() => setShowCreateForm(true)}
           className="flex items-center justify-center gap-2 px-5 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors shadow-sm whitespace-nowrap"
         >
           <FiPlus size={18} />
@@ -399,22 +470,6 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
         </div>
       </div>
 
-      {/* Create Form */}
-      {showCreateForm && (
-        <div className="mb-6 bg-white border-2 border-red-200 rounded-xl shadow-md p-5">
-          <h3 className="text-sm font-bold text-red-700 mb-3 flex items-center gap-2"><FiPlus size={16} /> Nuevo Cliente Frecuente</h3>
-          <ClienteFormFields form={createForm} setForm={setCreateForm} asesoras={asesoras} userRole={userRole} />
-          <div className="flex gap-2 mt-4">
-            <button onClick={handleCreate} disabled={creating} className="flex items-center gap-2 px-5 py-2.5 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors text-sm disabled:bg-gray-300">
-              <FiSave size={14} />{creating ? 'Guardando...' : 'Guardar Cliente'}
-            </button>
-            <button onClick={() => { setShowCreateForm(false); setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null }); }} className="flex items-center gap-2 px-5 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm">
-              <FiX size={14} />Cancelar
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Content */}
       {loading ? (
         <div className="text-center py-12 text-gray-500">Cargando clientes...</div>
@@ -425,67 +480,112 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
           <p className="text-gray-400 text-sm mt-1">Usa el botón &quot;Nuevo Cliente&quot; para agregar uno, o guárdalos desde el formulario de pedidos</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {clientes.map((c) => (
-            <div key={c.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 hover:shadow-md transition-shadow">
-              {editingId === c.id ? (
-                <div>
-                  <h3 className="text-sm font-bold text-blue-700 mb-3 flex items-center gap-2"><FiEdit2 size={14} /> Editando: {c.nombre}</h3>
-                  <ClienteFormFields form={editForm} setForm={setEditForm} asesoras={asesoras} userRole={userRole} />
-                  <div className="flex gap-2 mt-4">
-                    <button onClick={saveEdit} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-colors text-sm disabled:bg-gray-300">
-                      <FiSave size={14} />{saving ? 'Guardando...' : 'Guardar'}
-                    </button>
-                    <button onClick={cancelEdit} className="flex items-center gap-2 px-5 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm">
-                      <FiX size={14} />Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <h3 className="font-bold text-gray-800 text-lg">{c.nombre}</h3>
-                      <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[11px] font-medium">{c.tipo_cliente || 'Frecuente'}</span>
+        <div className="space-y-5">
+          {clientes.map((c) => {
+            const { inicial, clase } = avatarPara(c.nombre);
+            const wa = whatsappHref(c.whatsapp);
+            const menuAbierto = menuAbiertoId === c.id;
+            return (
+            <div key={c.id} className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow">
+                <div className="flex items-start gap-5">
+                  {/* Avatar con inicial — identificación visual rápida */}
+                  <Link
+                    href={`/dashboard/clientes/${c.id}`}
+                    className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${clase} hover:ring-2 hover:ring-offset-1 hover:ring-gray-300 transition-all`}
+                    title="Ver perfil 360°"
+                  >
+                    {inicial}
+                  </Link>
+
+                  <div className="flex-1 min-w-0 space-y-3">
+                    {/* Fila 1: nombre + badges */}
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <Link href={`/dashboard/clientes/${c.id}`} className="font-bold text-gray-800 text-lg leading-tight hover:text-indigo-700 transition-colors">
+                        {c.nombre}
+                      </Link>
+                      <span className="px-2.5 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[11px] font-medium">{c.tipo_cliente || 'Frecuente'}</span>
                       {/* Badge de asesora — visible para admin */}
                       {isAdmin && c.asesor_name && (
-                        <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[11px] font-semibold flex items-center gap-1">
-                          👤 {c.asesor_name}
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[11px] font-semibold flex items-center gap-1">
+                          <FiUser size={10} /> {c.asesor_name}
+                        </span>
+                      )}
+                      {(c.razon_social || c.ruc_dni) && (
+                        <span className="text-xs text-gray-400">
+                          {c.razon_social && <span>{c.razon_social}</span>}
+                          {c.razon_social && c.ruc_dni && <span className="mx-1.5">·</span>}
+                          {c.ruc_dni && <span className="font-mono">{c.ruc_dni}</span>}
                         </span>
                       )}
                     </div>
-                    {(c.razon_social || c.ruc_dni) && (
-                      <p className="text-xs text-gray-500 mb-1.5">
-                        {c.razon_social && <span>🏢 {c.razon_social}</span>}
-                        {c.razon_social && c.ruc_dni && <span className="mx-1.5">·</span>}
-                        {c.ruc_dni && <span>🆔 {c.ruc_dni}</span>}
+
+                    {/* Fila 2: contacto principal — WhatsApp (clic) + distrito */}
+                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                      {c.whatsapp && (
+                        wa ? (
+                          <a href={wa} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} className="flex items-center gap-1.5 text-green-600 hover:text-green-700 hover:underline font-semibold">
+                            <FiMessageCircle size={15} />{c.whatsapp}
+                          </a>
+                        ) : (
+                          <span className="flex items-center gap-1.5 text-gray-600 font-medium"><FiPhone size={15} />{c.whatsapp}</span>
+                        )
+                      )}
+                      {c.distrito && <span className="flex items-center gap-1.5 text-gray-600"><FiMap size={15} className="text-gray-400" />{c.distrito}</span>}
+                      {c.empresa && <span className="flex items-center gap-1.5 text-gray-600"><FiTruck size={15} className="text-gray-400" />{c.empresa}</span>}
+                      {c.hora_entrega && <span className="flex items-center gap-1.5 text-gray-600"><FiClock size={15} className="text-gray-400" />{c.hora_entrega}</span>}
+                    </div>
+
+                    {/* Fila 3: dirección (secundaria, más sutil) */}
+                    {c.direccion && (
+                      <p className="flex items-start gap-1.5 text-xs text-gray-400">
+                        <FiMapPin size={13} className="mt-0.5 flex-shrink-0" />
+                        <span className="line-clamp-1">{c.direccion}</span>
                       </p>
                     )}
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
-                      {c.whatsapp && <span className="flex items-center gap-1"><FiPhone size={13} />{c.whatsapp}</span>}
-                      {c.direccion && <span className="flex items-center gap-1"><FiMapPin size={13} /><span className="truncate max-w-[200px]">{c.direccion}</span></span>}
-                      {c.distrito && <span className="flex items-center gap-1"><FiMap size={13} />{c.distrito}</span>}
-                      {c.empresa && <span className="flex items-center gap-1"><FiTruck size={13} />{c.empresa}</span>}
-                      {c.hora_entrega && <span className="flex items-center gap-1"><FiClock size={13} />{c.hora_entrega}</span>}
-                    </div>
+
                     {c.notas && (
-                      <p className="mt-1.5 text-xs text-gray-500 flex items-start gap-1"><FiInfo size={12} className="mt-0.5 flex-shrink-0" /><span className="line-clamp-2">{c.notas}</span></p>
+                      <p className="text-xs text-gray-500 flex items-start gap-1.5 bg-gray-50 rounded-lg px-3 py-2"><FiInfo size={13} className="mt-0.5 flex-shrink-0 text-gray-400" /><span className="line-clamp-2">{c.notas}</span></p>
                     )}
                   </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={() => toggleHistory(c.id)} className={`p-2 rounded-lg transition-colors ${historyClienteId === c.id ? 'text-amber-600 bg-amber-50' : 'text-amber-500 hover:bg-amber-50'}`} title="Ver Pedidos">
-                      <FiClipboard size={16} />
-                    </button>
-                    <button onClick={() => openTransferModal(c.id)} className="p-2 text-purple-500 hover:bg-purple-50 rounded-lg transition-colors" title="Transferir Cliente">
-                      <FiRepeat size={16} />
-                    </button>
-                    <button onClick={() => startEdit(c)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Editar">
-                      <FiEdit2 size={16} />
-                    </button>
-                    <button onClick={() => handleDelete(c.id, c.nombre)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Eliminar">
-                      <FiTrash2 size={16} />
-                    </button>
+
+                  {/* Acciones: primaria "Ver perfil" + menú "⋯" con el resto */}
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <Link
+                      href={`/dashboard/clientes/${c.id}`}
+                      className="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      <FiUser size={14} /> <span className="hidden sm:inline">Ver perfil</span>
+                    </Link>
+                    <div className="relative">
+                      <button
+                        onClick={() => setMenuAbiertoId(menuAbierto ? null : c.id)}
+                        title="Más acciones"
+                        aria-label="Más acciones"
+                        className={`p-2 rounded-lg border transition-colors ${menuAbierto ? 'bg-gray-100 border-gray-300 text-gray-700' : 'border-gray-200 text-gray-500 hover:bg-gray-100'}`}
+                      >
+                        <FiMoreVertical size={16} />
+                      </button>
+                      {menuAbierto && (
+                        <>
+                          <div className="fixed inset-0 z-30" onClick={() => setMenuAbiertoId(null)} />
+                          <div className="absolute right-0 mt-1 w-52 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-40">
+                            <button onClick={() => { setMenuAbiertoId(null); toggleHistory(c.id); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left text-gray-700">
+                              <FiClipboard size={15} className="text-amber-600 flex-shrink-0" /> Últimos pedidos
+                            </button>
+                            <button onClick={() => { setMenuAbiertoId(null); startEdit(c); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left text-gray-700">
+                              <FiEdit2 size={15} className="text-blue-600 flex-shrink-0" /> Editar datos
+                            </button>
+                            <button onClick={() => { setMenuAbiertoId(null); openTransferModal(c.id); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left text-gray-700">
+                              <FiRepeat size={15} className="text-purple-600 flex-shrink-0" /> Transferir a otra asesora
+                            </button>
+                            <div className="my-1 border-t border-gray-100" />
+                            <button onClick={() => { setMenuAbiertoId(null); handleDelete(c.id, c.nombre); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-red-50 text-left text-red-600">
+                              <FiTrash2 size={15} className="flex-shrink-0" /> Eliminar cliente
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
                 {/* Order History Panel */}
@@ -524,10 +624,9 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                     )}
                   </div>
                 )}
-                </>
-              )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -551,6 +650,60 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
           >
             Siguiente →
           </button>
+        </div>
+      )}
+
+      {/* Modal: Nuevo Cliente (antes era un form inline que empujaba la lista) */}
+      {showCreateForm && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between rounded-t-2xl">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <FiPlus className="text-red-600" /> Nuevo cliente
+              </h3>
+              <button onClick={() => { setShowCreateForm(false); }} aria-label="Cerrar" className="text-gray-400 hover:text-gray-700">
+                <FiX size={20} />
+              </button>
+            </div>
+            <div className="p-6">
+              <ClienteFormFields form={createForm} setForm={setCreateForm} asesoras={asesoras} userRole={userRole} />
+            </div>
+            <div className="sticky bottom-0 bg-white px-6 py-4 border-t border-gray-100 flex justify-end gap-2 rounded-b-2xl">
+              <button onClick={() => { setShowCreateForm(false); setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null }); }} className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors text-sm">
+                Cancelar
+              </button>
+              <button onClick={handleCreate} disabled={creating} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors text-sm disabled:bg-gray-300">
+                <FiSave size={14} />{creating ? 'Guardando…' : 'Guardar cliente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Editar Cliente (antes reemplazaba la tarjeta con un form gigante) */}
+      {editingId && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-start justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-8" onClick={(e) => e.stopPropagation()}>
+            <div className="sticky top-0 z-10 bg-white px-6 py-4 border-b border-gray-100 flex items-center justify-between rounded-t-2xl">
+              <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <FiEdit2 className="text-blue-600" /> Editar: {editForm.nombre}
+              </h3>
+              <button onClick={cancelEdit} aria-label="Cerrar" className="text-gray-400 hover:text-gray-700">
+                <FiX size={20} />
+              </button>
+            </div>
+            <div className="p-6">
+              <ClienteFormFields form={editForm} setForm={setEditForm} asesoras={asesoras} userRole={userRole} />
+            </div>
+            <div className="sticky bottom-0 bg-white px-6 py-4 border-t border-gray-100 flex justify-end gap-2 rounded-b-2xl">
+              <button onClick={cancelEdit} className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors text-sm">
+                Cancelar
+              </button>
+              <button onClick={saveEdit} disabled={saving} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:bg-gray-300">
+                <FiSave size={14} />{saving ? 'Guardando…' : 'Guardar cambios'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

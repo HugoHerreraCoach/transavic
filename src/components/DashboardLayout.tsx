@@ -13,13 +13,21 @@ import {
   FiLogOut,
   FiMenu,
   FiX,
-  FiPackage,
   FiBarChart2,
   FiClipboard,
   FiNavigation,
   FiTruck,
+  FiTarget,
+  FiFileText,
+  FiCreditCard,
+  FiBox,
+  FiAward,
+  FiSun,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
+import NotificationBell from "./NotificationBell";
+import FloatingAssistant from "./FloatingAssistant";
+import CmdKModal from "./CmdKModal";
 
 interface NavItem {
   href: string;
@@ -30,19 +38,28 @@ interface NavItem {
   roles?: string[]; // si se define, solo se muestra a estos roles
 }
 
+// Orden = flujo del negocio. Cada ítem se muestra solo a los roles indicados.
+// El orden DENTRO de cada grupo lo da este array; los grupos se ordenan con GROUP_ORDER.
 const navItems: NavItem[] = [
+  // Mi Ruta: única vista del repartidor (suelta, sin encabezado de grupo).
   {
     href: "/dashboard/mi-ruta",
     label: "Mi Ruta",
     icon: <FiNavigation className="h-5 w-5 flex-shrink-0" />,
     roles: ["repartidor"],
   },
+
+  // P3.12 — "Mi Día" para asesoras: arrancar la jornada con todo en una pantalla
+  // (pedidos de hoy + cobranzas que tocan + clientes a recontactar + métricas).
+  // Admin lo ve como vista previa.
   {
-    href: "/dashboard/despacho",
-    label: "Despacho",
-    icon: <FiTruck className="h-5 w-5 flex-shrink-0" />,
-    roles: ["admin"],
+    href: "/dashboard/mi-dia",
+    label: "Mi Día",
+    icon: <FiSun className="h-5 w-5 flex-shrink-0" />,
+    roles: ["asesor", "admin"],
   },
+
+  // ── OPERACIÓN (flujo del pedido) ──
   {
     href: "/dashboard/nuevo-pedido",
     label: "Nuevo Pedido",
@@ -53,7 +70,22 @@ const navItems: NavItem[] = [
     href: "/dashboard",
     label: "Lista de Pedidos",
     icon: <FiList className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "asesor"],
   },
+  {
+    href: "/dashboard/produccion",
+    label: "Producción",
+    icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "produccion"],
+  },
+  {
+    href: "/dashboard/despacho",
+    label: "Despacho",
+    icon: <FiTruck className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin"],
+  },
+
+  // ── COMERCIAL ──
   {
     href: "/dashboard/clientes",
     label: "Clientes",
@@ -61,21 +93,45 @@ const navItems: NavItem[] = [
     roles: ["admin", "asesor"],
   },
   {
-    href: "/dashboard/productos",
-    label: "Productos",
-    icon: <FiPackage className="h-5 w-5 flex-shrink-0" />,
-    adminOnly: true,
+    href: "/dashboard/comprobantes",
+    label: "Comprobantes",
+    icon: <FiFileText className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "asesor"],
   },
   {
-    href: "/dashboard/analytics",
-    label: "Analítica",
+    href: "/dashboard/cobranzas",
+    label: "Cobranzas",
+    icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "asesor"],
+  },
+  {
+    href: "/dashboard/mis-metas",
+    label: "Mis Metas",
+    icon: <FiTarget className="h-5 w-5 flex-shrink-0" />,
+    // Asesoras lo usan a diario; el admin entra como VISTA PREVIA (no compite, sus
+    // tarjetas personales salen en S/0, pero ve el ranking y la meta de equipo reales).
+    roles: ["asesor", "admin"],
+  },
+
+  // ── REPORTES ──
+  {
+    href: "/dashboard/reportes",
+    label: "Reportes",
     icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />,
     adminOnly: true,
   },
+
+  // ── CONFIGURACIÓN ──
   {
-    href: "/dashboard/resumen",
-    label: "Resumen Diario",
-    icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />,
+    href: "/dashboard/catalogo",
+    label: "Catálogo",
+    icon: <FiBox className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
+  {
+    href: "/dashboard/incentivos",
+    label: "Incentivos",
+    icon: <FiAward className="h-5 w-5 flex-shrink-0" />,
     adminOnly: true,
   },
   {
@@ -85,6 +141,25 @@ const navItems: NavItem[] = [
     adminOnly: true,
   },
 ];
+
+const GROUP_ORDER = ["Operación", "Comercial", "Reportes", "Configuración"];
+// Mapea cada ruta a su grupo del sidebar. Rutas sin entrada (ej. Mi Ruta del
+// repartidor) se muestran sueltas, sin encabezado de grupo.
+const GROUP_BY_HREF: Record<string, string> = {
+  "/dashboard/produccion": "Operación",
+  "/dashboard/despacho": "Operación",
+  "/dashboard/nuevo-pedido": "Operación",
+  "/dashboard": "Operación",
+  "/dashboard/mi-dia": "Operación",
+  "/dashboard/clientes": "Comercial",
+  "/dashboard/cobranzas": "Comercial",
+  "/dashboard/comprobantes": "Comercial",
+  "/dashboard/mis-metas": "Comercial",
+  "/dashboard/reportes": "Reportes",
+  "/dashboard/catalogo": "Configuración",
+  "/dashboard/incentivos": "Configuración",
+  "/dashboard/users": "Configuración",
+};
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -109,6 +184,74 @@ export default function DashboardLayout({
     return true;
   });
 
+  // Agrupación del sidebar: ítems sin grupo (ej. Mi Ruta) van sueltos arriba;
+  // el resto se agrupa con encabezados según GROUP_BY_HREF.
+  const sinGrupo = filteredNavItems.filter((i) => !GROUP_BY_HREF[i.href]);
+  const grupos = GROUP_ORDER.map((nombre) => ({
+    nombre,
+    items: filteredNavItems.filter((i) => GROUP_BY_HREF[i.href] === nombre),
+  })).filter((g) => g.items.length > 0);
+
+  const isItemActive = (href: string) =>
+    href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
+
+  // Link del sidebar móvil (label siempre visible)
+  const mobileLink = (item: NavItem) => {
+    const active = isItemActive(item.href);
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={() => setMobileOpen(false)}
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all duration-200 cursor-pointer ${
+          active
+            ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 scale-[1.02]"
+            : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+        }`}
+      >
+        <span className={`transition-transform duration-200 ${active ? "scale-110" : ""}`}>{item.icon}</span>
+        <span>{item.label}</span>
+      </Link>
+    );
+  };
+
+  // Link del sidebar desktop (colapsado; label e ícono activo aparecen on hover)
+  const desktopLink = (item: NavItem) => {
+    const active = isItemActive(item.href);
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        title={item.label}
+        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl font-bold transition-all duration-200 cursor-pointer ${
+          active ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+        }`}
+      >
+        <span className={`flex-shrink-0 transition-all duration-200 ${active ? "text-red-600 scale-110" : "text-gray-400"}`}>{item.icon}</span>
+        <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
+          {item.label}
+        </span>
+      </Link>
+    );
+  };
+
+  // Render agrupado reutilizable. headerClass controla la visibilidad del título
+  // (en desktop colapsado el título solo aparece on hover).
+  const renderGrouped = (
+    renderLink: (item: NavItem) => React.ReactNode,
+    headerClass: string
+  ) => (
+    <>
+      {sinGrupo.map(renderLink)}
+      {grupos.map((g) => (
+        <div key={g.nombre} className="pt-2">
+          <p className={headerClass}>{g.nombre}</p>
+          {g.items.map(renderLink)}
+        </div>
+      ))}
+    </>
+  );
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Mobile header */}
@@ -122,7 +265,7 @@ export default function DashboardLayout({
             <FiMenu className="h-6 w-6" />
           </button>
           <span className="font-bold text-gray-800">🐔 Transavic</span>
-          <div className="w-10" />
+          <NotificationBell />
         </div>
       </header>
 
@@ -158,31 +301,10 @@ export default function DashboardLayout({
           </div>
 
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-            {filteredNavItems.map((item) => {
-              const isActive =
-                item.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(item.href);
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={() => setMobileOpen(false)}
-                  className={`
-                    flex items-center gap-3 px-4 py-3 rounded-lg font-medium transition-all duration-200
-                    ${
-                      isActive
-                        ? "bg-red-50 text-red-700 border-l-4 border-red-600"
-                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                    }
-                  `}
-                >
-                  {item.icon}
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
+            {renderGrouped(
+              mobileLink,
+              "px-4 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-gray-400"
+            )}
           </nav>
 
           <div className="border-t border-gray-200 p-4">
@@ -226,54 +348,27 @@ export default function DashboardLayout({
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 px-2 py-6 space-y-2 overflow-y-auto overflow-x-hidden">
-            {filteredNavItems.map((item) => {
-              const isActive =
-                item.href === "/dashboard"
-                  ? pathname === "/dashboard"
-                  : pathname.startsWith(item.href);
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  title={item.label}
-                  className={`
-                    flex items-center gap-3 px-3 py-3 rounded-lg font-medium transition-all duration-200
-                    ${
-                      isActive
-                        ? "bg-red-50 text-red-700"
-                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                    }
-                  `}
-                >
-                  <span
-                    className={`flex-shrink-0 ${isActive ? "text-red-600" : ""}`}
-                  >
-                    {item.icon}
-                  </span>
-                  <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
-                    {item.label}
-                  </span>
-                </Link>
-              );
-            })}
+          <nav className="flex-1 min-h-0 px-2 py-4 space-y-1 overflow-y-auto overflow-x-hidden">
+            {renderGrouped(
+              desktopLink,
+              "px-3 pt-1 pb-0.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap"
+            )}
           </nav>
 
-          {/* User section */}
+          {/* User section (compacta para no robar alto al menú) */}
           <div className="border-t border-gray-200 p-2">
             {/* User info - visible on hover */}
-            <div className="mb-2 px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-              <p className="text-xs text-gray-500">Sesión iniciada como</p>
-              <p className="font-semibold text-gray-800 truncate text-sm">
-                {session.user.name}
+            <div className="mb-1 px-3 py-1 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+              <p className="text-[11px] text-gray-500 leading-tight truncate">
+                Sesión:{" "}
+                <span className="font-semibold text-gray-800">{session.user.name}</span>
               </p>
             </div>
             <form action={doLogout}>
               <button
                 type="submit"
                 title="Cerrar Sesión"
-                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-red-600 hover:bg-red-50 font-medium transition-colors cursor-pointer"
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-600 hover:bg-red-50 font-medium transition-colors cursor-pointer"
               >
                 <FiLogOut className="h-5 w-5 flex-shrink-0" />
                 <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
@@ -285,8 +380,21 @@ export default function DashboardLayout({
         </div>
       </aside>
 
-      {/* Main content - ajustado para sidebar colapsado */}
-      <main className="lg:pl-16 pt-16 lg:pt-0 min-h-screen">{children}</main>
+      {/* Floating NotificationBell — desktop only (en mobile ya está en el header) */}
+      <div className="hidden lg:block fixed top-3 right-4 z-30">
+        <NotificationBell />
+      </div>
+
+      {/* Main content - ajustado para sidebar colapsado.
+          pb-24 deja aire abajo para que el botón flotante de IA no tape acciones. */}
+      <main className="lg:pl-16 pt-16 lg:pt-0 min-h-screen pb-24">{children}</main>
+
+      {/* Botón flotante de IA (reemplaza el ítem del menú) */}
+      <FloatingAssistant role={userRole} />
+
+      {/* P2.9 — Búsqueda global Cmd+K. Disponible solo para admin/asesor
+          (el repartidor opera con /mi-ruta, no necesita búsqueda transversal). */}
+      {(userRole === "admin" || userRole === "asesor") && <CmdKModal />}
     </div>
   );
 }

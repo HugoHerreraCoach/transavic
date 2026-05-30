@@ -15,12 +15,12 @@ interface UserModalProps {
 export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoading }: UserModalProps) {
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
-    const [role, setRole] = useState<'admin' | 'asesor' | 'repartidor'>('asesor');
+    const [role, setRole] = useState<'admin' | 'asesor' | 'repartidor' | 'produccion'>('asesor');
 
     useEffect(() => {
         if (userToEdit) {
             setName(userToEdit.name);
-            setRole(userToEdit.role as 'asesor' | 'repartidor' | 'admin');
+            setRole(userToEdit.role as 'asesor' | 'repartidor' | 'admin' | 'produccion');
             setPassword(''); // La contraseña siempre se limpia al editar
         } else {
             // Resetear para el modo de creación
@@ -64,9 +64,10 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                         </div>
                         <div>
                             <label htmlFor="role" className="block text-sm font-medium text-gray-700">Rol</label>
-                            <select id="role" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'asesor' | 'repartidor')} className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                            <select id="role" value={role} onChange={(e) => setRole(e.target.value as 'admin' | 'asesor' | 'repartidor' | 'produccion')} className="mt-1 block w-full px-3 py-2 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                                 <option value="asesor">Asesor</option>
                                 <option value="repartidor">Repartidor</option>
+                                <option value="produccion">Producción</option>
                                 <option value="admin">Administrador</option>
                             </select>
                         </div>

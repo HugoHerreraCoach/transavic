@@ -1,4 +1,12 @@
 // src/app/dashboard/productos/productos-client.tsx
+//
+// ⚠️ @deprecated (mayo 2026)
+// Este componente fue reemplazado por `src/app/dashboard/catalogo/catalogo-unificado.tsx`,
+// que muestra producto + precio en UNA sola vista. La ruta /dashboard/productos
+// ahora redirige a /dashboard/catalogo (ver page.tsx en este mismo directorio).
+//
+// Este archivo queda como red de seguridad por unas semanas. Si nadie reporta
+// regresiones visuales de la unificación, se puede borrar sin riesgo.
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -30,6 +38,7 @@ export default function ProductosClient() {
   const [newProduct, setNewProduct] = useState({ nombre: '', categoria: '', customCategoria: '' });
   const [selectedUnits, setSelectedUnits] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pagina, setPagina] = useState(1);
   const customUnitRef = useRef<HTMLInputElement>(null);
 
   // Derive categories dynamically from products
@@ -48,12 +57,23 @@ export default function ProductosClient() {
   }, []);
 
   useEffect(() => { fetchProductos(); }, [fetchProductos]);
+  // Volver a la página 1 al cambiar de categoría o búsqueda.
+  useEffect(() => { setPagina(1); }, [categoriaActiva, busqueda]);
 
   const filteredProducts = productos.filter(p => {
     const matchCategoria = categoriaActiva === 'Todos' || p.categoria === categoriaActiva;
     const matchBusqueda = !busqueda || p.nombre.toLowerCase().includes(busqueda.toLowerCase());
     return matchCategoria && matchBusqueda;
   });
+
+  // Paginación en cliente para no abultar la lista cuando hay muchos productos.
+  const PRODUCTOS_POR_PAGINA = 25;
+  const totalPaginas = Math.max(1, Math.ceil(filteredProducts.length / PRODUCTOS_POR_PAGINA));
+  const paginaActual = Math.min(pagina, totalPaginas);
+  const productosPagina = filteredProducts.slice(
+    (paginaActual - 1) * PRODUCTOS_POR_PAGINA,
+    paginaActual * PRODUCTOS_POR_PAGINA
+  );
 
   const conteos: Record<string, number> = {
     Todos: productos.length,
@@ -228,7 +248,7 @@ export default function ProductosClient() {
         <>
           {/* Mobile Cards */}
           <div className="space-y-3 sm:hidden">
-            {filteredProducts.map(p => (
+            {productosPagina.map(p => (
               <div key={p.id} className="rounded-lg border p-4 bg-white border-gray-200">
                 {editingId === p.id ? (
                   <div className="space-y-3">
@@ -298,7 +318,7 @@ export default function ProductosClient() {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {filteredProducts.map(p => (
+                {productosPagina.map(p => (
                   <tr key={p.id} className="hover:bg-gray-50 transition-colors">
                     {editingId === p.id ? (
                       <>
@@ -356,6 +376,31 @@ export default function ProductosClient() {
             </table>
           </div>
         </>
+      )}
+
+      {/* Paginación (cliente) */}
+      {totalPaginas > 1 && (
+        <div className="flex items-center justify-between gap-2 mt-4 text-sm">
+          <span className="text-gray-500">
+            {filteredProducts.length} producto{filteredProducts.length === 1 ? '' : 's'} · página {paginaActual} de {totalPaginas}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setPagina(p => Math.max(1, p - 1))}
+              disabled={paginaActual <= 1}
+              className="px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              ‹ Anterior
+            </button>
+            <button
+              onClick={() => setPagina(p => Math.min(totalPaginas, p + 1))}
+              disabled={paginaActual >= totalPaginas}
+              className="px-3 py-1.5 rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Siguiente ›
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Add Product Modal */}

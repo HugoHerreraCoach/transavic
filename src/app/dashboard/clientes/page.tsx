@@ -2,6 +2,7 @@
 
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
+import { homeForRole } from "@/lib/roles";
 import ClientesClient from "./clientes-client";
 
 export default async function ClientesPage() {
@@ -9,6 +10,10 @@ export default async function ClientesPage() {
 
   if (!session?.user) {
     redirect("/login");
+  }
+  // Clientes es de admin y asesoras (no de producción/repartidor).
+  if (!["admin", "asesor"].includes(session.user.role)) {
+    redirect(homeForRole(session.user.role));
   }
 
   return (

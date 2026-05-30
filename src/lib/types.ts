@@ -1,6 +1,13 @@
 // src/lib/types.ts
 
-export type EstadoPedido = 'Pendiente' | 'Asignado' | 'En_Camino' | 'Entregado' | 'Fallido';
+export type EstadoPedido =
+  | 'Pendiente'
+  | 'En_Produccion'
+  | 'Listo_Para_Despacho'
+  | 'Asignado'
+  | 'En_Camino'
+  | 'Entregado'
+  | 'Fallido';
 
 export type Pedido = {
   id: string;
@@ -51,9 +58,14 @@ export type User = {
 export type Producto = {
   id: string;
   nombre: string;
-  categoria: 'Pollo' | 'Carnes' | 'Huevos';
+  // El catálogo permite categorías custom (ver POST /api/productos), por eso
+  // dejamos `string` y los 3 valores comunes como hints en el tipo.
+  categoria: 'Pollo' | 'Carnes' | 'Huevos' | string;
   unidad: string;
   activo: boolean;
+  codigo?: string | null;
+  precio_venta?: number | string | null;
+  precio_compra?: number | string | null;
 };
 
 export type PedidoItem = {

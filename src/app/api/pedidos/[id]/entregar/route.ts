@@ -3,6 +3,9 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { crearNotificacion } from "@/lib/notificaciones";
+import { crearFacturaParaPedido, calcularMontoPedido } from "@/lib/cobranzas";
+import { calcularMetaDiaria, ventasHoy } from "@/lib/metas";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +97,148 @@ export async function POST(request: Request) {
             entregado_at = ${now}
         WHERE id = ${id}
       `;
+    }
+
+    // Si fue Entregado, crear factura automáticamente (no bloqueante)
+    if (resultado === "Entregado") {
+      try {
+        const monto = await calcularMontoPedido(id);
+        if (monto > 0) {
+          await crearFacturaParaPedido({ pedidoId: id, monto });
+        }
+      } catch (e) {
+        console.error("No se pudo crear factura automáticamente (no crítico):", e);
+      }
+
+      // AUTO-EMISIÓN DE COMPROBANTE SUNAT (configurable, no bloqueante).
+      // Se activa con AUTO_EMITIR_COMPROBANTE=true en .env. Por defecto OFF para
+      // que Antonio decida cuándo facturar cada pedido. Si lo activa:
+      //   - Cliente con RUC válido (11 dígitos) → Factura
+      //   - Cliente sin RUC → Boleta
+      //   - Si ya existe comprobante para este pedido, no duplica
+      if (process.env.AUTO_EMITIR_COMPROBANTE === "true") {
+        try {
+          const dupCheck = (await sql`
+            SELECT id FROM comprobantes WHERE pedido_id = ${id}::uuid LIMIT 1
+          `) as Array<{ id: string }>;
+          if (dupCheck.length === 0) {
+            const { emitirComprobante } = await import("@/lib/sunat");
+            const { TipoComprobante, TipoDocumentoIdentidad } = await import(
+              "@/lib/sunat/types"
+            );
+            const { empresaFromPedidoString } = await import(
+              "@/lib/sunat/config-transavic"
+            );
+            const datos = (await sql`
+              SELECT cliente, razon_social, ruc_dni, empresa
+              FROM pedidos WHERE id = ${id}
+            `) as Array<{
+              cliente: string;
+              razon_social: string | null;
+              ruc_dni: string | null;
+              empresa: string;
+            }>;
+            const items = (await sql`
+              SELECT producto_nombre,
+                COALESCE(cantidad_real, cantidad)::numeric AS cantidad,
+                unidad,
+                COALESCE(precio_unitario, 0)::numeric AS precio_unitario
+              FROM pedido_items WHERE pedido_id = ${id}
+            `) as Array<{
+              producto_nombre: string;
+              cantidad: string | number;
+              unidad: string;
+              precio_unitario: string | number;
+            }>;
+            const tieneRuc =
+              !!datos[0]?.ruc_dni && datos[0].ruc_dni.length === 11;
+            const tipo = tieneRuc ? TipoComprobante.FACTURA : TipoComprobante.BOLETA;
+            const empresa = empresaFromPedidoString(datos[0]?.empresa ?? "Transavic");
+            const IGV_FACTOR = 1.18;
+            await emitirComprobante({
+              empresa,
+              tipo,
+              pedidoId: id,
+              cliente: {
+                tipoDocumento: tieneRuc
+                  ? TipoDocumentoIdentidad.RUC
+                  : TipoDocumentoIdentidad.DNI,
+                numDocumento: datos[0]?.ruc_dni ?? "00000000",
+                razonSocial: datos[0]?.razon_social ?? datos[0]?.cliente ?? "Cliente",
+              },
+              items: items.map((it) => ({
+                descripcion: it.producto_nombre,
+                unidadMedida: it.unidad === "kg" ? "KGM" : "NIU",
+                cantidad: Number(it.cantidad),
+                precioUnitario: Number(
+                  (Number(it.precio_unitario) / IGV_FACTOR).toFixed(4)
+                ),
+                igvPorcentaje: 18,
+              })),
+            });
+          }
+        } catch (e) {
+          console.error("Auto-emisión SUNAT falló (no bloqueante):", e);
+        }
+      }
+    }
+
+    // Notificar a la asesora del pedido (no bloqueante)
+    const asesorInfo = await sql`
+      SELECT cliente, asesor_id FROM pedidos WHERE id = ${id}
+    `;
+    if (asesorInfo.length > 0 && asesorInfo[0].asesor_id) {
+      if (resultado === "Entregado") {
+        await crearNotificacion({
+          userId: asesorInfo[0].asesor_id as string,
+          tipo: "pedido_entregado",
+          titulo: "✅ Pedido entregado",
+          mensaje: `Cliente: ${asesorInfo[0].cliente} · Entregado por ${entregadoPor}`,
+          link: "/dashboard",
+          pedidoId: id,
+        });
+
+        // ¿Esta entrega hizo que la asesora cruce su meta del día? Avisar UNA sola
+        // vez (mismo cálculo que /api/metas → consistente con su barra de progreso).
+        // No bloqueante: si algo falla, la entrega igual queda registrada.
+        try {
+          const asesorId = asesorInfo[0].asesor_id as string;
+          const [vendidoHoy, meta] = await Promise.all([
+            ventasHoy(asesorId),
+            calcularMetaDiaria(asesorId),
+          ]);
+          if (meta.metaDiaria > 0 && vendidoHoy >= meta.metaDiaria) {
+            const yaAvisado = (await sql`
+              SELECT 1 FROM notificaciones
+              WHERE user_id = ${asesorId}
+                AND tipo = 'meta_diaria_alcanzada'
+                AND DATE(created_at AT TIME ZONE 'America/Lima')
+                    = (NOW() AT TIME ZONE 'America/Lima')::date
+              LIMIT 1
+            `) as Array<unknown>;
+            if (yaAvisado.length === 0) {
+              await crearNotificacion({
+                userId: asesorId,
+                tipo: "meta_diaria_alcanzada",
+                titulo: "🎯 ¡Meta del día alcanzada!",
+                mensaje: `Llegaste a tu meta de hoy (S/ ${meta.metaDiaria.toFixed(2)}). ¡Bien ahí! 🎉`,
+                link: "/dashboard/mis-metas",
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Chequeo de meta diaria falló (no crítico):", e);
+        }
+      } else {
+        await crearNotificacion({
+          userId: asesorInfo[0].asesor_id as string,
+          tipo: "pedido_fallido",
+          titulo: "❌ Pedido NO entregado",
+          mensaje: `Cliente: ${asesorInfo[0].cliente} · Razón: ${razon_fallo ?? "sin razón"}`,
+          link: "/dashboard",
+          pedidoId: id,
+        });
+      }
     }
 
     return NextResponse.json({

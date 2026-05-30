@@ -60,8 +60,10 @@ interface BaseLocation {
 // ── Helpers ──
 
 function getEstadoConfig(estado: EstadoPedido) {
-  const configs = {
+  const configs: Record<EstadoPedido, { label: string; color: string; bg: string; border: string; dot: string }> = {
     Pendiente: { label: "Pendiente", color: "text-gray-600", bg: "bg-gray-100", border: "border-gray-200", dot: "bg-gray-400" },
+    En_Produccion: { label: "En Producción", color: "text-purple-700", bg: "bg-purple-100", border: "border-purple-200", dot: "bg-purple-500" },
+    Listo_Para_Despacho: { label: "Listo p/ Despacho", color: "text-teal-700", bg: "bg-teal-100", border: "border-teal-200", dot: "bg-teal-500" },
     Asignado: { label: "Asignado", color: "text-blue-700", bg: "bg-blue-100", border: "border-blue-200", dot: "bg-blue-500" },
     En_Camino: { label: "En Camino", color: "text-indigo-700", bg: "bg-indigo-100", border: "border-indigo-300", dot: "bg-indigo-500" },
     Entregado: { label: "Entregado", color: "text-emerald-700", bg: "bg-emerald-100", border: "border-emerald-200", dot: "bg-emerald-500" },
@@ -536,7 +538,7 @@ function PedidoCard({
   const isCompleted = pedido.estado === "Entregado" || pedido.estado === "Fallido";
   const isEnCamino = pedido.estado === "En_Camino";
 
-  // ── Compact mode for completed (with revert option) ──
+  // ── Compact mode for completed (with revert option + foto firmada si Entregado) ──
   if (isCompleted) {
     return (
       <div className={`rounded-xl border overflow-hidden ${
@@ -556,7 +558,11 @@ function PedidoCard({
               <span className="text-[10px] text-gray-400">📏 {pedido.distancia_km} km</span>
             )}
           </div>
-          <span className="text-xs text-gray-400">{pedido.distrito}</span>
+          <span className="text-xs text-gray-400 hidden sm:inline">{pedido.distrito}</span>
+          {/* Botón subir foto guía firmada — solo si Entregado */}
+          {pedido.estado === "Entregado" && (
+            <SubirFotoGuiaButton pedidoId={pedido.id} />
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); onRevertir(pedido.id); }}
             className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors flex-shrink-0 cursor-pointer"
@@ -1446,5 +1452,79 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
         />
       )}
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  Botón: subir foto de guía firmada
+//  Aplica "No me hagas pensar": 1 toque → cámara → upload directo.
+// ════════════════════════════════════════════════════════════
+function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
+  const [uploading, setUploading] = useState(false);
+  const [uploaded, setUploaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("foto", file);
+      const res = await fetch(`/api/pedidos/${pedidoId}/guia-firmada`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const errBody = await res.json();
+        throw new Error(typeof errBody.error === "string" ? errBody.error : "Error al subir");
+      }
+      setUploaded(true);
+      setTimeout(() => setUploaded(false), 3000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error al subir");
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setUploading(false);
+      // Reset input para permitir resubir
+      e.target.value = "";
+    }
+  };
+
+  return (
+    <label
+      className={`relative cursor-pointer p-1.5 rounded-lg transition-colors flex-shrink-0 ${
+        uploaded
+          ? "text-green-600 bg-green-50"
+          : error
+          ? "text-red-600 bg-red-50"
+          : "text-gray-400 hover:text-blue-600 hover:bg-blue-50"
+      }`}
+      title={
+        uploaded
+          ? "✓ Subida"
+          : error
+          ? error
+          : "Subir foto de guía firmada"
+      }
+      onClick={(e) => e.stopPropagation()}
+    >
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={onFileSelected}
+        disabled={uploading}
+      />
+      {uploading ? (
+        <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      ) : uploaded ? (
+        <FiCheckCircle size={14} />
+      ) : (
+        <span style={{ fontSize: "14px" }}>📷</span>
+      )}
+    </label>
   );
 }

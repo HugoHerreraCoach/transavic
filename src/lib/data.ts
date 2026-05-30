@@ -180,9 +180,11 @@ export async function fetchMiRuta(repartidorId: string): Promise<PedidoRuta[]> {
         CASE estado
           WHEN 'En_Camino' THEN 0
           WHEN 'Asignado' THEN 1
-          WHEN 'Pendiente' THEN 2
-          WHEN 'Entregado' THEN 3
-          WHEN 'Fallido' THEN 4
+          WHEN 'Listo_Para_Despacho' THEN 2
+          WHEN 'En_Produccion' THEN 3
+          WHEN 'Pendiente' THEN 4
+          WHEN 'Entregado' THEN 5
+          WHEN 'Fallido' THEN 6
         END,
         orden_ruta ASC NULLS LAST,
         created_at ASC

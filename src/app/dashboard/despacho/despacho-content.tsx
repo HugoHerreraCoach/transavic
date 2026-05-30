@@ -85,6 +85,8 @@ interface BaseLocation {
 function getEstadoConfig(estado: EstadoPedido) {
   const configs: Record<EstadoPedido, { bg: string; text: string; dot: string; label: string }> = {
     Pendiente: { bg: "bg-amber-50", text: "text-amber-700", dot: "bg-amber-400", label: "Pendiente" },
+    En_Produccion: { bg: "bg-purple-50", text: "text-purple-700", dot: "bg-purple-400", label: "En Producción" },
+    Listo_Para_Despacho: { bg: "bg-teal-50", text: "text-teal-700", dot: "bg-teal-400", label: "Listo p/ Despacho" },
     Asignado: { bg: "bg-blue-50", text: "text-blue-700", dot: "bg-blue-400", label: "Asignado" },
     En_Camino: { bg: "bg-indigo-50", text: "text-indigo-700", dot: "bg-indigo-500", label: "En Camino" },
     Entregado: { bg: "bg-emerald-50", text: "text-emerald-700", dot: "bg-emerald-400", label: "Entregado" },

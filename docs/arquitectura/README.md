@@ -121,6 +121,37 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 | # | Hallazgo | Severidad |
 |---|---|---|
 | ~~1~~ | ~~`PATCH/DELETE /api/pedidos/[id]` sin auth check~~ — **✅ Resuelto 2026-05-13** | ✅ Resuelto |
+
+## 🚀 Estado de implementación (mayo 2026)
+
+| Fase | Estado | Documento detallado |
+|---|---|---|
+| **Sistema base** | ✅ Producción | Doc 01-05 |
+| **Fase A — Base operativa** (precios, producción, guía digital, foto firmada) | ✅ Código completo en local — pendiente migración SQL contra Neon branch | `docs/superpowers/plans/2026-05-13-fase-a-base-operativa.md` |
+| **Fase B — Visibilidad y dinero** (metas, notificaciones, cobranzas, SUNAT stub) | ✅ Código completo en local | `docs/superpowers/plans/2026-05-13-fase-b-visibilidad-y-dinero.md` |
+| **Fase C — Inteligencia + App móvil** (IA Gemini, Capacitor + Pusher) | ⏳ Pendiente | — |
+
+### Cambios en el modelo de datos (Fase A + B)
+
+**Tablas nuevas:**
+- `precios_productos` (Fase A.1) — histórico de precios
+- `correlativos` (Fase A.4) — numeración de guías
+- `metas_asesoras` (Fase B.1) — overrides manuales de meta mensual
+- `notificaciones` (Fase B.2) — notificaciones in-app
+- `facturas` (Fase B.3) — gestión de cobranzas
+- `comprobantes` + `comprobantes_contador` (Fase B.4) — SUNAT
+
+**Columnas nuevas:**
+- `productos.precio_compra`, `precio_venta`
+- `pedido_items.precio_unitario`, `subtotal`, `cantidad_real`, `subtotal_real`
+- `pedidos.numero_guia`, `guia_firmada_data` (base64), `guia_firmada_mime`, `guia_firmada_at`, `pesado_por`, `pesado_at`
+- `clientes.plazo_pago_dias`
+
+**Estados nuevos en `pedidos.estado`:**
+- `En_Produccion` (entre `Pendiente` y `Asignado`)
+- `Listo_Para_Despacho` (entre `En_Produccion` y `Asignado`)
+
+**Rol nuevo:** `produccion` (asistente de producción que pesa los pedidos)
 | 2 | Migración de tabla `clientes` no documentada en `/scripts/` (DB irrecuperable desde cero) | 🟡 Media |
 | 3 | `GET /api/clientes/[id]/pedidos` permite ver historial de clientes ajenos | 🟡 Media |
 

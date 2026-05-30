@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 const CreateUserSchema = z.object({
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
-  role: z.enum(['admin', 'asesor', 'repartidor']),
+  role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']),
 });
 
 // Función para obtener usuarios

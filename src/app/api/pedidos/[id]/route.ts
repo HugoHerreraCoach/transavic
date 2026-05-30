@@ -23,7 +23,7 @@ const UpdateSchema = z.object({
   latitude: z.number().nullable().optional(),
   longitude: z.number().nullable().optional(),
   // --- Campos de despacho ---
-  estado: z.enum(["Pendiente", "Asignado", "En_Camino", "Entregado", "Fallido"]).optional(),
+  estado: z.enum(["Pendiente", "En_Produccion", "Listo_Para_Despacho", "Asignado", "En_Camino", "Entregado", "Fallido"]).optional(),
   repartidor_id: z.string().uuid().nullable().optional(),
   orden_ruta: z.number().nullable().optional(),
   razon_fallo: z.string().nullable().optional(),
@@ -32,6 +32,77 @@ const UpdateSchema = z.object({
   entregado_por: z.string().optional().nullable(),
   entregado_at: z.string().optional().nullable(),
 });
+
+export async function GET(request: Request) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json(
+        { error: "No autorizado." },
+        { status: 401 }
+      );
+    }
+
+    const url = new URL(request.url);
+    const id = url.pathname.split("/").pop();
+
+    if (!id) {
+      return NextResponse.json(
+        { error: "ID del pedido no encontrado" },
+        { status: 400 }
+      );
+    }
+
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) throw new Error("DATABASE_URL no definida");
+
+    const sql = neon(connectionString);
+
+    // Cargar pedido
+    const pedidoRows = await sql`
+      SELECT p.*, u.name AS asesor_name
+      FROM pedidos p
+      LEFT JOIN users u ON p.asesor_id = u.id
+      WHERE p.id = ${id}
+    `;
+
+    if (pedidoRows.length === 0) {
+      return NextResponse.json(
+        { error: "Pedido no encontrado" },
+        { status: 404 }
+      );
+    }
+    const pedido = pedidoRows[0];
+
+    // Verificar permisos: asesor solo puede ver los suyos, repartidor los suyos, admin todos
+    if (
+      session.user.role !== "admin" &&
+      pedido.asesor_id !== session.user.id &&
+      pedido.repartidor_id !== session.user.id
+    ) {
+      return NextResponse.json(
+        { error: "No tienes permiso para ver este pedido." },
+        { status: 403 }
+      );
+    }
+
+    // Cargar items del pedido
+    const items = await sql`
+      SELECT pi.*, prod.codigo
+      FROM pedido_items pi
+      LEFT JOIN productos prod ON pi.producto_id = prod.id
+      WHERE pi.pedido_id = ${id}
+    `;
+
+    return NextResponse.json({ pedido, items });
+  } catch (error) {
+    console.error("Error en API GET:", error);
+    return NextResponse.json(
+      { error: "Error interno del servidor" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function PATCH(request: Request) {
   try {

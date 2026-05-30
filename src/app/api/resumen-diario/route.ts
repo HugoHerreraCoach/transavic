@@ -11,6 +11,11 @@ export async function GET(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "No autorizado." }, { status: 401 });
     }
+    // Resumen diario muestra TODOS los pedidos/items del día (vista admin
+    // operativa). Asesoras NO deben ver el resumen completo de la operación.
+    if (session.user.role !== "admin") {
+      return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    }
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no está definida");

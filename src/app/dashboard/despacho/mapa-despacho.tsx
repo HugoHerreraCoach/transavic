@@ -61,6 +61,8 @@ const LIMA_CENTER = { lat: -12.0464, lng: -77.0428 };
 
 const ESTADO_COLORS: Record<EstadoPedido, string> = {
   Pendiente: "#f59e0b",
+  En_Produccion: "#a855f7",
+  Listo_Para_Despacho: "#14b8a6",
   Asignado: "#3b82f6",
   En_Camino: "#6366f1",
   Entregado: "#10b981",
@@ -69,6 +71,8 @@ const ESTADO_COLORS: Record<EstadoPedido, string> = {
 
 const ESTADO_LABELS: Record<EstadoPedido, string> = {
   Pendiente: "Pendiente",
+  En_Produccion: "En Producción",
+  Listo_Para_Despacho: "Listo p/ Despacho",
   Asignado: "Asignado",
   En_Camino: "En Camino",
   Entregado: "Entregado",

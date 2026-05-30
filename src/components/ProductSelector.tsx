@@ -37,9 +37,19 @@ function hasMultipleUnits(unidad: string): boolean {
 interface ProductSelectorProps {
   onChange: (items: SelectedItem[], detalleText: string) => void;
   initialItems?: SelectedItem[];
+  empresa?: string;
 }
 
-export default function ProductSelector({ onChange, initialItems }: ProductSelectorProps) {
+export default function ProductSelector({ onChange, initialItems, empresa }: ProductSelectorProps) {
+  const isAvicola = (empresa || '').trim().toLowerCase().startsWith('av');
+  const activeColor = isAvicola ? '#d97706' : '#dc2626'; // amber-600 vs red-600
+  const activeBorder = isAvicola ? '#f59e0b' : '#ef4444'; // amber-500 vs red-500
+  const activeBg = isAvicola ? '#fffbeb' : '#fef2f2'; // amber-50 vs red-50
+  const hoverBorder = isAvicola ? '#fde68a' : '#fca5a5'; // amber-200 vs red-200
+  const hoverBg = isAvicola ? '#fffdf5' : '#fff5f5'; // amber-50/30 vs red-50/30
+  const focusBorder = isAvicola ? '#fcd34d' : '#fca5a5'; // amber-300 vs red-300
+  const focusRing = isAvicola ? 'rgba(251,191,36,0.3)' : 'rgba(252,165,165,0.3)'; // amber-400 vs red-300
+
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -278,12 +288,12 @@ export default function ProductSelector({ onChange, initialItems }: ProductSelec
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '12px 16px', borderRadius: 12, boxSizing: 'border-box',
-          border: isOpen ? '2px solid #ef4444' : '2px dashed #d1d5db',
-          backgroundColor: isOpen ? '#fef2f2' : 'white',
-          color: isOpen ? '#b91c1c' : '#6b7280',
+          border: isOpen ? `2px solid ${activeBorder}` : '2px dashed #d1d5db',
+          backgroundColor: isOpen ? activeBg : 'white',
+          color: isOpen ? activeColor : '#6b7280',
           cursor: 'pointer', transition: 'all 0.2s', fontSize: 14
         }}
-        onMouseOver={e => { if (!isOpen) { e.currentTarget.style.borderColor = '#fca5a5'; e.currentTarget.style.backgroundColor = '#fff5f5'; } }}
+        onMouseOver={e => { if (!isOpen) { e.currentTarget.style.borderColor = hoverBorder; e.currentTarget.style.backgroundColor = hoverBg; } }}
         onMouseOut={e => { if (!isOpen) { e.currentTarget.style.borderColor = '#d1d5db'; e.currentTarget.style.backgroundColor = 'white'; } }}
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -319,7 +329,7 @@ export default function ProductSelector({ onChange, initialItems }: ProductSelec
                   backgroundColor: 'white', color: '#111827', outline: 'none',
                   transition: 'border-color 0.2s, box-shadow 0.2s', boxSizing: 'border-box'
                 }}
-                onFocus={e => { e.currentTarget.style.borderColor = '#fca5a5'; e.currentTarget.style.boxShadow = '0 0 0 3px rgba(252,165,165,0.3)'; }}
+                onFocus={e => { e.currentTarget.style.borderColor = focusBorder; e.currentTarget.style.boxShadow = `0 0 0 3px ${focusRing}`; }}
                 onBlur={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.boxShadow = 'none'; }}
                 autoFocus
               />
@@ -367,11 +377,11 @@ export default function ProductSelector({ onChange, initialItems }: ProductSelec
                     <span>{categoriaConfig[cat]?.emoji}</span> {cat}
                     <span style={{ marginLeft: 'auto', opacity: 0.6 }}>{prods.length}</span>
                   </div>
-                  {prods.map(p => <ProductRow key={p.id} producto={p} qty={getItemQty(p.id)} onAdd={addItem} onUpdateQty={updateQty} />)}
+                  {prods.map(p => <ProductRow key={p.id} producto={p} qty={getItemQty(p.id)} onAdd={addItem} onUpdateQty={updateQty} activeColor={activeColor} />)}
                 </div>
               ))
             ) : (
-              filteredProducts.map(p => <ProductRow key={p.id} producto={p} qty={getItemQty(p.id)} onAdd={addItem} onUpdateQty={updateQty} />)
+              filteredProducts.map(p => <ProductRow key={p.id} producto={p} qty={getItemQty(p.id)} onAdd={addItem} onUpdateQty={updateQty} activeColor={activeColor} />)
             )}
           </div>
 
@@ -410,11 +420,12 @@ function CategoryPill({ label, active, color, onClick }: { label: string; active
 }
 
 // ── Single Product Row ──
-function ProductRow({ producto, qty, onAdd, onUpdateQty }: {
+function ProductRow({ producto, qty, onAdd, onUpdateQty, activeColor }: {
   producto: Producto;
   qty: number;
   onAdd: (p: Producto) => void;
   onUpdateQty: (id: string, delta: number) => void;
+  activeColor: string;
 }) {
   const isSelected = qty > 0;
   const unitDisplay = hasMultipleUnits(producto.unidad)
@@ -469,7 +480,7 @@ function ProductRow({ producto, qty, onAdd, onUpdateQty }: {
           border: 'none', cursor: 'pointer', transition: 'all 0.15s',
           display: 'flex', alignItems: 'center', justifyContent: 'center'
         }}
-        onMouseOver={e => { e.currentTarget.style.backgroundColor = '#dc2626'; e.currentTarget.style.color = 'white'; e.currentTarget.style.transform = 'scale(1.1)'; }}
+        onMouseOver={e => { e.currentTarget.style.backgroundColor = activeColor; e.currentTarget.style.color = 'white'; e.currentTarget.style.transform = 'scale(1.1)'; }}
         onMouseOut={e => { e.currentTarget.style.backgroundColor = '#f3f4f6'; e.currentTarget.style.color = '#9ca3af'; e.currentTarget.style.transform = 'scale(1)'; }}
         >
           <IconPlus size={14} />

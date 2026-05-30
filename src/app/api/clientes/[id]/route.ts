@@ -21,6 +21,7 @@ const UpdateSchema = z.object({
   latitude: z.number().nullable().optional(),
   longitude: z.number().nullable().optional(),
   asesor_id: z.string().uuid().optional().nullable(), // Para transferencia
+  plazo_pago_dias: z.number().int().min(0).max(90).optional(),
 });
 
 export async function GET(request: Request) {
