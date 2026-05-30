@@ -89,8 +89,8 @@ export async function notificarComprobanteConProblema(params: {
     const mensaje =
       params.mensajeSunat?.trim() ||
       (params.estado === "RECHAZADA"
-        ? "SUNAT rechazó el comprobante. Revisá el motivo y reintentá o emití una Nota de Crédito."
-        : "Hubo un problema al enviar a SUNAT. Reintentá desde /comprobantes.");
+        ? "SUNAT rechazó el comprobante. Revisa el motivo y reintenta o emite una Nota de Crédito."
+        : "Hubo un problema al enviar a SUNAT. Reintenta desde /comprobantes.");
     const link = `/dashboard/comprobantes`;
     const tipoNotif: TipoNotificacion =
       params.estado === "RECHAZADA" ? "comprobante_rechazado" : "comprobante_error";
@@ -124,6 +124,38 @@ export async function notificarComprobanteConProblema(params: {
     }
   } catch (e) {
     console.error("Error al notificar comprobante con problema (no crítico):", e);
+  }
+}
+
+/**
+ * Mantenimiento: borra notificaciones YA LEÍDAS de más de `diasRetencion` días
+ * (default 30) para que la tabla `notificaciones` no crezca sin límite.
+ *
+ * Reglas:
+ *   - Solo borra las que el usuario YA VIO (`leida = TRUE`). Las no leídas se
+ *     respetan siempre, sin importar su antigüedad — son pendientes reales.
+ *   - No depende de timezone: compara contra "hace N días desde ahora".
+ *
+ * NO crea un cron propio: lo invoca un cron diario existente
+ * (`daily-digest-admin`) para no sumar otro job a Vercel. Best-effort: NUNCA
+ * lanza error (es mantenimiento, no debe romper al que lo llama). Devuelve
+ * cuántas filas borró, para logging.
+ */
+export async function limpiarNotificacionesAntiguas(
+  diasRetencion = 30
+): Promise<number> {
+  try {
+    const sql = neon(process.env.DATABASE_URL!);
+    const filas = (await sql`
+      DELETE FROM notificaciones
+      WHERE leida = TRUE
+        AND created_at < NOW() - make_interval(days => ${diasRetencion}::int)
+      RETURNING id
+    `) as Array<{ id: string }>;
+    return filas.length;
+  } catch (e) {
+    console.error("Error al limpiar notificaciones antiguas (no crítico):", e);
+    return 0;
   }
 }
 

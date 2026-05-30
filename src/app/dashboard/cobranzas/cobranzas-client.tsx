@@ -14,6 +14,7 @@ import {
   FiRefreshCw,
   FiX,
   FiPlus,
+  FiEdit2,
 } from "react-icons/fi";
 
 interface Factura {
@@ -62,6 +63,9 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Edición de la fecha de vencimiento (clic en "Vence" de una cobranza pendiente).
+  const [editandoVenc, setEditandoVenc] = useState<string | null>(null);
+  const [guardandoVenc, setGuardandoVenc] = useState<string | null>(null);
 
   const fetchData = async () => {
     setRefreshing(true);
@@ -198,6 +202,42 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     }
   };
 
+  // Cambiar la fecha de vencimiento de una cobranza (la mayoría paga días
+  // después; la asesora ajusta cuándo). Optimista + refresca las stats.
+  const cambiarVencimiento = async (id: string, nuevaFecha: string) => {
+    setGuardandoVenc(id);
+    try {
+      const res = await fetch(`/api/facturas/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha_vencimiento: nuevaFecha }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(
+          typeof err.error === "string" ? err.error : "Error al cambiar la fecha"
+        );
+      }
+      const j = (await res.json()) as { fecha_vencimiento: string; estado: string };
+      setFacturas((prev) =>
+        prev.map((f) =>
+          f.id === id
+            ? { ...f, fecha_vencimiento: j.fecha_vencimiento, estado: j.estado as Factura["estado"] }
+            : f
+        )
+      );
+      setMensaje("📅 Vencimiento actualizado");
+      setTimeout(() => setMensaje(null), 2500);
+      fetchData(); // refresca stats (Pendientes / Vencidas)
+    } catch (e) {
+      setMensaje(e instanceof Error ? `❌ ${e.message}` : "❌ No se pudo cambiar la fecha");
+      setTimeout(() => setMensaje(null), 4000);
+    } finally {
+      setGuardandoVenc(null);
+      setEditandoVenc(null);
+    }
+  };
+
   // Modal de cobranza manual — registra una factura sin pedido ni comprobante.
   const [showModalManual, setShowModalManual] = useState(false);
   const [guardandoManual, setGuardandoManual] = useState(false);
@@ -298,7 +338,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   const guardarCobranzaManual = async () => {
     setErrorManual(null);
     if (manualCliente.trim().length < 2) {
-      setErrorManual("Ingresá el nombre del cliente.");
+      setErrorManual("Ingresa el nombre del cliente.");
       return;
     }
     if (!(manualMonto > 0)) {
@@ -483,8 +523,34 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     {f.fecha_emision}
                   </td>
                   <td className="px-3 py-3 text-center text-xs">
-                    <div className="font-medium">{f.fecha_vencimiento}</div>
-                    <div className={`text-[10px] ${urg.text}`}>{urg.label}</div>
+                    {editandoVenc === f.id ? (
+                      <input
+                        type="date"
+                        defaultValue={f.fecha_vencimiento}
+                        autoFocus
+                        disabled={guardandoVenc === f.id}
+                        onChange={(e) => e.target.value && cambiarVencimiento(f.id, e.target.value)}
+                        onBlur={() => setEditandoVenc(null)}
+                        className="border border-gray-300 rounded px-1.5 py-1 text-xs focus:ring-2 focus:ring-red-400 focus:outline-none"
+                      />
+                    ) : f.estado !== "Pagada" ? (
+                      <button
+                        onClick={() => setEditandoVenc(f.id)}
+                        title="Tocá para cambiar la fecha de vencimiento"
+                        className="group inline-flex flex-col items-center rounded px-1.5 py-0.5 hover:bg-white/70 transition-colors cursor-pointer"
+                      >
+                        <span className="font-medium inline-flex items-center gap-1 tabular-nums">
+                          {f.fecha_vencimiento}
+                          <FiEdit2 className="h-2.5 w-2.5 text-gray-300 group-hover:text-gray-500" />
+                        </span>
+                        <span className={`text-[10px] ${urg.text}`}>{urg.label}</span>
+                      </button>
+                    ) : (
+                      <>
+                        <div className="font-medium tabular-nums">{f.fecha_vencimiento}</div>
+                        <div className={`text-[10px] ${urg.text}`}>{urg.label}</div>
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-3 text-center">
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${urg.text} bg-white border`}>
@@ -592,7 +658,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     );
                     setManualClienteId(match?.id ?? null);
                   }}
-                  placeholder="Buscá un cliente guardado o escribí uno nuevo"
+                  placeholder="Busca un cliente guardado o escribe uno nuevo"
                   className="w-full p-2.5 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-red-500 focus:border-red-500"
                 />
                 <datalist id="cobranza-manual-clientes">
@@ -634,7 +700,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     ))}
                   </select>
                   <p className="text-[11px] text-gray-500 mt-1">
-                    Si elegís una factura, vinculamos la cobranza y autollenamos el monto.
+                    Si eliges una factura, vinculamos la cobranza y autollenamos el monto.
                   </p>
                 </div>
               )}

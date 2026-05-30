@@ -646,7 +646,7 @@ function ModalComunicacionBaja({
           <p className="text-sm text-gray-600">
             Anula ante SUNAT la factura{" "}
             <strong className="font-mono">{comprobante.serie_numero}</strong>. Solo se
-            permite dentro de los <strong>7 días</strong> de emitida; pasado ese plazo, usá
+            permite dentro de los <strong>7 días</strong> de emitida; pasado ese plazo, usa
             una nota de crédito.
           </p>
           {!resultado && (
@@ -908,7 +908,7 @@ function ModalResumenDiario({
         <div className="p-5 space-y-4">
           <p className="text-sm text-gray-600">
             SUNAT exige enviar un resumen de las boletas del día. El sistema lo manda
-            automáticamente cada madrugada; acá podés enviarlo o reenviarlo manualmente.
+            automáticamente cada madrugada; aquí puedes enviarlo o reenviarlo manualmente.
           </p>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1150,7 +1150,7 @@ function ModalExportarExcel({
         <div className="p-5 space-y-4">
           <p className="text-sm text-gray-600">
             Reporte contable con <strong>resumen, registro de ventas y detalle</strong> por
-            tipo. Elegí el período a exportar:
+            tipo. Elige el período a exportar:
           </p>
 
           {/* Presets */}
@@ -1222,7 +1222,7 @@ function ModalExportarExcel({
                 {filtroTipo !== "all" && <strong> Tipo = {tipoLabel(filtroTipo)}</strong>}
                 {filtroTipo !== "all" && filtroEmpresa !== "all" && " ·"}
                 {filtroEmpresa !== "all" && <strong> Empresa = {empresaLabel(filtroEmpresa)}</strong>}
-                . Quitá los filtros en la lista si querés exportar todo.
+                . Quita los filtros en la lista si quieres exportar todo.
               </span>
             </div>
           )}
@@ -1660,7 +1660,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         {userRole === "admin" && (
           <button
             onClick={() => setModalExcel(true)}
-            title="Exportar reporte contable a Excel (elegí el período)"
+            title="Exportar reporte contable a Excel (elige el período)"
             className="px-3 py-2 text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg flex items-center gap-1 font-medium"
           >
             <FiFile />
@@ -1706,7 +1706,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                         Resumen diario de boletas
                       </span>
                       <span className="block text-[11px] text-gray-500 leading-snug">
-                        Se envía solo cada noche. Entrá solo si querés revisar o reenviarlo.
+                        Se envía solo cada noche. Entra solo si quieres revisar o reenviarlo.
                       </span>
                     </span>
                   </button>
@@ -2075,9 +2075,9 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         <strong>ℹ️ Cómo funciona:</strong> al emitir, el comprobante se transmite
         a <strong>SUNAT</strong> automáticamente para su validación (esto{" "}
         <strong>no</strong> es un correo al cliente). Para enviárselo al cliente
-        por correo —adjuntando el <strong>PDF y el XML</strong>— abrí el menú{" "}
-        <strong>⋯</strong> del comprobante y elegí{" "}
-        <strong>“Enviar por correo”</strong>: solo se envía cuando vos lo indicás.
+        por correo —adjuntando el <strong>PDF y el XML</strong>— abre el menú{" "}
+        <strong>⋯</strong> del comprobante y elige{" "}
+        <strong>“Enviar por correo”</strong>: solo se envía cuando tú lo indicas.
       </div>
     </div>
   );

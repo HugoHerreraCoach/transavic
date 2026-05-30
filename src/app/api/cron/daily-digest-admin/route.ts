@@ -15,7 +15,7 @@
 // arranca el día.
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
-import { crearNotificacion } from "@/lib/notificaciones";
+import { crearNotificacion, limpiarNotificacionesAntiguas } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +33,18 @@ export async function GET(request: Request) {
 
   try {
     const sql = neon(process.env.DATABASE_URL!);
+
+    // 0) Mantenimiento — purgar notificaciones LEÍDAS de más de 30 días para que
+    //    la tabla no crezca sin límite. Va acá (piggyback en un cron diario que
+    //    ya existe) en vez de crear un cron nuevo, para no sumar otro job a
+    //    Vercel. Corre ANTES del posible return temprano de abajo, así se ejecuta
+    //    todos los días aunque no haya señales para el digest. Best-effort.
+    const notifsPurgadas = await limpiarNotificacionesAntiguas(30);
+    if (notifsPurgadas > 0) {
+      console.log(
+        `[daily-digest-admin] Notificaciones purgadas (leídas > 30 días): ${notifsPurgadas}`
+      );
+    }
 
     // 1) Vencidas — ya marcadas como Vencida por el cron facturas-vencidas
     //    (que corre 1h antes, a las 13 UTC). Acá solo agregamos.
@@ -78,6 +90,7 @@ export async function GET(request: Request) {
       return NextResponse.json({
         digestEnviado: false,
         motivo: "Sin señales relevantes hoy",
+        notificacionesPurgadas: notifsPurgadas,
         timestamp: new Date().toISOString(),
       });
     }
@@ -133,6 +146,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       digestEnviado: true,
       destinatarios: admins.length,
+      notificacionesPurgadas: notifsPurgadas,
       senales: {
         vencidas: vencidas.cnt,
         venceHoy: venceHoy.cnt,

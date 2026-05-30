@@ -100,7 +100,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
         latitude: dup.latitude ?? prev.latitude,
         longitude: dup.longitude ?? prev.longitude,
       }));
-      setSuccessToast('📋 Cliente copiado del pedido anterior — revisá y ajustá lo que necesite.');
+      setSuccessToast('📋 Cliente copiado del pedido anterior — revisa y ajusta lo que necesite.');
       setTimeout(() => setSuccessToast(null), 4000);
     } catch {
       /* sessionStorage no disponible o JSON inválido — ignorar */

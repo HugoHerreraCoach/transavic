@@ -136,7 +136,7 @@ export async function POST(request: Request) {
         pedido_ids.length === 1
           ? "Nuevo pedido asignado"
           : `${pedido_ids.length} pedidos asignados`,
-      mensaje: "Revisá tu ruta del día en Mi Ruta.",
+      mensaje: "Revisa tu ruta del día en Mi Ruta.",
       link: "/dashboard/mi-ruta",
       pedidoId: pedido_ids[0],
     });

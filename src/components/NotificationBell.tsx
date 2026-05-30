@@ -5,20 +5,22 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { FiBell, FiCheckCircle, FiPackage, FiTruck, FiAlertCircle, FiDollarSign } from "react-icons/fi";
-
-type TipoNotificacion =
-  | "pedido_creado"
-  | "pesos_listos"
-  | "listo_para_despacho"
-  | "pedido_asignado"
-  | "pedido_en_camino"
-  | "pedido_entregado"
-  | "pedido_fallido"
-  | "guia_firmada"
-  | "factura_vencida"
-  | "factura_por_vencer"
-  | "meta_diaria_alcanzada";
+import {
+  FiBell,
+  FiCheckCircle,
+  FiPackage,
+  FiTruck,
+  FiAlertCircle,
+  FiDollarSign,
+  FiXCircle,
+  FiAlertTriangle,
+  FiTrendingDown,
+  FiClock,
+} from "react-icons/fi";
+// Fuente única del tipo: lo importamos del backend para que el frontend nunca
+// quede desfasado cuando se agregan tipos nuevos (import type → se borra en build,
+// no arrastra el código server de lib/notificaciones al bundle del cliente).
+import type { TipoNotificacion } from "@/lib/notificaciones";
 
 interface Notificacion {
   id: string;
@@ -52,6 +54,14 @@ function iconoParaTipo(tipo: TipoNotificacion) {
       return <FiDollarSign className="text-amber-600" />;
     case "meta_diaria_alcanzada":
       return <span>🎯</span>;
+    case "meta_atrasada":
+      return <FiTrendingDown className="text-amber-600" />;
+    case "comprobante_rechazado":
+      return <FiXCircle className="text-red-600" />;
+    case "comprobante_error":
+      return <FiAlertTriangle className="text-amber-600" />;
+    case "cliente_inactivo":
+      return <FiClock className="text-gray-500" />;
     default:
       return <FiBell className="text-gray-500" />;
   }

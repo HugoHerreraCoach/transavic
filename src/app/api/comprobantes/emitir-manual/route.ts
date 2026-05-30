@@ -11,7 +11,7 @@ import { z } from "zod";
 import { neon } from "@neondatabase/serverless";
 import { emitirComprobante } from "@/lib/sunat";
 import { TipoComprobante, TipoDocIdentidad, EstadoSunat } from "@/lib/sunat/types";
-import { crearFacturaStandalone } from "@/lib/cobranzas";
+import { crearFacturaStandalone, plazoDeCobranza } from "@/lib/cobranzas";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
@@ -92,7 +92,7 @@ export async function POST(request: Request) {
     );
     if (totalConIgv <= 0 || totalConIgv > 500000) {
       return NextResponse.json(
-        { error: `Total fuera de rango (S/ ${totalConIgv.toFixed(2)}). Revisá precios y cantidades.` },
+        { error: `Total fuera de rango (S/ ${totalConIgv.toFixed(2)}). Revisa precios y cantidades.` },
         { status: 400 }
       );
     }
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
       // FACTURA: siempre RUC válido + razón social.
       if (!esRucValido) {
         return NextResponse.json(
-          { error: "Para FACTURA el receptor debe tener un RUC válido (11 dígitos que empiezan en 10/15/16/17/20). Para personas naturales emití BOLETA." },
+          { error: "Para FACTURA el receptor debe tener un RUC válido (11 dígitos que empiezan en 10/15/16/17/20). Para personas naturales emite BOLETA." },
           { status: 400 }
         );
       }
@@ -206,9 +206,12 @@ export async function POST(request: Request) {
           clienteId: cliente.id ?? null,
           asesorId: session.user.role === "asesor" ? session.user.id : null,
           monto: totalConIgv,
-          // Contado-sin-cobrar → vencimiento = hoy (plazo 0).
-          // Crédito → plazo del form (default 7).
-          plazoDias: esCredito ? parsed.data.plazoDias : 0,
+          // Crédito → plazo del form. Contado (factura sin "ya cobrado") →
+          // plazo del CLIENTE (plazo_pago_dias) o el default del negocio, en vez
+          // de vencer hoy: la mayoría paga días después.
+          plazoDias: esCredito
+            ? parsed.data.plazoDias
+            : await plazoDeCobranza(cliente.id ?? null),
           numeroComprobante: resultado.serieNumero,
         });
       } catch (errCobranza) {

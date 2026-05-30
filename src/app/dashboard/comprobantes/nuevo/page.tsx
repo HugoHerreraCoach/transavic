@@ -1,4 +1,5 @@
 // src/app/dashboard/comprobantes/nuevo/page.tsx
+import { Suspense } from "react";
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
 import { getSunatConfig } from "@/lib/sunat/config-transavic";
@@ -18,5 +19,9 @@ export default async function NuevoComprobantePage() {
     avicola: { ruc: avi.ruc, razonSocial: avi.razonSocial },
   };
 
-  return <EmitirComprobanteClient empresas={empresas} />;
+  return (
+    <Suspense fallback={null}>
+      <EmitirComprobanteClient empresas={empresas} />
+    </Suspense>
+  );
 }

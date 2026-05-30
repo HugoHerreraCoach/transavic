@@ -202,7 +202,7 @@ export function GraficoBarrasDia({
       <p className="text-gray-400 text-center py-12 text-sm">
         {data.length === 0
           ? "Sin pedidos entregados en este período."
-          : "No hay montos facturados para graficar. Cargá los precios en el catálogo."}
+          : "No hay montos facturados para graficar. Carga los precios en el catálogo."}
       </p>
     );
   }

@@ -77,7 +77,7 @@ export default function GuiaImprimibleClient(props: Props) {
           </div>
         </div>
         <div className="max-w-4xl mx-auto px-4 pb-2 text-xs text-gray-500">
-          Sugerencia: en el diálogo de impresión elegí <strong>&quot;Guardar como PDF&quot;</strong> para enviarlo por WhatsApp.
+          Sugerencia: en el diálogo de impresión elige <strong>&quot;Guardar como PDF&quot;</strong> para enviarlo por WhatsApp.
         </div>
       </div>
 

@@ -250,15 +250,15 @@ export async function insightProductosEnAlza(): Promise<InsightProducto> {
 
   if (productosUp.length === 0 && productosDown.length === 0) {
     return {
-      texto: "No hay suficientes datos del mes anterior todavía para detectar tendencias significativas. Esperá unos días más para que el análisis tenga más volumen.",
+      texto: "No hay suficientes datos del mes anterior todavía para detectar tendencias significativas. Espera unos días más para que el análisis tenga más volumen.",
       productosUp: [],
       productosDown: [],
     };
   }
 
   // Prompt: NO contiene nombres de clientes, solo nombres de productos (públicos)
-  const prompt = `Sos un asistente comercial de Antonio, dueño de una distribuidora avícola en Lima (Transavic + Avícola de Tony).
-Analizá estos cambios de ventas entre el mes anterior y el mes actual y dale a Antonio una recomendación breve, conversacional, en español rioplatense neutro, máximo 3 oraciones.
+  const prompt = `Eres un asistente comercial de Antonio, dueño de una distribuidora avícola en Lima (Transavic + Avícola de Tony).
+Analiza estos cambios de ventas entre el mes anterior y el mes actual y dale a Antonio una recomendación breve, conversacional, en español neutro latinoamericano, máximo 3 oraciones.
 
 PRODUCTOS QUE SUBIERON:
 ${productosUp.map((p) => `  • ${p.nombre}: S/ ${p.ventas_mes_anterior.toFixed(0)} → S/ ${p.ventas_mes_actual.toFixed(0)} (${p.porcentaje_cambio >= 0 ? "+" : ""}${p.porcentaje_cambio}%)`).join("\n") || "  (ninguno)"}
@@ -266,7 +266,7 @@ ${productosUp.map((p) => `  • ${p.nombre}: S/ ${p.ventas_mes_anterior.toFixed(
 PRODUCTOS QUE BAJARON:
 ${productosDown.map((p) => `  • ${p.nombre}: S/ ${p.ventas_mes_anterior.toFixed(0)} → S/ ${p.ventas_mes_actual.toFixed(0)} (${p.porcentaje_cambio}%)`).join("\n") || "  (ninguno)"}
 
-Dale a Antonio una acción concreta. NO repitas todos los productos, solo destacá lo más importante. Si nada destaca, decílo.`;
+Dale a Antonio una acción concreta. NO repitas todos los productos, solo destaca lo más importante. Si nada destaca, dilo.`;
 
   let texto = "Analizando tendencias del mes…";
   try {
@@ -289,7 +289,7 @@ export async function insightClientesEnRiesgo(): Promise<InsightClientes> {
 
   if (clientes.length === 0) {
     return {
-      texto: "Excelente — todos tus clientes recurrentes pidieron en los últimos 3 semanas. Seguí así.",
+      texto: "Excelente — todos tus clientes recurrentes pidieron en las últimas 3 semanas. Sigue así.",
       clientes: [],
     };
   }
@@ -303,12 +303,12 @@ export async function insightClientesEnRiesgo(): Promise<InsightClientes> {
     pedidos_total: c.pedidos_total,
   }));
 
-  const prompt = `Sos un asistente comercial de Antonio, dueño de una distribuidora avícola en Lima.
+  const prompt = `Eres un asistente comercial de Antonio, dueño de una distribuidora avícola en Lima.
 Estos son clientes recurrentes que NO compraron en las últimas 3 semanas (${DIAS_INACTIVIDAD_RIESGO}+ días). Ordenados por gasto histórico de mayor a menor:
 
 ${clientesAnon.map((c) => `  • ${c.codigo}: ${c.dias_sin_comprar} días sin comprar, gastó históricamente S/${c.total_historico.toFixed(0)} en ${c.pedidos_total} pedidos`).join("\n")}
 
-Dale a Antonio una recomendación concreta de acción (en español rioplatense neutro, máximo 3 oraciones). NO uses los códigos "Cliente A" en tu respuesta — referite a ellos como "el cliente más importante", "los 3 clientes top", etc. Si hay uno claramente prioritario, destacalo.`;
+Dale a Antonio una recomendación concreta de acción (en español neutro latinoamericano, máximo 3 oraciones). NO uses los códigos "Cliente A" en tu respuesta — refiérete a ellos como "el cliente más importante", "los 3 clientes top", etc. Si hay uno claramente prioritario, destácalo.`;
 
   let texto = "Analizando clientes en riesgo…";
   try {
@@ -335,12 +335,12 @@ export async function insightAsesoraTop(): Promise<InsightAsesora> {
     };
   }
 
-  const prompt = `Sos un asistente comercial de Antonio (distribuidora avícola Lima).
+  const prompt = `Eres un asistente comercial de Antonio (distribuidora avícola Lima).
 Estas son las ventas del MES EN CURSO por asesora (pedidos entregados):
 
 ${asesoras.map((a, i) => `  ${i + 1}. ${a.nombre}: S/ ${a.total_ventas_mes.toFixed(0)} en ${a.pedidos_entregados} pedidos (ticket promedio S/ ${a.ticket_promedio.toFixed(0)})`).join("\n")}
 
-Dale a Antonio una observación breve, en español rioplatense neutro, máximo 3 oraciones. Destacá quién va primera y por qué (alto ticket promedio? muchos pedidos?). Si hay alguien muy abajo, mencionalo con cuidado (sin ser duro — son sus empleadas).`;
+Dale a Antonio una observación breve, en español neutro latinoamericano, máximo 3 oraciones. Destaca quién va primera y por qué (alto ticket promedio? muchos pedidos?). Si hay alguien muy abajo, menciónalo con cuidado (sin ser duro — son sus empleadas).`;
 
   let texto = "Analizando performance del mes…";
   try {
@@ -368,7 +368,7 @@ export async function insightRecomendacionDia(): Promise<InsightDia> {
   }
 
   const tasaExito = (resumen.pedidos_entregados / resumen.pedidos_total) * 100;
-  const prompt = `Sos un asistente comercial de Antonio (distribuidora avícola Lima).
+  const prompt = `Eres un asistente comercial de Antonio (distribuidora avícola Lima).
 Resumen de AYER (${resumen.fecha}):
   • Pedidos totales: ${resumen.pedidos_total}
   • Entregados: ${resumen.pedidos_entregados}
@@ -377,7 +377,7 @@ Resumen de AYER (${resumen.fecha}):
   • Ventas del día: S/ ${resumen.ventas_total.toFixed(0)}
   • Ticket promedio: S/ ${resumen.ticket_promedio.toFixed(0)}
 
-Dale a Antonio una recomendación práctica para HOY basándote en este resumen. Español rioplatense neutro, máximo 3 oraciones. Si la tasa de éxito fue baja (<80%), sugerí revisar fallos. Si fue alta y las ventas buenas, felicitalo.`;
+Dale a Antonio una recomendación práctica para HOY basándote en este resumen. Español neutro latinoamericano, máximo 3 oraciones. Si la tasa de éxito fue baja (<80%), sugiere revisar fallos. Si fue alta y las ventas buenas, felicítalo.`;
 
   let texto = "Analizando el día de ayer…";
   try {
@@ -465,7 +465,7 @@ export async function insightMiPerformance(
   // Si la meta es cero (mes anterior sin ventas, ni override), no llamamos Gemini.
   if (meta.metaMensual === 0) {
     return {
-      texto: `Todavía no hay meta calculada porque no había ventas registradas el mes anterior. Cuando el sistema acumule un mes de datos, vas a ver tu meta y tu avance acá.`,
+      texto: `Todavía no hay meta calculada porque no había ventas registradas el mes anterior. Cuando el sistema acumule un mes de datos, verás tu meta y tu avance aquí.`,
       ventasMes: vendido,
       metaMensual: 0,
       porcentajeAvance: 0,
@@ -476,7 +476,7 @@ export async function insightMiPerformance(
     };
   }
 
-  const prompt = `Sos un coach comercial cercano de ${asesoraNombre}, asesora de ventas de Transavic (distribuidora avícola en Lima).
+  const prompt = `Eres un coach comercial cercano de ${asesoraNombre}, asesora de ventas de Transavic (distribuidora avícola en Lima).
 Estos son SUS números del mes en curso:
 
   • Vendido hasta hoy: S/ ${vendido.toFixed(0)}
@@ -486,12 +486,12 @@ Estos son SUS números del mes en curso:
   • Lo que ya debería haber vendido (proporcional): S/ ${meta.metaAcumuladaHoy.toFixed(0)}
   • Ritmo necesario para los días restantes: S/ ${ritmoNecesario.toFixed(0)} por día hábil
 
-Hablale a ${asesoraNombre} en segunda persona (tutéala, "vos"/"tú" en español rioplatense neutro). 3 oraciones máximo, motivacional pero honesta:
-- Si va arriba del ritmo necesario → felicitala y proponé mantener.
-- Si va parejo → animala a no aflojar.
-- Si va atrasada → dale una estrategia concreta (priorizar clientes top, hacer X llamadas/día, ofrecer combos, etc.). NO la culpés.
+Háblale a ${asesoraNombre} en segunda persona (tutéala, usa "tú" en español neutro latinoamericano). 3 oraciones máximo, motivacional pero honesta:
+- Si va arriba del ritmo necesario → felicítala y propón mantener.
+- Si va parejo → anímala a no aflojar.
+- Si va atrasada → dale una estrategia concreta (priorizar clientes top, hacer X llamadas/día, ofrecer combos, etc.). NO la culpes.
 
-NO repitas los números crudos — ella ya los ve abajo. Centrate en la recomendación.`;
+NO repitas los números crudos — ella ya los ve abajo. Concéntrate en la recomendación.`;
 
   let texto = "Analizando tu performance del mes…";
   try {
@@ -582,12 +582,12 @@ export async function insightMisClientesEnRiesgo(
     pedidos_total: c.pedidos_total,
   }));
 
-  const prompt = `Sos coach comercial de ${asesoraNombre}, asesora de Transavic (distribuidora avícola Lima).
+  const prompt = `Eres coach comercial de ${asesoraNombre}, asesora de Transavic (distribuidora avícola Lima).
 Estos son SUS clientes que no pidieron en 3+ semanas, ordenados por gasto histórico:
 
 ${clientesAnon.map((c) => `  • ${c.codigo}: ${c.dias_sin_comprar} días sin comprar, históricamente gastó S/${c.total_historico.toFixed(0)} en ${c.pedidos_total} pedidos`).join("\n")}
 
-Hablale en segunda persona tuteándola ("tu cliente más importante", "deberías llamarlo"), español rioplatense neutro. 3 oraciones máximo. NO uses "Cliente A"/"Cliente B" en la respuesta. Si hay UNO claramente prioritario, destacalo. Dale una acción concreta hoy.`;
+Háblale en segunda persona tuteándola ("tu cliente más importante", "deberías llamarlo"), español neutro latinoamericano. 3 oraciones máximo. NO uses "Cliente A"/"Cliente B" en la respuesta. Si hay UNO claramente prioritario, destácalo. Dale una acción concreta hoy.`;
 
   let texto = "Analizando tu cartera en riesgo…";
   try {
@@ -650,17 +650,17 @@ export async function insightMiCartera(
 
   if (productos.length === 0) {
     return {
-      texto: `Todavía no hay suficientes pedidos en tu cartera para detectar productos top. Apenas tengamos volumen, vas a ver acá qué te conviene ofrecer.`,
+      texto: `Todavía no hay suficientes pedidos en tu cartera para detectar productos top. Apenas tengamos volumen, verás aquí qué te conviene ofrecer.`,
       productos: [],
     };
   }
 
-  const prompt = `Sos coach comercial de ${asesoraNombre}, asesora de Transavic.
+  const prompt = `Eres coach comercial de ${asesoraNombre}, asesora de Transavic.
 Estos son los productos que MÁS pide la cartera de ${asesoraNombre} en los últimos 90 días (productos con 2+ pedidos):
 
 ${productos.map((p, i) => `  ${i + 1}. ${p.nombre} — ${p.pedidos} pedidos, ${p.cantidad_total} kg/u total, S/ ${p.ventas.toFixed(0)}`).join("\n")}
 
-Hablale en segunda persona tuteándola ("tu cartera", "tus clientes prefieren"), español rioplatense neutro. 3 oraciones máximo. Recomendale: (a) qué producto destacar al ofrecer a nuevos clientes, y (b) qué oportunidad de venta cruzada podría tener. NO repitas la lista entera.`;
+Háblale en segunda persona tuteándola ("tu cartera", "tus clientes prefieren"), español neutro latinoamericano. 3 oraciones máximo. Recomendale: (a) qué producto destacar al ofrecer a nuevos clientes, y (b) qué oportunidad de venta cruzada podría tener. NO repitas la lista entera.`;
 
   let texto = "Analizando los productos de tu cartera…";
   try {
@@ -772,12 +772,12 @@ export async function insightSugerenciaDia(
 
   const hoyDow = dowName(new Date().getDay());
 
-  const prompt = `Sos coach comercial de ${asesoraNombre}, asesora de Transavic. Hoy es ${hoyDow}.
+  const prompt = `Eres coach comercial de ${asesoraNombre}, asesora de Transavic. Hoy es ${hoyDow}.
 Estos son los clientes de ${asesoraNombre} que SEGÚN SU PATRÓN HISTÓRICO "tocaba" que pidan ahora (ya pasaron tantos días como suele ser su intervalo):
 
 ${candidatosAnon.map((c) => `  • ${c.codigo}: ${c.dias_sin_comprar} días sin pedir (intervalo típico: cada ${c.intervalo} días). Históricamente gastó S/${c.total_historico.toFixed(0)}. Días que suele pedir: ${c.dias_tipicos}.`).join("\n")}
 
-Hablale en segunda persona tuteándola, español rioplatense neutro. 3 oraciones máximo. Recomendá UNA acción concreta para HOY (a quién priorizar y qué decirle). NO uses "Cliente A". Referite a ellos como "tu cliente más fiel", "el de mayor frecuencia", etc.`;
+Háblale en segunda persona tuteándola, español neutro latinoamericano. 3 oraciones máximo. Recomendá UNA acción concreta para HOY (a quién priorizar y qué decirle). NO uses "Cliente A". Referite a ellos como "tu cliente más fiel", "el de mayor frecuencia", etc.`;
 
   let texto = "Analizando a quién contactar hoy…";
   try {

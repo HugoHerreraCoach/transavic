@@ -82,7 +82,7 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
     const numero = (form.ruc_dni ?? '').trim();
     if (!/^\d{8}$|^\d{11}$/.test(numero)) {
       setDocMsgError(true);
-      setDocMsg('Ingresá un DNI (8) o RUC (11 dígitos).');
+      setDocMsg('Ingresa un DNI (8) o RUC (11 dígitos).');
       return;
     }
     setConsultandoDoc(true);
@@ -106,7 +106,7 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
       }
     } catch {
       setDocMsgError(true);
-      setDocMsg('No se pudo consultar. Escribí los datos a mano.');
+      setDocMsg('No se pudo consultar. Escribe los datos a mano.');
     } finally {
       setConsultandoDoc(false);
     }

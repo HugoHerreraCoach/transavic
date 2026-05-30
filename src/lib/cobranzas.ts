@@ -6,6 +6,35 @@ export type EstadoFactura = "Pendiente" | "Pagada" | "Vencida";
 export type Urgencia = "vencida" | "urgente" | "proxima" | "holgada";
 
 /**
+ * Plazo de cobranza por defecto (días) cuando el cliente NO tiene un
+ * `plazo_pago_dias` propio. Refleja la realidad de Transavic: la mayoría paga
+ * unos días después, no el mismo día. Ajustable por cliente (perfil) o por
+ * cobranza (/cobranzas).
+ */
+export const PLAZO_COBRANZA_DEFAULT = 7;
+
+/**
+ * Plazo de pago (días) a usar para la cobranza de un cliente: su
+ * `plazo_pago_dias` si tiene uno > 0, si no el default del negocio. Hace que el
+ * vencimiento salga "inteligente" al emitir, en vez de vencer siempre hoy.
+ */
+export async function plazoDeCobranza(
+  clienteId: string | null | undefined
+): Promise<number> {
+  if (!clienteId) return PLAZO_COBRANZA_DEFAULT;
+  try {
+    const sql = neon(process.env.DATABASE_URL!);
+    const rows = (await sql`
+      SELECT plazo_pago_dias FROM clientes WHERE id = ${clienteId}
+    `) as Array<{ plazo_pago_dias: number | null }>;
+    const p = Number(rows[0]?.plazo_pago_dias ?? 0);
+    return p > 0 ? p : PLAZO_COBRANZA_DEFAULT;
+  } catch {
+    return PLAZO_COBRANZA_DEFAULT;
+  }
+}
+
+/**
  * Calcula la fecha de vencimiento sumando días al día de emisión.
  * Si plazo=0, vence el mismo día (pago al momento).
  */

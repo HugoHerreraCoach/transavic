@@ -354,12 +354,25 @@ function generarPDFFactura(doc: jsPDF, data: PDFComprobanteData): void {
 
   // Left: Company info (bottom-aligned with the box — same pattern as boleta)
   const headerBottom = boxY + boxH;
-  // Encabezado del emisor igual que la boleta y la representación oficial de SUNAT:
-  // 3 líneas → razón social (nombre legal) en negrita, dirección, y
-  // distrito - provincia - departamento. NO se muestra el nombre comercial
-  // (SUNAT encabeza con el nombre legal del contribuyente).
-  y = headerBottom - 7; // 3 líneas × ~3.5mm, alineadas al fondo del recuadro
+  // Encabezado del emisor (igual a la representación oficial de SUNAT):
+  //   [nombre comercial — solo si difiere de la razón social]
+  //   razón social (negrita)
+  //   dirección
+  //   distrito - provincia - departamento
+  // Ej.: Transavic muestra "TRANSAVIC" + "NEGOCIOS Y SERVICIOS TRANSAVIC S.A.C.";
+  // una persona natural (RUC 10) sin nombre comercial muestra solo su nombre legal.
+  const muestraComercial =
+    !!EMISOR.nombreComercial &&
+    EMISOR.nombreComercial.trim().toLowerCase() !== EMISOR.razonSocial.trim().toLowerCase();
+  const headerLineas = muestraComercial ? 4 : 3;
+  y = headerBottom - (headerLineas - 1) * 3.5;
   const headerLx = margin + 2;
+  if (muestraComercial) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(EMISOR.nombreComercial, headerLx, y);
+    y += 3.5;
+  }
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text(EMISOR.razonSocial, headerLx, y);
@@ -389,7 +402,7 @@ function generarPDFFactura(doc: jsPDF, data: PDFComprobanteData): void {
   doc.text(`${formatDate(data.fechaEmision)}`, vx + 1, y);
 
   const formaPagoLabel =
-    (data.formaPago || "").toLowerCase() === "credito" ? "AL CRÉDITO" : "AL CONTADO";
+    (data.formaPago || "").toLowerCase() === "credito" ? "Crédito" : "Contado";
   doc.setFont("helvetica", "normal");
   doc.text(`Forma de pago: ${formaPagoLabel}`, boxCx, y, { align: "center" });
 
@@ -649,10 +662,22 @@ function generarPDFBoleta(doc: jsPDF, data: PDFComprobanteData): void {
   doc.text(`RUC: ${EMISOR.ruc}`, boxCx, boxY + 7, { align: "center" });
   doc.text(`E${data.serie}-${data.numero}`, boxCx, boxY + 10.5, { align: "center" });
 
-  // Left: Company info (bottom-aligned with the box)
+  // Left: Company info (bottom-aligned with the box) — mismo formato que la
+  // factura: [nombre comercial si difiere] · razón social (negrita) · dirección ·
+  // distrito - provincia - departamento.
   const headerBottom = boxY + boxH; // bottom of box = bottom reference
-  y = headerBottom - 7; // 3 lines × ~3.5mm, start here so last line is near bottom
+  const muestraComercial =
+    !!EMISOR.nombreComercial &&
+    EMISOR.nombreComercial.trim().toLowerCase() !== EMISOR.razonSocial.trim().toLowerCase();
+  const headerLineas = muestraComercial ? 4 : 3;
+  y = headerBottom - (headerLineas - 1) * 3.5;
   const headerLx = margin + 2; // small left padding from outer border
+  if (muestraComercial) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.text(EMISOR.nombreComercial, headerLx, y);
+    y += 3.5;
+  }
   doc.setFont("helvetica", "bold");
   doc.setFontSize(9);
   doc.text(EMISOR.razonSocial, headerLx, y);

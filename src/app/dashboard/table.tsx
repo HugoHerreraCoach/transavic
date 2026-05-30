@@ -1,12 +1,23 @@
 // src/app/dashboard/table.tsx
 'use client';
 
-import { useState } from 'react';
+import { useState, Suspense, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { Pedido, EstadoPedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical, FiChevronDown, FiDownload } from 'react-icons/fi';
 import { useRouter } from 'next/navigation';
-import ModalEmitirComprobante from "@/components/ModalEmitirComprobante";
+import ModalShell from "@/components/ModalShell";
+import EmitirComprobanteClient from "./comprobantes/nuevo/emitir-client";
+import { descargarPdfComprobante, descargarXmlComprobante, descargarCdrComprobante } from "@/lib/descargar-comprobante";
+
+// Comprobante (forma reducida) que la lista de pedidos necesita para el menú
+// "Facturado": id para descargar, serie/estado para mostrar.
+type ComprobanteLite = {
+    id: string;
+    serie_numero: string;
+    tipo: string;
+    estado: string;
+};
 
 type Column = 'distrito' | 'tipo_cliente' | 'hora_entrega' | 'razon_social' | 'ruc_dni' | 'notas' | 'empresa' | 'asesor' | 'entregado' | 'navegacion' | 'fecha' | 'detalle_final';
 
@@ -64,21 +75,59 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const [isProcessing, setIsProcessing] = useState(false);
     const [showDeliverySelector, setShowDeliverySelector] = useState(false);
     const [showEmitirModal, setShowEmitirModal] = useState(false);
-    const [yaTieneComprobante, setYaTieneComprobante] = useState<boolean | null>(null);
+    // Comprobantes VÁLIDOS del pedido (aceptado/observado). null = aún no chequeado.
+    // Uno rechazado o con error NO cuenta como "Facturado".
+    const [comprobantes, setComprobantes] = useState<ComprobanteLite[] | null>(null);
+    const [showFacturado, setShowFacturado] = useState(false);
+    const [descargando, setDescargando] = useState<string | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const isAvicola = (pedido.empresa || "").trim().toLowerCase().startsWith("av");
+    const yaTieneComprobante = (comprobantes?.length ?? 0) > 0;
 
-    // Detectar si ya tiene comprobante emitido (lazy: solo al primer render del botón)
-    const verificarComprobante = async () => {
-        if (yaTieneComprobante !== null) return;
+    // Trae los comprobantes VÁLIDOS del pedido. Lazy (hover/click) y se refresca
+    // al cerrar el modal de emisión (así "Facturado" aparece solo si SUNAT aceptó).
+    const cargarComprobantes = useCallback(async () => {
         try {
             const res = await fetch(`/api/comprobantes?pedido_id=${pedido.id}`);
-            if (res.ok) {
-                const j = await res.json();
-                setYaTieneComprobante((j.data?.length ?? 0) > 0);
-            }
+            if (!res.ok) return;
+            const j = await res.json();
+            const validos: ComprobanteLite[] = (j.data ?? [])
+                .filter((c: { estado?: string }) => c.estado === "aceptado" || c.estado === "observado")
+                .map((c: ComprobanteLite) => ({
+                    id: c.id,
+                    serie_numero: c.serie_numero,
+                    tipo: c.tipo,
+                    estado: c.estado,
+                }));
+            setComprobantes(validos);
         } catch {
-            // silent
+            /* silent */
+        }
+    }, [pedido.id]);
+    const verificarComprobante = () => {
+        if (comprobantes === null) void cargarComprobantes();
+    };
+
+    // Al montar, chequear el estado SOLO para pedidos facturables → "Facturado"
+    // aparece de una al cargar la página (sin necesidad de hover/clic).
+    useEffect(() => {
+        const facturable =
+            userRole !== "repartidor" &&
+            ["Entregado", "Listo_Para_Despacho", "Asignado", "En_Produccion"].includes(pedido.estado);
+        if (facturable) void cargarComprobantes();
+    }, [cargarComprobantes, pedido.estado, userRole]);
+
+    // Descarga PDF / XML / CDR de un comprobante (reusa el helper compartido).
+    const descargarComprobante = async (c: ComprobanteLite, fmt: "pdf" | "xml" | "cdr") => {
+        setDescargando(c.id + fmt);
+        try {
+            if (fmt === "pdf") await descargarPdfComprobante(c.id);
+            else if (fmt === "xml") await descargarXmlComprobante(c.id, c.serie_numero);
+            else await descargarCdrComprobante(c.id, c.serie_numero);
+        } catch (e) {
+            alert(e instanceof Error ? e.message : "No se pudo descargar");
+        } finally {
+            setDescargando(null);
         }
     };
 
@@ -194,20 +243,42 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                 {/* 2. Botón Principal: Facturar / Facturado (con color de marca dinámico) */}
                 {['Entregado', 'Listo_Para_Despacho', 'Asignado', 'En_Produccion'].includes(pedido.estado) && userRole !== 'repartidor' && (
                     yaTieneComprobante ? (
-                        <Link
-                            href={`/dashboard/comprobantes?pedido_id=${pedido.id}`}
-                            className="px-2.5 py-2 flex items-center justify-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors whitespace-nowrap"
-                            title="Ver el comprobante emitido para este pedido"
-                        >
-                            <FiFileText /> Facturado
-                        </Link>
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowFacturado((v) => !v)}
+                                className="px-2.5 py-2 flex items-center justify-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors whitespace-nowrap cursor-pointer"
+                                title="Comprobante(s) de este pedido — descargar"
+                            >
+                                <FiFileText /> Facturado
+                                <FiChevronDown size={12} className={`transition-transform ${showFacturado ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showFacturado && (
+                                <>
+                                    <div className="fixed inset-0 z-10" onClick={() => setShowFacturado(false)} />
+                                    <div className="absolute right-0 mt-1.5 w-64 rounded-xl border border-gray-100 bg-white p-2 shadow-xl z-20 animate-fade-in origin-top-right">
+                                        <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Comprobantes del pedido</p>
+                                        {(comprobantes ?? []).map((c) => (
+                                            <div key={c.id} className="px-2 py-2 rounded-lg hover:bg-gray-50">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-xs font-bold text-gray-800">{c.serie_numero}</span>
+                                                    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-emerald-600"><FiCheckCircle size={11} /> Aceptado</span>
+                                                </div>
+                                                <div className="flex items-center gap-1 mt-1.5">
+                                                    <button onClick={() => descargarComprobante(c, 'pdf')} disabled={descargando === c.id + 'pdf'} className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 active:scale-95 transition disabled:opacity-50"><FiDownload size={11} /> PDF</button>
+                                                    <button onClick={() => descargarComprobante(c, 'xml')} disabled={descargando === c.id + 'xml'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-95 transition disabled:opacity-50">XML</button>
+                                                    <button onClick={() => descargarComprobante(c, 'cdr')} disabled={descargando === c.id + 'cdr'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 active:scale-95 transition disabled:opacity-50">CDR</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <Link href={`/dashboard/comprobantes?pedido_id=${pedido.id}`} className="block mt-1 px-2 py-2 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-50 rounded-lg">Ver en comprobantes →</Link>
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     ) : (
                         <button
                             onMouseEnter={verificarComprobante}
-                            onClick={() => {
-                                verificarComprobante();
-                                setShowEmitirModal(true);
-                            }}
+                            onClick={() => { verificarComprobante(); setShowEmitirModal(true); }}
                             disabled={isProcessing}
                             className={`px-3 py-2 flex items-center justify-center gap-1.5 text-white rounded-lg transition-all text-xs font-bold shadow-sm active:scale-95 cursor-pointer whitespace-nowrap ${
                                 isAvicola 
@@ -312,13 +383,18 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                 )}
             </div>
 
-            {/* Modal emitir comprobante */}
+            {/* Emitir comprobante desde el pedido: MISMA pantalla rediseñada que
+                /dashboard/comprobantes/nuevo, embebida en un modal para poder
+                facturar varios pedidos seguidos sin salir de la lista. */}
             {showEmitirModal && (
-                <ModalEmitirComprobante
-                    pedido={pedido}
-                    onClose={() => setShowEmitirModal(false)}
-                    onSuccess={() => setYaTieneComprobante(true)}
-                />
+                <ModalShell onClose={() => { setShowEmitirModal(false); void cargarComprobantes(); }}>
+                    <Suspense fallback={null}>
+                        <EmitirComprobanteClient
+                            pedidoIdProp={pedido.id}
+                            onClose={() => { setShowEmitirModal(false); void cargarComprobantes(); }}
+                        />
+                    </Suspense>
+                </ModalShell>
             )}
         </>
     );

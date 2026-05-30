@@ -245,7 +245,7 @@ export default function CatalogoUnificado() {
             ? (((num - ventaAnterior) / ventaAnterior) * 100).toFixed(1)
             : "?";
         const ok = window.confirm(
-          `¿Confirmás el cambio de precio?\n\n` +
+          `¿Confirmas el cambio de precio?\n\n` +
             `${actual?.nombre}\n` +
             `Precio venta: S/ ${ventaAnterior.toFixed(2)} → S/ ${num.toFixed(2)} ` +
             `(${pct.startsWith("-") ? "" : "+"}${pct}%)\n\n` +
@@ -595,7 +595,7 @@ export default function CatalogoUnificado() {
           {/* Pista de edición inline (descubrible sin tener que adivinar) */}
           <p className="hidden lg:flex items-center gap-1.5 text-xs text-gray-400 mb-2">
             <FiEdit2 className="h-3 w-3" />
-            Tocá un precio de compra o venta para editarlo al instante.
+            Toca un precio de compra o venta para editarlo al instante.
           </p>
           {/* Desktop */}
           <div className="hidden lg:block overflow-x-auto rounded-xl border border-gray-200 shadow-sm">

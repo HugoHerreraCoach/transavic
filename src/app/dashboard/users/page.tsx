@@ -5,8 +5,6 @@ import { redirect } from "next/navigation";
 import { neon } from '@neondatabase/serverless';
 import { User } from "@/lib/types";
 import UsersClientPage from "./users-client";
-import Link from 'next/link';
-import { FiArrowLeft } from 'react-icons/fi';
 
 // Función para obtener los usuarios directamente en el servidor
 async function getUsers(): Promise<User[]> {
@@ -31,16 +29,16 @@ export default async function Page() {
     const users = await getUsers();
 
     return (
-        // ✅ CAMBIO AQUÍ: Añadimos un contenedor con padding y ancho máximo
-        <div className="w-full max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-                <h1 className="text-3xl font-bold text-gray-900">Gestión de Usuarios</h1>
-                <Link href="/dashboard" className="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50">
-                    <FiArrowLeft className="mr-2 h-5 w-5" />
-                    Regresar al Dashboard
-                </Link>
+        <div className="bg-gray-50 min-h-screen">
+            <div className="w-full max-w-5xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
+                <header className="mb-6">
+                    <h1 className="text-2xl font-bold text-gray-800">Usuarios</h1>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Quién accede al sistema y con qué permisos.
+                    </p>
+                </header>
+                <UsersClientPage initialUsers={users} />
             </div>
-            <UsersClientPage initialUsers={users} />
         </div>
     );
 }

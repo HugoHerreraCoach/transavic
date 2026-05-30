@@ -21,6 +21,15 @@ const Schema = z.object({
   formaPago: z.enum(["Contado", "Credito"]).default("Contado"),
   plazoDias: z.number().int().min(0).max(120).default(0),
   yaCobrado: z.boolean().default(false),
+  // Datos del receptor desde el form (al facturar desde el modal). Si no vienen,
+  // se usan los del pedido en DB. Evita el error SUNAT 2021 (razón social vacía).
+  cliente_override: z
+    .object({
+      numDocumento: z.string().trim().optional(),
+      razonSocial: z.string().trim().optional(),
+      direccion: z.string().trim().max(250).optional(),
+    })
+    .optional(),
   // Items opcionales: si se pasan, se usan estos (para edits "antes de emitir").
   // Si no, se usan los items del pedido tal cual están en DB.
   items_override: z
@@ -80,19 +89,39 @@ export async function POST(request: Request) {
 
     if (session.user.role === "asesor" && pedido.asesor_id !== session.user.id) {
       return NextResponse.json(
-        { error: "No podés emitir comprobantes de pedidos ajenos" },
+        { error: "No puedes emitir comprobantes de pedidos ajenos" },
         { status: 403 }
       );
     }
 
-    // Validación: factura requiere RUC del cliente (11 dígitos)
-    const tieneRuc = !!pedido.ruc_dni && pedido.ruc_dni.length === 11;
+    // Datos del receptor: preferir lo que mandó el form (cliente_override) y, si
+    // no, lo del pedido. Se usa `||` (no `??`) a propósito: un razon_social ""
+    // (string vacío) cae al nombre del cliente → evita el error SUNAT 2021
+    // ("RegistrationName del receptor vacío").
+    const ov = parsed.data.cliente_override;
+    const cliNumDoc = (ov?.numDocumento?.trim() || pedido.ruc_dni || "").trim();
+    const cliRazon = (
+      ov?.razonSocial?.trim() ||
+      pedido.razon_social?.trim() ||
+      pedido.cliente ||
+      ""
+    ).trim();
+    const cliDireccion = ov?.direccion?.trim() || undefined;
+    const tieneRuc = /^\d{11}$/.test(cliNumDoc);
+
+    // Validación: factura requiere RUC del cliente (11 dígitos) + razón social.
     if (parsed.data.tipo === "01" && !tieneRuc) {
       return NextResponse.json(
         {
           error:
             "Para emitir FACTURA el cliente debe tener RUC (11 dígitos). Para personas naturales emitir BOLETA.",
         },
+        { status: 400 }
+      );
+    }
+    if (parsed.data.tipo === "01" && !cliRazon) {
+      return NextResponse.json(
+        { error: "La factura requiere la razón social del cliente." },
         { status: 400 }
       );
     }
@@ -133,7 +162,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            "Los items no tienen precio definido. Asegurate de que los productos tengan precio en /dashboard/precios.",
+            "Los items no tienen precio definido. Asegúrate de que los productos tengan precio en /dashboard/precios.",
         },
         { status: 400 }
       );
@@ -213,12 +242,12 @@ export async function POST(request: Request) {
     }
 
     // Regla SUNAT: una boleta > S/700 exige identificar al cliente con DNI o RUC.
-    const esDniCliente = !!pedido.ruc_dni && /^\d{8}$/.test(pedido.ruc_dni);
+    const esDniCliente = /^\d{8}$/.test(cliNumDoc);
     if (parsed.data.tipo === "03" && totalConIgv > 700 && !esDniCliente && !tieneRuc) {
       return NextResponse.json(
         {
           error:
-            "Las boletas mayores a S/700 requieren el DNI o RUC del cliente (regla SUNAT). Editá el cliente y agregá su documento.",
+            "Las boletas mayores a S/700 requieren el DNI o RUC del cliente (regla SUNAT). Edita el cliente y agrega su documento.",
         },
         { status: 400 }
       );
@@ -230,8 +259,9 @@ export async function POST(request: Request) {
       pedidoId: parsed.data.pedido_id,
       cliente: {
         tipoDocumento: tieneRuc ? TipoDocIdentidad.RUC : TipoDocIdentidad.DNI,
-        numDocumento: pedido.ruc_dni ?? "00000000",
-        razonSocial: pedido.razon_social ?? pedido.cliente,
+        numDocumento: cliNumDoc || "00000000",
+        razonSocial: cliRazon,
+        direccion: cliDireccion,
       },
       items: itemsSunat,
       formaPago: parsed.data.formaPago,
@@ -274,15 +304,17 @@ export async function POST(request: Request) {
 
     if (debeCrearCobranza) {
       try {
-        const { crearFacturaStandalone } = await import("@/lib/cobranzas");
+        const { crearFacturaStandalone, plazoDeCobranza } = await import("@/lib/cobranzas");
         await crearFacturaStandalone({
           clienteNombre: pedido.razon_social ?? pedido.cliente,
           clienteId: pedido.cliente_id,
           asesorId: session.user.role === "asesor" ? session.user.id : null,
           monto: totalConIgv,
-          // Contado-sin-cobrar → vencimiento = hoy (plazo 0).
-          // Crédito → plazo del form (default 7).
-          plazoDias: esCredito ? parsed.data.plazoDias : 0,
+          // Crédito → plazo del form. Contado → plazo del CLIENTE
+          // (plazo_pago_dias) o el default del negocio, en vez de vencer hoy.
+          plazoDias: esCredito
+            ? parsed.data.plazoDias
+            : await plazoDeCobranza(pedido.cliente_id),
           numeroComprobante: resultado.serieNumero,
           pedidoId: parsed.data.pedido_id,
         });
@@ -294,7 +326,23 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json(resultado);
+    // Recuperar el id del comprobante recién creado para que el ticket de éxito
+    // muestre el botón "Descargar PDF" (igual que la emisión standalone).
+    let comprobanteId: string | undefined;
+    if (resultado.serieNumero) {
+      try {
+        const idRows = (await sql`
+          SELECT id FROM comprobantes
+          WHERE empresa = ${empresa} AND serie_numero = ${resultado.serieNumero}
+          ORDER BY created_at DESC LIMIT 1
+        `) as Array<{ id: string }>;
+        comprobanteId = idRows[0]?.id;
+      } catch {
+        // si el lookup falla, el ticket igual ofrece "Ver comprobantes"
+      }
+    }
+
+    return NextResponse.json({ ...resultado, id: comprobanteId });
   } catch (error) {
     console.error("Error en POST /api/comprobantes/emitir:", error);
     return NextResponse.json(

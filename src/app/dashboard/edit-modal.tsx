@@ -154,9 +154,9 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                                 </div>
                                 <p>
                                     Los cambios <strong>no se reflejarán</strong> en el comprobante
-                                    enviado a SUNAT. Si necesitás corregir importes, cliente o
-                                    detalle del comprobante, emití una <strong>Nota de Crédito</strong>
-                                    y volvé a emitir.
+                                    enviado a SUNAT. Si necesitas corregir importes, cliente o
+                                    detalle del comprobante, emite una <strong>Nota de Crédito</strong>
+                                    y vuelve a emitir.
                                 </p>
                                 <Link
                                     href={`/dashboard/comprobantes?pedido_id=${pedido.id}`}

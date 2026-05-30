@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   FiArrowLeft,
   FiSearch,
@@ -114,10 +114,34 @@ const money = (n: number) => `S/ ${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 
 export default function EmitirComprobanteClient({
   empresas,
+  pedidoIdProp,
+  onClose,
 }: {
-  empresas: Record<Empresa, EmpresaInfo>;
+  // `empresas` es opcional: cuando el form se usa embebido (ej. modal desde la
+  // lista de pedidos) no viene del server, así que se trae de /api/sunat/empresas.
+  empresas?: Record<Empresa, EmpresaInfo>;
+  // Cuando se abre desde un pedido (modal): vincula la emisión a ese pedido.
+  pedidoIdProp?: string | null;
+  // Si está embebido en un modal: cerrar en vez de navegar.
+  onClose?: () => void;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Embebido en un modal (vino de un pedido con onClose) → el form va en UNA
+  // columna apilada (un modal es más angosto que la página); como página, 3 columnas.
+  const esModal = !!onClose;
+  // Si "Facturar" en un pedido nos trajo acá (?pedido=<id> o pedidoIdProp), la
+  // emisión queda vinculada a ese pedido (cobranza + badge "Facturado") vía
+  // /api/comprobantes/emitir.
+  const [pedidoId, setPedidoId] = useState<string | null>(null);
+  const [pedidoCliente, setPedidoCliente] = useState<string | null>(null);
+  // Empresas: del prop (página) o traídas del endpoint (modal embebido).
+  const [empresasMap, setEmpresasMap] = useState<Record<Empresa, EmpresaInfo>>(
+    empresas ?? {
+      transavic: { ruc: "", razonSocial: "Transavic" },
+      avicola: { ruc: "", razonSocial: "Avícola de Tony" },
+    }
+  );
   const [productos, setProductos] = useState<Producto[]>([]);
   const [tipo, setTipo] = useState<Tipo>("01");
   const [empresa, setEmpresa] = useState<Empresa>("transavic");
@@ -151,6 +175,73 @@ export default function EmitirComprobanteClient({
   const [resultado, setResultado] = useState<ResultadoEmision | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [descargando, setDescargando] = useState(false);
+
+  // Empresas: si no vinieron por prop (form embebido en un modal), las traemos.
+  useEffect(() => {
+    if (empresas) return;
+    let active = true;
+    fetch("/api/sunat/empresas")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active && d) setEmpresasMap(d);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [empresas]);
+
+  // Precarga al venir de "Facturar" en un pedido: traemos cliente + ítems del
+  // pedido y los cargamos en este MISMO formulario (la única interfaz de
+  // emisión). El pedidoId queda guardado para vincular el comprobante al pedido.
+  useEffect(() => {
+    const pid = pedidoIdProp ?? searchParams.get("pedido");
+    if (!pid) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pedidos/${pid}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!active) return;
+        // La API devuelve { pedido: {...columnas}, items: [...] }.
+        const ped = data.pedido || {};
+        const pedItems = Array.isArray(data.items) ? data.items : [];
+        setPedidoId(pid);
+        setPedidoCliente(ped.cliente || ped.razon_social || null);
+        const esAvicola = (ped.empresa || "").trim().toLowerCase().startsWith("av");
+        setEmpresa(esAvicola ? "avicola" : "transavic");
+        const doc = (ped.ruc_dni || "").trim();
+        setNumDoc(doc);
+        setRazonSocial((ped.razon_social || ped.cliente || "").trim());
+        setTipo(doc.length === 11 ? "01" : "03");
+        if (pedItems.length > 0) {
+          setItems(
+            pedItems.map(
+              (it: {
+                producto_nombre?: string;
+                cantidad?: number | string;
+                unidad?: string;
+                precio_unitario?: number | string | null;
+                codigo?: string | null;
+              }) => ({
+                descripcion: it.producto_nombre || "",
+                cantidad: Number(it.cantidad) || 1,
+                unidad: it.unidad || "NIU",
+                precio: Number(it.precio_unitario) || 0,
+                codigo: it.codigo || undefined,
+              })
+            )
+          );
+        }
+      } catch {
+        /* si falla, el form queda en blanco y el usuario puede llenarlo igual */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [searchParams, pedidoIdProp]);
 
   const totales = useMemo(() => {
     const total = items.reduce(
@@ -252,7 +343,7 @@ export default function EmitirComprobanteClient({
   async function consultar() {
     const numero = numDoc.trim();
     if (!/^\d{8}$|^\d{11}$/.test(numero)) {
-      setConsultaMsg("Ingresá un DNI (8 dígitos) o RUC (11 dígitos).");
+      setConsultaMsg("Ingresa un DNI (8 dígitos) o RUC (11 dígitos).");
       return;
     }
     setConsultando(true);
@@ -271,10 +362,10 @@ export default function EmitirComprobanteClient({
         if (numero.length === 11) setDocInfo({ estado: j.estado, condicion: j.condicion });
         setTipo(numero.length === 11 ? "01" : "03");
       } else {
-        setConsultaMsg(j.error || "No se encontró el documento. Escribí los datos a mano.");
+        setConsultaMsg(j.error || "No se encontró el documento. Escribe los datos a mano.");
       }
     } catch {
-      setConsultaMsg("No se pudo consultar. Escribí los datos a mano.");
+      setConsultaMsg("No se pudo consultar. Escribe los datos a mano.");
     } finally {
       setConsultando(false);
     }
@@ -438,7 +529,7 @@ export default function EmitirComprobanteClient({
       a.remove();
       URL.revokeObjectURL(url);
     } catch {
-      setErrorMsg("No se pudo descargar el PDF automáticamente. Podés bajarlo desde 'Ver comprobantes'.");
+      setErrorMsg("No se pudo descargar el PDF automáticamente. Puedes bajarlo desde 'Ver comprobantes'.");
     } finally {
       setDescargando(false);
     }
@@ -448,38 +539,69 @@ export default function EmitirComprobanteClient({
     setErrorMsg(null);
     setResultado(null);
     if (tipo === "01" && !docEsRuc) {
-      setErrorMsg("Para FACTURA el receptor debe tener RUC (11 dígitos). Para personas naturales emití BOLETA.");
+      setErrorMsg("Para FACTURA el receptor debe tener RUC (11 dígitos). Para personas naturales emite BOLETA.");
       return;
     }
     setEmitiendo(true);
     try {
-      const res = await fetch("/api/comprobantes/emitir-manual", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo,
-          empresa,
-          cliente: {
-            id: clienteId || undefined,
-            numDocumento: numDoc.trim(),
-            razonSocial: razonSocial.trim(),
-            direccion: direccionCliente.trim() || undefined,
-          },
-          items: items.map((it) => ({
-            codigo: it.codigo,
-            descripcion: it.descripcion.trim(),
-            unidad: it.unidad,
-            cantidad: Number(it.cantidad),
-            precio_unitario: Number(it.precio),
-          })),
-          formaPago,
-          plazoDias: formaPago === "Credito" ? diasHasta(fechaVenc) : 0,
-          yaCobrado: tipo === "01" && formaPago === "Contado" ? yaCobrado : false,
-        }),
-      });
+      const plazo = formaPago === "Credito" ? diasHasta(fechaVenc) : 0;
+      const cobradoYa = tipo === "01" && formaPago === "Contado" ? yaCobrado : false;
+      // Si venimos de un pedido → /emitir (vincula el comprobante al pedido, su
+      // cobranza y el badge "Facturado"). Si es emisión suelta → /emitir-manual.
+      // Misma interfaz para ambos; solo cambia el endpoint y el armado del payload.
+      const res = pedidoId
+        ? await fetch("/api/comprobantes/emitir", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pedido_id: pedidoId,
+              tipo,
+              formaPago,
+              plazoDias: plazo,
+              yaCobrado: cobradoYa,
+              // Datos del receptor tal como están en el form (precargados del
+              // pedido + editables/consultables por el usuario).
+              cliente_override: {
+                numDocumento: numDoc.trim(),
+                razonSocial: razonSocial.trim(),
+                direccion: direccionCliente.trim() || undefined,
+              },
+              items_override: items.map((it) => ({
+                producto_nombre: it.descripcion.trim(),
+                cantidad: Number(it.cantidad),
+                unidad: it.unidad,
+                precio_unitario: Number(it.precio),
+                codigo: it.codigo,
+              })),
+            }),
+          })
+        : await fetch("/api/comprobantes/emitir-manual", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              tipo,
+              empresa,
+              cliente: {
+                id: clienteId || undefined,
+                numDocumento: numDoc.trim(),
+                razonSocial: razonSocial.trim(),
+                direccion: direccionCliente.trim() || undefined,
+              },
+              items: items.map((it) => ({
+                codigo: it.codigo,
+                descripcion: it.descripcion.trim(),
+                unidad: it.unidad,
+                cantidad: Number(it.cantidad),
+                precio_unitario: Number(it.precio),
+              })),
+              formaPago,
+              plazoDias: plazo,
+              yaCobrado: cobradoYa,
+            }),
+          });
       const j = await res.json();
       if (!res.ok) {
-        setErrorMsg(typeof j.error === "string" ? j.error : "No se pudo emitir. Revisá los datos.");
+        setErrorMsg(typeof j.error === "string" ? j.error : "No se pudo emitir. Revisa los datos.");
       } else {
         setResultado(j);
         const emitidoOk =
@@ -558,19 +680,21 @@ export default function EmitirComprobanteClient({
     <div className="max-w-6xl mx-auto pb-16 px-4">
       {/* Volver y Título */}
       <button
-        onClick={() => router.push("/dashboard/comprobantes")}
+        onClick={onClose ?? (() => router.push("/dashboard/comprobantes"))}
         className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors font-semibold cursor-pointer"
       >
-        <FiArrowLeft /> Volver a comprobantes
+        <FiArrowLeft /> {onClose ? "Cerrar" : "Volver a comprobantes"}
       </button>
       
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-gray-150 pb-5">
         <div>
           <h1 className="text-3xl font-black text-gray-900 flex items-center gap-2 tracking-tight">
-            <FiFileText className={theme.text} /> Emitir comprobante
+            <FiFileText className={theme.text} /> {pedidoId ? "Facturar pedido" : "Emitir comprobante"}
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Generación manual de factura o boleta electrónica suelta (sin pedido asociado).
+            {pedidoId
+              ? `Facturando el pedido de ${pedidoCliente ?? "—"}. Al emitir, el comprobante queda vinculado al pedido. Puedes ajustar cantidades y precios abajo.`
+              : "Generación manual de factura o boleta electrónica suelta (sin pedido asociado)."}
           </p>
         </div>
 
@@ -586,8 +710,8 @@ export default function EmitirComprobanteClient({
           <p className="text-sm text-amber-800 mt-2 leading-relaxed">
             Es un problema de los <strong>servidores de SUNAT</strong>, no del
             sistema. El comprobante <strong>NO se emitió</strong>. Mientras SUNAT se
-            normaliza, emitilo <strong>manualmente desde el portal de SUNAT
-            (SEE-SOL)</strong> y volvé a intentarlo acá más tarde.
+            normaliza, emítelo <strong>manualmente desde el portal de SUNAT
+            (SEE-SOL)</strong> y vuelve a intentarlo aquí más tarde.
           </p>
           <div className="flex gap-2 mt-4">
             <button
@@ -630,9 +754,9 @@ export default function EmitirComprobanteClient({
               <div>
                 <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 block mb-1">Comprobante de Venta</span>
                 <h3 className="text-lg font-black text-gray-800 leading-tight px-4">
-                  {empresas[empresa].razonSocial}
+                  {empresasMap[empresa].razonSocial}
                 </h3>
-                <span className="text-xs text-gray-500 font-bold block mt-0.5">RUC: {empresas[empresa].ruc}</span>
+                <span className="text-xs text-gray-500 font-bold block mt-0.5">RUC: {empresasMap[empresa].ruc}</span>
               </div>
               
               {/* Badge de Estado */}
@@ -776,7 +900,7 @@ export default function EmitirComprobanteClient({
 
       {/* Formulario Principal */}
       {!resultado && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start animate-[fadeIn_0.2s_ease-out]">
+        <div className={`grid grid-cols-1 gap-6 animate-[fadeIn_0.2s_ease-out] ${esModal ? "" : "lg:grid-cols-3 items-start"}`}>
           
           {/* COLUMNA IZQUIERDA: Receptor e Items */}
           <div className="lg:col-span-2 space-y-6">
@@ -838,7 +962,7 @@ export default function EmitirComprobanteClient({
                           <div className={`font-black text-xs truncate ${activo ? ui.texto : "text-gray-800"}`}>
                             {ui.nombre}
                           </div>
-                          <div className="text-[10px] text-gray-400 font-bold truncate mt-0.5">RUC {empresas[emp].ruc}</div>
+                          <div className="text-[10px] text-gray-400 font-bold truncate mt-0.5">RUC {empresasMap[emp].ruc}</div>
                         </div>
                         {activo && (
                           <FiCheckCircle className={`absolute top-2 right-2 h-4 w-4 ${ui.texto}`} />
@@ -925,7 +1049,7 @@ export default function EmitirComprobanteClient({
                 <div className="relative flex py-2 items-center">
                   <div className="flex-grow border-t border-gray-150"></div>
                   <span className="flex-shrink mx-3 text-[10px] text-gray-400 font-bold uppercase tracking-widest bg-white">
-                    o ingresá los datos manualmente
+                    o ingresa los datos manualmente
                   </span>
                   <div className="flex-grow border-t border-gray-150"></div>
                 </div>
@@ -1152,7 +1276,7 @@ export default function EmitirComprobanteClient({
           </div>
 
           {/* COLUMNA DERECHA: Configuración y Totales (Sticky) */}
-          <div className="lg:col-span-1 space-y-6 lg:sticky lg:top-4">
+          <div className={`lg:col-span-1 space-y-6 ${esModal ? "" : "lg:sticky lg:top-4"}`}>
 
 
             {/* Card 4: Parámetros del Comprobante */}
@@ -1212,7 +1336,7 @@ export default function EmitirComprobanteClient({
                         onChange={(e) => setYaCobrado(e.target.checked)}
                         className={`mt-0.5 ${theme.ringAccent} h-4 w-4 border-gray-300 rounded`}
                       />
-                      <span>
+                      <span className="flex-1 min-w-0">
                         <strong>¿El cliente pagó en el acto?</strong> Si marcas esto, no se creará cobranza pendiente. Por default se crea vencida para hoy (uso ERP).
                       </span>
                     </label>
@@ -1250,7 +1374,7 @@ export default function EmitirComprobanteClient({
                 <div className="space-y-2">
                   <div className="flex items-start gap-2 text-gray-700">
                     <FiCheckCircle className="text-green-600 mt-0.5 flex-shrink-0" size={14} />
-                    <div>
+                    <div className="min-w-0">
                       <span>Emisor activo: <strong>{EMPRESA_UI[empresa].nombre}</strong></span>
                     </div>
                   </div>
@@ -1261,7 +1385,7 @@ export default function EmitirComprobanteClient({
                     ) : (
                       <FiAlertCircle className="text-red-500 mt-0.5 flex-shrink-0" size={14} />
                     )}
-                    <div>
+                    <div className="min-w-0">
                       <span className={reqs.clienteValido ? "text-gray-750" : "text-red-650 font-bold"}>
                         Receptor: {reqs.descCliente}
                       </span>
@@ -1274,7 +1398,7 @@ export default function EmitirComprobanteClient({
                     ) : (
                       <FiAlertCircle className="text-red-500 mt-0.5 flex-shrink-0" size={14} />
                     )}
-                    <div>
+                    <div className="min-w-0">
                       <span className={reqs.itemsValidos ? "text-gray-750" : "text-red-650 font-bold"}>
                         Ítems: {reqs.itemsValidos 
                           ? `${reqs.itemsCount} producto(s) listo(s).`
@@ -1297,7 +1421,7 @@ export default function EmitirComprobanteClient({
               </button>
               {emitiendo && (
                 <p className="text-[11px] text-gray-500 text-center font-medium leading-snug -mt-1">
-                  Esperá unos segundos — SUNAT puede tardar hasta 10s en responder.
+                  Espera unos segundos — SUNAT puede tardar hasta 10s en responder.
                   No cierres ni recargues esta pantalla.
                 </p>
               )}

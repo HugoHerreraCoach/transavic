@@ -69,7 +69,7 @@ export async function POST(request: Request) {
     // Solo admin y asesoras pueden crear pedidos (producción/repartidor no).
     if (!["admin", "asesor"].includes(session.user.role)) {
       return NextResponse.json(
-        { error: "No tenés permiso para crear pedidos." },
+        { error: "No tienes permiso para crear pedidos." },
         { status: 403 }
       );
     }

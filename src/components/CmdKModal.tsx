@@ -225,7 +225,7 @@ export default function CmdKModal() {
         <div className="max-h-[60vh] overflow-y-auto">
           {q.trim().length < 2 ? (
             <div className="px-6 py-8 text-center text-sm text-gray-400">
-              Escribí al menos 2 letras (nombre, RUC, n° comprobante…)
+              Escribe al menos 2 letras (nombre, RUC, n° comprobante…)
             </div>
           ) : lista.length === 0 && !loading ? (
             <div className="px-6 py-8 text-center text-sm text-gray-400">

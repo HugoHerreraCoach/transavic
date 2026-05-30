@@ -12,6 +12,7 @@ import {
   FiTarget,
   FiShoppingBag,
   FiPhoneCall,
+  FiLock,
 } from "react-icons/fi";
 
 // ════════════════════════════════════════════════════════════════════
@@ -91,59 +92,64 @@ interface AsesorResponse {
 }
 type InsightsResponse = AdminResponse | AsesorResponse;
 
+type Accent = "green" | "red" | "amber" | "blue" | "teal";
+
 // ════════════════════════════════════════════════════════════════════
-// Card genérica
+// Card genérica — el texto de la IA es el protagonista; los datos, apoyo.
+// Acento de color SOLO en el ícono del encabezado (significado), sin
+// gradientes ni bloques de color (que daban "look de IA").
 // ════════════════════════════════════════════════════════════════════
 function InsightCard({
   icon,
   title,
-  color,
+  accent,
   iaText,
   children,
   loading,
 }: {
   icon: React.ReactNode;
   title: string;
-  color: "green" | "red" | "amber" | "blue" | "violet" | "indigo" | "rose" | "teal";
+  accent: Accent;
   iaText: string;
   children: React.ReactNode;
   loading?: boolean;
 }) {
-  const colorMap: Record<string, string> = {
-    green: "bg-green-50 border-green-200 text-green-700",
-    red: "bg-red-50 border-red-200 text-red-700",
-    amber: "bg-amber-50 border-amber-200 text-amber-700",
-    blue: "bg-blue-50 border-blue-200 text-blue-700",
-    violet: "bg-violet-50 border-violet-200 text-violet-700",
-    indigo: "bg-indigo-50 border-indigo-200 text-indigo-700",
-    rose: "bg-rose-50 border-rose-200 text-rose-700",
-    teal: "bg-teal-50 border-teal-200 text-teal-700",
+  const accentBg: Record<Accent, string> = {
+    green: "bg-green-50 text-green-600",
+    red: "bg-red-50 text-red-600",
+    amber: "bg-amber-50 text-amber-600",
+    blue: "bg-blue-50 text-blue-600",
+    teal: "bg-teal-50 text-teal-600",
   };
   return (
-    <div className="bg-white rounded-xl shadow-sm p-5 flex flex-col h-full">
-      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${colorMap[color]} mb-4`}>
-        {icon}
-        <h2 className="font-semibold text-sm">{title}</h2>
+    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 flex flex-col h-full">
+      {/* Encabezado sobrio */}
+      <div className="flex items-center gap-2.5 mb-4">
+        <span className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${accentBg[accent]}`}>
+          {icon}
+        </span>
+        <h2 className="font-bold text-gray-800 text-sm">{title}</h2>
       </div>
 
-      {/* Texto generado por Gemini */}
-      <div className="mb-4 p-3 bg-gradient-to-br from-violet-50 to-indigo-50 rounded-lg border border-violet-200">
-        <div className="flex items-start gap-2">
-          <FiZap className="h-4 w-4 text-violet-600 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-gray-800 leading-relaxed">
-            {loading ? (
-              <span className="inline-block w-full">
-                <span className="block h-3 bg-gray-200 rounded animate-pulse mb-2"></span>
-                <span className="block h-3 bg-gray-200 rounded animate-pulse w-4/5"></span>
-              </span>
-            ) : (
-              iaText
-            )}
-          </p>
+      {/* Texto generado por la IA — protagonista */}
+      <div className="mb-4">
+        <div className="flex items-center gap-1.5 text-red-600 mb-1.5">
+          <FiZap className="h-3.5 w-3.5" />
+          <span className="text-[10px] font-semibold uppercase tracking-wide">Sugerencia de la IA</span>
         </div>
+        {loading ? (
+          <div className="space-y-2">
+            <span className="block h-3 bg-gray-100 rounded animate-pulse"></span>
+            <span className="block h-3 bg-gray-100 rounded animate-pulse w-11/12"></span>
+            <span className="block h-3 bg-gray-100 rounded animate-pulse w-4/5"></span>
+          </div>
+        ) : (
+          <p className="text-[15px] text-gray-800 leading-relaxed">{iaText}</p>
+        )}
       </div>
 
-      <div className="flex-1">{children}</div>
+      {/* Datos de apoyo */}
+      <div className="flex-1 pt-3 border-t border-gray-100">{children}</div>
     </div>
   );
 }
@@ -155,9 +161,9 @@ function VistaAdmin({ data, loading }: { data: AdminResponse | null; loading: bo
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <InsightCard
-        icon={<FiTrendingUp className="h-5 w-5" />}
+        icon={<FiTrendingUp className="h-4 w-4" />}
         title="Tendencias de productos"
-        color="green"
+        accent="green"
         loading={loading}
         iaText={data?.productos.texto ?? ""}
       >
@@ -166,7 +172,7 @@ function VistaAdmin({ data, loading }: { data: AdminResponse | null; loading: bo
             {data.productos.productosUp.map((p) => (
               <div key={"u-" + p.nombre} className="flex justify-between items-center text-xs">
                 <span className="truncate flex-1 text-gray-700">{p.nombre}</span>
-                <span className="text-green-600 font-mono font-semibold ml-2 whitespace-nowrap">
+                <span className="text-green-600 font-semibold ml-2 whitespace-nowrap tabular-nums">
                   ▲ +{p.porcentaje_cambio.toFixed(0)}%
                 </span>
               </div>
@@ -174,21 +180,21 @@ function VistaAdmin({ data, loading }: { data: AdminResponse | null; loading: bo
             {data.productos.productosDown.map((p) => (
               <div key={"d-" + p.nombre} className="flex justify-between items-center text-xs">
                 <span className="truncate flex-1 text-gray-700">{p.nombre}</span>
-                <span className="text-red-600 font-mono font-semibold ml-2 whitespace-nowrap">
+                <span className="text-red-600 font-semibold ml-2 whitespace-nowrap tabular-nums">
                   ▼ {p.porcentaje_cambio.toFixed(0)}%
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">Sin datos suficientes todavía</p>
+          <p className="text-xs text-gray-400">Sin datos suficientes todavía.</p>
         )}
       </InsightCard>
 
       <InsightCard
-        icon={<FiAlertCircle className="h-5 w-5" />}
+        icon={<FiAlertCircle className="h-4 w-4" />}
         title="Clientes en riesgo"
-        color="red"
+        accent="red"
         loading={loading}
         iaText={data?.clientes.texto ?? ""}
       >
@@ -196,22 +202,22 @@ function VistaAdmin({ data, loading }: { data: AdminResponse | null; loading: bo
           <div className="space-y-1.5">
             {data.clientes.clientes.map((c) => (
               <div key={c.cliente_id} className="flex justify-between items-center text-xs">
-                <span className="truncate flex-1 text-gray-700">{c.nombre}</span>
-                <span className="text-red-600 font-mono ml-2 whitespace-nowrap">
+                <span className="truncate flex-1 text-gray-700">{c.nombre.trim()}</span>
+                <span className="text-gray-500 ml-2 whitespace-nowrap tabular-nums">
                   {c.dias_sin_comprar}d · S/{c.total_historico.toFixed(0)}
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">{loading ? "" : "Todos al día ✨"}</p>
+          <p className="text-xs text-gray-400">{loading ? "" : "Todos al día."}</p>
         )}
       </InsightCard>
 
       <InsightCard
-        icon={<FiAward className="h-5 w-5" />}
+        icon={<FiAward className="h-4 w-4" />}
         title="Ranking de asesoras este mes"
-        color="amber"
+        accent="amber"
         loading={loading}
         iaText={data?.asesoras.texto ?? ""}
       >
@@ -220,43 +226,43 @@ function VistaAdmin({ data, loading }: { data: AdminResponse | null; loading: bo
             {data.asesoras.asesoras.map((a, i) => (
               <div key={a.asesor_id} className="flex justify-between items-center text-xs">
                 <span className="truncate flex-1 text-gray-700">
-                  {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`} {a.nombre}
+                  {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`} {a.nombre.trim()}
                 </span>
-                <span className="text-amber-700 font-mono font-semibold ml-2 whitespace-nowrap">
+                <span className="text-gray-800 font-semibold ml-2 whitespace-nowrap tabular-nums">
                   S/ {a.total_ventas_mes.toFixed(0)}
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">Sin asesoras registradas</p>
+          <p className="text-xs text-gray-400">Sin asesoras registradas.</p>
         )}
       </InsightCard>
 
       <InsightCard
-        icon={<FiSun className="h-5 w-5" />}
+        icon={<FiSun className="h-4 w-4" />}
         title="Resumen de ayer y recomendación para hoy"
-        color="blue"
+        accent="blue"
         loading={loading}
         iaText={data?.dia.texto ?? ""}
       >
         {data && (
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-gray-50 rounded p-2">
+            <div className="bg-gray-50 rounded-lg p-2.5">
               <div className="text-gray-500">Pedidos</div>
-              <div className="font-semibold text-gray-800">{data.dia.resumen.pedidos_total}</div>
+              <div className="font-bold text-gray-800 text-base tabular-nums">{data.dia.resumen.pedidos_total}</div>
             </div>
-            <div className="bg-green-50 rounded p-2">
-              <div className="text-green-600">Entregados</div>
-              <div className="font-semibold text-green-700">{data.dia.resumen.pedidos_entregados}</div>
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <div className="text-gray-500">Entregados</div>
+              <div className="font-bold text-green-700 text-base tabular-nums">{data.dia.resumen.pedidos_entregados}</div>
             </div>
-            <div className="bg-red-50 rounded p-2">
-              <div className="text-red-600">Fallidos</div>
-              <div className="font-semibold text-red-700">{data.dia.resumen.pedidos_fallidos}</div>
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <div className="text-gray-500">Fallidos</div>
+              <div className="font-bold text-red-700 text-base tabular-nums">{data.dia.resumen.pedidos_fallidos}</div>
             </div>
-            <div className="bg-blue-50 rounded p-2">
-              <div className="text-blue-600">Ventas</div>
-              <div className="font-semibold text-blue-700">S/ {data.dia.resumen.ventas_total.toFixed(0)}</div>
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <div className="text-gray-500">Ventas</div>
+              <div className="font-bold text-gray-800 text-base tabular-nums">S/ {data.dia.resumen.ventas_total.toFixed(0)}</div>
             </div>
           </div>
         )}
@@ -273,9 +279,9 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
       {/* CARD 1: Mi performance */}
       <InsightCard
-        icon={<FiTarget className="h-5 w-5" />}
-        title="Mi performance del mes"
-        color="violet"
+        icon={<FiTarget className="h-4 w-4" />}
+        title="Mi avance del mes"
+        accent="blue"
         loading={loading}
         iaText={data?.performance.texto ?? ""}
       >
@@ -283,11 +289,11 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
           <div className="space-y-3">
             {/* Barra de progreso */}
             <div>
-              <div className="flex justify-between text-xs text-gray-600 mb-1">
+              <div className="flex justify-between text-xs text-gray-600 mb-1 tabular-nums">
                 <span>S/ {data.performance.ventasMes.toFixed(0)}</span>
                 <span>Meta: S/ {data.performance.metaMensual.toFixed(0)}</span>
               </div>
-              <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                 <div
                   className={`h-full transition-all ${
                     data.performance.porcentajeAvance >= 100
@@ -301,20 +307,20 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
                   style={{ width: `${Math.min(100, data.performance.porcentajeAvance)}%` }}
                 ></div>
               </div>
-              <div className="text-right text-xs text-gray-500 mt-1">
+              <div className="text-right text-xs text-gray-500 mt-1 tabular-nums">
                 {data.performance.porcentajeAvance.toFixed(0)}% del mes
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-violet-50 rounded p-2">
-                <div className="text-violet-600">Día del mes</div>
-                <div className="font-semibold text-violet-800">
+              <div className="bg-gray-50 rounded-lg p-2.5">
+                <div className="text-gray-500">Día del mes</div>
+                <div className="font-bold text-gray-800 tabular-nums">
                   {data.performance.diaDelMes} / {data.performance.diasHabilesMes}
                 </div>
               </div>
-              <div className="bg-indigo-50 rounded p-2">
-                <div className="text-indigo-600">Ritmo necesario</div>
-                <div className="font-semibold text-indigo-800">
+              <div className="bg-gray-50 rounded-lg p-2.5">
+                <div className="text-gray-500">Ritmo necesario</div>
+                <div className="font-bold text-gray-800 tabular-nums">
                   S/ {data.performance.ritmoNecesario.toFixed(0)}/día
                 </div>
               </div>
@@ -325,9 +331,9 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
 
       {/* CARD 2: Mis clientes en riesgo */}
       <InsightCard
-        icon={<FiAlertCircle className="h-5 w-5" />}
+        icon={<FiAlertCircle className="h-4 w-4" />}
         title="Mis clientes que dejaron de pedir"
-        color="rose"
+        accent="red"
         loading={loading}
         iaText={data?.clientes.texto ?? ""}
       >
@@ -335,23 +341,23 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
           <div className="space-y-1.5">
             {data.clientes.clientes.map((c) => (
               <div key={c.cliente_id} className="flex justify-between items-center text-xs">
-                <span className="truncate flex-1 text-gray-700">{c.nombre}</span>
-                <span className="text-rose-600 font-mono ml-2 whitespace-nowrap">
+                <span className="truncate flex-1 text-gray-700">{c.nombre.trim()}</span>
+                <span className="text-gray-500 ml-2 whitespace-nowrap tabular-nums">
                   {c.dias_sin_comprar}d · S/{c.total_historico.toFixed(0)}
                 </span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">{loading ? "" : "Tu cartera está al día ✨"}</p>
+          <p className="text-xs text-gray-400">{loading ? "" : "Tu cartera está al día."}</p>
         )}
       </InsightCard>
 
       {/* CARD 3: Productos top de mi cartera */}
       <InsightCard
-        icon={<FiShoppingBag className="h-5 w-5" />}
+        icon={<FiShoppingBag className="h-4 w-4" />}
         title="Top productos de mi cartera (90 días)"
-        color="teal"
+        accent="teal"
         loading={loading}
         iaText={data?.cartera.texto ?? ""}
       >
@@ -362,45 +368,39 @@ function VistaAsesora({ data, loading }: { data: AsesorResponse | null; loading:
                 <span className="truncate flex-1 text-gray-700">
                   {i + 1}. {p.nombre}
                 </span>
-                <span className="text-teal-700 font-mono ml-2 whitespace-nowrap">
-                  {p.pedidos} ped.
-                </span>
+                <span className="text-gray-500 ml-2 whitespace-nowrap tabular-nums">{p.pedidos} ped.</span>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">Sin datos suficientes todavía</p>
+          <p className="text-xs text-gray-400">Sin datos suficientes todavía.</p>
         )}
       </InsightCard>
 
       {/* CARD 4: Sugerencia del día */}
       <InsightCard
-        icon={<FiPhoneCall className="h-5 w-5" />}
+        icon={<FiPhoneCall className="h-4 w-4" />}
         title="¿A quién contactar hoy?"
-        color="indigo"
+        accent="amber"
         loading={loading}
         iaText={data?.sugerencia.texto ?? ""}
       >
         {data && data.sugerencia.candidatos.length > 0 ? (
           <div className="space-y-1.5">
             {data.sugerencia.candidatos.map((c) => (
-              <div key={c.cliente_id} className="text-xs bg-indigo-50 rounded p-2">
+              <div key={c.cliente_id} className="text-xs bg-gray-50 rounded-lg p-2.5">
                 <div className="flex justify-between items-center">
-                  <span className="font-medium text-gray-800 truncate flex-1">{c.nombre}</span>
-                  <span className="text-indigo-700 font-mono ml-2 whitespace-nowrap">
-                    {c.dias_sin_comprar}d
-                  </span>
+                  <span className="font-medium text-gray-800 truncate flex-1">{c.nombre.trim()}</span>
+                  <span className="text-gray-500 ml-2 whitespace-nowrap tabular-nums">{c.dias_sin_comprar}d</span>
                 </div>
-                <div className="text-[10px] text-gray-500 mt-0.5">
+                <div className="text-[10px] text-gray-500 mt-0.5 tabular-nums">
                   Suele pedir cada {c.patron_intervalo_dias}d · histórico S/{c.total_historico.toFixed(0)}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-xs text-gray-400 italic">
-            {loading ? "" : "Sin candidatos por patrón hoy"}
-          </p>
+          <p className="text-xs text-gray-400">{loading ? "" : "Sin candidatos por patrón hoy."}</p>
         )}
       </InsightCard>
     </div>
@@ -447,28 +447,26 @@ export default function AsistenteIAClient({
 
   // Heading depende del rol
   const heading =
-    role === "admin"
-      ? "Asistente IA"
-      : `Hola ${nombre.split(" ")[0]}, tu Asistente IA`;
+    role === "admin" ? "Asistente IA" : `Hola ${nombre.split(" ")[0]}, tu Asistente IA`;
   const subtitle =
     role === "admin"
-      ? "Análisis automático del negocio — se actualiza cada hora"
-      : "Tus números, tu cartera, tu sugerencia del día — actualizado cada hora";
+      ? "Análisis automático del negocio, actualizado cada hora"
+      : "Tus números, tu cartera y tu sugerencia del día, actualizados cada hora";
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       <header className="mb-6 flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-            <FiZap className="text-violet-600" />
+            <FiZap className="text-red-600" />
             {heading}
           </h1>
           <p className="text-sm text-gray-500 mt-1">{subtitle}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {data && !error && (
             <span className="text-xs text-gray-400">
-              {data.cached ? "📦 desde cache" : "✨ recién generado"} ·{" "}
+              {data.cached ? "Desde caché" : "Recién generado"} ·{" "}
               {new Date(data.generatedAt).toLocaleTimeString("es-PE", {
                 hour: "2-digit",
                 minute: "2-digit",
@@ -478,7 +476,7 @@ export default function AsistenteIAClient({
           <button
             onClick={() => fetchInsights(true)}
             disabled={refreshing}
-            className="px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 flex items-center gap-2 text-sm font-medium"
+            className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 flex items-center gap-2 text-sm font-medium transition-colors active:scale-[0.97]"
           >
             <FiRefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
             {refreshing ? "Generando…" : "Refrescar análisis"}
@@ -487,8 +485,8 @@ export default function AsistenteIAClient({
       </header>
 
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          <strong>⚠️ Error:</strong> {error}
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+          <strong>Error:</strong> {error}
         </div>
       )}
 
@@ -498,12 +496,14 @@ export default function AsistenteIAClient({
         <VistaAsesora data={data as AsesorResponse | null} loading={loading} />
       )}
 
-      {/* Disclaimer */}
-      <div className="mt-6 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500">
-        🔒 <strong>Privacidad:</strong> antes de enviar datos a Gemini, los nombres de
-        {role === "admin" ? " los clientes" : " tus clientes"} se reemplazan por códigos
-        anónimos (Cliente A, Cliente B…). Gemini solo ve montos, cantidades y nombres de
-        productos.
+      {/* Disclaimer de privacidad */}
+      <div className="mt-6 flex items-start gap-2 p-3 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
+        <FiLock className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
+        <p>
+          <strong className="text-gray-600">Privacidad:</strong> antes de enviar datos a la IA, los
+          nombres de {role === "admin" ? "los clientes" : "tus clientes"} se reemplazan por códigos
+          anónimos (Cliente A, Cliente B…). La IA solo ve montos, cantidades y nombres de productos.
+        </p>
       </div>
     </div>
   );

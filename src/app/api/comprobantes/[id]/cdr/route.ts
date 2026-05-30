@@ -58,7 +58,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     return NextResponse.json(
       {
         error:
-          "Este comprobante no tiene CDR: SUNAT lo entrega solo cuando el comprobante fue ACEPTADO. Revisá el estado del comprobante.",
+          "Este comprobante no tiene CDR: SUNAT lo entrega solo cuando el comprobante fue ACEPTADO. Revisa el estado del comprobante.",
       },
       { status: 404 }
     );

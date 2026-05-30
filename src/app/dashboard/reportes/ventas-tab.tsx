@@ -89,7 +89,7 @@ export default function VentasTab() {
       const { generarPdfVentas } = await import("@/lib/reportes/pdf-ventas");
       generarPdfVentas(data, etiquetaRango(desde, hasta));
     } catch {
-      aviso("No se pudo generar el PDF. Intentá de nuevo.");
+      aviso("No se pudo generar el PDF. Intenta de nuevo.");
     } finally {
       setGenerandoPdf(false);
     }
@@ -213,9 +213,9 @@ export default function VentasTab() {
                   href="/dashboard/catalogo"
                   className="font-semibold underline underline-offset-2 hover:text-amber-900"
                 >
-                  Cargá los precios en el Catálogo
+                  Carga los precios en el Catálogo
                 </a>{" "}
-                para ver tus ventas reales acá.
+                para ver tus ventas reales aquí.
               </p>
             </div>
           )}
