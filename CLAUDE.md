@@ -69,6 +69,8 @@ node scripts/run-migration.mjs            # agrega asesor_id a clientes
 
 Cuando agregues una migración nueva, **crear nuevo archivo `migrate-<feature>.mjs`** siguiendo el patrón existente (con `CREATE EXTENSION IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, etc.). No modificar migraciones existentes.
 
+> **Migración a producción (30 may 2026):** el esquema de producción se puso al día con **`scripts/migrate-produccion-2026-05-29.sql`** (consolida 8 tablas + 14 columnas que faltaban; idempotente y aditivo). Se aplica con **psql**, NO con los `.mjs` (Node 26 + `@neondatabase/serverless` falla — gotcha #13): `psql "$DATABASE_URL_UNPOOLED" -f scripts/migrate-produccion-2026-05-29.sql`. Rollback: `scripts/rollback-produccion-2026-05-29.sql`. Para futuros cambios de esquema, aplicar a producción por psql **antes** de que el deploy del código nuevo quede activo.
+
 ---
 
 ## 4. Variables de entorno
@@ -95,7 +97,9 @@ Definidas en `.env` (no comiteado). Las críticas:
 
 `ADMIN_USER`/`ADMIN_PASSWORD` están en `.env` pero **no se usan en código activo** (legacy del scaffolding inicial). La auth real lee de la tabla `users`.
 
-**`.env.local` (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`.
+**`.env.local` (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Sigue en `SUNAT_ENVIRONMENT=beta` (con `MODDATOS`) para testing local.
+
+**Producción (Vercel) ya tiene TODAS estas vars configuradas (30 may 2026):** las 24 del lanzamiento — todas las `SUNAT_*` reales (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET` — además de las que ya existían (DB, Auth, Maps). Se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
 
 ---
 
@@ -294,31 +298,36 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 11. **Nombres de usuarios con espacios al final**: la DB de producción tiene `"Leslie "` y `"Jhoselyn "` (con espacio al final, data legacy). NO usar `WHERE name='Leslie'` — usar el `id` directamente o trim del nombre. Esto rompió el script de testing y se documenta para evitar repetir el bug.
 12. **Gemini Flash Latest + thinking tokens**: el modelo gemini-2.5-flash usa "thinking tokens" internos que consumen `maxOutputTokens` antes de generar texto. Sin `thinkingConfig: { thinkingBudget: 0 }`, las respuestas se truncan a ~19 chars. Ver `src/lib/gemini.ts:55`.
 13. **Bug DNS Node 26 con `@neondatabase/serverless`**: scripts `node ./scripts/migrate-X.mjs` fallan con `TypeError: fetch failed`. Workaround: aplicar SQL directamente con `psql -f scripts/migrations-fase-ab.sql`. Next.js dev server NO está afectado (usa su propio runtime). Nota: `npm install` SÍ funciona (verificado mayo 2026).
-14. **Cache del Asistente IA por scope**: el endpoint `/api/asistente-ia` cachea por rol/asesor (key `admin-*` o `asesor-{uuid}-*`). Esto preserva privacy boundary entre asesoras. TTL 1h. Si tocas `lib/insights.ts`, considerá si invalidar cache.
+14. **Cache del Asistente IA por scope**: el endpoint `/api/asistente-ia` cachea por rol/asesor (key `admin-*` o `asesor-{uuid}-*`). Esto preserva privacy boundary entre asesoras. TTL 1h. Si tocas `lib/insights.ts`, considerá si invalidar cache. ⚠️ El caché es **in-memory** (`new Map()` en `lib/insights.ts`) y **NO persiste en Vercel serverless** (cada cold start y cada deploy lo vacían) → bajo carga se topa el límite gratuito de Gemini (429). Ver gotcha #16.
 15. **Light-mode forzado (NO re-agregar dark mode)**: `globals.css` fija `color-scheme: light` y ya NO tiene `@media (prefers-color-scheme: dark)`. La app está diseñada SOLO para modo claro (tarjetas blancas, texto oscuro). Con el dark mode del SO activo, `--foreground` pasaba a claro (#ededed) y los textos quedaban casi invisibles sobre fondos blancos. **No volver a agregar el bloque dark.** Si se quiere dark mode real, hay que rediseñar todos los fondos/colores con variantes `dark:` de Tailwind.
+16. **⚠️ IA / Gemini 429 bajo carga (mejora pendiente)**: el caché de insights es **in-memory** (`new Map()` en `lib/insights.ts`), y en Vercel serverless la memoria **no sobrevive** entre invocaciones ni a un deploy. Resultado: cada carga de Reportes/Mis Metas dispara hasta 4 llamadas frescas a Gemini → con el plan **gratuito** (límite bajo por minuto/día) salta **429** ("You exceeded your quota"). **No rompe nada**: la app degrada bien (muestra "Datos crudos abajo"). **Fix pendiente (recomendado, $0):** persistir el caché en la DB (tabla o `settings`) para que cada insight se genere ≤1 vez/hora por scope y sobreviva a cold starts; bonus: servir el último insight bueno guardado cuando Gemini falle. (El límite diario también se consume con testing intensivo y se reinicia solo cada día.)
+17. **Producción lanzada 30 may 2026 — cómo se migró**: el esquema de producción se llevó al día con `scripts/migrate-produccion-2026-05-29.sql` aplicado por **psql** (`psql "$DATABASE_URL_UNPOOLED" -f …`), NO por los `.mjs` (Node 26 los rompe — gotcha #13). Rollback en `scripts/rollback-produccion-2026-05-29.sql`. Vercel: proyecto `hugoherrerateam/transavic`, plan **Pro**. Para futuros cambios de esquema: probar en `dev-hugo`, y al mergear a `main` aplicar la migración a producción por psql ANTES de que el deploy con el código nuevo quede activo (si no, el código nuevo choca con columnas/tablas que faltan).
 
 ---
 
-## 13. Estado del proyecto (mayo 2026)
+## 13. Estado del proyecto
 
-### En producción
-- Sistema base v1 (pedidos, despacho, mi-ruta, productos, clientes, analytics, resumen).
-- Deploy en `transavic.app` (Vercel).
-- 6 motorizados activos, 4 asesoras, 1 admin.
+### 🚀 LANZADO A PRODUCCIÓN — 30 mayo 2026
+**Todo el trabajo de las 8 mejoras está DESPLEGADO Y EN VIVO** en `main` → Vercel (`transavic.vercel.app`). Ya NO es "local / dev-hugo": se hizo el merge a producción.
+- **DB de producción migrada** (`ep-cool-sound`): se aplicó `scripts/migrate-produccion-2026-05-29.sql` por psql (8 tablas nuevas + 14 columnas + backfill de código de producto). La data real (~6.024 pedidos, 394 clientes, 87 productos) quedó **intacta**; las tablas nuevas nacieron vacías. Respaldo previo completo en `backups/` (gitignored) + restore automático de Neon.
+- **24 env vars cargadas en Vercel (Production)**: `SUNAT_*` con credenciales **reales** (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET`. Las credenciales reales SOLO viven en Vercel + archivos gitignored (`.env.local`, `CREDENCIALES-PRODUCCION.local.md`) — nunca en el repo.
+- **SUNAT en producción**: ambas empresas listas — Transavic (RUC 20 `20612806901`) y Avícola de Tony (RUC 10 `10710548841`, persona natural; APIFACTU creado + régimen confirmado por Antonio: emite boletas **y** facturas). **Pendiente: la 1ª emisión fiscal REAL** (Hugo la hará manualmente para validar end-to-end; los 3 tipos ya están validados en BETA).
+- **Vercel**: proyecto `hugoherrerateam/transavic`, plan **Pro** (permite 40 crons; usamos 4). Auto-deploy desde `main`; **rollback instantáneo** disponible si algo sale mal.
+- **`.env.local` sigue en `beta`** (testing local contra `dev-hugo`). Lo que está en `production` es Vercel.
 
-### En implementación (Fase actual)
-Las **8 mejoras** acordadas con Antonio (mayo 2026, S/ 4 000, 17 días, 50% pagado):
+> ⚠️ Las secciones de abajo describen CÓMO se construyó cada módulo (siguen vigentes). Donde digan **"TODO LOCAL / producción intacta / falta mergear / falta validar en producción"**, entender que **eso ya se ejecutó el 30 may 2026** (merge + migración + deploy hechos).
 
-| # | Mejora | Fase | Estado código | Estado branch |
-|---|---|---|---|---|
-| 1 | Pesos digitales + flujo completo (estados `En_Produccion`, `Listo_Para_Despacho`, rol `produccion`) | A | ✅ Local | ✅ Migración aplicada |
-| 2 | Guía de remisión digital + foto firmada (HTML+CSS imprimible, foto base64 en DB) | A | ✅ Local | ✅ Migración aplicada |
-| 4 | Avisos automáticos entre áreas (campanita con polling 30s) | B | ✅ Local | ✅ Migración aplicada |
-| 5 | Dashboard comercial + metas + panel gerencial (mes anterior × 1.15) | B | ✅ Local | ✅ Migración aplicada |
-| 6 | Cobranzas con plazos flexibles + cron diario | B | ✅ Local | ✅ Migración aplicada |
-| 7 | Integración SUNAT con 2 RUCs — **FLUJO REAL** (XML UBL 2.1 + firma + SOAP + CDR) + emisión standalone + nota de crédito + consulta RUC/DNI + correo Brevo. Cert real de Transavic cargado, firma válida. **BETA VALIDADA end-to-end (mayo 2026): factura + boleta + nota de crédito ACEPTADAS con CDR.** Falta solo el paso a producción (usuario SOL real). | B | ✅ Local | ✅ BETA OK |
-| 8 | **IA comercial Gemini Flash Latest — admin Y asesoras (scoped)** | C | ✅ Local | ✅ Funciona en branch |
-| 3 | Seguimiento motorizado en vivo (Capacitor + Pusher) | C | ⏳ Pendiente | — |
+### Las 8 mejoras (acordadas con Antonio — S/ 4 000, 17 días)
+| # | Mejora | Fase | Estado |
+|---|---|---|---|
+| 1 | Pesos digitales + flujo completo (estados `En_Produccion`, `Listo_Para_Despacho`, rol `produccion`) | A | ✅ En producción |
+| 2 | Guía de remisión digital + foto firmada (HTML imprimible, foto base64 en DB) | A | ✅ En producción |
+| 4 | Avisos automáticos entre áreas (campanita, polling 30s) | B | ✅ En producción |
+| 5 | Dashboard comercial + metas + panel gerencial | B | ✅ En producción |
+| 6 | Cobranzas con plazos flexibles + cron diario | B | ✅ En producción |
+| 7 | SUNAT con 2 RUCs (XML UBL 2.1 + firma + SOAP + CDR) + emisión standalone + NC + consulta RUC/DNI + correo Brevo. Validado en BETA (factura/boleta/NC ACEPTADAS). | B | ✅ En producción · falta 1ª emisión real |
+| 8 | IA comercial Gemini Flash — admin y asesoras (scoped) | C | ✅ En producción ⚠️ (caché 429 — ver gotcha #16) |
+| 3 | Seguimiento motorizado en vivo (Capacitor + Pusher) | C | ⏳ Pendiente (no iniciado) |
 
 **Decisiones técnicas tomadas durante implementación:**
 - PDF de guía → HTML + `window.print()` (sin `@react-pdf/renderer`). $0 costo.
@@ -332,12 +341,12 @@ Las **8 mejoras** acordadas con Antonio (mayo 2026, S/ 4 000, 17 días, 50% paga
 - Branch ID: `br-tiny-frost-aduw14pu`
 - Endpoint: `ep-super-violet-adyp68ne` (vs producción `ep-cool-sound-adxrsjt5`)
 - Conexión guardada en `.env.local` (no en `.env`)
-- Producción NUNCA se toca hasta que Hugo apruebe merge desde Neon Console
+- El merge a producción se hizo el **30 may 2026** (migración por psql + deploy). `dev-hugo` sigue como branch de testing aislado para cambios futuros: probar acá primero, y recién mergear a `main`.
 
 Planes formales: `docs/superpowers/plans/2026-05-13-fase-{a,b}-*.md`.
 
-### Módulo de comprobantes ampliado (mayo 2026 — TODO LOCAL, producción intacta)
-Construido en `dev-hugo` + `.env.local`, **sin tocar producción** (ni DB real, ni `.env`, ni el deploy de Vercel). Falta validar contra SUNAT producción antes de mergear.
+### Módulo de comprobantes ampliado (mayo 2026 — ✅ EN PRODUCCIÓN desde 30 may 2026)
+Construido y probado en `dev-hugo` + `.env.local`, **ya mergeado y desplegado en producción** (30 may 2026). Validado en BETA SUNAT; pendiente solo la 1ª emisión fiscal real (Hugo).
 
 - **Emisión standalone** (factura/boleta SIN pedido): `src/app/dashboard/comprobantes/nuevo/{page,emitir-client}.tsx` + `POST /api/comprobantes/emitir-manual`. Botón "Emitir comprobante" en `/dashboard/comprobantes`.
   - **Rediseño UX (mayo 2026, "No Me Hagas Pensar")**: (1) **Detalle conectado al catálogo** — cada ítem usa un `<datalist id="catalogo-productos">` con los productos de `/api/productos` (que ahora devuelve `precio_venta`); al elegir/escribir el nombre exacto, `onDescripcion()` autocompleta **precio (con IGV) y unidad** (helper `unidadSunatDesde` mapea "uni/kg"/"kg"→KGM, resto→NIU). El usuario solo ajusta cantidad → facturas mucho más rápidas. Sigue permitiendo texto libre para no-catalogados. (2) **Empresa emisora diferenciada de un vistazo**: tarjetas grandes con **logo** (`/transavic.jpg`, `/avicola.jpg`) + razón social + RUC, y un **banner persistente** "Emitiendo como … · RUC …" con **color por empresa** (Transavic=rojo, Avícola=ámbar, vía `EMPRESA_UI`). El `page.tsx` (server) pasa `{ruc, razonSocial}` de ambas empresas vía `getSunatConfig` (datos públicos, sin exponer cert/clave). Verificado en navegador: autollenado (Bistec→S/30) y switch de empresa (banner cambia rojo↔ámbar).
@@ -373,19 +382,15 @@ Construido en `dev-hugo` + `.env.local`, **sin tocar producción** (ni DB real, 
   - **Modal compartir ticket**: card con `max-h-[90vh] overflow-y-auto` + header sticky con la X siempre visible. Antes el contenido se cortaba y el cerrar quedaba off-screen.
   - **Exportar Excel** en `/comprobantes` (admin): nuevo endpoint `GET /api/comprobantes/export-xlsx` (usa `xlsx` lib, respeta los filtros activos `tipo/empresa/cliente_doc_num`, scope por rol, hasta 5000 filas), botón "Excel" en el header. Columnas pensadas para contador (Fecha · Serie-Número · Tipo · Empresa · Cliente · Doc · Subtotal · IGV · Total · Forma de pago · Vencimiento · Estado SUNAT · Mensaje). tsc/lint limpios.
 
-**Estado: BETA VALIDADA (mayo 2026).** Los pendientes anteriores ya se resolvieron:
-- ✅ Código alineado con conexipema (xml-builder/xml-signer/soap-client idénticos salvo import y `CitySubdivisionName` vacío vs "SARITA", que BETA acepta). Los "cambios de caza de bug" ya estaban revertidos.
-- ✅ Endpoint temporal `/api/test-sunat-beta` usado para validar y **borrado** tras las pruebas.
-- ✅ Factura (01), boleta (03) y nota de crédito (07) → `ACEPTADA` con CDR en BETA, firmadas con el cert real.
-
-**Falta solo para PRODUCCIÓN (con OK de Hugo):**
-1. **Usuario SOL real**: en beta se usó `MODDATOS`/`moddatos`; en producción Antonio crea un usuario SOL secundario con perfil "Emisión Electrónica" (APIFACTU) y se configuran `SUNAT_TRA_SOL_USER`/`SUNAT_TRA_SOL_PASSWORD` reales (ídem AVI).
-2. **`SUNAT_ENVIRONMENT=production`** + emitir factura+boleta de monto bajo y anular con NC.
-3. **Configurar en Vercel**: `APISPERU_TOKEN`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` y las `SUNAT_*` reales.
+**Estado: ✅ DESPLEGADO EN PRODUCCIÓN (30 may 2026).** Validado en BETA (factura 01, boleta 03, NC 07 → `ACEPTADA` con CDR, cert real) y ya en producción con credenciales reales. Lo que se resolvió para el paso a producción:
+1. ✅ **Usuario SOL real**: `APIFACTU`/`Transavic123` (perfil "Emisión Electrónica") creado para AMBAS empresas (Transavic RUC 20 y Avícola RUC 10). En `.env.local` (testing) se sigue usando `MODDATOS`/`moddatos` porque el endpoint beta solo acepta ese usuario.
+2. ✅ **`SUNAT_ENVIRONMENT=production`** configurado en Vercel.
+3. ✅ **Env vars en Vercel**: `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET` y todas las `SUNAT_*` reales (cert `.p12` en base64).
+4. ⏳ **Único pendiente**: emitir la 1ª factura/boleta REAL de monto bajo (la hace Hugo manualmente) y, si se quiere, anularla con NC.
 
 > ✅ **Corrección de diagnóstico (mayo 2026): la BETA SÍ funciona.** La conclusión previa ("BETA rechaza por esquema viejo, validar solo en producción") era **incorrecta**. El endpoint `ol-ti-itcpfegem-beta` acepta UBL 2.1 sin problema (factura/boleta/NC ACEPTADAS). El error **2335 NO significa "cert no reconocido por CA"** sino **"el documento electrónico ha sido alterado"** (fuente: greenter/xcodes + manual del programador SUNAT) — causado por inconsistencia de encoding o por modificar el XML tras firmar. El bug real era que el código **saltaba la firma en beta** (condición `beta && !certificatePath`, pero siempre se usa `certificateBase64` → nunca firmaba → SUNAT veía un XML sin firma); **corregido** para firmar siempre que haya certificado. La BETA acepta certificados autofirmados (no valida la CA).
 
-### Optimización de UI (mayo 2026 — TODO LOCAL, producción intacta)
+### Optimización de UI (mayo 2026 — ✅ EN PRODUCCIÓN desde 30 may 2026)
 Refactor de navegación/UX en `dev-hugo`. Plan: `docs/superpowers/plans/2026-05-21-optimizacion-menu-catalogo-ia.md`.
 - **Catálogo** (`/dashboard/catalogo`): fusiona Productos + Precios en una página con 2 pestañas que reutilizan `productos-client` y `precios-client`. `/dashboard/productos` y `/dashboard/precios` redirigen a `/catalogo`. **Actualización (mayo 2026, vista única)**: las 2 pestañas se eliminaron. Hoy hay UNA sola tabla en `src/app/dashboard/catalogo/catalogo-unificado.tsx` con columnas Producto · Código · Categoría · Unidad · Compra · Venta · Margen · Acciones. Click sobre la celda Compra/Venta → input inline + Enter guarda (con confirm si cambia la venta — afecta pedidos nuevos). Botón ✏️ → modal completo (nombre, código, categoría, unidad, compra, venta). Filtros: chips por categoría + buscador (matcha nombre Y código) + chip clickeable "Sin precio (N)" que filtra los que no se pueden vender. Banner ámbar al tope cuando hay productos sin `precio_venta`. El modal "Agregar Producto" ahora acepta precio opcional → un producto nuevo nace listo para vender. **Endpoints actualizados (cero migración de DB)**: `GET/POST/PATCH /api/productos` ahora devuelven y aceptan `precio_venta`, `precio_compra` y `codigo` (antes vivía en `/api/precios`); el PATCH además **preserva el histórico** en la tabla `precios_productos` (cierra el vigente, inserta el nuevo) — la auditoría que ya tenía `/api/precios/[id]` sigue funcionando. Los archivos viejos `productos-client.tsx`, `precios-client.tsx` y los endpoints `/api/precios*` quedaron marcados `@deprecated` como red de seguridad (se borran tras unas semanas sin regresiones). El tipo `Producto` en `lib/types.ts` se extendió con `codigo`, `precio_venta`, `precio_compra` opcionales. **Rediseño UX "No Me Hagas Pensar" (mayo 2026)**: (1) **Barra de 4 KPIs** arriba (`KpiCatalogo`): Productos · Listos para vender (con precio) · **Sin precio** (clickeable → filtra, reemplaza al banner ámbar viejo) · **Margen promedio** del catálogo (promedio de `margenPct` de los que tienen compra+venta). (2) **Edición inline descubrible**: las celdas Compra/Venta muestran el número con un **lápiz** que se intensifica en hover + fondo azul de "campo editable" (antes solo un `title` invisible) + una pista textual arriba de la tabla ("Tocá un precio para editarlo"). (3) **"Sin precio" → botón accionable** "+ Poner precio" (ámbar) en la celda Venta, en vez de texto rojo pasivo. (4) **Columna Código eliminada**: el código va **debajo del nombre** (gris mono pequeño) → de 8 a 7 columnas, menos ruido. El emoji de categoría queda como identificador del producto. tsc/eslint limpios. **Pulido con skill `/mejora-diseño` (mayo 2026)**: (a) **animación de UI sutil** — keyframes reutilizables nuevos en `globals.css` (`fadeIn`/`modalIn`/`toastIn` + clases `.anim-fade`/`.anim-modal`/`.anim-toast`, curva ease-out `cubic-bezier(0.25,1,0.5,1)`, `modalIn` entra desde `scale(0.96)` no 0) + bloque global `@media (prefers-reduced-motion: reduce)`. Beneficia a todo el dashboard (de paso revive los `animate-[fadeIn]` que estaban muertos en `emitir-client`). Modales del catálogo entran con `anim-modal` + backdrop `anim-fade`; micro-feedback `active:scale-[0.97/0.98]` en botón Agregar, chips de categoría, paginación y botones de modal. (b) el **mensaje de éxito/error pasó de banner (empujaba el contenido) a toast flotante** (`fixed bottom-6 right-6` + `anim-toast`), mismo patrón que `/comprobantes` y `/cobranzas`. (c) **`tabular-nums`** en Compra/Venta/Margen (tabla y cards) para que las cifras alineen parejo. (d) **radios unificados** (cards/tabla/modales → `rounded-xl`/`2xl`; botones/chips → `rounded-lg`). NO se tintaron los neutros (habría roto consistencia con las pantallas hermanas que usan gris Tailwind — queda como recomendación global). tsc/eslint limpios.
 - **Reportes** (`/dashboard/reportes`): originalmente hub con 3 pestañas (Panel Gerencial · Analítica · Resumen). **Rediseño con `/mejora-diseño` (mayo 2026 — local, verificado en navegador con Chrome MCP):** se fusionó a **2 pestañas de propósito claro** porque las 3 se pisaban (KPIs/top productos/ranking repetidos; Panel tenía dinero sin fechas, Analítica fechas sin dinero):
@@ -405,7 +410,7 @@ Auditoría: las áreas se conectan vía `pedido_id` + `pedidos.estado` (cadena P
 - **Cobranza manual**: botón "Registrar cobranza manual" en `/dashboard/cobranzas` + `POST /api/facturas` (deudas sin pedido). `facturas.pedido_id` es nullable → no requirió migración.
 
 ### Roadmap "Mejor flujo para usuarios" — P0–P3 ejecutado (mayo 2026 — local, build OK)
-Audit completo y plan en `docs/superpowers/specs/2026-05-27-audit-conexiones-roadmap-design.md` + `docs/superpowers/plans/2026-05-27-p0-cierra-loop-dinero.md`. Lo ejecutado (todo en `dev-hugo`, producción intacta):
+Audit completo y plan en `docs/superpowers/specs/2026-05-27-audit-conexiones-roadmap-design.md` + `docs/superpowers/plans/2026-05-27-p0-cierra-loop-dinero.md`. Lo ejecutado (construido en `dev-hugo`, **ya en producción desde 30 may 2026**):
 
 **P0 — Cierra el loop del dinero (~14h):**
 - **P0.1 — Contado → cobranza por default** (`/api/comprobantes/emitir-manual` + `emitir-client.tsx`): toda factura (tipo 01) crea cobranza automáticamente, sea Contado o Crédito. Toggle "El cliente ya pagó al instante" cuando es Contado-cash. Boletas (03) NO crean cobranza.
@@ -431,7 +436,7 @@ Audit completo y plan en `docs/superpowers/specs/2026-05-27-audit-conexiones-roa
 
 **Lo que NO se tocó** (en respeto al spec): el módulo SUNAT real (`lib/sunat/xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `index.ts`) — BETA-validado, se evitó cualquier riesgo de regresión en la firma/envío.
 
-**Estado**: `npx tsc --noEmit` + `npx eslint` limpios; `npm run build` pasa OK. Falta verificación visual en navegador y aplicar `migrate-factura-vinculo.sql` en producción (cuando Hugo apruebe el merge).
+**Estado**: ✅ en producción (30 may 2026). `tsc`/`eslint` limpios, build OK. La migración `migrate-factura-vinculo.sql` quedó incluida en `migrate-produccion-2026-05-29.sql` (ya aplicada en producción).
 
 ### Mejoras UX/flujo (mayo 2026 — local, tras pruebas en navegador)
 Plan: `docs/superpowers/plans/2026-05-22-mejoras-ux-flujo.md`. 11 mejoras de las pruebas E2E:
@@ -545,25 +550,19 @@ Antes de empezar cualquier tarea:
 | `src/app/api/comprobantes/emitir/route.ts` | 164 | ✅ Emite comprobante real |
 | `src/app/dashboard/comprobantes/...` | — | ✅ UI: PDF ⬇, XML ⟨/⟩, Email ✉, N. Crédito, Baja, Reintentar + Resumen diario (header) |
 
-**Estado de testing (verificado mayo 2026):**
-- ✅ XML UBL 2.1 generado correctamente (8440 chars, todos los namespaces, totales OK)
-- ✅ Firma digital con cert dummy funciona (hashCpe generado)
-- ✅ Comprimido en ZIP correctamente
-- ✅ Enviado a webservice SUNAT BETA
-- ✅ SUNAT respondió con código 2335 "No signature in message" — **esperado con cert dummy** porque la firma no viene de una CA reconocida. Con certificado real de Antonio (gratis desde SUNAT) las facturas se aceptan.
+**Estado de testing (BETA, validado mayo 2026 con cert REAL):**
+- ✅ XML UBL 2.1 generado correctamente (namespaces + totales OK)
+- ✅ Firma digital con el cert real `.p12` (XML-DSig) — válida
+- ✅ Comprimido en ZIP + enviado al webservice SUNAT BETA
+- ✅ Factura (01), boleta (03) y nota de crédito (07) → **`ACEPTADA` con CDR** en BETA. (El viejo error 2335 era porque el código saltaba la firma en beta — corregido; ver §13.)
 
-**Qué falta para SUNAT en producción REAL:**
-1. ⚠️ Antonio descarga certificado digital tributario `.p12` desde SUNAT (menú SOL > Certificado Digital Tributario — **gratis hasta 31-dic-2027**)
-2. ⚠️ Crear usuario SOL secundario con perfil "Emisión Electrónica" (APIFACTU)
-3. Convertir cert a base64: `base64 -i cert.p12 -o cert.b64`
-4. Configurar env vars reales en `.env` de producción:
-   - `SUNAT_TRA_RUC=20XXXXXXXXX` (RUC real Transavic)
-   - `SUNAT_TRA_RAZON_SOCIAL`, `SUNAT_TRA_DIRECCION`, `SUNAT_TRA_UBIGEO`
-   - `SUNAT_TRA_SOL_USER`, `SUNAT_TRA_SOL_PASSWORD` (usuario SOL real)
-   - `SUNAT_TRA_CERT_B64`, `SUNAT_TRA_CERT_PASS`
-   - Idem `SUNAT_AVI_*` para Avícola de Tony
-5. Cambiar `SUNAT_ENVIRONMENT=production`
-6. Emitir primera factura real
+**Paso a producción — ✅ HECHO (30 may 2026), salvo la 1ª emisión real:**
+1. ✅ Certificado digital tributario `.p12` descargado (Transavic `20612806901` y Avícola/RUC 10 `10710548841`), vigentes hasta 2029.
+2. ✅ Usuario SOL secundario `APIFACTU` (perfil "Emisión Electrónica") creado para ambas empresas.
+3. ✅ Cert convertido a base64 y cargado.
+4. ✅ Env vars reales configuradas **en Vercel** (no en `.env`): `SUNAT_TRA_*` y `SUNAT_AVI_*` (RUC, razón social, dirección, ubigeo, SOL user/pass `APIFACTU`/`Transavic123`, cert b64/pass).
+5. ✅ `SUNAT_ENVIRONMENT=production` en Vercel.
+6. ⏳ **Emitir la primera factura/boleta real** (la hace Hugo manualmente) — único pendiente.
 
 **Dependencias instaladas (mayo 2026):**
 - `xmlbuilder2@4` — XML UBL 2.1
