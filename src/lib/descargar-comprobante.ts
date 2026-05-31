@@ -53,9 +53,10 @@ export async function descargarXmlComprobante(id: string, serieNumero?: string):
   descargarBlob(await res.blob(), `${serieNumero || id}.xml`);
 }
 
-/** Descarga la Constancia de Recepción (CDR) de SUNAT. */
+/** Descarga la Constancia de Recepción (CDR) de SUNAT — ZIP oficial tal cual
+ * lo entrega SUNAT (contiene el XML R-<...>.xml con el ResponseCode). */
 export async function descargarCdrComprobante(id: string, serieNumero?: string): Promise<void> {
   const res = await fetch(`/api/comprobantes/${id}/cdr`);
   if (!res.ok) throw new Error("No se pudo descargar el CDR");
-  descargarBlob(await res.blob(), `R-${serieNumero || id}.xml`);
+  descargarBlob(await res.blob(), `R-${serieNumero || id}.zip`);
 }

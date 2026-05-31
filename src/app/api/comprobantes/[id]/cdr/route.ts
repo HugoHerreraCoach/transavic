@@ -6,7 +6,6 @@
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
-import { descomprimirCDR } from "@/lib/sunat/soap-client";
 
 export const dynamic = "force-dynamic";
 
@@ -64,32 +63,26 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     );
   }
 
-  // Servimos el XML del CDR (la constancia en sí), extraído del ZIP de SUNAT, para
-  // que el usuario reciba UN solo archivo limpio. (El ZIP de SUNAT incluye una
-  // carpeta "dummy/" vacía que confunde; el XML es lo legalmente relevante.)
-  try {
-    const cdrXml = await descomprimirCDR(c.cdr_base64);
-    const xmlBuffer = Buffer.from(cdrXml, "utf-8");
-    const filename = `R-${c.ruc_emisor}-${c.tipo}-${c.serie_numero}.xml`;
-    return new NextResponse(new Uint8Array(xmlBuffer), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/xml; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": String(xmlBuffer.length),
-      },
-    });
-  } catch {
-    // Fallback: si no se pudo extraer, servimos el ZIP original tal cual.
-    const cdrBuffer = Buffer.from(c.cdr_base64, "base64");
-    const filename = `R-${c.ruc_emisor}-${c.tipo}-${c.serie_numero}.zip`;
-    return new NextResponse(new Uint8Array(cdrBuffer), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${filename}"`,
-        "Content-Length": String(cdrBuffer.length),
-      },
-    });
+  // Servimos el ZIP de la CDR TAL CUAL lo entrega SUNAT (la constancia oficial).
+  // Antes intentábamos extraer solo el XML con un parser PKZip casero, pero con
+  // los ZIP de SUNAT (formato "data descriptor") ese parser calculaba mal el
+  // tamaño y devolvía un string VACÍO → el usuario descargaba 0 bytes. El ZIP
+  // crudo siempre es válido, abre bien y contiene R-<ruc>-<tipo>-<serie>.xml con
+  // el ResponseCode de aceptación. Es lo que un contador espera recibir.
+  const cdrBuffer = Buffer.from(c.cdr_base64, "base64");
+  if (cdrBuffer.length === 0) {
+    return NextResponse.json(
+      { error: "El CDR almacenado está vacío o corrupto." },
+      { status: 422 }
+    );
   }
+  const filename = `R-${c.ruc_emisor}-${c.tipo}-${c.serie_numero}.zip`;
+  return new NextResponse(new Uint8Array(cdrBuffer), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/zip",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Length": String(cdrBuffer.length),
+    },
+  });
 }

@@ -7,6 +7,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { getSunatConfig } from "@/lib/sunat/config-transavic";
 import type { EmpresaId } from "@/lib/sunat/types";
+import { parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 
 export const dynamic = "force-dynamic";
 
@@ -104,26 +105,38 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   }
   const c = rows[0];
 
-  // Traer items del pedido asociado (si existe)
-  let items: Array<{
-    descripcion: string;
-    unidadMedida: string;
-    cantidad: number;
-    precioUnitario: number;
-    valorVenta: number;
-    montoIGV: number;
-    precioTotal: number;
-  }> = [];
+  // ÍTEMS PARA EL PDF — fuente de verdad por prioridad:
+  //  (1) El XML firmado (lo que SUNAT recibió): fiel SIEMPRE e incluye el código.
+  //      Cubre tanto facturas standalone como las emitidas desde un pedido.
+  //  (2) pedido_items: solo si el comprobante aún no tiene XML (pendiente/error).
+  //  (3) Línea "global": último recurso (sin XML ni pedido).
+  // Antes se fabricaba siempre una línea genérica ("Venta a <cliente>", 1 UNIDAD)
+  // cuando no había pedido → el PDF de las facturas standalone salía con
+  // cantidad/unidad/código/descripción equivocados. El XML lo corrige.
+  let items: CpeItem[] = [];
 
-  if (c.pedido_id) {
+  // (1) XML firmado — la representación impresa DEBE coincidir con el XML.
+  if (c.xml_firmado_base64) {
+    try {
+      const xml = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
+      items = parseCpeItems(xml);
+    } catch {
+      items = [];
+    }
+  }
+
+  // (2) Fallback: ítems del pedido asociado (comprobante sin XML)
+  if (items.length === 0 && c.pedido_id) {
     const itemRows = (await sql`
       SELECT
         pi.producto_nombre AS descripcion,
         pi.unidad AS unidad_medida,
         COALESCE(pi.cantidad_real, pi.cantidad, 0)::numeric AS cantidad,
         COALESCE(pi.precio_unitario, 0)::numeric AS precio_unitario,
-        COALESCE(pi.subtotal_real, pi.subtotal, 0)::numeric AS subtotal
+        COALESCE(pi.subtotal_real, pi.subtotal, 0)::numeric AS subtotal,
+        pr.codigo AS codigo
       FROM pedido_items pi
+      LEFT JOIN productos pr ON pr.id = pi.producto_id
       WHERE pi.pedido_id = ${c.pedido_id}::uuid
       ORDER BY pi.created_at
     `) as Array<{
@@ -132,6 +145,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       cantidad: string | number;
       precio_unitario: string | number;
       subtotal: string | number;
+      codigo: string | null;
     }>;
 
     items = itemRows.map((r) => {
@@ -147,12 +161,12 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         valorVenta,
         montoIGV,
         precioTotal: Number((valorVenta + montoIGV).toFixed(2)),
+        codigo: r.codigo || "",
       };
     });
   }
 
-  // Si no hay items (comprobante sin pedido asociado), generar un item "global"
-  // a partir de los montos del comprobante
+  // (3) Último recurso: línea global desde los montos del comprobante
   if (items.length === 0) {
     const subtotal = Number(c.monto_subtotal);
     const igv = Number(c.monto_igv);
@@ -167,6 +181,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         valorVenta: subtotal,
         montoIGV: igv,
         precioTotal: subtotal + igv,
+        codigo: "",
       },
     ];
   }
