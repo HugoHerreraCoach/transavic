@@ -83,6 +83,25 @@ const ESTADO_LABELS: Record<EstadoPedido, string> = {
 
 const REPARTIDOR_COLORS = ["#8b5cf6", "#06b6d4", "#f97316", "#ec4899", "#14b8a6"];
 
+// Presets rápidos del filtro de estados. "Por entregar" = lo que todavía necesita
+// acción (saca del mapa los ya entregados/fallidos, que suelen ser la mayoría).
+const ESTADOS_TODOS: EstadoPedido[] = [
+  "Pendiente",
+  "En_Produccion",
+  "Listo_Para_Despacho",
+  "Asignado",
+  "En_Camino",
+  "Entregado",
+  "Fallido",
+];
+const ESTADOS_POR_ENTREGAR: EstadoPedido[] = [
+  "Pendiente",
+  "En_Produccion",
+  "Listo_Para_Despacho",
+  "Asignado",
+  "En_Camino",
+];
+
 const mapContainerStyle = { width: "100%", height: "100%" };
 
 const mapOptions: google.maps.MapOptions = {
@@ -132,8 +151,10 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
   });
 
   const [selectedPedido, setSelectedPedido] = useState<PedidoDespacho | null>(null);
+  // Abre enfocado en lo que falta repartir (saca del mapa los ya entregados, que
+  // suelen ser mayoría). El preset "Todos" del panel muestra todo en 1 clic.
   const [filtroEstados, setFiltroEstados] = useState<Set<EstadoPedido>>(
-    new Set(["Pendiente", "Asignado", "En_Camino", "Entregado", "Fallido"])
+    new Set(ESTADOS_POR_ENTREGAR)
   );
   // Selección ÚNICA de motorizado: null = ver todas las rutas; un id = ver SOLO esa.
   // (Antes era multi-toggle y aislar a uno obligaba a apagar los demás uno por uno.)
@@ -237,6 +258,30 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
       else next.add(estado);
       return next;
     });
+  };
+
+  // Presets rápidos de estados (1 clic en vez de togglear 7 a mano).
+  const aplicarPreset = (estados: EstadoPedido[]) => setFiltroEstados(new Set(estados));
+  const mismoSet = (arr: EstadoPedido[]) =>
+    arr.length === filtroEstados.size && arr.every((e) => filtroEstados.has(e));
+  const presetActivo: "porEntregar" | "todos" | "custom" = mismoSet(ESTADOS_TODOS)
+    ? "todos"
+    : mismoSet(ESTADOS_POR_ENTREGAR)
+    ? "porEntregar"
+    : "custom";
+
+  // Conteo REAL de pedidos por estado (con coords) en el foco actual de motorizado,
+  // independiente del filtro de estados → el número no miente aunque el estado esté oculto.
+  const totalPorEstado = (estado: EstadoPedido): number => {
+    let n = 0;
+    if (repartidorFoco === null) {
+      n += pendientes.filter((p) => p.latitude && p.longitude && p.estado === estado).length;
+    }
+    repartidores.forEach((r) => {
+      if (!esVisible(r.id)) return;
+      n += r.pedidos.filter((p) => p.latitude && p.longitude && p.estado === estado).length;
+    });
+    return n;
   };
 
   if (loadError) {
@@ -373,31 +418,6 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
 
       {/* ── Panel de Filtros ── */}
       <div className="w-full lg:w-[260px] flex-shrink-0 space-y-4">
-        {/* Filtro por estado */}
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Estados</h3>
-          <div className="space-y-1.5">
-            {(Object.keys(ESTADO_COLORS) as EstadoPedido[]).map((estado) => {
-              const active = filtroEstados.has(estado);
-              const count = allPedidos.filter((p) => p.pedido.estado === estado).length;
-              return (
-                <button
-                  key={estado}
-                  onClick={() => toggleEstado(estado)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                    active ? "bg-gray-50 text-gray-800" : "text-gray-400 opacity-50"
-                  }`}
-                >
-                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: ESTADO_COLORS[estado] }} />
-                  <span className="flex-1 text-left">{ESTADO_LABELS[estado]}</span>
-                  <span className="text-[10px] font-bold">{count}</span>
-                  {active ? <FiEye size={12} /> : <FiEyeOff size={12} />}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
         {/* Ver ruta de — selección ÚNICA de motorizado (1 clic aísla su ruta) */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
@@ -491,6 +511,57 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
               . Toca <span className="font-semibold">Todos los motorizados</span> para ver el resto.
             </p>
           )}
+        </div>
+
+        {/* Estados — presets rápidos (1 clic) + toggles finos */}
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Estados</h3>
+
+          {/* Lo más común: enfocar lo que falta repartir, sin apagar estados a mano */}
+          <div className="flex gap-1.5 mb-3">
+            <button
+              onClick={() => aplicarPreset(ESTADOS_POR_ENTREGAR)}
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-[0.98] ${
+                presetActivo === "porEntregar"
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              Por entregar
+            </button>
+            <button
+              onClick={() => aplicarPreset(ESTADOS_TODOS)}
+              className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-[0.98] ${
+                presetActivo === "todos"
+                  ? "bg-gray-900 text-white"
+                  : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+              }`}
+            >
+              Todos
+            </button>
+          </div>
+
+          {/* Toggles finos por estado, con el conteo real (no miente aunque esté oculto) */}
+          <div className="space-y-1">
+            {ESTADOS_TODOS.map((estado) => {
+              const active = filtroEstados.has(estado);
+              const count = totalPorEstado(estado);
+              return (
+                <button
+                  key={estado}
+                  onClick={() => toggleEstado(estado)}
+                  className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-medium transition-all active:scale-[0.98] ${
+                    active ? "bg-gray-50 text-gray-800" : "text-gray-400"
+                  }`}
+                >
+                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: ESTADO_COLORS[estado] }} />
+                  <span className="flex-1 text-left">{ESTADO_LABELS[estado]}</span>
+                  <span className="text-[10px] font-bold tabular-nums">{count}</span>
+                  {active ? <FiEye size={12} /> : <FiEyeOff size={12} />}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Leyenda de líneas (rutas dibujadas) */}
