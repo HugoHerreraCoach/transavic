@@ -40,7 +40,11 @@ const ConfigSchema = z.object({
     minimoDiario: z.number().min(0).max(10000000),
     premio: z.string().max(120),
   }),
-  metasIndividuales: z.object({ activo: z.boolean() }),
+  metasIndividuales: z.object({
+    activo: z.boolean(),
+    // % de crecimiento de la meta automática mensual (10, 15, cualquier número ≥ 0).
+    factorCrecimientoPct: z.number().min(0).max(1000),
+  }),
 });
 
 export async function GET() {

@@ -603,7 +603,7 @@ function PesoModal({
             </div>
           )}
 
-          {/* Botón imprimir guía: solo si hay pesos registrados */}
+          {/* Botón imprimir orden de pedido: solo si hay pesos registrados */}
           {todoCompleto && (
             <a
               href={`/pedidos/${pedido.id}/guia`}
@@ -612,7 +612,7 @@ function PesoModal({
               className="mt-2 block w-full px-4 py-2.5 bg-gray-700 text-white rounded-lg font-medium hover:bg-gray-800 text-center flex items-center justify-center gap-2"
             >
               <FiPrinter />
-              Imprimir guía de remisión
+              Imprimir orden de pedido
             </a>
           )}
         </div>

@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { calcularCambios, tocaCamposAuditables } from "@/lib/pedido-historial";
 
 export const dynamic = "force-dynamic";
 
@@ -215,6 +216,19 @@ export async function PATCH(request: Request) {
       );
     }
 
+    // ── Auditoría: si este PATCH corrige datos del pedido, leemos los valores
+    //    ANTES de actualizar para poder guardar el diff (antes → después). ──
+    let antesAuditable: Record<string, unknown> | null = null;
+    if (tocaCamposAuditables(dataToUpdate as Record<string, unknown>)) {
+      const antesRows = await sql`
+        SELECT cliente, whatsapp, direccion, distrito, tipo_cliente, detalle,
+               hora_entrega, razon_social, ruc_dni, notas, detalle_final, empresa,
+               TO_CHAR(fecha_pedido, 'YYYY-MM-DD') AS fecha_pedido
+        FROM pedidos WHERE id = ${id}
+      `;
+      antesAuditable = (antesRows[0] as Record<string, unknown>) ?? null;
+    }
+
     // Construimos la consulta SET dinámicamente
     const setClauses = updateEntries
       .map(([key], index) => `${key} = $${index + 1}`)
@@ -224,6 +238,32 @@ export async function PATCH(request: Request) {
     const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
     params.push(id);
     await sql.query(query, params);
+
+    // ── Auditoría: guardar el historial de la corrección (no bloqueante: si
+    //    el INSERT falla, la edición igual quedó aplicada). ──
+    if (antesAuditable) {
+      try {
+        const cambios = calcularCambios(
+          antesAuditable,
+          dataToUpdate as Record<string, unknown>
+        );
+        if (cambios.length > 0) {
+          await sql`
+            INSERT INTO pedido_ediciones
+              (pedido_id, usuario_id, usuario_nombre, usuario_rol, cambios)
+            VALUES (
+              ${id},
+              ${session.user.id ?? null},
+              ${session.user.name || "Desconocido"},
+              ${session.user.role ?? null},
+              ${JSON.stringify(cambios)}::jsonb
+            )
+          `;
+        }
+      } catch (e) {
+        console.error("No se pudo registrar el historial de edición:", e);
+      }
+    }
 
     return NextResponse.json(
       { message: "Pedido actualizado exitosamente" },
@@ -249,10 +289,11 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // ── Rol: solo admin y asesor pueden eliminar pedidos (no repartidor) ──
-    if (session.user.role === "repartidor") {
+    // ── Rol: SOLO el admin puede eliminar pedidos. Las asesoras corrigen con
+    //    "Editar" (queda en el historial), pero no borran; el repartidor tampoco. ──
+    if (session.user.role !== "admin") {
       return NextResponse.json(
-        { error: "No tienes permiso para eliminar pedidos." },
+        { error: "Solo un administrador puede eliminar pedidos." },
         { status: 403 }
       );
     }
@@ -271,25 +312,6 @@ export async function DELETE(request: Request) {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
-
-    // ── Ownership: asesor solo puede eliminar sus propios pedidos (admin: cualquiera) ──
-    if (session.user.role === "asesor") {
-      const pedidoCheck = await sql`
-        SELECT asesor_id FROM pedidos WHERE id = ${id}
-      `;
-      if (pedidoCheck.length === 0) {
-        return NextResponse.json(
-          { error: "Pedido no encontrado para eliminar" },
-          { status: 404 }
-        );
-      }
-      if (pedidoCheck[0].asesor_id !== session.user.id) {
-        return NextResponse.json(
-          { error: "No tienes permiso para eliminar este pedido." },
-          { status: 403 }
-        );
-      }
-    }
 
     const result = await sql`
       DELETE FROM pedidos

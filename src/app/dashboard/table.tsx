@@ -8,6 +8,7 @@ import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiM
 import { useRouter } from 'next/navigation';
 import ModalShell from "@/components/ModalShell";
 import EmitirComprobanteClient from "./comprobantes/nuevo/emitir-client";
+import HistorialPedidoModal from "./historial-pedido-modal";
 import { descargarPdfComprobante, descargarXmlComprobante, descargarCdrComprobante } from "@/lib/descargar-comprobante";
 
 // Comprobante (forma reducida) que la lista de pedidos necesita para el menú
@@ -81,6 +82,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const [showFacturado, setShowFacturado] = useState(false);
     const [descargando, setDescargando] = useState<string | null>(null);
     const [showMenu, setShowMenu] = useState(false);
+    const [showHistorial, setShowHistorial] = useState(false);
     const isAvicola = (pedido.empresa || "").trim().toLowerCase().startsWith("av");
     const yaTieneComprobante = (comprobantes?.length ?? 0) > 0;
 
@@ -368,6 +370,19 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                         <button
                                             onClick={() => {
                                                 setShowMenu(false);
+                                                setShowHistorial(true);
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                        >
+                                            <FiClock className="text-gray-400" />
+                                            <span>Ver historial</span>
+                                        </button>
+                                    )}
+
+                                    {userRole === 'admin' && (
+                                        <button
+                                            onClick={() => {
+                                                setShowMenu(false);
                                                 handleDelete();
                                             }}
                                             className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-left cursor-pointer"
@@ -395,6 +410,16 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                         />
                     </Suspense>
                 </ModalShell>
+            )}
+
+            {/* Historial de correcciones (solo admin) */}
+            {showHistorial && (
+                <HistorialPedidoModal
+                    pedidoId={pedido.id}
+                    pedidoCliente={pedido.cliente}
+                    isOpen={showHistorial}
+                    onClose={() => setShowHistorial(false)}
+                />
             )}
         </>
     );

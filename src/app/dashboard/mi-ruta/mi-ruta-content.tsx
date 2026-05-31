@@ -1506,7 +1506,7 @@ function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
           ? "✓ Subida"
           : error
           ? error
-          : "Subir foto de guía firmada"
+          : "Subir foto de la orden firmada"
       }
       onClick={(e) => e.stopPropagation()}
     >

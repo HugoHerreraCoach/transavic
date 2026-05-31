@@ -9,6 +9,7 @@ import {
   ventasHoy,
   ventasSemana,
   rachaDiaria,
+  getBonoMensual,
 } from "@/lib/metas";
 
 export const dynamic = "force-dynamic";
@@ -30,11 +31,12 @@ export async function GET(request: Request) {
     }
 
     const meta = await calcularMetaDiaria(asesorId);
-    const [ventasMes, ventasDia, ventasSem, racha] = await Promise.all([
+    const [ventasMes, ventasDia, ventasSem, racha, bono] = await Promise.all([
       ventasMesActual(asesorId),
       ventasHoy(asesorId),
       ventasSemana(asesorId),
       rachaDiaria(asesorId),
+      getBonoMensual(asesorId),
     ]);
     const metaSemanal = Number((meta.metaDiaria * 6).toFixed(2)); // lun–sáb
 
@@ -45,6 +47,7 @@ export async function GET(request: Request) {
       ventasSemana: ventasSem,
       metaSemanal,
       racha,
+      bono, // bono personalizado al cumplir la meta del mes ("" si no hay)
       porcentajeAvanceMensual:
         meta.metaMensual > 0
           ? Math.round((ventasMes / meta.metaMensual) * 100)

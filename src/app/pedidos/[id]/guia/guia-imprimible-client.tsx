@@ -1,6 +1,9 @@
 // src/app/pedidos/[id]/guia/guia-imprimible-client.tsx
-// Componente cliente: render HTML de la guía + botón "Imprimir / Guardar PDF"
-// usa window.print() del navegador — sin librerías PDF, $0 costo.
+// Componente cliente: render HTML de la "orden de pedido" + botón "Imprimir / Guardar PDF".
+// Usa window.print() del navegador — sin librerías PDF, $0 costo.
+// Toggle "Incluir precios": cada cliente maneja precios distintos, así que al
+// imprimir el usuario decide si la orden lleva precios (P. Unit. / Importe /
+// Total) o solo las cantidades.
 "use client";
 
 import { useEffect, useState } from "react";
@@ -36,6 +39,10 @@ export default function GuiaImprimibleClient(props: Props) {
   // desajuste de hidratación (server HTML ≠ client HTML).
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
+  // Cada cliente maneja precios distintos → el usuario decide al imprimir si la
+  // orden de pedido muestra precios o solo cantidades. Por defecto los incluye
+  // (conserva el comportamiento anterior); se puede ocultar con un clic.
+  const [incluirPrecios, setIncluirPrecios] = useState(true);
   const puedeCompartir =
     mounted && typeof navigator !== "undefined" && "share" in navigator;
 
@@ -45,13 +52,22 @@ export default function GuiaImprimibleClient(props: Props) {
       <div className="print:hidden bg-white shadow-sm border-b">
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
           <div>
-            <div className="text-xs text-gray-500">Guía de Remisión</div>
+            <div className="text-xs text-gray-500">Orden de Pedido</div>
             <div className="font-bold text-gray-800">N° {props.numero}</div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer select-none rounded-lg border border-gray-200 px-3 py-2 hover:bg-gray-50 transition-colors active:scale-[0.98]">
+              <input
+                type="checkbox"
+                checked={incluirPrecios}
+                onChange={(e) => setIncluirPrecios(e.target.checked)}
+                className="h-4 w-4 accent-red-600"
+              />
+              Incluir precios
+            </label>
             <button
               onClick={() => window.print()}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2"
+              className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2 transition-transform active:scale-[0.98]"
             >
               <FiPrinter />
               Imprimir / Guardar PDF
@@ -61,14 +77,14 @@ export default function GuiaImprimibleClient(props: Props) {
                 onClick={async () => {
                   try {
                     await navigator.share({
-                      title: `Guía ${props.numero} - ${props.cliente}`,
+                      title: `Orden de pedido ${props.numero} - ${props.cliente}`,
                       url: window.location.href,
                     });
                   } catch {
                     /* user canceled */
                   }
                 }}
-                className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 flex items-center gap-2"
+                className="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600 flex items-center gap-2 transition-transform active:scale-[0.98]"
               >
                 <FiShare2 />
                 Compartir
@@ -123,8 +139,8 @@ export default function GuiaImprimibleClient(props: Props) {
               <tr>
                 <th className="p-2 text-left">Cant.</th>
                 <th className="p-2 text-left">Producto</th>
-                <th className="p-2 text-right">P. Unit.</th>
-                <th className="p-2 text-right">Importe</th>
+                {incluirPrecios && <th className="p-2 text-right">P. Unit.</th>}
+                {incluirPrecios && <th className="p-2 text-right">Importe</th>}
               </tr>
             </thead>
             <tbody>
@@ -134,34 +150,41 @@ export default function GuiaImprimibleClient(props: Props) {
                     {it.cantidad} {it.unidad}
                   </td>
                   <td className="p-2">{it.producto}</td>
-                  <td className="p-2 text-right font-mono">
-                    {it.precio > 0 ? `S/ ${it.precio.toFixed(2)}` : "—"}
-                  </td>
-                  <td className="p-2 text-right font-mono font-semibold">
-                    {it.subtotal > 0 ? `S/ ${it.subtotal.toFixed(2)}` : "—"}
-                  </td>
+                  {incluirPrecios && (
+                    <td className="p-2 text-right font-mono">
+                      {it.precio > 0 ? `S/ ${it.precio.toFixed(2)}` : "—"}
+                    </td>
+                  )}
+                  {incluirPrecios && (
+                    <td className="p-2 text-right font-mono font-semibold">
+                      {it.subtotal > 0 ? `S/ ${it.subtotal.toFixed(2)}` : "—"}
+                    </td>
+                  )}
                 </tr>
               ))}
-              {/* Filas vacías para que se vea como guía real */}
+              {/* Filas vacías para que la orden se vea ordenada aunque tenga pocos ítems */}
               {Array.from({ length: Math.max(0, 6 - props.items.length) }).map((_, i) => (
                 <tr key={`empty-${i}`} className="border-t border-gray-200">
-                  <td className="p-2">&nbsp;</td>
-                  <td className="p-2">&nbsp;</td>
-                  <td className="p-2">&nbsp;</td>
-                  <td className="p-2">&nbsp;</td>
+                  {Array.from({ length: incluirPrecios ? 4 : 2 }).map((__, j) => (
+                    <td key={j} className="p-2">
+                      &nbsp;
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
-            <tfoot>
-              <tr className="bg-gray-100 border-t-2 border-red-700">
-                <td colSpan={3} className="p-2 text-right font-bold">
-                  TOTAL S/
-                </td>
-                <td className="p-2 text-right font-bold text-lg text-red-700">
-                  {props.total.toFixed(2)}
-                </td>
-              </tr>
-            </tfoot>
+            {incluirPrecios && (
+              <tfoot>
+                <tr className="bg-gray-100 border-t-2 border-red-700">
+                  <td colSpan={3} className="p-2 text-right font-bold">
+                    TOTAL S/
+                  </td>
+                  <td className="p-2 text-right font-bold text-lg text-red-700">
+                    {props.total.toFixed(2)}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
           </table>
 
           {props.notas && (

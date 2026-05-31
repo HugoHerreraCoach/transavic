@@ -29,14 +29,17 @@ export interface IncentivosConfig {
   };
   // Metas individuales (mensual por asesora). Si está activo, la asesora ve sus
   // tarjetas de progreso (Hoy/Semana/Mes) en el panel.
-  metasIndividuales: { activo: boolean };
+  // `factorCrecimientoPct`: % de crecimiento de la meta automática mensual
+  // (meta = ventas_del_mes_anterior × (1 + pct/100)). Configurable por el admin
+  // (10, 15, cualquier número ≥ 0). El override manual por asesora lo pisa.
+  metasIndividuales: { activo: boolean; factorCrecimientoPct: number };
 }
 
 export const DEFAULT_INCENTIVOS: IncentivosConfig = {
   metaEquipoSemanal: { activo: false, criterio: "monto", monto: 0, premio: "" },
   rankingMensual: { activo: false, criterio: "monto", premios: [] },
   rachaSemanal: { activo: false, diaFin: 6, criterio: "monto", minimoDiario: 0, premio: "" },
-  metasIndividuales: { activo: true },
+  metasIndividuales: { activo: true, factorCrecimientoPct: 15 },
 };
 
 export async function getIncentivosConfig(): Promise<IncentivosConfig> {
@@ -55,11 +58,24 @@ export async function getIncentivosConfig(): Promise<IncentivosConfig> {
   rankingMensual.criterio = norm(rankingMensual.criterio);
   const rachaSemanal = { ...DEFAULT_INCENTIVOS.rachaSemanal, ...(v.rachaSemanal ?? {}) };
   rachaSemanal.criterio = norm(rachaSemanal.criterio);
+  const metasIndividuales = {
+    ...DEFAULT_INCENTIVOS.metasIndividuales,
+    ...(v.metasIndividuales ?? {}),
+  };
+  // El % de crecimiento debe ser un número ≥ 0; si viene corrupto, default 15.
+  if (
+    typeof metasIndividuales.factorCrecimientoPct !== "number" ||
+    !isFinite(metasIndividuales.factorCrecimientoPct) ||
+    metasIndividuales.factorCrecimientoPct < 0
+  ) {
+    metasIndividuales.factorCrecimientoPct =
+      DEFAULT_INCENTIVOS.metasIndividuales.factorCrecimientoPct;
+  }
   return {
     metaEquipoSemanal,
     rankingMensual,
     rachaSemanal,
-    metasIndividuales: { ...DEFAULT_INCENTIVOS.metasIndividuales, ...(v.metasIndividuales ?? {}) },
+    metasIndividuales,
   };
 }
 

@@ -1,7 +1,7 @@
 // src/app/dashboard/despacho/mapa-despacho.tsx
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF, PolylineF } from "@react-google-maps/api";
 import { EstadoPedido } from "@/lib/types";
 import {
@@ -13,6 +13,8 @@ import {
   FiAlertTriangle,
   FiEye,
   FiEyeOff,
+  FiCheck,
+  FiUsers,
 } from "react-icons/fi";
 
 // ── Types ──
@@ -133,49 +135,71 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
   const [filtroEstados, setFiltroEstados] = useState<Set<EstadoPedido>>(
     new Set(["Pendiente", "Asignado", "En_Camino", "Entregado", "Fallido"])
   );
-  const [filtroRepartidores, setFiltroRepartidores] = useState<Set<string>>(
-    new Set(repartidores.map((r) => r.id))
-  );
+  // Selección ÚNICA de motorizado: null = ver todas las rutas; un id = ver SOLO esa.
+  // (Antes era multi-toggle y aislar a uno obligaba a apagar los demás uno por uno.)
+  const [repartidorFoco, setRepartidorFoco] = useState<string | null>(null);
   const [showPendientes, setShowPendientes] = useState(true);
+  const [mapRef, setMapRef] = useState<google.maps.Map | null>(null);
+
+  // Color estable por repartidor (según su posición original) — así el marcador y
+  // su línea de ruta siempre coinciden, incluso al enfocar uno solo.
+  const colorPorRepartidor = useMemo(() => {
+    const m = new Map<string, string>();
+    repartidores.forEach((r, i) =>
+      m.set(r.id, REPARTIDOR_COLORS[i % REPARTIDOR_COLORS.length])
+    );
+    return m;
+  }, [repartidores]);
+
+  const esVisible = useCallback(
+    (id: string) => repartidorFoco === null || repartidorFoco === id,
+    [repartidorFoco]
+  );
 
   // Todos los pedidos con coordenadas
   const allPedidos = useMemo(() => {
-    const items: { pedido: PedidoDespacho; repartidorName?: string; repartidorId?: string; colorIndex?: number }[] = [];
+    const items: { pedido: PedidoDespacho; repartidorName?: string; repartidorId?: string }[] = [];
 
-    // Pendientes sin asignar
-    if (showPendientes) {
+    // Pendientes sin asignar (capa independiente; se ocultan al enfocar un
+    // motorizado para que "ver solo su ruta" sea de verdad solo la suya).
+    if (showPendientes && repartidorFoco === null) {
       pendientes
         .filter((p) => p.latitude && p.longitude && filtroEstados.has(p.estado))
         .forEach((p) => items.push({ pedido: p }));
     }
 
-    // Pedidos asignados
-    repartidores.forEach((r, ri) => {
-      if (!filtroRepartidores.has(r.id)) return;
+    // Pedidos asignados (solo el motorizado en foco, o todos si no hay foco)
+    repartidores.forEach((r) => {
+      if (!esVisible(r.id)) return;
       r.pedidos
         .filter((p) => p.latitude && p.longitude && filtroEstados.has(p.estado))
-        .forEach((p) => items.push({ pedido: p, repartidorName: r.name, repartidorId: r.id, colorIndex: ri }));
+        .forEach((p) => items.push({ pedido: p, repartidorName: r.name, repartidorId: r.id }));
     });
 
     return items;
-  }, [pendientes, repartidores, filtroEstados, filtroRepartidores, showPendientes]);
+  }, [pendientes, repartidores, filtroEstados, repartidorFoco, showPendientes, esVisible]);
 
-  // Líneas conectoras por repartidor
+  // Líneas conectoras por repartidor (solo los visibles)
   const polylines = useMemo(() => {
     return repartidores
-      .filter((r) => filtroRepartidores.has(r.id))
-      .map((r, ri) => {
+      .filter((r) => esVisible(r.id))
+      .map((r) => {
         const coords = r.pedidos
           .filter((p) => p.latitude && p.longitude && !["Entregado", "Fallido"].includes(p.estado))
           .sort((a, b) => (a.orden_ruta || 99) - (b.orden_ruta || 99))
           .map((p) => ({ lat: p.latitude!, lng: p.longitude! }));
-        return { repartidorId: r.id, path: coords, color: REPARTIDOR_COLORS[ri % REPARTIDOR_COLORS.length] };
+        return {
+          repartidorId: r.id,
+          path: coords,
+          color: colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0],
+        };
       })
       .filter((pl) => pl.path.length > 1);
-  }, [repartidores, filtroRepartidores]);
+  }, [repartidores, esVisible, colorPorRepartidor]);
 
-  // Auto-fit bounds
-  const onMapLoad = useCallback(
+  // Encaja el mapa en lo que está visible. Se vuelve a llamar cuando cambia el
+  // foco → al elegir un motorizado, el mapa hace zoom a SU ruta.
+  const ajustarEncuadre = useCallback(
     (map: google.maps.Map) => {
       if (allPedidos.length === 0) return;
       const bounds = new google.maps.LatLngBounds();
@@ -184,10 +208,26 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
           bounds.extend({ lat: pedido.latitude, lng: pedido.longitude });
         }
       });
+      if (baseLocation && repartidorFoco === null) {
+        bounds.extend({ lat: baseLocation.lat, lng: baseLocation.lng });
+      }
       map.fitBounds(bounds, 60);
     },
-    [allPedidos]
+    [allPedidos, baseLocation, repartidorFoco]
   );
+
+  const onMapLoad = useCallback(
+    (map: google.maps.Map) => {
+      setMapRef(map);
+      ajustarEncuadre(map);
+    },
+    [ajustarEncuadre]
+  );
+
+  // Reencuadrar al cambiar el foco/filtro (sin esperar a recargar el mapa).
+  useEffect(() => {
+    if (mapRef) ajustarEncuadre(mapRef);
+  }, [mapRef, ajustarEncuadre]);
 
   // Toggle filtros
   const toggleEstado = (estado: EstadoPedido) => {
@@ -195,15 +235,6 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
       const next = new Set(prev);
       if (next.has(estado)) next.delete(estado);
       else next.add(estado);
-      return next;
-    });
-  };
-
-  const toggleRepartidor = (id: string) => {
-    setFiltroRepartidores((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
       return next;
     });
   };
@@ -367,59 +398,117 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
           </div>
         </div>
 
-        {/* Filtro por repartidor */}
+        {/* Ver ruta de — selección ÚNICA de motorizado (1 clic aísla su ruta) */}
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Repartidores</h3>
+          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+            Ver ruta de
+          </h3>
+          <p className="text-[11px] text-gray-400 mb-3">
+            Elige un motorizado para ver solo su ruta en el mapa.
+          </p>
+
+          {/* Todos */}
           <button
-            onClick={() => setShowPendientes(!showPendientes)}
-            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all mb-1.5 ${
-              showPendientes ? "bg-amber-50 text-amber-800" : "text-gray-400 opacity-50"
+            onClick={() => setRepartidorFoco(null)}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all active:scale-[0.98] ${
+              repartidorFoco === null
+                ? "bg-gray-900 text-white"
+                : "bg-gray-50 text-gray-600 hover:bg-gray-100"
             }`}
           >
-            <span className="w-3 h-3 rounded-full flex-shrink-0 bg-amber-400" />
-            <span className="flex-1 text-left">Sin Asignar</span>
-            <span className="text-[10px] font-bold">{pendientes.filter((p) => p.latitude && p.longitude).length}</span>
-            {showPendientes ? <FiEye size={12} /> : <FiEyeOff size={12} />}
+            <FiUsers size={13} className="flex-shrink-0" />
+            <span className="flex-1 text-left">Todos los motorizados</span>
+            {repartidorFoco === null && <FiCheck size={13} />}
           </button>
-          {repartidores.map((r, ri) => {
-            const active = filtroRepartidores.has(r.id);
-            const color = REPARTIDOR_COLORS[ri % REPARTIDOR_COLORS.length];
-            const count = r.pedidos.filter((p) => p.latitude && p.longitude).length;
-            const enCamino = r.pedidos.find((p) => p.estado === "En_Camino");
-            return (
+
+          {/* Un motorizado por fila — clic = ver solo el suyo */}
+          <div className="mt-2 space-y-1">
+            {repartidores.map((r) => {
+              const seleccionado = repartidorFoco === r.id;
+              const color = colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0];
+              const count = r.pedidos.filter((p) => p.latitude && p.longitude).length;
+              const enCamino = r.pedidos.find((p) => p.estado === "En_Camino");
+              return (
+                <button
+                  key={r.id}
+                  onClick={() => setRepartidorFoco(seleccionado ? null : r.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all active:scale-[0.98] ${
+                    seleccionado ? "bg-gray-50 text-gray-900" : "text-gray-700 hover:bg-gray-50"
+                  }`}
+                  style={seleccionado ? { boxShadow: `inset 0 0 0 2px ${color}` } : undefined}
+                >
+                  <span
+                    className="w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  <div className="flex-1 text-left min-w-0">
+                    <span className="block truncate">{r.name}</span>
+                    {enCamino && (
+                      <span className="block text-[10px] text-indigo-600 truncate">
+                        <FiNavigation size={8} className="inline mr-0.5" />→ {enCamino.cliente}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-bold text-gray-400">{count}</span>
+                  {seleccionado && <FiCheck size={13} style={{ color }} />}
+                </button>
+              );
+            })}
+            {repartidores.length === 0 && (
+              <p className="text-xs text-gray-400 px-3 py-2">Nadie con pedidos asignados.</p>
+            )}
+          </div>
+
+          {/* Capa "Sin asignar" — solo tiene sentido viendo a todos */}
+          {repartidorFoco === null && (
+            <div className="mt-2 pt-2 border-t border-gray-100">
               <button
-                key={r.id}
-                onClick={() => toggleRepartidor(r.id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
-                  active ? "bg-gray-50 text-gray-800" : "text-gray-400 opacity-50"
+                onClick={() => setShowPendientes(!showPendientes)}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all active:scale-[0.98] ${
+                  showPendientes ? "text-amber-800" : "text-gray-400"
                 }`}
               >
-                <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                <div className="flex-1 text-left">
-                  <span>{r.name}</span>
-                  {enCamino && active && (
-                    <span className="block text-[10px] text-indigo-600">
-                      <FiNavigation size={8} className="inline mr-0.5" />→ {enCamino.cliente}
-                    </span>
-                  )}
-                </div>
-                <span className="text-[10px] font-bold">{count}</span>
-                {active ? <FiEye size={12} /> : <FiEyeOff size={12} />}
+                <span
+                  className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                    showPendientes ? "bg-amber-400" : "bg-gray-300"
+                  }`}
+                />
+                <span className="flex-1 text-left">Sin asignar</span>
+                <span className="text-[10px] font-bold">
+                  {pendientes.filter((p) => p.latitude && p.longitude).length}
+                </span>
+                {showPendientes ? <FiEye size={12} /> : <FiEyeOff size={12} />}
               </button>
-            );
-          })}
+            </div>
+          )}
+
+          {repartidorFoco !== null && (
+            <p className="text-[11px] text-gray-400 mt-3 pt-3 border-t border-gray-100">
+              Mostrando solo la ruta de{" "}
+              <span className="font-semibold text-gray-600">
+                {repartidores.find((r) => r.id === repartidorFoco)?.name}
+              </span>
+              . Toca <span className="font-semibold">Todos los motorizados</span> para ver el resto.
+            </p>
+          )}
         </div>
 
-        {/* Leyenda de líneas */}
+        {/* Leyenda de líneas (rutas dibujadas) */}
         {polylines.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Rutas</h3>
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              {repartidorFoco === null ? "Rutas dibujadas" : "Ruta"}
+            </h3>
             <div className="space-y-1">
               {repartidores
-                .filter((r) => filtroRepartidores.has(r.id))
-                .map((r, ri) => (
+                .filter((r) => esVisible(r.id))
+                .filter((r) => polylines.some((pl) => pl.repartidorId === r.id))
+                .map((r) => (
                   <div key={r.id} className="flex items-center gap-2 text-xs text-gray-600">
-                    <div className="w-6 h-0.5 rounded" style={{ backgroundColor: REPARTIDOR_COLORS[ri % REPARTIDOR_COLORS.length] }} />
+                    <div
+                      className="w-6 h-0.5 rounded"
+                      style={{ backgroundColor: colorPorRepartidor.get(r.id) }}
+                    />
                     <span>{r.name}</span>
                   </div>
                 ))}

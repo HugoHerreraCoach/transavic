@@ -36,21 +36,23 @@ interface Config {
     minimoDiario: number;
     premio: string;
   };
-  metasIndividuales: { activo: boolean };
+  metasIndividuales: { activo: boolean; factorCrecimientoPct: number };
 }
 interface AsesoraRow {
   id: string;
   nombre: string;
-  metaMensual: number;
+  metaMensual: number; // meta efectiva (override o automática)
   metaDiaria: number;
   ventasMesActual: number;
+  metaOverride: number | null; // null = meta automática; número = meta fija
+  bono: string; // bono al cumplir la meta del mes ("" = sin bono)
 }
 
 const DEFAULT_CONFIG: Config = {
   metaEquipoSemanal: { activo: false, criterio: "monto", monto: 0, premio: "" },
   rankingMensual: { activo: false, criterio: "monto", premios: [] },
   rachaSemanal: { activo: false, diaFin: 6, criterio: "monto", minimoDiario: 0, premio: "" },
-  metasIndividuales: { activo: true },
+  metasIndividuales: { activo: true, factorCrecimientoPct: 15 },
 };
 
 const CRITERIOS: { v: Criterio; l: string }[] = [
@@ -170,6 +172,7 @@ export default function IncentivosClient() {
   const [config, setConfig] = useState<Config>(DEFAULT_CONFIG);
   const [asesoras, setAsesoras] = useState<AsesoraRow[]>([]);
   const [metaInputs, setMetaInputs] = useState<Record<string, string>>({});
+  const [bonoInputs, setBonoInputs] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingMetaId, setSavingMetaId] = useState<string | null>(null);
@@ -189,11 +192,13 @@ export default function IncentivosClient() {
         const j = await rAse.json();
         const lista: AsesoraRow[] = j.asesoras ?? [];
         setAsesoras(lista);
+        // El input de meta refleja el OVERRIDE (vacío = automática), no la meta efectiva.
         setMetaInputs(
           Object.fromEntries(
-            lista.map((a) => [a.id, a.metaMensual > 0 ? String(a.metaMensual) : ""])
+            lista.map((a) => [a.id, a.metaOverride != null ? String(a.metaOverride) : ""])
           )
         );
+        setBonoInputs(Object.fromEntries(lista.map((a) => [a.id, a.bono ?? ""])));
       }
     } catch {
       setMsg({ tipo: "error", txt: "No pude cargar la configuración." });
@@ -213,23 +218,38 @@ export default function IncentivosClient() {
   }, [msg]);
 
   async function guardarMeta(id: string) {
-    const monto = parseFloat(metaInputs[id] || "0");
-    if (!(monto > 0)) {
-      setMsg({ tipo: "error", txt: "Ingresa un monto mayor a 0." });
-      return;
+    // Meta opcional: vacío = automática. Si hay valor, debe ser > 0.
+    const raw = (metaInputs[id] || "").trim();
+    let montoMeta: number | null = null;
+    if (raw !== "") {
+      const n = parseFloat(raw);
+      if (!(n > 0)) {
+        setMsg({
+          tipo: "error",
+          txt: "La meta debe ser mayor a 0 (o déjala vacía para automática).",
+        });
+        return;
+      }
+      montoMeta = n;
     }
+    const bono = (bonoInputs[id] || "").trim();
     setSavingMetaId(id);
     try {
       const res = await fetch("/api/metas/override", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ asesor_id: id, mes: mesActualISO(), monto_meta: monto }),
+        body: JSON.stringify({
+          asesor_id: id,
+          mes: mesActualISO(),
+          monto_meta: montoMeta,
+          bono: bono || null,
+        }),
       });
       if (!res.ok) throw new Error();
-      setMsg({ tipo: "ok", txt: "Meta guardada." });
-      setAsesoras((prev) => prev.map((a) => (a.id === id ? { ...a, metaMensual: monto } : a)));
+      setMsg({ tipo: "ok", txt: "Guardado." });
+      await cargar(); // refresca meta efectiva, override y bono desde el servidor
     } catch {
-      setMsg({ tipo: "error", txt: "No se pudo guardar la meta." });
+      setMsg({ tipo: "error", txt: "No se pudo guardar." });
     } finally {
       setSavingMetaId(null);
     }
@@ -585,72 +605,129 @@ export default function IncentivosClient() {
           titulo="Metas individuales"
           resumen="Cada asesora ve su progreso del día, la semana y el mes."
           activo={config.metasIndividuales.activo}
-          onToggle={(v) => setConfig({ ...config, metasIndividuales: { activo: v } })}
+          onToggle={(v) =>
+            setConfig({
+              ...config,
+              metasIndividuales: { ...config.metasIndividuales, activo: v },
+            })
+          }
         >
+          {/* % de crecimiento de la meta automática (configurable). Se guarda con el
+              botón grande "Guardar configuración de bonos" de abajo, junto al resto. */}
+          <div className="mb-4 rounded-xl bg-gray-50 px-3 py-2.5 flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-gray-600">
+              Meta automática = ventas del mes anterior
+            </span>
+            <span className="text-sm text-gray-400">+</span>
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={config.metasIndividuales.factorCrecimientoPct}
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  setConfig({
+                    ...config,
+                    metasIndividuales: {
+                      ...config.metasIndividuales,
+                      factorCrecimientoPct: isNaN(n) || n < 0 ? 0 : n,
+                    },
+                  });
+                }}
+                className="w-16 px-2 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-red-200"
+              />
+              <span className="text-sm text-gray-500">%</span>
+            </div>
+            <span className="text-[11px] text-gray-400">
+              (puedes poner 10, 15 o el número que quieras)
+            </span>
+          </div>
+
           <p className="text-xs text-gray-500 mb-3">
-            La meta se calcula sola (mes anterior +15%). Solo ajusta un monto si quieres fijarle una
-            meta distinta a alguien.
+            Abajo puedes fijarle a alguien una meta distinta y, si quieres, un{" "}
+            <strong>bono</strong> que gana al cumplir su meta del mes. Ambos son opcionales.
           </p>
           {asesoras.length === 0 ? (
             <p className="text-sm text-gray-400">No hay asesoras registradas.</p>
           ) : (
-            <div className="rounded-xl border border-gray-100 divide-y divide-gray-100 overflow-hidden">
-              <div className="flex items-center justify-between px-3 py-2 bg-gray-50">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                  Asesora
-                </span>
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-                  Meta del mes ({mesActualISO()})
-                </span>
-              </div>
+            <div className="space-y-2">
               {asesoras.map((a) => {
-                const orig = a.metaMensual > 0 ? String(a.metaMensual) : "";
-                const val = metaInputs[a.id] ?? "";
-                const dirty = val.trim() !== orig;
+                const origMeta = a.metaOverride != null ? String(a.metaOverride) : "";
+                const origBono = a.bono ?? "";
+                const valMeta = metaInputs[a.id] ?? "";
+                const valBono = bonoInputs[a.id] ?? "";
+                const dirty = valMeta.trim() !== origMeta || valBono !== origBono;
                 const saving = savingMetaId === a.id;
                 return (
-                  <div key={a.id} className="flex items-center gap-3 px-3 py-2.5 flex-wrap">
-                    <div className="flex-1 min-w-[120px]">
-                      <div className="font-medium text-gray-800 text-sm">{a.nombre.trim()}</div>
-                      <div className="text-[11px] text-gray-400">
-                        {a.metaMensual > 0 ? (
-                          <>Meta fija: <span className="tabular-nums">S/ {a.metaMensual.toFixed(2)}</span></>
-                        ) : (
-                          "Meta automática (mes anterior +15%)"
-                        )}
+                  <div key={a.id} className="rounded-xl border border-gray-100 p-3">
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-800 text-sm truncate">
+                          {a.nombre.trim()}
+                        </div>
+                        <div className="text-[11px] text-gray-400">
+                          {a.metaOverride != null ? (
+                            <>
+                              Meta fija:{" "}
+                              <span className="tabular-nums">S/ {a.metaOverride.toFixed(2)}</span>
+                            </>
+                          ) : (
+                            <>
+                              Meta automática:{" "}
+                              <span className="tabular-nums">S/ {a.metaMensual.toFixed(2)}</span>
+                            </>
+                          )}
+                          {a.bono ? (
+                            <span className="text-amber-600"> · Bono: {a.bono}</span>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-gray-400">S/</span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="0.01"
-                        value={val}
-                        onChange={(e) => setMetaInputs({ ...metaInputs, [a.id]: e.target.value })}
-                        placeholder="automática"
-                        className="w-28 px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 tabular-nums focus:outline-none focus:ring-2 focus:ring-red-200"
-                      />
-                      {/* El botón aparece solo si cambiaste el valor de esa fila */}
                       {dirty ? (
                         <button
                           onClick={() => guardarMeta(a.id)}
                           disabled={saving}
-                          className="px-2.5 py-1.5 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 flex items-center gap-1 transition-colors active:scale-95"
+                          className="px-2.5 py-1.5 text-sm bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 flex items-center gap-1 transition-colors active:scale-95 flex-shrink-0"
                         >
                           {saving ? (
                             <FiRefreshCw className="h-3.5 w-3.5 animate-spin" />
                           ) : (
                             <FiSave className="h-3.5 w-3.5" />
                           )}
-                          Fijar
+                          Guardar
                         </button>
-                      ) : (
-                        <span className="w-[58px] text-center text-[11px] text-gray-300">
-                          {a.metaMensual > 0 ? "guardada" : ""}
-                        </span>
-                      )}
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                        Meta
+                        <span className="text-gray-400">S/</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="0.01"
+                          value={valMeta}
+                          onChange={(e) =>
+                            setMetaInputs({ ...metaInputs, [a.id]: e.target.value })
+                          }
+                          placeholder="automática"
+                          className="w-28 px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 tabular-nums focus:outline-none focus:ring-2 focus:ring-red-200"
+                        />
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-gray-500 flex-1 min-w-[180px]">
+                        Bono al cumplir
+                        <input
+                          type="text"
+                          maxLength={200}
+                          value={valBono}
+                          onChange={(e) =>
+                            setBonoInputs({ ...bonoInputs, [a.id]: e.target.value })
+                          }
+                          placeholder="opcional — ej. S/ 100 o un día libre"
+                          className="flex-1 min-w-[120px] px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-red-200"
+                        />
+                      </label>
                     </div>
                   </div>
                 );
@@ -658,8 +735,8 @@ export default function IncentivosClient() {
             </div>
           )}
           <p className="text-[11px] text-gray-400 mt-2">
-            Las metas se guardan al instante con el botón <strong>Fijar</strong>, aparte de la
-            configuración de abajo.
+            La meta y el bono de cada asesora se guardan al instante con su botón{" "}
+            <strong>Guardar</strong>. El % de arriba se guarda con el botón grande de abajo.
           </p>
         </BonoCard>
       </div>

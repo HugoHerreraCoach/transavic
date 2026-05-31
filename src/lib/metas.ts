@@ -63,6 +63,52 @@ function toIsoDate(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * Factor de crecimiento de la meta automática (meta = ventas_mes_anterior × factor).
+ * Configurable por el admin en settings.incentivos_config.metasIndividuales.factorCrecimientoPct
+ * (un porcentaje, ej. 15 → factor 1.15; 10 → 1.10; cualquier número ≥ 0). Lo leemos
+ * directo de `settings` para NO importar lib/incentivos.ts (que importa de este
+ * módulo → crearía dependencia circular). Si no está configurado o es inválido,
+ * cae al default histórico (+15%).
+ */
+async function getFactorCrecimiento(): Promise<number> {
+  try {
+    const sql = neon(process.env.DATABASE_URL!);
+    const rows = (await sql`
+      SELECT value FROM settings WHERE key = 'incentivos_config'
+    `) as Array<{ value: unknown }>;
+    const v = (rows[0]?.value ?? {}) as {
+      metasIndividuales?: { factorCrecimientoPct?: unknown };
+    };
+    const pct = v.metasIndividuales?.factorCrecimientoPct;
+    if (typeof pct === "number" && isFinite(pct) && pct >= 0) {
+      return 1 + pct / 100;
+    }
+  } catch {
+    /* fallback al default */
+  }
+  return FACTOR_CRECIMIENTO;
+}
+
+/**
+ * Bono personalizado (texto libre) que el admin definió para esta asesora en el
+ * mes actual, al alcanzar su meta individual. Devuelve "" si no hay bono.
+ */
+export async function getBonoMensual(
+  asesorId: string,
+  fechaRef: Date = new Date()
+): Promise<string> {
+  const sql = neon(process.env.DATABASE_URL!);
+  const mesIni = toIsoDate(
+    new Date(fechaRef.getFullYear(), fechaRef.getMonth(), 1)
+  );
+  const rows = (await sql`
+    SELECT bono FROM metas_asesoras
+    WHERE asesor_id = ${asesorId} AND mes = ${mesIni}::date
+  `) as Array<{ bono: string | null }>;
+  return (rows[0]?.bono ?? "").trim();
+}
+
 export async function calcularMetaDiaria(
   asesorId: string,
   fechaRef: Date = new Date()
@@ -79,17 +125,24 @@ export async function calcularMetaDiaria(
     toIsoDate(mesAnteriorFin)
   );
 
-  // Override manual del admin (si existe)
+  // Override manual del admin (si existe Y tiene monto). Una fila puede existir
+  // solo para el bono personalizado, con monto_meta NULL → en ese caso la meta
+  // sigue siendo automática (ventas_mes_anterior × factor configurable).
   const mesActualIni = new Date(fechaRef.getFullYear(), fechaRef.getMonth(), 1);
   const mesActualIniIso = toIsoDate(mesActualIni);
   const override = (await sql`
     SELECT monto_meta FROM metas_asesoras
     WHERE asesor_id = ${asesorId} AND mes = ${mesActualIniIso}::date
-  `) as Array<{ monto_meta: string | number }>;
-  const metaMensual =
-    override.length > 0
+  `) as Array<{ monto_meta: string | number | null }>;
+  const overrideMonto =
+    override.length > 0 && override[0].monto_meta != null
       ? Number(override[0].monto_meta)
-      : Number((ventasMesAnterior * FACTOR_CRECIMIENTO).toFixed(2));
+      : null;
+  const factor = await getFactorCrecimiento();
+  const metaMensual =
+    overrideMonto != null
+      ? overrideMonto
+      : Number((ventasMesAnterior * factor).toFixed(2));
 
   const mesActualFin = new Date(fechaRef.getFullYear(), fechaRef.getMonth() + 1, 0);
   const diasHabilesMes = contarDiasHabiles(mesActualIni, mesActualFin);

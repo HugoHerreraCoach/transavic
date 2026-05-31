@@ -1,5 +1,7 @@
 // src/app/pedidos/[id]/guia/page.tsx
-// Página HTML imprimible de la guía de remisión (sin librería PDF — usa window.print()).
+// Página HTML imprimible de la "orden de pedido" (sin librería PDF — usa window.print()).
+// (La ruta sigue llamándose /guia internamente por compatibilidad con enlaces existentes;
+//  el documento ya NO es una guía de remisión legal, es una orden de pedido interna.)
 // Ruta PÚBLICA fuera de /dashboard para que el motorizado/cliente pueda verla sin auth si tiene el link directo.
 // Pero internamente verifica sesión para emisión de número correlativo.
 import { neon } from "@neondatabase/serverless";

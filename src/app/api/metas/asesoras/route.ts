@@ -19,16 +19,29 @@ export async function GET() {
     SELECT id, name FROM users WHERE role = 'asesor' ORDER BY name
   `) as Array<{ id: string; name: string }>;
 
+  // Mes actual (primer día) para leer el override/bono que el admin haya fijado.
+  const hoy = new Date();
+  const mesIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, "0")}-01`;
+
   const out = [];
   for (const a of asesores) {
     const meta = await calcularMetaDiaria(a.id);
     const vendido = await ventasMesActual(a.id);
+    const ov = (await sql`
+      SELECT monto_meta, bono FROM metas_asesoras
+      WHERE asesor_id = ${a.id} AND mes = ${mesIso}::date
+    `) as Array<{ monto_meta: string | number | null; bono: string | null }>;
+    const metaOverride =
+      ov.length > 0 && ov[0].monto_meta != null ? Number(ov[0].monto_meta) : null;
+    const bono = (ov[0]?.bono ?? "").trim();
     out.push({
       id: a.id,
       nombre: (a.name || "").trim(),
-      metaMensual: meta.metaMensual,
+      metaMensual: meta.metaMensual, // meta efectiva (override o automática)
       metaDiaria: meta.metaDiaria,
       ventasMesActual: vendido,
+      metaOverride, // null = meta automática; número = meta fija puesta por el admin
+      bono, // "" = sin bono
     });
   }
 

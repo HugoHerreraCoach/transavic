@@ -36,6 +36,7 @@ interface MetaData {
   porcentajeAvanceDiario: number;
   porcentajeAvanceSemanal: number;
   diferenciaVsMetaAcumulada: number;
+  bono: string; // bono personalizado al cumplir la meta del mes ("" si no hay)
 }
 
 type CriterioRanking = "monto" | "pedidos";
@@ -317,6 +318,49 @@ export default function MisMetasClient({
                 </div>
               </div>
             </div>
+
+            {/* ── Bono personalizado al cumplir la meta del mes (si el admin lo definió) ── */}
+            {data.bono ? (
+              <div
+                className={`rounded-xl p-3.5 mb-4 flex items-start gap-3 border ${
+                  data.porcentajeAvanceMensual >= 100
+                    ? "bg-green-50 border-green-200"
+                    : "bg-amber-50 border-amber-200"
+                }`}
+              >
+                <FiGift
+                  className={`h-5 w-5 flex-shrink-0 mt-0.5 ${
+                    data.porcentajeAvanceMensual >= 100 ? "text-green-600" : "text-amber-600"
+                  }`}
+                />
+                <div className="flex-1 text-sm">
+                  <div
+                    className={`font-semibold ${
+                      data.porcentajeAvanceMensual >= 100 ? "text-green-700" : "text-amber-700"
+                    }`}
+                  >
+                    {data.porcentajeAvanceMensual >= 100
+                      ? "¡Ganaste tu bono de este mes!"
+                      : "Bono por cumplir tu meta del mes"}
+                  </div>
+                  <div
+                    className={`mt-0.5 ${
+                      data.porcentajeAvanceMensual >= 100 ? "text-green-600" : "text-amber-700"
+                    }`}
+                  >
+                    {data.porcentajeAvanceMensual >= 100 ? (
+                      <>
+                        Llegaste a tu meta del mes. Tu bono: <strong>{data.bono}</strong>
+                      </>
+                    ) : (
+                      <>
+                        Si llegas a tu meta del mes ganas: <strong>{data.bono}</strong>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </>
         )}
 

@@ -102,15 +102,15 @@ export async function POST(request: Request) {
       await crearNotificacion({
         userId: info[0].asesor_id,
         tipo: "guia_firmada",
-        titulo: "Guía firmada recibida",
-        mensaje: `${info[0].cliente ?? "Pedido"} — se subió la foto de la guía firmada.`,
+        titulo: "Orden firmada recibida",
+        mensaje: `${info[0].cliente ?? "Pedido"} — se subió la foto de la orden firmada.`,
         link: "/dashboard",
         pedidoId,
       });
     }
 
     return NextResponse.json({
-      message: "Guía firmada subida",
+      message: "Orden firmada subida",
       size: file.size,
       url: `/api/pedidos/${pedidoId}/guia-firmada`,
     });
@@ -167,7 +167,7 @@ export async function GET(request: Request) {
     }>;
     if (rows.length === 0 || !rows[0].guia_firmada_data) {
       return NextResponse.json(
-        { error: "Esta guía todavía no fue firmada" },
+        { error: "Esta orden todavía no fue firmada" },
         { status: 404 }
       );
     }
