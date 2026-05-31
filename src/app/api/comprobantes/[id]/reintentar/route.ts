@@ -58,7 +58,8 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     SELECT
       c.id, c.pedido_id, c.empresa, c.tipo, c.serie, c.numero, c.serie_numero,
       c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
-      c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at
+      c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at,
+      c.hash_cpe, c.xml_firmado_base64, c.items_json
     FROM comprobantes c
     WHERE c.id = ${id}::uuid LIMIT 1
   `) as Array<{
@@ -77,6 +78,9 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     monto_total: string | number;
     estado: string;
     created_at: string | Date;
+    hash_cpe: string | null;
+    xml_firmado_base64: string | null;
+    items_json: unknown;
   }>;
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
@@ -90,17 +94,35 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     );
   }
 
-  // 2. Reconstruir items (necesarios para regenerar el XML)
-  let items: Array<{
+  // 2. Ítems para reconstruir el XML — SOLO se usan si el comprobante NO tiene
+  //    su XML firmado original (caso raro). Prioridad:
+  //      (1) items_json guardado al emitir (fiel, con código y afectación)
+  //      (2) pedido_items (si viene de un pedido)
+  //    Si no hay ninguno, NO se fabrica una línea genérica ("Venta a …"): el
+  //    reintento aborta abajo con un error claro (mejor que re-emitir mal).
+  type ItemReintento = {
+    codigo?: string;
     descripcion: string;
     unidadMedida: string;
     cantidad: number;
     precioUnitario: number;
     tipoAfectacionIGV: TipoAfectacionIGV;
     porcentajeIGV: number;
-  }> = [];
+  };
+  let items: ItemReintento[] = [];
 
-  if (c.pedido_id) {
+  if (Array.isArray(c.items_json) && c.items_json.length > 0) {
+    items = (c.items_json as ItemReintento[]).map((it) => ({
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      unidadMedida: it.unidadMedida || "NIU",
+      cantidad: Number(it.cantidad),
+      precioUnitario: Number(it.precioUnitario),
+      tipoAfectacionIGV:
+        it.tipoAfectacionIGV ?? TipoAfectacionIGV.GRAVADA_ONEROSA,
+      porcentajeIGV: it.porcentajeIGV ?? 18,
+    }));
+  } else if (c.pedido_id) {
     const itemRows = (await sql`
       SELECT
         pi.producto_nombre AS descripcion,
@@ -126,23 +148,6 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     }));
   }
 
-  // Si no hay items reconstruibles, generar uno global a partir del monto
-  if (items.length === 0) {
-    const subtotal = Number(c.monto_subtotal);
-    items = [
-      {
-        descripcion: c.cliente_razon_social
-          ? `Venta a ${c.cliente_razon_social}`
-          : "Venta",
-        unidadMedida: "NIU",
-        cantidad: 1,
-        precioUnitario: subtotal,
-        tipoAfectacionIGV: TipoAfectacionIGV.GRAVADA_ONEROSA,
-        porcentajeIGV: 18,
-      },
-    ];
-  }
-
   const empresaId = (c.empresa as EmpresaId) || "transavic";
   const config = getSunatConfig(empresaId);
   if (!config.certificateBase64) {
@@ -158,31 +163,53 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       : c.created_at.toISOString().slice(0, 10);
 
   try {
-    // 3. Regenerar XML con MISMO serie+numero (preserva correlatividad)
-    const xmlSinFirma = generarXMLComprobante(
-      {
-        tipoComprobante: c.tipo as TipoComprobante,
-        serie: c.serie,
-        numero: c.numero,
-        fechaEmision,
-        horaEmision: new Date().toLocaleTimeString("en-US", { hour12: false }),
-        tipoOperacion: TipoOperacion.VENTA_INTERNA,
-        moneda: CATALOGO.MONEDA.SOLES,
-        cliente: {
-          tipoDocumento:
-            (c.cliente_doc_tipo as TipoDocumentoIdentidad) ??
-            TipoDocumentoIdentidad.RUC,
-          numDocumento: c.cliente_doc_num || "00000000",
-          razonSocial: c.cliente_razon_social || "Cliente",
+    // 3+4. Obtener el XML firmado a enviar:
+    //   (a) Si el comprobante YA tiene su XML firmado original → reenviarlo TAL
+    //       CUAL (no se reconstruye → es IMPOSIBLE alterar los ítems). Cubre los
+    //       casos típicos de reintento: rechazado, o error con respuesta SUNAT.
+    //   (b) Si NO hay XML (error por excepción antes de firmar) → reconstruir
+    //       desde los ítems guardados. Si no hay ítems, se ABORTA con error
+    //       claro — NUNCA se fabrica una línea genérica equivocada.
+    let xmlFirmado: string;
+    let hashCpe: string | null;
+    if (c.xml_firmado_base64) {
+      xmlFirmado = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
+      hashCpe = c.hash_cpe ?? null;
+    } else {
+      if (items.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "No se puede reintentar automáticamente: este comprobante no guardó su XML ni sus ítems. Vuelve a emitirlo desde 'Emitir comprobante'.",
+          },
+          { status: 422 }
+        );
+      }
+      const xmlSinFirma = generarXMLComprobante(
+        {
+          tipoComprobante: c.tipo as TipoComprobante,
+          serie: c.serie,
+          numero: c.numero,
+          fechaEmision,
+          horaEmision: new Date().toLocaleTimeString("en-US", { hour12: false }),
+          tipoOperacion: TipoOperacion.VENTA_INTERNA,
+          moneda: CATALOGO.MONEDA.SOLES,
+          cliente: {
+            tipoDocumento:
+              (c.cliente_doc_tipo as TipoDocumentoIdentidad) ??
+              TipoDocumentoIdentidad.RUC,
+            numDocumento: c.cliente_doc_num || "00000000",
+            razonSocial: c.cliente_razon_social || "Cliente",
+          },
+          items,
+          formaPago: "Contado",
         },
-        items,
-        formaPago: "Contado",
-      },
-      config
-    );
-
-    // 4. Firmar + enviar
-    const { xmlFirmado, hashCpe } = firmarXML(xmlSinFirma, config);
+        config
+      );
+      const firmado = firmarXML(xmlSinFirma, config);
+      xmlFirmado = firmado.xmlFirmado;
+      hashCpe = firmado.hashCpe;
+    }
     const resultadoEnvio = await enviarComprobante(
       xmlFirmado,
       c.tipo,

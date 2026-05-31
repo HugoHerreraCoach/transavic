@@ -178,7 +178,7 @@ export function generarXMLComprobante(
     doc
       .ele(NS.cbc, "cbc:InvoiceTypeCode")
       .att("listID", datos.tipoOperacion)
-      .att("name", "Tipo de Documento")
+      .att("name", "Tipo de Operacion")
       .att("listAgencyName", "PE:SUNAT")
       .att("listName", "Tipo de Documento")
       .att("listURI", "urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01")
@@ -268,10 +268,15 @@ export function generarXMLComprobante(
   const supplierAddr = supplierLegal.ele(NS.cac, "cac:RegistrationAddress");
   supplierAddr.ele(NS.cbc, "cbc:ID").txt(config.ubigeo);
   supplierAddr.ele(NS.cbc, "cbc:AddressTypeCode").txt("0000");
-  // SUNAT permite omitir CitySubdivisionName (urbanización). El residuo del
-  // puerto era "SARITA" (urb. de conexipema-eventos en Cajamarca). Lo dejamos
-  // vacío — si Antonio necesita poner urbanización, agregar campo a SunatConfig.
-  supplierAddr.ele(NS.cbc, "cbc:CitySubdivisionName").txt("");
+  // Urbanización (CitySubdivisionName): SOLO se incluye si existe. Un elemento
+  // VACÍO dispara la observación SUNAT 4095 ("la urbanización del domicilio
+  // fiscal no cumple con el formato"). Si no hay urbanización, se OMITE (SUNAT
+  // lo permite). Se configura con SUNAT_*_URBANIZACION (vacío por defecto).
+  if (config.urbanizacion && config.urbanizacion.trim()) {
+    supplierAddr
+      .ele(NS.cbc, "cbc:CitySubdivisionName")
+      .txt(config.urbanizacion.trim());
+  }
   supplierAddr.ele(NS.cbc, "cbc:CityName").txt(config.provincia);
   supplierAddr.ele(NS.cbc, "cbc:CountrySubentity").txt(config.departamento);
   supplierAddr.ele(NS.cbc, "cbc:District").txt(config.distrito);

@@ -191,14 +191,14 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento
+        forma_pago, fecha_vencimiento, items_json
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'pendiente',
         ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
       )
     `;
     if (opts.pedidoId) {
@@ -267,7 +267,7 @@ export async function emitirComprobante(
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado,
         hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
-        forma_pago, fecha_vencimiento
+        forma_pago, fecha_vencimiento, items_json
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
@@ -278,7 +278,7 @@ export async function emitirComprobante(
         ${resultadoEnvio.cdrBase64 ?? null},
         ${observacionesStr},
         ${resultadoEnvio.descripcion ?? null},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
       )
     `;
 
@@ -308,14 +308,14 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento
+        forma_pago, fecha_vencimiento, items_json
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'error',
         ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
       )
     `;
     return {

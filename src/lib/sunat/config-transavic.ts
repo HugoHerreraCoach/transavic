@@ -109,6 +109,7 @@ export interface SunatConfig {
   departamento: string;
   provincia: string;
   distrito: string;
+  urbanizacion: string;
   codigoPais: string;
   solUser: string;
   solPassword: string;
@@ -154,6 +155,10 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
   const departamento = process.env[`${prefix}_DEPARTAMENTO`] || emisor.departamento;
   const provincia = process.env[`${prefix}_PROVINCIA`] || emisor.provincia;
   const distrito = process.env[`${prefix}_DISTRITO`] || emisor.distrito;
+  // Urbanización del domicilio fiscal (CitySubdivisionName). Vacía por defecto:
+  // si no hay urbanización, el XML OMITE el campo (un CitySubdivisionName VACÍO
+  // dispara la observación SUNAT 4095). Configurable por SUNAT_*_URBANIZACION.
+  const urbanizacion = process.env[`${prefix}_URBANIZACION`] || "";
 
   const solUser = process.env[`${prefix}_SOL_USER`] || (isBeta ? "MODDATOS" : "");
   const solPassword = process.env[`${prefix}_SOL_PASSWORD`] || (isBeta ? "moddatos" : "");
@@ -175,6 +180,7 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
     departamento,
     provincia,
     distrito,
+    urbanizacion,
     codigoPais: emisor.codigoPais,
     solUser,
     solPassword,
