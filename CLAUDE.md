@@ -139,14 +139,14 @@ public/                           # transavic.jpg, avicola.jpg (logos para ticke
 
 ## 6. Roles y permisos
 
-El sistema tiene **3 roles** (próximamente **4** con el módulo de producción):
+El sistema tiene **4 roles** (el de `produccion` ya está en producción desde el 30 may 2026):
 
 | Rol | Quién es | Qué ve | Permisos clave |
 |---|---|---|---|
 | `admin` | Antonio (dueño) | Todo | Gestionar usuarios, productos, despacho, base_location, ver TODOS los pedidos |
 | `asesor` | Vendedoras (Leslie, Yoshelin, Sarai, Yesica) | Solo sus pedidos y sus clientes | Crear pedidos y clientes; ver lista propia. Scoping en SQL por `asesor_id = userId` |
 | `repartidor` | Motorizados (Marco, Yhorner, Anghelo, etc.) | Solo `/mi-ruta` con SUS pedidos del día | Cambiar estado de SUS pedidos. Scoping por `repartidor_id = userId` |
-| `produccion` *(en implementación)* | Asistente de producción (en otro distrito que la oficina) | Cola del día + filtro búsqueda + ingresar pesos | A definir |
+| `produccion` | Asistente de producción (en otro distrito que la oficina) | Solo `/dashboard/produccion`: cola del día + búsqueda + ingresar pesos reales | Marcar pesos y "listo para despacho" en SUS pedidos. Scoping en `/api/produccion/*`. Login redirige a `/dashboard/produccion` (`auth.config.ts`). ✅ en producción |
 
 **Login redirige por rol** (ver `auth.config.ts:authorized`):
 - `repartidor` → `/dashboard/mi-ruta`
@@ -208,7 +208,7 @@ Pendiente ──asignar──▶ Asignado ──iniciar viaje──▶ En_Camino
 4. **`entregado_por` se llena con `session.user.name`** desde quien dispara la transición — útil cuando admin marca por el repartidor.
 5. **`distancia_km` se congela al asignar**, NO se sobreescribe al optimizar ruta. Solo `orden_ruta` y `duracion_estimada_min` cambian.
 
-**Pronto se agregarán dos estados** (mejoras Antonio 2026): `En_Produccion` y `Listo_Para_Despacho` antes de `Asignado`. Cuidado al ampliar el enum: actualizar también `lib/types.ts`, validaciones zod en `/api/pedidos/[id]/route.ts` y los `CASE` de orden en queries.
+**Los dos estados de producción YA EXISTEN y están en producción** (Mejora 1, desde 30 may 2026): `En_Produccion` y `Listo_Para_Despacho` van antes de `Asignado` (ver el enum `EstadoPedido` en `lib/types.ts`). Si en el futuro amplías el enum de nuevo, actualizar también `lib/types.ts`, las validaciones zod en `/api/pedidos/[id]/route.ts` y los `CASE` de orden en queries.
 
 ---
 
@@ -296,7 +296,7 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 9. **Offline queue usa `localStorage`** (no IndexedDB) — capacidad ~5-10MB, suficiente para una jornada del repartidor pero no para histórico largo.
 10. **Precios CON IGV INCLUIDO** (convención crítica): los precios en `productos.precio_venta` y `pedido_items.precio_unitario` se almacenan **CON IGV** (lo que Antonio cobra al cliente). Antes de mandar a SUNAT, dividimos entre 1.18 para obtener el neto en `/api/comprobantes/emitir/route.ts:130-170`. Si esta convención cambia, actualizar también la UI de `/dashboard/precios` y el seed.
 11. **Nombres de usuarios con espacios al final**: la DB de producción tiene `"Leslie "` y `"Jhoselyn "` (con espacio al final, data legacy). NO usar `WHERE name='Leslie'` — usar el `id` directamente o trim del nombre. Esto rompió el script de testing y se documenta para evitar repetir el bug.
-12. **Gemini Flash Latest + thinking tokens**: el modelo gemini-2.5-flash usa "thinking tokens" internos que consumen `maxOutputTokens` antes de generar texto. Sin `thinkingConfig: { thinkingBudget: 0 }`, las respuestas se truncan a ~19 chars. Ver `src/lib/gemini.ts:55`.
+12. **Gemini Flash Latest + thinking tokens**: el modelo es **`gemini-flash-latest`** (constante `GEMINI_MODEL` en `src/lib/gemini.ts:9`) — usa "thinking tokens" internos que consumen `maxOutputTokens` antes de generar texto. Sin `thinkingConfig: { thinkingBudget: 0 }` (en `gemini.ts:64`), las respuestas se truncan a ~19 chars.
 13. **Bug DNS Node 26 con `@neondatabase/serverless`**: scripts `node ./scripts/migrate-X.mjs` fallan con `TypeError: fetch failed`. Workaround: aplicar SQL directamente con `psql -f scripts/migrations-fase-ab.sql`. Next.js dev server NO está afectado (usa su propio runtime). Nota: `npm install` SÍ funciona (verificado mayo 2026).
 14. **Cache del Asistente IA por scope**: el endpoint `/api/asistente-ia` cachea por rol/asesor (key `admin-*` o `asesor-{uuid}-*`). Esto preserva privacy boundary entre asesoras. TTL 1h. Si tocas `lib/insights.ts`, considerá si invalidar cache. ⚠️ El caché es **in-memory** (`new Map()` en `lib/insights.ts`) y **NO persiste en Vercel serverless** (cada cold start y cada deploy lo vacían) → bajo carga se topa el límite gratuito de Gemini (429). Ver gotcha #16.
 15. **Light-mode forzado (NO re-agregar dark mode)**: `globals.css` fija `color-scheme: light` y ya NO tiene `@media (prefers-color-scheme: dark)`. La app está diseñada SOLO para modo claro (tarjetas blancas, texto oscuro). Con el dark mode del SO activo, `--foreground` pasaba a claro (#ededed) y los textos quedaban casi invisibles sobre fondos blancos. **No volver a agregar el bloque dark.** Si se quiere dark mode real, hay que rediseñar todos los fondos/colores con variantes `dark:` de Tailwind.
