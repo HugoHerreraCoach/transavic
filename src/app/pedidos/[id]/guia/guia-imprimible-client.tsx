@@ -37,6 +37,11 @@ interface Props {
   notas: string;
   items: Item[];
   total: number;
+  // Datos del EMISOR (la empresa que vende) para el encabezado: logo + razón
+  // social + RUC + dirección. Opcionales: si no llegan, se usa el nombre comercial.
+  emisorRazonSocial?: string;
+  emisorRuc?: string;
+  emisorDireccion?: string;
 }
 
 type Formato = "ticket" | "a4";
@@ -168,6 +173,11 @@ export default function GuiaImprimibleClient(props: Props) {
           .orden-ticket {
             box-shadow: none !important;
           }
+          /* Conservar el color del logo al imprimir / guardar como PDF. */
+          img {
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
         }
       `}</style>
     </div>
@@ -190,8 +200,12 @@ function TicketLayout({
   items,
   total,
   incluirPrecios,
+  emisorRazonSocial,
+  emisorRuc,
+  emisorDireccion,
 }: Props & { incluirPrecios: boolean }) {
   const nombreEmpresa = empresa === "Transavic" ? "TRANSAVIC" : "AVÍCOLA DE TONY";
+  const logo = empresa === "Transavic" ? "/transavic.jpg" : "/avicola.jpg";
   const linea = "border-t border-dashed border-gray-500 my-2";
   return (
     <div
@@ -199,10 +213,30 @@ function TicketLayout({
       style={{ width: "80mm" }}
     >
       <div className="px-3 py-3" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
-        {/* Encabezado */}
+        {/* Encabezado: logo a color + datos del emisor (como un ticket real) */}
         <div className="text-center leading-tight">
-          <div className="text-lg font-extrabold tracking-wide">{nombreEmpresa}</div>
-          <div className="text-[13px] font-bold mt-0.5">ORDEN DE PEDIDO</div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logo}
+            alt={empresa}
+            className="mx-auto block h-auto w-[62%] object-contain"
+          />
+          <div className="mt-2 text-[13px] font-extrabold uppercase leading-tight">
+            {emisorRazonSocial || nombreEmpresa}
+          </div>
+          {emisorRuc ? (
+            <div className="text-[12px] font-semibold">RUC {emisorRuc}</div>
+          ) : null}
+          {emisorDireccion ? (
+            <div className="text-[11px] leading-snug">{emisorDireccion}</div>
+          ) : null}
+        </div>
+
+        <div className={linea} />
+
+        {/* Tipo de documento */}
+        <div className="text-center leading-tight">
+          <div className="text-[14px] font-bold">ORDEN DE PEDIDO</div>
           <div className="text-[16px] font-extrabold">N° {numero}</div>
           <div className="text-[11px]">{fecha}</div>
         </div>
@@ -302,12 +336,15 @@ function A4Layout({
   items,
   total,
   incluirPrecios,
+  emisorRazonSocial,
+  emisorRuc,
+  emisorDireccion,
 }: Props & { incluirPrecios: boolean }) {
   return (
     <div className="bg-white print:bg-transparent shadow-lg print:shadow-none rounded-lg print:rounded-none p-6 sm:p-10 print:p-6">
       {/* Header */}
       <div className="flex items-start justify-between border-b-2 border-red-700 pb-4 mb-6">
-        <div className="flex items-center">
+        <div className="flex flex-col">
           {/* Logo real de la marca (el mismo de /dashboard/nuevo-pedido) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -315,6 +352,17 @@ function A4Layout({
             alt={empresa}
             className="h-20 w-auto max-w-[230px] object-contain"
           />
+          {(emisorRazonSocial || emisorRuc || emisorDireccion) && (
+            <div className="mt-2 text-xs text-gray-600 leading-snug">
+              {emisorRazonSocial && (
+                <div className="font-bold text-gray-700 uppercase">
+                  {emisorRazonSocial}
+                </div>
+              )}
+              {emisorRuc && <div>RUC {emisorRuc}</div>}
+              {emisorDireccion && <div>{emisorDireccion}</div>}
+            </div>
+          )}
         </div>
         <div className="text-right">
           <div className="border-2 border-red-700 rounded px-3 py-1.5 text-xs font-bold text-red-700">

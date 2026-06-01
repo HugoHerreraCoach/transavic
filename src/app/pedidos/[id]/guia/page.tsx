@@ -9,6 +9,7 @@ import { auth } from "@/auth";
 import { siguienteCorrelativo, formatNumeroGuia } from "@/lib/correlativos";
 import { notFound } from "next/navigation";
 import GuiaImprimibleClient from "./guia-imprimible-client";
+import { getSunatConfig } from "@/lib/sunat/config-transavic";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -74,6 +75,23 @@ export default async function GuiaPage({ params }: PageProps) {
   );
   const total = totalReal > 0 ? totalReal : totalEstimado;
 
+  // Datos del emisor (logo + razón social + RUC + dirección) según la empresa del
+  // pedido, para el encabezado del ticket. Defensivo: si la config SUNAT no está
+  // disponible, no rompemos la orden (el ticket cae al nombre comercial).
+  const empresaKey: "transavic" | "avicola" =
+    (pedido.empresa as string) === "Transavic" ? "transavic" : "avicola";
+  let emisorRazonSocial = "";
+  let emisorRuc = "";
+  let emisorDireccion = "";
+  try {
+    const cfg = getSunatConfig(empresaKey);
+    emisorRazonSocial = cfg.razonSocial || "";
+    emisorRuc = cfg.ruc || "";
+    emisorDireccion = cfg.direccion || "";
+  } catch {
+    /* sin config SUNAT → el ticket usa solo el nombre comercial */
+  }
+
   return (
     <GuiaImprimibleClient
       numero={formatNumeroGuia(numero)}
@@ -95,6 +113,9 @@ export default async function GuiaPage({ params }: PageProps) {
         subtotal: Number(it.subtotal_real ?? it.subtotal ?? 0),
       }))}
       total={total}
+      emisorRazonSocial={emisorRazonSocial}
+      emisorRuc={emisorRuc}
+      emisorDireccion={emisorDireccion}
     />
   );
 }
