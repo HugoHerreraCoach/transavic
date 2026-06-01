@@ -37,11 +37,6 @@ interface Props {
   notas: string;
   items: Item[];
   total: number;
-  // Datos del EMISOR (la empresa que vende) para el encabezado: logo + razón
-  // social + RUC + dirección. Opcionales: si no llegan, se usa el nombre comercial.
-  emisorRazonSocial?: string;
-  emisorRuc?: string;
-  emisorDireccion?: string;
 }
 
 type Formato = "ticket" | "a4";
@@ -200,12 +195,8 @@ function TicketLayout({
   items,
   total,
   incluirPrecios,
-  emisorRazonSocial,
-  emisorRuc,
-  emisorDireccion,
 }: Props & { incluirPrecios: boolean }) {
   const esTransavic = empresa === "Transavic";
-  const nombreEmpresa = esTransavic ? "TRANSAVIC" : "AVÍCOLA DE TONY";
   const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
   const linea = "border-t border-dashed border-gray-500 my-2";
   return (
@@ -233,15 +224,6 @@ function TicketLayout({
               className="h-full w-full object-cover object-center"
             />
           </div>
-          <div className="mt-1 text-[13px] font-extrabold uppercase leading-tight">
-            {emisorRazonSocial || nombreEmpresa}
-          </div>
-          {emisorRuc ? (
-            <div className="text-[12px] font-semibold">RUC {emisorRuc}</div>
-          ) : null}
-          {emisorDireccion ? (
-            <div className="text-[11px] leading-snug">{emisorDireccion}</div>
-          ) : null}
         </div>
 
         <div className={linea} />
@@ -348,15 +330,12 @@ function A4Layout({
   items,
   total,
   incluirPrecios,
-  emisorRazonSocial,
-  emisorRuc,
-  emisorDireccion,
 }: Props & { incluirPrecios: boolean }) {
   return (
     <div className="bg-white print:bg-transparent shadow-lg print:shadow-none rounded-lg print:rounded-none p-6 sm:p-10 print:p-6">
       {/* Header */}
       <div className="flex items-start justify-between border-b-2 border-red-700 pb-4 mb-6">
-        <div className="flex flex-col">
+        <div className="flex items-center">
           {/* Logo real de la marca (el mismo de /dashboard/nuevo-pedido) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -364,17 +343,6 @@ function A4Layout({
             alt={empresa}
             className="h-20 w-auto max-w-[230px] object-contain"
           />
-          {(emisorRazonSocial || emisorRuc || emisorDireccion) && (
-            <div className="mt-2 text-xs text-gray-600 leading-snug">
-              {emisorRazonSocial && (
-                <div className="font-bold text-gray-700 uppercase">
-                  {emisorRazonSocial}
-                </div>
-              )}
-              {emisorRuc && <div>RUC {emisorRuc}</div>}
-              {emisorDireccion && <div>{emisorDireccion}</div>}
-            </div>
-          )}
         </div>
         <div className="text-right">
           <div className="border-2 border-red-700 rounded px-3 py-1.5 text-xs font-bold text-red-700">
