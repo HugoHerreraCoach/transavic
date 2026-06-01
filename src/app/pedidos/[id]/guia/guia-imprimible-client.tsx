@@ -204,8 +204,9 @@ function TicketLayout({
   emisorRuc,
   emisorDireccion,
 }: Props & { incluirPrecios: boolean }) {
-  const nombreEmpresa = empresa === "Transavic" ? "TRANSAVIC" : "AVÍCOLA DE TONY";
-  const logo = empresa === "Transavic" ? "/transavic.jpg" : "/avicola.jpg";
+  const esTransavic = empresa === "Transavic";
+  const nombreEmpresa = esTransavic ? "TRANSAVIC" : "AVÍCOLA DE TONY";
+  const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
   const linea = "border-t border-dashed border-gray-500 my-2";
   return (
     <div
@@ -213,15 +214,26 @@ function TicketLayout({
       style={{ width: "80mm" }}
     >
       <div className="px-3 py-3" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
-        {/* Encabezado: logo a color + datos del emisor (como un ticket real) */}
+        {/* Encabezado: logo a color + datos del emisor (como un ticket real).
+            El JPG de Transavic trae aire arriba/abajo dentro del cuadrado 600×600;
+            lo recortamos con un contenedor más bajo (aspect 3/2) + object-cover,
+            sin cortar el arte. El de Avícola llena el cuadrado → se muestra entero. */}
         <div className="text-center leading-tight">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={logo}
-            alt={empresa}
-            className="mx-auto block h-auto w-[62%] object-contain"
-          />
-          <div className="mt-2 text-[13px] font-extrabold uppercase leading-tight">
+          <div
+            className="mx-auto overflow-hidden"
+            style={{
+              width: esTransavic ? "72%" : "56%",
+              aspectRatio: esTransavic ? "3 / 2" : "1 / 1",
+            }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={logo}
+              alt={empresa}
+              className="h-full w-full object-cover object-center"
+            />
+          </div>
+          <div className="mt-1 text-[13px] font-extrabold uppercase leading-tight">
             {emisorRazonSocial || nombreEmpresa}
           </div>
           {emisorRuc ? (
