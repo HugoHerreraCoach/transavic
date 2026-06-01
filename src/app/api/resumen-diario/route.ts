@@ -11,9 +11,10 @@ export async function GET(request: NextRequest) {
     if (!session?.user) {
       return NextResponse.json({ error: "No autorizado." }, { status: 401 });
     }
-    // Resumen diario muestra TODOS los pedidos/items del día (vista admin
-    // operativa). Asesoras NO deben ver el resumen completo de la operación.
-    if (session.user.role !== "admin") {
+    // Resumen del día (totales por producto para preparar). Lo usan el ADMIN y
+    // el rol PRODUCCIÓN (quien prepara la mercadería). Asesoras/repartidores NO
+    // ven el resumen completo de la operación.
+    if (!["admin", "produccion"].includes(session.user.role)) {
       return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
     }
 

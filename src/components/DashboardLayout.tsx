@@ -72,6 +72,14 @@ const navItems: NavItem[] = [
     icon: <FiList className="h-5 w-5 flex-shrink-0" />,
     roles: ["admin", "asesor"],
   },
+  // Resumen del día: totales por producto para preparar (uso de producción +
+  // admin). Va antes de Producción porque responde "¿qué preparo?" en el flujo.
+  {
+    href: "/dashboard/resumen",
+    label: "Resumen del día",
+    icon: <FiBox className="h-5 w-5 flex-shrink-0" />,
+    roles: ["admin", "produccion"],
+  },
   {
     href: "/dashboard/produccion",
     label: "Producción",
@@ -150,6 +158,7 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/despacho": "Operación",
   "/dashboard/nuevo-pedido": "Operación",
   "/dashboard": "Operación",
+  "/dashboard/resumen": "Operación",
   "/dashboard/mi-dia": "Operación",
   "/dashboard/clientes": "Comercial",
   "/dashboard/cobranzas": "Comercial",
