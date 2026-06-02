@@ -21,6 +21,8 @@ import {
   FiSlash,
   FiCheckCircle,
   FiFile,
+  FiCornerUpLeft,
+  FiUser,
   FiMoreVertical,
   FiAlertTriangle,
   FiClock,
@@ -41,6 +43,15 @@ interface Comprobante {
   created_at: string;
   mensaje_sunat: string | null;
   pedido_cliente: string | null;
+  // Quién emitió el comprobante (asesora/admin). Null en los sueltos viejos.
+  emitido_por: string | null;
+  // Vínculo NC ↔ comprobante original (lo devuelve GET /api/comprobantes):
+  // en una NC (07) apuntan a la factura/boleta que acredita; en una
+  // factura/boleta, `tiene_nc` indica si ya tiene una NC aceptada/observada.
+  referencia_comprobante_id: string | null;
+  referencia_serie_numero: string | null;
+  referencia_tipo: string | null;
+  tiene_nc: boolean;
 }
 
 interface ComprobanteDetalle {
@@ -143,6 +154,39 @@ function tipoLabel(tipo: string): string {
       : tipo === "07"
         ? "Nota Crédito"
         : tipo;
+}
+
+// Chip de TIPO (hermano de estadoUI): color + ícono propios para distinguir de un
+// vistazo Factura / Boleta / Nota de Crédito. Colores elegidos para NO chocar con
+// los de Estado (verde/ámbar/rojo/azul) ni Empresa (rojo/teal): factura=índigo,
+// boleta=pizarra (neutro), NC=naranja (es un ajuste/reversa, mismo naranja que el
+// botón "nota de crédito"). El chip usa rounded-md lleno → forma distinta del pill
+// redondo de Estado y del borde de Empresa, así cada columna se lee aparte.
+function tipoUI(tipo: string): {
+  bg: string;
+  text: string;
+  label: string;
+  Icon: typeof FiFileText;
+} {
+  switch (tipo) {
+    case "01":
+      return { bg: "bg-indigo-50", text: "text-indigo-700", label: "Factura", Icon: FiFileText };
+    case "03":
+      return { bg: "bg-slate-100", text: "text-slate-700", label: "Boleta", Icon: FiFile };
+    case "07":
+      return { bg: "bg-orange-50", text: "text-orange-700", label: "N. Crédito", Icon: FiCornerUpLeft };
+    default:
+      return { bg: "bg-gray-100", text: "text-gray-700", label: tipoLabel(tipo), Icon: FiFileText };
+  }
+}
+
+// "F001-00000011" → "F001-11": quita los ceros del correlativo para que el vínculo
+// "anula F001-11" se lea rápido sin tanto cero.
+function serieCorta(serieNumero: string): string {
+  const [serie, num] = serieNumero.split("-");
+  if (!num) return serieNumero;
+  const n = Number(num);
+  return Number.isFinite(n) ? `${serie}-${n}` : serieNumero;
 }
 
 function empresaLabel(empresa: string): string {
@@ -1728,9 +1772,9 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
           onChange={setFiltroTipo}
           opciones={[
             { v: "all", l: "Todos" },
-            { v: "01", l: "Facturas" },
-            { v: "03", l: "Boletas" },
-            { v: "07", l: "N. Crédito" },
+            { v: "01", l: "Facturas", swatch: "bg-indigo-500" },
+            { v: "03", l: "Boletas", swatch: "bg-slate-400" },
+            { v: "07", l: "N. Crédito", swatch: "bg-orange-500" },
           ]}
         />
         <GrupoFiltro
@@ -1771,15 +1815,36 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                   <div className="font-mono font-bold text-gray-800">
                     {c.serie_numero}
                   </div>
-                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    <span className="text-xs text-gray-500">
-                      {tipoLabel(c.tipo)}
-                    </span>
+                  {c.tipo === "07" && c.referencia_serie_numero && (
+                    <button
+                      onClick={() => setBusqueda(c.referencia_serie_numero ?? "")}
+                      className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-orange-700 hover:underline active:scale-[0.98]"
+                    >
+                      <FiCornerUpLeft size={11} className="flex-shrink-0" />
+                      anula {serieCorta(c.referencia_serie_numero)}
+                    </button>
+                  )}
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {(() => {
+                      const t = tipoUI(c.tipo);
+                      return (
+                        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold ${t.bg} ${t.text}`}>
+                          <t.Icon size={10} className="flex-shrink-0" />
+                          {t.label}
+                        </span>
+                      );
+                    })()}
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded border ${empresaBadgeColor(c.empresa)}`}
                     >
                       {empresaLabel(c.empresa)}
                     </span>
+                    {c.tipo !== "07" && c.tiene_nc && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
+                        <FiCornerUpLeft size={10} className="flex-shrink-0" />
+                        con N. Crédito
+                      </span>
+                    )}
                   </div>
                 </div>
                 {(() => {
@@ -1801,6 +1866,12 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                 {c.cliente_doc_num && (
                   <div className="text-[10px] text-gray-400 font-mono">
                     {c.cliente_doc_num}
+                  </div>
+                )}
+                {c.emitido_por && (
+                  <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500">
+                    <FiUser size={11} className="text-gray-400 flex-shrink-0" />
+                    Emitió: {c.emitido_por}
                   </div>
                 )}
               </div>
@@ -1835,13 +1906,14 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
               <th className="px-3 py-2 text-right">Monto</th>
               <th className="px-3 py-2 text-center">Estado</th>
               <th className="px-3 py-2 text-left">Empresa</th>
+              <th className="px-3 py-2 text-left">Emitido por</th>
               <th className="px-3 py-2 text-center">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {comprobantesFiltrados.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center text-gray-400 py-8">
+                <td colSpan={8} className="text-center text-gray-400 py-8">
                   Sin comprobantes emitidos todavía
                 </td>
               </tr>
@@ -1849,8 +1921,36 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             {comprobantesPagina.map((c) => {
               return (
                 <tr key={c.id} className="border-t hover:bg-gray-50">
-                  <td className="px-4 py-2 font-mono font-medium">{c.serie_numero}</td>
-                  <td className="px-3 py-2">{tipoLabel(c.tipo)}</td>
+                  <td className="px-4 py-2">
+                    <div className="font-mono font-medium text-gray-800">{c.serie_numero}</div>
+                    {c.tipo === "07" && c.referencia_serie_numero && (
+                      <button
+                        onClick={() => setBusqueda(c.referencia_serie_numero ?? "")}
+                        title={`Ver la factura/boleta ${c.referencia_serie_numero} que esta nota de crédito anula`}
+                        className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-orange-700 hover:underline active:scale-[0.98]"
+                      >
+                        <FiCornerUpLeft size={11} className="flex-shrink-0" />
+                        anula {serieCorta(c.referencia_serie_numero)}
+                      </button>
+                    )}
+                    {c.tipo !== "07" && c.tiene_nc && (
+                      <span className="mt-0.5 flex w-fit items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
+                        <FiCornerUpLeft size={10} className="flex-shrink-0" />
+                        con N. Crédito
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {(() => {
+                      const t = tipoUI(c.tipo);
+                      return (
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ${t.bg} ${t.text}`}>
+                          <t.Icon size={11} className="flex-shrink-0" />
+                          {t.label}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-3 py-2">
                     <div className="font-medium">
                       {c.cliente_razon_social ?? c.pedido_cliente}
@@ -1899,6 +1999,16 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     >
                       {empresaLabel(c.empresa)}
                     </span>
+                  </td>
+                  <td className="px-3 py-2">
+                    {c.emitido_por ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-gray-600">
+                        <FiUser size={12} className="text-gray-400 flex-shrink-0" />
+                        {c.emitido_por}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {celdaAcciones(c)}

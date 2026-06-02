@@ -163,6 +163,7 @@ export async function POST(request: Request) {
       items: itemsSunat,
       formaPago: parsed.data.formaPago,
       plazoDias: parsed.data.plazoDias, // crédito → cuota con vencimiento en el XML
+      emitidoPor: session.user.name?.trim() || undefined,
       // sin pedidoId → comprobante suelto
     });
 

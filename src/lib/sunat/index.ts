@@ -58,6 +58,20 @@ export interface OpcionesEmision {
     tipoNotaCredito?: TipoNotaCredito;
     motivo: string;
   };
+  /**
+   * Para NOTA_CREDITO (07): id (UUID) de la fila `comprobantes` del comprobante
+   * original que se acredita. Se persiste en `comprobantes.referencia_comprobante_id`
+   * para enlazar la NC con su factura/boleta en la lista y para que la asesora
+   * dueña del original vea también la NC (ver scoping en GET /api/comprobantes).
+   */
+  referenciaComprobanteId?: string;
+  /**
+   * Nombre de la persona (asesora/admin) que emite el comprobante. Se guarda en
+   * `comprobantes.emitido_por` para mostrar la atribución en la lista (todas las
+   * asesoras ven todos los comprobantes). Lo pasa cada endpoint de emisión desde
+   * `session.user.name`.
+   */
+  emitidoPor?: string;
 }
 
 /**
@@ -191,14 +205,15 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json
+        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'pendiente',
         ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;
     if (opts.pedidoId) {
@@ -267,7 +282,7 @@ export async function emitirComprobante(
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado,
         hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json
+        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
@@ -278,7 +293,8 @@ export async function emitirComprobante(
         ${resultadoEnvio.cdrBase64 ?? null},
         ${observacionesStr},
         ${resultadoEnvio.descripcion ?? null},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;
 
@@ -308,14 +324,15 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json
+        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'error',
         ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;
     return {

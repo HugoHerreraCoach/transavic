@@ -331,6 +331,15 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 
 **Migraciones nuevas aplicadas a dev-hugo Y producción (psql)**: `migrate-pedido-ediciones.sql` + `migrate-meta-bono.sql`. La fila `correlativos.guia_remision` se sembró en prod (crash fix, gotcha #20).
 
+### Comprobantes — tipos diferenciados, vínculo NC↔factura, visibilidad total + emisor (2 jun 2026 — ✅ EN PRODUCCIÓN)
+Pedido de Antonio/Hugo. Todo en la **lista** `/dashboard/comprobantes` (`comprobantes-client.tsx`); el PDF y el módulo SUNAT NO se tocaron. Se subió por un PR aparte (NO por el branch `respaldo-pre-migracion-2026-05-29`, que arrastra la app repartidor — esa sigue solo en local).
+1. **Chip de tipo con color + ícono** (helper `tipoUI`, hermano de `estadoUI`): Factura = índigo + `FiFileText`, Boleta = slate + `FiFile`, N. Crédito = naranja + `FiCornerUpLeft`. Antes la columna "Tipo" era texto plano e indistinguible. Tabla desktop + cards mobile; los chips del filtro "Tipo" llevan swatch del mismo color. Chip `rounded-md` lleno. Hecho con `/mejora-diseño`.
+2. **Vínculo NC↔factura**: una NC muestra bajo su número "↩ anula F001-11" (clic → escribe esa serie en el buscador y salta a la factura); una factura/boleta ya acreditada muestra el chip "↩ con N. Crédito".
+3. **Visibilidad total**: TODAS las asesoras ven TODOS los comprobantes (antes cada una veía solo los de sus pedidos). Se eliminó el scoping por rol del `GET /api/comprobantes` y del `POST /api/comprobantes/[id]/nota-credito` (ahora cualquier asesora/admin emite NC sobre cualquier comprobante). La separación por asesora se mantiene SOLO en los insights de IA.
+4. **Emisor**: columna "Emitido por" (desktop) / línea "Emitió: X" (mobile) con el nombre de quien emitió. Columna `emitido_por` llenada al emitir (`session.user.name`) en los 3 endpoints (`emitir`, `emitir-manual`, `[id]/nota-credito`); el reintento hace UPDATE (no reinserta) → preserva el emisor original.
+
+**Migraciones (aplicadas a producción por psql ANTES del deploy — gotcha #17):** `scripts/migrate-comprobante-referencia.sql` (columna `referencia_comprobante_id`) y `scripts/migrate-comprobante-emisor.sql` (columna `emitido_por` + backfill best-effort desde la asesora dueña del pedido). Ambas **aditivas e idempotentes**; NO tocan XML/CDR/montos/estados → los comprobantes y NC ya emitidos quedan **intactos**. En comprobantes viejos: sin referencia (no muestran vínculo hasta re-emitir) y `emitido_por` solo para los que tienen pedido (los sueltos viejos quedan "—"). `OpcionesEmision` ganó `referenciaComprobanteId` y `emitidoPor`. Validado en dev-hugo; tsc/eslint limpios.
+
 ### Las 8 mejoras (acordadas con Antonio — S/ 4 000, 17 días)
 | # | Mejora | Fase | Estado |
 |---|---|---|---|

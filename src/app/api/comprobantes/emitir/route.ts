@@ -266,6 +266,7 @@ export async function POST(request: Request) {
       items: itemsSunat,
       formaPago: parsed.data.formaPago,
       plazoDias: parsed.data.plazoDias,
+      emitidoPor: session.user.name?.trim() || undefined,
     });
 
     // P2.10 — Notificar al admin (y a la asesora del pedido) si SUNAT rechaza
