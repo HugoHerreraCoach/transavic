@@ -77,6 +77,26 @@ export async function GET() {
       SELECT id, name, role FROM users WHERE role = 'repartidor' ORDER BY name ASC
     `;
 
+    // 3b. Última ubicación en vivo de cada motorizado (tabla rider_locations).
+    //     Es modelo "1 fila por rider" (UPSERT), así que cada fila ya es la posición
+    //     ACTUAL. El frontend decide si está fresca según captured_at ("hace N min").
+    const ubicaciones = await sql`
+      SELECT repartidor_id, latitude, longitude, heading, captured_at
+      FROM rider_locations
+    `;
+    const ubicPorRider = new Map<
+      string,
+      { lat: number; lng: number; heading: number | null; capturedAt: string }
+    >();
+    for (const u of ubicaciones) {
+      ubicPorRider.set(u.repartidor_id as string, {
+        lat: parseFloat(u.latitude as string),
+        lng: parseFloat(u.longitude as string),
+        heading: u.heading != null ? parseFloat(u.heading as string) : null,
+        capturedAt: String(u.captured_at),
+      });
+    }
+
     const pedidosAsignados = await sql`
       SELECT
         p.id, p.cliente, p.direccion, p.distrito, p.whatsapp,
@@ -109,9 +129,10 @@ export async function GET() {
       duracion_estimada_min: p.duracion_estimada_min ? parseInt(p.duracion_estimada_min as string) : null,
     });
 
-    // Agrupar pedidos por repartidor
+    // Agrupar pedidos por repartidor (+ adjuntar su última ubicación en vivo)
     const repartidoresConPedidos = repartidores.map((r) => ({
       ...r,
+      ubicacion: ubicPorRider.get(r.id as string) ?? null,
       pedidos: pedidosAsignados
         .filter((p) => p.repartidor_id === r.id)
         .map(parseCoords),

@@ -7,9 +7,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "seed": "node --no-warnings ./scripts/seed.mjs"
+    "seed": "node --no-warnings ./scripts/seed.mjs",
+    "app:sync": "cap sync android",
+    "app:open": "cap open android",
+    "app:build": "cap sync android && cd android && ./gradlew assembleDebug",
+    "app:build:prod": "CAP_SERVER_URL=https://transavic.vercel.app cap sync android && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.26",
+    "@capacitor/android": "^7.6.5",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.5",
+    "@capacitor/splash-screen": "^7.0.5",
     "@hello-pangea/dnd": "^18.0.1",
     "@neondatabase/serverless": "^1.0.1",
     "@react-google-maps/api": "^2.20.7",
@@ -34,6 +43,8 @@
     "zod": "^4.0.5"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.6.5",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/archiver": "^7.0.0",

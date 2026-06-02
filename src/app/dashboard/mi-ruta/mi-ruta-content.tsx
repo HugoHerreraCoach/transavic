@@ -31,6 +31,15 @@ import {
   FiZap,
 } from "react-icons/fi";
 import { useJsApiLoader } from "@react-google-maps/api";
+import nextDynamic from "next/dynamic";
+import { esPlataformaNativa } from "@/lib/plataforma";
+
+// Seguimiento de ubicación de la APP NATIVA. Se carga SOLO en el navegador (ssr:false)
+// para que el import de @capacitor/core nunca corra en el servidor. En web devuelve null.
+const SeguimientoUbicacionNativo = nextDynamic(
+  () => import("./seguimiento-nativo").then((m) => m.SeguimientoUbicacionNativo),
+  { ssr: false }
+);
 
 interface MiRutaContentProps {
   session: Session;
@@ -106,26 +115,81 @@ function useOnlineStatus() {
   return useSyncExternalStore(subscribe, getSnapshot, () => true);
 }
 
-// ── Hook: Geolocation (Lazy — solo se activa cuando se necesita) ──
+// ── Reporte de ubicación al backend ──
 
-function useGeolocation(enabled: boolean) {
+const REPORTAR_CADA_MS = 12000; // máx ~1 POST cada 12s (no spamear el backend)
+
+// Envía la última posición al backend (rider_locations). Best-effort: si falla
+// (sin internet, sesión vencida) se descarta en silencio; el repartidor sigue igual
+// y el próximo tick del watch reintenta. keepalive ayuda si la pestaña se oculta.
+async function reportarUbicacion(coords: {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  heading?: number | null;
+  speed?: number | null;
+}): Promise<void> {
+  try {
+    await fetch("/api/repartidor/ubicacion", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        lat: coords.lat,
+        lng: coords.lng,
+        accuracy: coords.accuracy,
+        heading: coords.heading ?? undefined,
+        speed: coords.speed ?? undefined,
+        capturedAt: new Date().toISOString(),
+      }),
+    });
+  } catch {
+    // best-effort: la siguiente lectura del watch reintenta
+  }
+}
+
+// ── Hook: Geolocation (Lazy — solo se activa cuando se necesita) ──
+// Devuelve la posición para el ETA y, si `reportar` está activo y estamos en web,
+// la manda al backend (throttle) para el seguimiento en vivo del mapa de despacho.
+
+function useGeolocation(enabled: boolean, reportar = false) {
   const [position, setPosition] = useState<{ lat: number; lng: number } | null>(null);
+  const ultimoReporteRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || !navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        setPosition({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        const { latitude, longitude, accuracy, heading, speed } = pos.coords;
+        setPosition({ lat: latitude, lng: longitude });
+
+        // Reporte al backend SOLO en web (en la app nativa lo hace el plugin de fondo).
+        if (reportar && !esPlataformaNativa()) {
+          const ahora = Date.now();
+          if (ahora - ultimoReporteRef.current >= REPORTAR_CADA_MS) {
+            ultimoReporteRef.current = ahora;
+            void reportarUbicacion({
+              lat: latitude,
+              lng: longitude,
+              accuracy: typeof accuracy === "number" ? accuracy : undefined,
+              heading: heading != null && !Number.isNaN(heading) ? heading : null,
+              speed: speed != null && !Number.isNaN(speed) ? speed : null,
+            });
+          }
+        }
       },
       () => {
         // Silencioso — si no hay permiso, el ETA usa otros métodos
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
+      // En la app nativa el plugin de background ya hace el GPS de alta precisión; acá
+      // bajamos a precisión normal para no tener DOS locks de GPS a la vez (batería).
+      // Alcanza para centrar el mini-mapa. En web (navegador) se mantiene alta precisión.
+      { enableHighAccuracy: !esPlataformaNativa(), timeout: 10000, maximumAge: 5000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [enabled]);
+  }, [enabled, reportar]);
 
   return position;
 }
@@ -945,7 +1009,8 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 
   // GPS: solo se activa cuando el mapa está abierto o hay un pedido En_Camino
   const pedidoEnCaminoExists = pedidos.some(p => p.estado === 'En_Camino');
-  const driverPosition = useGeolocation(showMap || pedidoEnCaminoExists);
+  // reportar=true → la posición se manda al backend (seguimiento en vivo del despacho).
+  const driverPosition = useGeolocation(showMap || pedidoEnCaminoExists, true);
 
   const refreshQueueState = useCallback(() => {
     setQueueCount(getQueueCount());
@@ -1250,6 +1315,9 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
       </div>
 
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
+
+        {/* Seguimiento de ubicación — solo visible dentro de la app nativa */}
+        <SeguimientoUbicacionNativo />
 
         {/* Offline Banner */}
         {!online && (

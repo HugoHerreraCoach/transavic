@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Permite tráfico http (cleartext) SOLO para el servidor de desarrollo local, que
+  es como se hace la PRUEBA sin subir nada a producción:
+    adb reverse tcp:3000 tcp:3000   →  el teléfono ve http://localhost:3000 (dev del Mac)
+
+  En PRODUCCIÓN la app apunta a https://transavic.vercel.app, así que esto no aplica.
+  No se permite cleartext a dominios arbitrarios → seguro para Google Play.
+
+  Si en vez de `adb reverse` preferís probar por WiFi (LAN), agregá acá la IP del Mac
+  como un <domain> más (ej. <domain>192.168.1.50</domain>) y apuntá CAP_SERVER_URL a esa IP.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain> <!-- host del emulador Android -->
+    </domain-config>
+</network-security-config>
