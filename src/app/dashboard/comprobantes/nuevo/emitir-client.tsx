@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { esDniValido, esRucValido, tieneNombreEspecifico } from "@/lib/sunat/validacion-cliente";
 import {
   FiArrowLeft,
   FiSearch,
@@ -155,6 +156,13 @@ export default function EmitirComprobanteClient({
   const [razonSocial, setRazonSocial] = useState("");
   const [direccionCliente, setDireccionCliente] = useState("");
   const [clienteId, setClienteId] = useState<string | null>(null);
+  // Aviso de comprobante duplicado: el backend responde 409 con el comprobante igual.
+  const [duplicado, setDuplicado] = useState<{
+    id: string;
+    serieNumero: string;
+    fecha: string;
+    mensaje: string;
+  } | null>(null);
   const [docInfo, setDocInfo] = useState<{ estado?: string | null; condicion?: string | null } | null>(null);
   
   // Búsqueda inteligente de clientes registrados
@@ -253,6 +261,10 @@ export default function EmitirComprobanteClient({
   }, [items]);
 
   const docEsRuc = numDoc.trim().length === 11;
+  // Cliente elegido del buscador que NO tiene documento válido (DNI/RUC): hay que
+  // conseguirlo y consultarlo. Dispara el aviso guía en la sección del cliente.
+  const clienteSinDoc =
+    clienteId !== null && !esDniValido(numDoc) && !esRucValido(numDoc);
   const boletaGrande = tipo === "03" && totales.total > 700;
   const clienteOpcional = tipo === "03" && !boletaGrande;
 
@@ -441,44 +453,43 @@ export default function EmitirComprobanteClient({
       (it) => it.descripcion.trim() && it.cantidad > 0 && it.precio > 0
     );
     
-    const docLength = numDoc.trim().length;
-    const rucValido = docEsRuc;
-    const dniValido = docLength === 8;
-    const docVacio = docLength === 0;
-    
+    const docTrim = numDoc.trim();
+    const docVacio = docTrim.length === 0;
+    const rucValido = esRucValido(docTrim);
+    const dniValido = esDniValido(docTrim);
+    const docValido = rucValido || dniValido;
+    const hayNombre = tieneNombreEspecifico(razonSocial);
+
     let clienteValido = false;
     let descCliente = "";
-    
+
     if (tipo === "01") {
       if (rucValido && razonSocial.trim().length > 0) {
         clienteValido = true;
-        descCliente = "RUC de 11 dígitos y Razón Social válidos.";
+        descCliente = "RUC y Razón Social válidos.";
       } else if (!rucValido) {
-        descCliente = "Facturas exigen obligatoriamente RUC de 11 dígitos.";
+        descCliente = "Las facturas exigen un RUC válido (11 dígitos, empieza en 10/15/16/17/20).";
       } else {
         descCliente = "Falta rellenar la Razón Social del cliente.";
       }
     } else {
-      if (boletaGrande) {
-        if (rucValido || dniValido) {
-          clienteValido = true;
-          descCliente = "Identificación cargada (DNI/RUC exigido para boletas > S/700).";
-        } else {
-          descCliente = "Boletas mayores a S/700 exigen DNI de 8 o RUC de 11 dígitos.";
-        }
+      // BOLETA
+      if (!docVacio && !docValido) {
+        descCliente = "El documento no es válido. DNI = 8 dígitos reales (no 00000000); RUC = 11 dígitos.";
+      } else if (boletaGrande && !docValido) {
+        descCliente = "Las boletas mayores a S/700 exigen DNI (8 díg) o RUC (11 díg).";
+      } else if (docValido) {
+        clienteValido = true;
+        descCliente = "Identificación del cliente válida.";
       } else {
-        if (docVacio) {
-          clienteValido = true;
-          descCliente = "Clientes Varios (monto menor a S/700).";
-        } else if (rucValido || dniValido) {
-          clienteValido = true;
-          descCliente = "Identificación opcional cargada correctamente.";
-        } else {
-          descCliente = "El documento debe tener 8 dígitos (DNI) o 11 dígitos (RUC).";
-        }
+        // Sin documento válido, monto < S/700 → consumidor genérico (CLIENTES VARIOS).
+        clienteValido = true;
+        descCliente = hayNombre
+          ? "Sin DNI/RUC válido, esta boleta saldrá a CLIENTES VARIOS (el nombre queda en el pedido)."
+          : "Se emitirá a CLIENTES VARIOS (consumidor final, monto menor a S/700).";
       }
     }
-    
+
     return {
       itemsValidos,
       clienteValido,
@@ -486,7 +497,7 @@ export default function EmitirComprobanteClient({
       itemsCount,
       puedeEmitir: itemsValidos && clienteValido,
     };
-  }, [items, numDoc, razonSocial, tipo, boletaGrande, docEsRuc]);
+  }, [items, numDoc, razonSocial, tipo, boletaGrande]);
 
   const puedeEmitir = reqs.puedeEmitir;
 
@@ -535,7 +546,7 @@ export default function EmitirComprobanteClient({
     }
   }
 
-  async function emitir() {
+  async function emitir(confirmarDuplicado = false) {
     setErrorMsg(null);
     setResultado(null);
     if (tipo === "01" && !docEsRuc) {
@@ -559,6 +570,7 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               yaCobrado: cobradoYa,
+              confirmarDuplicado,
               // Datos del receptor tal como están en el form (precargados del
               // pedido + editables/consultables por el usuario).
               cliente_override: {
@@ -597,10 +609,20 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               yaCobrado: cobradoYa,
+              confirmarDuplicado,
             }),
           });
       const j = await res.json();
-      if (!res.ok) {
+      if (res.status === 409 && j?.duplicado) {
+        // El backend encontró un comprobante igual reciente: pedimos confirmación
+        // antes de duplicar (no es un error, es una guarda).
+        setDuplicado({
+          id: j.duplicado.id,
+          serieNumero: j.duplicado.serieNumero,
+          fecha: j.duplicado.fecha,
+          mensaje: typeof j.mensaje === "string" ? j.mensaje : "Ya existe un comprobante igual.",
+        });
+      } else if (!res.ok) {
         setErrorMsg(typeof j.error === "string" ? j.error : "No se pudo emitir. Revisa los datos.");
       } else {
         setResultado(j);
@@ -1054,6 +1076,17 @@ export default function EmitirComprobanteClient({
                   <div className="flex-grow border-t border-gray-150"></div>
                 </div>
 
+                {clienteSinDoc && (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <FiAlertCircle className="mt-0.5 flex-shrink-0" size={14} />
+                    <span>
+                      <strong>{razonSocial.trim() || "Este cliente"}</strong> no tiene RUC/DNI guardado.{" "}
+                      {tipo === "01" ? "Para emitir la factura," : "Para identificarlo,"} escríbelo abajo
+                      y toca <strong>Consultar</strong>: SUNAT trae sus datos y lo guardamos en su ficha
+                      para la próxima.
+                    </span>
+                  </div>
+                )}
                 {/* RUC / DNI Input + Consultar button */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
@@ -1412,7 +1445,7 @@ export default function EmitirComprobanteClient({
               {errorMsg && <p className="text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-lg border border-red-100 leading-normal">{errorMsg}</p>}
               
               <button
-                onClick={emitir}
+                onClick={() => emitir()}
                 disabled={!puedeEmitir || emitiendo}
                 className={`w-full py-3.5 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-98 cursor-pointer ${theme.buttonDisabled} disabled:cursor-not-allowed text-sm`}
               >
@@ -1441,13 +1474,72 @@ export default function EmitirComprobanteClient({
           </div>
           
           <button
-            onClick={emitir}
+            onClick={() => emitir()}
             disabled={!puedeEmitir || emitiendo}
             className={`px-5 py-3 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs ${theme.buttonDisabled}`}
           >
             {emitiendo ? <FiLoader className="animate-spin" /> : <FiFileText />}
             {emitiendo ? "Enviando…" : `Emitir ${tipo === "01" ? "factura" : "boleta"}`}
           </button>
+        </div>
+      )}
+
+      {/* Aviso de comprobante DUPLICADO: guarda antes de emitir uno igual. */}
+      {duplicado && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 anim-fade">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden anim-modal">
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100">
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex-shrink-0">
+                <FiAlertCircle size={18} />
+              </span>
+              <h3 className="font-bold text-gray-900">Ya existe un comprobante igual</h3>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm">
+              <p className="text-gray-700">{duplicado.mensaje}</p>
+              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-gray-600">
+                <span className="font-mono font-bold text-gray-900">{duplicado.serieNumero}</span>
+                <span className="text-gray-400">
+                  {" "}· emitido{" "}
+                  {new Intl.DateTimeFormat("es-PE", {
+                    timeZone: "America/Lima",
+                    day: "2-digit",
+                    month: "2-digit",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    hour12: true,
+                  }).format(new Date(duplicado.fecha))}
+                </span>
+              </div>
+              <p className="text-gray-500">
+                Si es una venta distinta, puedes emitirlo igual. Si fue por error, revisa el que ya existe.
+              </p>
+            </div>
+            <div className="flex flex-col-reverse gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                onClick={() => setDuplicado(null)}
+                className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-800 active:scale-95 transition"
+              >
+                Cancelar
+              </button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button
+                  onClick={() => window.open("/dashboard/comprobantes", "_blank")}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition"
+                >
+                  <FiFileText size={15} /> Ver comprobante
+                </button>
+                <button
+                  onClick={() => {
+                    setDuplicado(null);
+                    void emitir(true);
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 active:scale-95 transition shadow-sm"
+                >
+                  Sí, emitir igual
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

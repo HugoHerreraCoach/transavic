@@ -13,6 +13,11 @@ import { emitirComprobante } from "@/lib/sunat";
 import { TipoComprobante, TipoDocIdentidad, EstadoSunat } from "@/lib/sunat/types";
 import { crearFacturaStandalone, plazoDeCobranza } from "@/lib/cobranzas";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
+import {
+  esRucValido,
+  esReceptorIdentificado,
+} from "@/lib/sunat/validacion-cliente";
+import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +48,8 @@ const Schema = z.object({
   // Default false = se crea cobranza también para contado (refleja realidad del
   // negocio Transavic: la mayoría son "contado" pero el cliente paga después).
   yaCobrado: z.boolean().default(false),
+  // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
+  confirmarDuplicado: z.boolean().default(false),
 });
 
 /** Mapea unidades comunes al catálogo 03 de SUNAT (unidad de medida). */
@@ -80,10 +87,10 @@ export async function POST(request: Request) {
     const numDoc = (cliente.numDocumento || "").trim();
     const razon = (cliente.razonSocial || "").trim();
 
-    const esRuc = /^\d{11}$/.test(numDoc);
-    const esRucValido = /^(10|15|16|17|20)\d{9}$/.test(numDoc);
-    const esDni = /^\d{8}$/.test(numDoc);
-    const identificado = esDni || esRuc;
+    // Documento del receptor: validación robusta (rechaza relleno como 00000000).
+    const docPresente = numDoc !== "" && numDoc !== "0";
+    const esRuc = esRucValido(numDoc);
+    const identificado = esReceptorIdentificado(numDoc); // DNI válido o RUC válido
 
     // Total con IGV (necesario para las reglas por monto).
     const totalConIgv = items.reduce(
@@ -98,9 +105,16 @@ export async function POST(request: Request) {
     }
 
     // ── Reglas SUNAT de identificación del cliente ───────────────────────────
+    // Si ingresaron un documento, debe ser válido (rechaza relleno como 00000000).
+    if (docPresente && !identificado) {
+      return NextResponse.json(
+        { error: `El documento "${numDoc}" no es válido. DNI = 8 dígitos reales; RUC = 11 dígitos que empiezan en 10/15/16/17/20.` },
+        { status: 400 }
+      );
+    }
     if (tipo === "01") {
       // FACTURA: siempre RUC válido + razón social.
-      if (!esRucValido) {
+      if (!esRuc) {
         return NextResponse.json(
           { error: "Para FACTURA el receptor debe tener un RUC válido (11 dígitos que empiezan en 10/15/16/17/20). Para personas naturales emite BOLETA." },
           { status: 400 }
@@ -112,12 +126,18 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-    } else if (totalConIgv > 700 && !identificado) {
-      // BOLETA ≥ S/700: SUNAT exige identificar con DNI o RUC.
-      return NextResponse.json(
-        { error: "Las boletas mayores a S/700 requieren el DNI (8 dígitos) o RUC del cliente (regla SUNAT)." },
-        { status: 400 }
-      );
+    } else {
+      // BOLETA.
+      if (totalConIgv > 700 && !identificado) {
+        // SUNAT exige identificar al cliente en boletas ≥ S/700.
+        return NextResponse.json(
+          { error: "Las boletas mayores a S/700 requieren el DNI (8 dígitos) o RUC del cliente (regla SUNAT)." },
+          { status: 400 }
+        );
+      }
+      // Sin documento válido y < S/700: NO se traba la emisión — la boleta sale a
+      // "CLIENTES VARIOS" (ver clienteFinal). 400 de 404 clientes no tienen doc, así
+      // que exigirlo frenaría casi todas las boletas (decisión de Antonio, jun 2026).
     }
 
     // Cliente final: si está identificado, usar su documento; si es una boleta sin
@@ -127,13 +147,14 @@ export async function POST(request: Request) {
       ? {
           tipoDocumento: esRuc ? TipoDocIdentidad.RUC : TipoDocIdentidad.DNI,
           numDocumento: numDoc,
-          razonSocial: razon || "CLIENTES VARIOS",
+          razonSocial: (razon || "CLIENTES VARIOS").toUpperCase(),
           direccion: direccionCliente,
         }
       : {
+          // Sin documento válido (boleta < S/700, sin nombre): consumidor genérico.
           tipoDocumento: TipoDocIdentidad.SIN_DOCUMENTO, // "0"
           numDocumento: "0",
-          razonSocial: razon || "CLIENTES VARIOS",
+          razonSocial: "CLIENTES VARIOS",
           direccion: direccionCliente,
         };
 
@@ -155,6 +176,27 @@ export async function POST(request: Request) {
         igvPorcentaje: 18,
       };
     });
+
+    // Anti-duplicado: si ya hay un comprobante igual reciente (mismo cliente
+    // identificado + tipo + monto), avisar antes de duplicar — salvo que la
+    // asesora ya haya confirmado "emitir igual".
+    if (!parsed.data.confirmarDuplicado && identificado) {
+      const dup = await buscarComprobanteDuplicado({
+        empresa,
+        tipo,
+        clienteDocNum: numDoc,
+        montoTotal: totalConIgv,
+      });
+      if (dup) {
+        return NextResponse.json(
+          {
+            duplicado: dup,
+            mensaje: `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     const resultado = await emitirComprobante({
       empresa,
@@ -220,6 +262,23 @@ export async function POST(request: Request) {
           "Comprobante emitido pero no se pudo crear la cobranza asociada:",
           errCobranza
         );
+      }
+    }
+
+    // Completar la ficha del cliente: si es un cliente registrado que NO tenía un
+    // documento válido y ahora tenemos uno (consultado en SUNAT), lo guardamos para
+    // que la próxima vez no haya que buscarlo. Solo si su doc actual no es válido
+    // (no pisa uno bueno). No-bloqueante.
+    if (parsed.data.cliente.id && identificado) {
+      try {
+        const sqlCli = neon(process.env.DATABASE_URL!);
+        await sqlCli`
+          UPDATE clientes SET ruc_dni = ${numDoc}
+          WHERE id = ${parsed.data.cliente.id}::uuid
+            AND COALESCE(ruc_dni, '') !~ '^([0-9]{8}|[0-9]{11})$'
+        `;
+      } catch (e) {
+        console.error("No se pudo guardar el documento en la ficha del cliente:", e);
       }
     }
 

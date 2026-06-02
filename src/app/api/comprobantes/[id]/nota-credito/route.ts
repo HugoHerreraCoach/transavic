@@ -61,9 +61,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
-    SELECT c.empresa, c.tipo, c.serie, c.numero, c.estado,
+    SELECT c.empresa, c.tipo, c.serie, c.numero, c.serie_numero, c.estado,
            c.monto_subtotal, c.cliente_doc_num, c.cliente_razon_social,
-           c.pedido_id, p.asesor_id
+           c.observaciones, c.pedido_id, p.asesor_id
     FROM comprobantes c
     LEFT JOIN pedidos p ON c.pedido_id = p.id
     WHERE c.id = ${id}::uuid LIMIT 1
@@ -72,10 +72,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     tipo: string;
     serie: string;
     numero: number;
+    serie_numero: string;
     estado: string;
     monto_subtotal: string | number;
     cliente_doc_num: string | null;
     cliente_razon_social: string | null;
+    observaciones: string | null;
     pedido_id: string | null;
     asesor_id: string | null;
   }>;
@@ -101,6 +103,28 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       },
       { status: 409 }
     );
+
+  // Anti-duplicado: bloquear una SEGUNDA nota de crédito si el comprobante ya tiene
+  // una NC aceptada/observada que lo acredita. (Pasó en prod: una factura quedó con
+  // DOS NC por el total → doble anulación.) Se detecta por la referencia estructurada
+  // (NC emitidas con el sistema nuevo) y por las observaciones del comprobante (NC
+  // históricas, anteriores a la columna referencia_comprobante_id).
+  const ncPrevias = (await sql`
+    SELECT serie_numero FROM comprobantes
+    WHERE referencia_comprobante_id = ${id}::uuid
+      AND tipo = '07' AND estado IN ('aceptado', 'observado')
+    ORDER BY created_at LIMIT 1
+  `) as Array<{ serie_numero: string }>;
+  const ncHistorica = /nota de cr[eé]dito\s+(\S+)\s+\(ACEPTADA/i.exec(c.observaciones ?? "");
+  if (ncPrevias.length > 0 || ncHistorica) {
+    const ncRef = ncPrevias[0]?.serie_numero ?? ncHistorica?.[1] ?? "una previa";
+    return NextResponse.json(
+      {
+        error: `Este comprobante (${c.serie_numero}) ya tiene la nota de crédito ${ncRef}; no se puede emitir otra sobre el mismo comprobante. Si hay un caso especial, coordínalo con el admin.`,
+      },
+      { status: 409 }
+    );
+  }
 
   const subtotalNeto = Number(c.monto_subtotal);
   if (!Number.isFinite(subtotalNeto) || subtotalNeto <= 0)

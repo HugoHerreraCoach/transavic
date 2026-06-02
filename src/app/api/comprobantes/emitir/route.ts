@@ -12,6 +12,11 @@ import {
 } from "@/lib/sunat/types";
 import { empresaFromPedidoString } from "@/lib/sunat/config-transavic";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
+import {
+  esRucValido,
+  esReceptorIdentificado,
+} from "@/lib/sunat/validacion-cliente";
+import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +26,8 @@ const Schema = z.object({
   formaPago: z.enum(["Contado", "Credito"]).default("Contado"),
   plazoDias: z.number().int().min(0).max(120).default(0),
   yaCobrado: z.boolean().default(false),
+  // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
+  confirmarDuplicado: z.boolean().default(false),
   // Datos del receptor desde el form (al facturar desde el modal). Si no vienen,
   // se usan los del pedido en DB. Evita el error SUNAT 2021 (razón social vacía).
   cliente_override: z
@@ -107,7 +114,10 @@ export async function POST(request: Request) {
       ""
     ).trim();
     const cliDireccion = ov?.direccion?.trim() || undefined;
-    const tieneRuc = /^\d{11}$/.test(cliNumDoc);
+    // Documento del receptor: validación robusta (rechaza relleno como 00000000).
+    const docPresente = cliNumDoc.length > 0 && cliNumDoc !== "0";
+    const tieneRuc = esRucValido(cliNumDoc);
+    const identificado = esReceptorIdentificado(cliNumDoc); // DNI válido o RUC válido
 
     // Validación: factura requiere RUC del cliente (11 dígitos) + razón social.
     if (parsed.data.tipo === "01" && !tieneRuc) {
@@ -241,28 +251,69 @@ export async function POST(request: Request) {
       );
     }
 
-    // Regla SUNAT: una boleta > S/700 exige identificar al cliente con DNI o RUC.
-    const esDniCliente = /^\d{8}$/.test(cliNumDoc);
-    if (parsed.data.tipo === "03" && totalConIgv > 700 && !esDniCliente && !tieneRuc) {
-      return NextResponse.json(
-        {
-          error:
-            "Las boletas mayores a S/700 requieren el DNI o RUC del cliente (regla SUNAT). Edita el cliente y agrega su documento.",
-        },
-        { status: 400 }
-      );
+    // Boleta: validar documento e identificación del cliente.
+    if (parsed.data.tipo === "03") {
+      if (docPresente && !identificado) {
+        // Pusieron un documento pero no es válido (ej. 00000000 de relleno).
+        return NextResponse.json(
+          {
+            error: `El documento del cliente ("${cliNumDoc}") no es válido. Corrige el DNI (8 dígitos) o RUC del cliente antes de emitir la boleta.`,
+          },
+          { status: 400 }
+        );
+      }
+      if (totalConIgv > 700 && !identificado) {
+        // SUNAT exige identificar al cliente en boletas ≥ S/700.
+        return NextResponse.json(
+          {
+            error:
+              "Las boletas mayores a S/700 requieren el DNI o RUC del cliente (regla SUNAT). Edita el cliente y agrega su documento.",
+          },
+          { status: 400 }
+        );
+      }
+      // Sin documento válido y < S/700: NO se traba — la boleta sale a "CLIENTES
+      // VARIOS" (ver el cliente abajo). El nombre del cliente igual queda en el pedido.
+    }
+
+    // Anti-duplicado: avisar si ya hay un comprobante igual reciente (mismo
+    // cliente identificado + tipo + monto), salvo que ya se haya confirmado.
+    if (!parsed.data.confirmarDuplicado && identificado) {
+      const dup = await buscarComprobanteDuplicado({
+        empresa,
+        tipo: parsed.data.tipo,
+        clienteDocNum: cliNumDoc,
+        montoTotal: totalConIgv,
+      });
+      if (dup) {
+        return NextResponse.json(
+          {
+            duplicado: dup,
+            mensaje: `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
+          },
+          { status: 409 }
+        );
+      }
     }
 
     const resultado = await emitirComprobante({
       empresa,
       tipo: parsed.data.tipo as TipoComprobante,
       pedidoId: parsed.data.pedido_id,
-      cliente: {
-        tipoDocumento: tieneRuc ? TipoDocIdentidad.RUC : TipoDocIdentidad.DNI,
-        numDocumento: cliNumDoc || "00000000",
-        razonSocial: cliRazon,
-        direccion: cliDireccion,
-      },
+      cliente: identificado
+        ? {
+            tipoDocumento: tieneRuc ? TipoDocIdentidad.RUC : TipoDocIdentidad.DNI,
+            numDocumento: cliNumDoc,
+            razonSocial: cliRazon.toUpperCase(),
+            direccion: cliDireccion,
+          }
+        : {
+            // Boleta < S/700 sin documento válido: consumidor genérico (no inventar DNI de ceros).
+            tipoDocumento: TipoDocIdentidad.SIN_DOCUMENTO,
+            numDocumento: "0",
+            razonSocial: "CLIENTES VARIOS",
+            direccion: cliDireccion,
+          },
       items: itemsSunat,
       formaPago: parsed.data.formaPago,
       plazoDias: parsed.data.plazoDias,
