@@ -216,6 +216,25 @@ function fechaLima(offsetDias = 0): string {
   }).format(new Date(Date.now() + offsetDias * 24 * 60 * 60 * 1000));
 }
 
+/** Fecha y hora (zona Lima) de un ISO timestamp, para mostrar en la lista. */
+function fechaHoraLima(iso: string): { fecha: string; hora: string } {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return { fecha: "—", hora: "" };
+  const fecha = new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(d);
+  const hora = new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(d);
+  return { fecha, hora };
+}
+
 // ──────────────────────────────────────────────────────────
 // Helpers cliente: traer detalle + generar PDF
 // ──────────────────────────────────────────────────────────
@@ -1847,17 +1866,27 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     )}
                   </div>
                 </div>
-                {(() => {
-                  const ui = estadoUI(c.estado);
-                  return (
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold flex-shrink-0 ${ui.bg} ${ui.text}`}
-                    >
-                      <ui.Icon size={10} />
-                      {ui.label}
-                    </span>
-                  );
-                })()}
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  {(() => {
+                    const ui = estadoUI(c.estado);
+                    return (
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${ui.bg} ${ui.text}`}
+                      >
+                        <ui.Icon size={10} />
+                        {ui.label}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
+                    const f = fechaHoraLima(c.created_at);
+                    return (
+                      <span className="text-[10px] text-gray-400 tabular-nums whitespace-nowrap">
+                        {f.fecha} · {f.hora}
+                      </span>
+                    );
+                  })()}
+                </div>
               </div>
               <div className="mb-2">
                 <div className="text-sm font-medium text-gray-800">
@@ -1907,13 +1936,14 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
               <th className="px-3 py-2 text-center">Estado</th>
               <th className="px-3 py-2 text-left">Empresa</th>
               <th className="px-3 py-2 text-left">Emitido por</th>
+              <th className="px-3 py-2 text-left">Fecha</th>
               <th className="px-3 py-2 text-center">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {comprobantesFiltrados.length === 0 && (
               <tr>
-                <td colSpan={8} className="text-center text-gray-400 py-8">
+                <td colSpan={9} className="text-center text-gray-400 py-8">
                   Sin comprobantes emitidos todavía
                 </td>
               </tr>
@@ -2009,6 +2039,17 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     ) : (
                       <span className="text-gray-300">—</span>
                     )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {(() => {
+                      const f = fechaHoraLima(c.created_at);
+                      return (
+                        <div className="text-xs text-gray-700 tabular-nums">
+                          {f.fecha}
+                          <span className="block text-[10px] text-gray-400">{f.hora}</span>
+                        </div>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-2">
                     {celdaAcciones(c)}
