@@ -30,13 +30,11 @@ export async function GET(request: Request) {
       params.push(pedidoId);
     }
 
-    // Scoping: asesor solo ve comprobantes de sus pedidos
-    if (session.user.role === "asesor") {
-      conditions.push(
-        `c.pedido_id IN (SELECT id FROM pedidos WHERE asesor_id = $${i++})`
-      );
-      params.push(session.user.id);
-    }
+    // Acceso (decisión de negocio jun 2026): TODAS las asesoras y el admin ven
+    // TODOS los comprobantes (transparencia total del equipo). Antes la asesora
+    // solo veía los de sus pedidos; ese límite se quitó a pedido de Antonio. La
+    // atribución de quién emitió cada uno se muestra con la columna `emitido_por`.
+    // (La separación por asesora se mantiene SOLO en los insights de IA.)
 
     if (tipo && (tipo === "01" || tipo === "03" || tipo === "07" || tipo === "08")) {
       conditions.push(`c.tipo = $${i++}`);
@@ -61,9 +59,20 @@ export async function GET(request: Request) {
     const rows = await sql.query(
       `SELECT c.id, c.serie_numero, c.tipo, c.empresa, c.cliente_razon_social,
         c.cliente_doc_num, c.monto_total, c.estado, c.created_at, c.mensaje_sunat,
-        p.cliente AS pedido_cliente
+        p.cliente AS pedido_cliente,
+        c.emitido_por,
+        c.referencia_comprobante_id,
+        ref.serie_numero AS referencia_serie_numero,
+        ref.tipo         AS referencia_tipo,
+        EXISTS (
+          SELECT 1 FROM comprobantes nc
+          WHERE nc.referencia_comprobante_id = c.id
+            AND nc.tipo = '07'
+            AND nc.estado IN ('aceptado', 'observado')
+        ) AS tiene_nc
       FROM comprobantes c
       LEFT JOIN pedidos p ON c.pedido_id = p.id
+      LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id
       ${where}
       ORDER BY c.created_at DESC
       LIMIT 100`,

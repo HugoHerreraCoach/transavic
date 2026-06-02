@@ -83,18 +83,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   const c = rows[0];
 
-  // Scoping: una asesora solo puede acreditar comprobantes de SUS pedidos (igual que
-  // el scoping de la lista en GET /api/comprobantes). Los comprobantes sin pedido
-  // (standalone) los acredita el admin — la asesora ni los ve en su lista.
-  if (
-    session.user.role === "asesor" &&
-    (!c.pedido_id || c.asesor_id !== session.user.id)
-  ) {
-    return NextResponse.json(
-      { error: "Solo puedes emitir notas de crédito sobre tus propios comprobantes." },
-      { status: 403 }
-    );
-  }
+  // Acceso (decisión de negocio jun 2026): todas las asesoras y el admin pueden
+  // emitir nota de crédito sobre CUALQUIER comprobante (el equipo se cubre entre
+  // sí cuando una falta). Antes la asesora solo podía sobre los suyos; se abrió a
+  // pedido de Antonio. Queda registrado quién la emite en `emitido_por` (rastro).
+  // El check de rol asesor/admin ya se hizo arriba.
 
   if (c.tipo !== "01" && c.tipo !== "03")
     return NextResponse.json(
@@ -142,6 +135,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         tipoNotaCredito: parsed.data.tipoNotaCredito as TipoNotaCredito,
         motivo: parsed.data.motivo,
       },
+      // Vincula la NC con la fila del comprobante original (factura/boleta): se
+      // guarda en `comprobantes.referencia_comprobante_id`. Sirve para mostrar el
+      // enlace "anula F001-5" en la lista y para que la factura aparezca "con N. Crédito".
+      referenciaComprobanteId: id,
+      // Rastro: quién emitió esta nota de crédito (cualquier asesora/admin puede).
+      emitidoPor: session.user.name?.trim() || undefined,
     });
 
     // Vincular la NC con el comprobante original (auditoría)
