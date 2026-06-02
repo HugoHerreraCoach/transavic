@@ -1289,9 +1289,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // envía SOLO por cron (2am Lima); acá queda solo como respaldo por si el cron
   // falló algún día — no como acción que el admin deba recordar hacer.
   const [menuAdmin, setMenuAdmin] = useState(false);
-  // Nota de crédito: solo admin, sobre facturas/boletas ya aceptadas u observadas.
+  // Nota de crédito: admin y la asesora dueña del comprobante, sobre facturas/boletas
+  // ya aceptadas u observadas. (La lista ya viene scopeada a los comprobantes de la
+  // asesora; el backend revalida que solo acredite los de sus pedidos.)
   const puedeNotaCredito = (c: Comprobante) =>
-    userRole === "admin" &&
+    (userRole === "admin" || userRole === "asesor") &&
     (c.estado === "aceptado" || c.estado === "observado") &&
     (c.tipo === "01" || c.tipo === "03");
   // Reintentar: solo admin, sobre comprobantes que SUNAT rechazó o que erraron al enviar.

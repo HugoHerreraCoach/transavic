@@ -7,7 +7,8 @@
 //
 // V1: reconstruye el crédito como una línea consolidada por el neto del original
 // (la tabla comprobantes guarda monto_subtotal/igv/total). Suficiente para
-// anulación total (motivo 01). Solo admin.
+// anulación total (motivo 01). La emite el admin o la ASESORA dueña del
+// comprobante (de sus pedidos) — las asesoras son las que facturan.
 
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
@@ -43,9 +44,9 @@ interface RouteParams {
 export async function POST(req: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-  if (session.user.role !== "admin")
+  if (!["asesor", "admin"].includes(session.user.role))
     return NextResponse.json(
-      { error: "Solo admin puede emitir notas de crédito" },
+      { error: "Solo asesores o admin pueden emitir notas de crédito" },
       { status: 403 }
     );
 
@@ -60,9 +61,12 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
-    SELECT empresa, tipo, serie, numero, estado,
-           monto_subtotal, cliente_doc_num, cliente_razon_social
-    FROM comprobantes WHERE id = ${id}::uuid LIMIT 1
+    SELECT c.empresa, c.tipo, c.serie, c.numero, c.estado,
+           c.monto_subtotal, c.cliente_doc_num, c.cliente_razon_social,
+           c.pedido_id, p.asesor_id
+    FROM comprobantes c
+    LEFT JOIN pedidos p ON c.pedido_id = p.id
+    WHERE c.id = ${id}::uuid LIMIT 1
   `) as Array<{
     empresa: string;
     tipo: string;
@@ -72,10 +76,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     monto_subtotal: string | number;
     cliente_doc_num: string | null;
     cliente_razon_social: string | null;
+    pedido_id: string | null;
+    asesor_id: string | null;
   }>;
   if (rows.length === 0)
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   const c = rows[0];
+
+  // Scoping: una asesora solo puede acreditar comprobantes de SUS pedidos (igual que
+  // el scoping de la lista en GET /api/comprobantes). Los comprobantes sin pedido
+  // (standalone) los acredita el admin — la asesora ni los ve en su lista.
+  if (
+    session.user.role === "asesor" &&
+    (!c.pedido_id || c.asesor_id !== session.user.id)
+  ) {
+    return NextResponse.json(
+      { error: "Solo puedes emitir notas de crédito sobre tus propios comprobantes." },
+      { status: 403 }
+    );
+  }
 
   if (c.tipo !== "01" && c.tipo !== "03")
     return NextResponse.json(
@@ -135,9 +154,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       `;
     }
 
-    // P2.10 — Si la NC fue rechazada o falló, avisar al admin (es el que la
-    // emite; nota-credito está restringida a admin). Sin pedido_id directo
-    // acá — la NC suele venir de admin sobre cualquier factura.
+    // P2.10 — Si la NC fue rechazada o falló, avisar. La NC ahora también la puede
+    // emitir la asesora dueña, así que notificamos al admin y a la asesora del
+    // comprobante (si lo tiene) para que se entere de que su nota de crédito falló.
     if (
       resultado.estado === EstadoSunat.RECHAZADA ||
       resultado.estado === EstadoSunat.ERROR
@@ -148,9 +167,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         tipo: "07",
         estado: resultado.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
         mensajeSunat: resultado.mensaje ?? null,
-        pedidoId: null,
+        pedidoId: c.pedido_id ?? null,
         empresa: c.empresa,
-        asesorId: null,
+        asesorId: c.asesor_id ?? null,
       });
     }
 
