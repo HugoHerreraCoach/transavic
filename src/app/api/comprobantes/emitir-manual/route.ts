@@ -18,6 +18,7 @@ import {
   esReceptorIdentificado,
 } from "@/lib/sunat/validacion-cliente";
 import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
 export const dynamic = "force-dynamic";
 
@@ -52,13 +53,11 @@ const Schema = z.object({
   confirmarDuplicado: z.boolean().default(false),
 });
 
-/** Mapea unidades comunes al catálogo 03 de SUNAT (unidad de medida). */
+/** Mapea la unidad a código SUNAT — delegado al helper compartido (un solo origen
+ *  de verdad para todos los flujos de emisión). Acepta "kg"/"uni" crudos y los
+ *  códigos "KGM"/"NIU" del form (idempotente, nunca degrada KGM→NIU). */
 function mapUnidad(u: string): string {
-  const up = (u || "").trim().toUpperCase();
-  const codigos = ["KGM", "NIU", "ZZ", "BX", "GLL", "LTR", "MTR", "GRM", "DZN"];
-  if (codigos.includes(up)) return up;
-  if (["KG", "KILO", "KILOS", "KILOGRAMO", "KILOGRAMOS"].includes(up)) return "KGM";
-  return "NIU"; // unidad (por defecto)
+  return aUnitCodeSunat(u);
 }
 
 export async function POST(request: Request) {

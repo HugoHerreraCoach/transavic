@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { esDniValido, esRucValido, tieneNombreEspecifico } from "@/lib/sunat/validacion-cliente";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import {
   FiArrowLeft,
   FiSearch,
@@ -68,11 +69,10 @@ const EMPRESA_UI: Record<Empresa, { logo: string; nombre: string; ring: string; 
   },
 };
 
-/** Mapea la unidad del catálogo (texto libre) a unidad SUNAT. */
+/** Mapea la unidad del catálogo a código SUNAT (helper compartido `aUnitCodeSunat`,
+ *  mismo criterio que usan los endpoints de emisión). */
 function unidadSunatDesde(u: string | null | undefined): "NIU" | "KGM" {
-  const s = (u || "").trim().toLowerCase();
-  if (s === "kg" || s === "kgm" || s === "kilogramo" || s === "kilo") return "KGM";
-  return "NIU"; // "uni/kg", "unidad", etc. → unidad por defecto (editable)
+  return aUnitCodeSunat(u);
 }
 
 /** Fecha local (YYYY-MM-DD) de hoy + `dias`. Para el selector de vencimiento. */

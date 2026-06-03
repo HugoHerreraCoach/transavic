@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { crearNotificacion } from "@/lib/notificaciones";
 import { crearFacturaParaPedido, calcularMontoPedido } from "@/lib/cobranzas";
 import { calcularMetaDiaria, ventasHoy } from "@/lib/metas";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
 export const dynamic = "force-dynamic";
 
@@ -168,7 +169,7 @@ export async function POST(request: Request) {
               },
               items: items.map((it) => ({
                 descripcion: it.producto_nombre,
-                unidadMedida: it.unidad === "kg" ? "KGM" : "NIU",
+                unidadMedida: aUnitCodeSunat(it.unidad),
                 cantidad: Number(it.cantidad),
                 precioUnitario: Number(
                   (Number(it.precio_unitario) / IGV_FACTOR).toFixed(4)

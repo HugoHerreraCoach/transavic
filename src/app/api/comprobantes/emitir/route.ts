@@ -17,6 +17,7 @@ import {
   esReceptorIdentificado,
 } from "@/lib/sunat/validacion-cliente";
 import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
 export const dynamic = "force-dynamic";
 
@@ -230,7 +231,7 @@ export async function POST(request: Request) {
           codMap.get(it.producto_nombre.trim().toLowerCase()) ||
           `P${String(idx + 1).padStart(3, "0")}`,
         descripcion: it.producto_nombre,
-        unidadMedida: it.unidad === "kg" ? "KGM" : "NIU",
+        unidadMedida: aUnitCodeSunat(it.unidad),
         cantidad: it.cantidad,
         precioUnitario: Number(precioSinIgv.toFixed(4)),
         igvPorcentaje: 18,
