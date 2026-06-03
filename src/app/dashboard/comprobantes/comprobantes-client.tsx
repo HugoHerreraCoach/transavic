@@ -1956,7 +1956,6 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             { v: "all", l: "Todos" },
             { v: "aceptados", l: "Aceptados", swatch: "bg-green-500" },
             { v: "problemas", l: "Con problemas", swatch: "bg-red-500" },
-            { v: "anulados", l: "Anulados", swatch: "bg-gray-500" },
           ]}
         />
       </div>
