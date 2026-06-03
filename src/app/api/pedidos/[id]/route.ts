@@ -32,6 +32,18 @@ const UpdateSchema = z.object({
   entregado: z.boolean().optional(),
   entregado_por: z.string().optional().nullable(),
   entregado_at: z.string().optional().nullable(),
+  // Ítems estructurados (productos del catálogo). Si vienen, REEMPLAZAN los
+  // pedido_items del pedido → editar cuenta en el "Resumen del día" y reportes.
+  items: z
+    .array(
+      z.object({
+        productoId: z.string().uuid(),
+        nombre: z.string().min(1),
+        cantidad: z.number().positive(),
+        unidad: z.string().min(1),
+      })
+    )
+    .optional(),
 });
 
 export async function GET(request: Request) {
@@ -160,6 +172,11 @@ export async function PATCH(request: Request) {
 
     const dataToUpdate = parsedData.data;
 
+    // `items` (productos del catálogo) NO es columna de `pedidos`: se sincroniza aparte
+    // en `pedido_items`. Lo separamos del objeto que arma el UPDATE dinámico de pedidos.
+    const itemsToSync = dataToUpdate.items;
+    delete (dataToUpdate as { items?: unknown }).items;
+
     // Sincronizar estado ↔ entregado (backward compatibility)
     if (dataToUpdate.estado) {
       // Si se cambia el estado directamente, sincronizar el boolean
@@ -209,7 +226,7 @@ export async function PATCH(request: Request) {
       (entry) => entry[1] !== undefined
     );
 
-    if (updateEntries.length === 0) {
+    if (updateEntries.length === 0 && itemsToSync === undefined) {
       return NextResponse.json(
         { error: "No se proporcionaron campos para actualizar." },
         { status: 400 }
@@ -229,15 +246,17 @@ export async function PATCH(request: Request) {
       antesAuditable = (antesRows[0] as Record<string, unknown>) ?? null;
     }
 
-    // Construimos la consulta SET dinámicamente
-    const setClauses = updateEntries
-      .map(([key], index) => `${key} = $${index + 1}`)
-      .join(", ");
+    // Construimos la consulta SET dinámicamente (solo si hay campos de `pedidos`).
+    if (updateEntries.length > 0) {
+      const setClauses = updateEntries
+        .map(([key], index) => `${key} = $${index + 1}`)
+        .join(", ");
 
-    const params = updateEntries.map((entry) => entry[1]);
-    const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
-    params.push(id);
-    await sql.query(query, params);
+      const params = updateEntries.map((entry) => entry[1]);
+      const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
+      params.push(id);
+      await sql.query(query, params);
+    }
 
     // ── Auditoría: guardar el historial de la corrección (no bloqueante: si
     //    el INSERT falla, la edición igual quedó aplicada). ──
@@ -262,6 +281,32 @@ export async function PATCH(request: Request) {
         }
       } catch (e) {
         console.error("No se pudo registrar el historial de edición:", e);
+      }
+    }
+
+    // ── Sincronizar pedido_items (editor de pedido con selección de productos) ──
+    // Si el payload trae `items`, reemplazamos los productos del pedido por los nuevos,
+    // con snapshot del precio vigente (igual que al crear). Así editar SÍ cuenta en el
+    // "Resumen del día" y los reportes (antes, editar solo el texto libre no se
+    // contabilizaba porque no actualizaba pedido_items).
+    if (itemsToSync !== undefined) {
+      await sql`DELETE FROM pedido_items WHERE pedido_id = ${id}`;
+      for (const item of itemsToSync) {
+        const productoRow = await sql`
+          SELECT precio_venta FROM productos WHERE id = ${item.productoId}
+        `;
+        const precioUnitario = productoRow[0]?.precio_venta
+          ? Number(productoRow[0].precio_venta)
+          : null;
+        const subtotal =
+          precioUnitario !== null
+            ? Number((precioUnitario * item.cantidad).toFixed(2))
+            : null;
+        await sql`
+          INSERT INTO pedido_items
+            (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
+          VALUES (${id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${precioUnitario}, ${subtotal})
+        `;
       }
     }
 

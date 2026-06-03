@@ -11,7 +11,13 @@ export default async function ResumenPage() {
   if (!session?.user) {
     redirect("/login");
   }
-  if (!["admin", "produccion"].includes(session.user.role)) {
+  // Bloqueamos SOLO a asesoras y repartidores (no es su herramienta). Admin y
+  // producción SIEMPRE pasan. Antes era un allowlist estricto (`["admin","produccion"].includes`)
+  // que rebotaba al admin a /dashboard si el role traía algún borde (espacio/mayúscula
+  // o una sesión vieja sin normalizar). Con blocklist normalizado, el admin nunca se
+  // queda fuera de su propia herramienta.
+  const rol = (session.user.role ?? "").trim().toLowerCase();
+  if (rol === "asesor" || rol === "repartidor") {
     redirect("/dashboard");
   }
   return <ResumenClient />;

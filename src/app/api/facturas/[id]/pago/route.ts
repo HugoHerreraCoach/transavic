@@ -13,6 +13,14 @@ const Schema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/, "Formato esperado: YYYY-MM-DD")
     .optional(),
   notas: z.string().optional(),
+  // Cómo se pagó (data flexible para el negocio).
+  metodo_pago: z.enum(["efectivo", "transferencia", "yape", "plin", "otro"]).optional(),
+  pago_detalle: z.string().trim().max(200).optional(),
+  // Captura del pago: ya viene COMPRIMIDA del cliente (~60-90KB). base64 sin el
+  // prefijo "data:...;base64,". Cap a ~400KB de base64 (≈300KB de imagen) para que
+  // la base de datos no crezca rápido aunque el cliente mande algo grande.
+  pago_img_base64: z.string().max(400_000).optional(),
+  pago_img_mime: z.string().max(50).optional(),
 });
 
 export async function POST(request: Request) {
@@ -52,11 +60,17 @@ export async function POST(request: Request) {
       }
     }
 
+    const { metodo_pago, pago_detalle, pago_img_base64, pago_img_mime } = parsed.data;
+
     await sql`
       UPDATE facturas
       SET fecha_pago = ${fechaPago}::date,
           estado = 'Pagada',
-          notas = COALESCE(${parsed.data.notas ?? null}, notas)
+          notas = COALESCE(${parsed.data.notas ?? null}, notas),
+          metodo_pago = ${metodo_pago ?? null},
+          pago_detalle = ${pago_detalle ?? null},
+          pago_img_base64 = ${pago_img_base64 ?? null},
+          pago_img_mime = ${pago_img_mime ?? null}
       WHERE id = ${id}
     `;
 
@@ -101,6 +115,7 @@ export async function DELETE(request: Request) {
     }
 
     // Estado al revertir: si ya venció → 'Vencida', si no → 'Pendiente'.
+    // Al revertir también limpiamos el método y la captura (el pago se deshizo).
     await sql`
       UPDATE facturas
       SET fecha_pago = NULL,
@@ -108,7 +123,11 @@ export async function DELETE(request: Request) {
             WHEN fecha_vencimiento < (NOW() AT TIME ZONE 'America/Lima')::date
               THEN 'Vencida'
             ELSE 'Pendiente'
-          END
+          END,
+          metodo_pago = NULL,
+          pago_detalle = NULL,
+          pago_img_base64 = NULL,
+          pago_img_mime = NULL
       WHERE id = ${id}
     `;
 

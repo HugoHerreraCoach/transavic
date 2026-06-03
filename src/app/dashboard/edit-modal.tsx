@@ -7,6 +7,7 @@ import { Pedido } from '@/lib/types';
 import { FiX, FiAlertTriangle, FiFileText } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import TimeRangePicker from '@/components/TimeRangePicker';
+import ProductSelector, { SelectedItem } from '@/components/ProductSelector';
 
 interface EditPedidoModalProps {
     pedido: Pedido;
@@ -34,6 +35,12 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
     const [error, setError] = useState<string | null>(null);
     // P2.11 — Comprobante existente para este pedido (si lo hay).
     const [comprobante, setComprobante] = useState<ComprobanteRefMini | null>(null);
+    // M1 — Productos estructurados del pedido. Precargamos los pedido_items existentes
+    // para que el selector arranque con ellos; al guardar se reemplazan en la DB y el
+    // pedido vuelve a contar en el "Resumen del día" y reportes.
+    const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
+    const [itemsIniciales, setItemsIniciales] = useState<SelectedItem[] | null>(null); // null = cargando
+    const [itemsError, setItemsError] = useState(false);
 
     useEffect(() => {
         if (pedido) {
@@ -76,6 +83,49 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
         };
     }, [isOpen, pedido?.id]);
 
+    // M1 — Cargar los productos (pedido_items) del pedido para precargar el selector.
+    useEffect(() => {
+        if (!isOpen || !pedido?.id) return;
+        let cancelled = false;
+        setItemsIniciales(null);
+        setItemsError(false);
+        (async () => {
+            try {
+                const res = await fetch(`/api/pedidos/${pedido.id}`);
+                if (!res.ok) throw new Error('No se pudieron cargar los productos');
+                const json = await res.json();
+                const raw = (json.items ?? []) as Array<{
+                    producto_id: string | null;
+                    producto_nombre: string;
+                    cantidad: string | number;
+                    unidad: string | null;
+                }>;
+                const mapped: SelectedItem[] = raw
+                    .filter((it) => it.producto_id)
+                    .map((it) => ({
+                        productoId: it.producto_id as string,
+                        nombre: it.producto_nombre,
+                        cantidad: Number(it.cantidad) || 0,
+                        unidad: (it.unidad || 'uni').trim(),
+                    }))
+                    .filter((it) => it.cantidad > 0);
+                if (!cancelled) {
+                    setItemsIniciales(mapped);
+                    setSelectedItems(mapped);
+                }
+            } catch {
+                // Si falla, NO tocaremos pedido_items al guardar (se omite `items` del PATCH).
+                if (!cancelled) {
+                    setItemsError(true);
+                    setItemsIniciales([]);
+                }
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, pedido?.id]);
+
     if (!isOpen) return null;
 
     const yaFacturado = !!comprobante;
@@ -99,11 +149,23 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
         setIsSaving(true);
         setError(null);
 
-        const payload: Partial<Pedido> = { ...formData };
+        const payload: Record<string, unknown> = { ...formData };
 
         delete payload.id;
         delete payload.created_at;
         delete payload.asesor_name;
+
+        // M1 — Si pudimos cargar los productos, los enviamos para sincronizar pedido_items.
+        // Si la carga falló (itemsError), NO mandamos `items` → el PATCH no toca los productos
+        // existentes (evita borrarlos por accidente).
+        if (!itemsError) {
+            payload.items = selectedItems.map((it) => ({
+                productoId: it.productoId,
+                nombre: it.nombre,
+                cantidad: it.cantidad,
+                unidad: it.unidad,
+            }));
+        }
 
         try {
             const response = await fetch(`/api/pedidos/${pedido.id}`, {
@@ -224,6 +286,32 @@ export default function EditPedidoModal({ isOpen, onClose, pedido, onPedidoUpdat
                             <option value="Nuevo">Nuevo</option>
                         </select>
                     </div>
+                    {/* M1 — Selección de productos del catálogo, integrada al editor.
+                        Precargada con los productos actuales del pedido; al guardar se
+                        sincronizan los pedido_items para que el pedido vuelva a contar en
+                        el "Resumen del día" y los reportes. */}
+                    {!itemsError && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Productos del Catálogo</label>
+                            {itemsIniciales === null ? (
+                                <div className="text-sm text-gray-400 py-3 px-1">Cargando productos…</div>
+                            ) : (
+                                <ProductSelector
+                                    empresa={formData.empresa}
+                                    initialItems={itemsIniciales}
+                                    onChange={(items, detalleText) => {
+                                        setSelectedItems(items);
+                                        if (items.length > 0) {
+                                            setFormData(prev => ({ ...prev, detalle: detalleText }));
+                                        }
+                                    }}
+                                />
+                            )}
+                            <p className="text-xs text-gray-500 mt-1">
+                                Elige productos del catálogo para que el pedido cuente en el <strong>Resumen del día</strong> y los reportes. El detalle de abajo se autocompleta; puedes ajustarlo a mano.
+                            </p>
+                        </div>
+                    )}
                     <div>
                         <label htmlFor="detalle" className="block text-sm font-medium text-gray-700">Detalle del Pedido</label>
                         <textarea id="detalle" name="detalle" value={formData.detalle} onChange={handleChange} rows={4} className="mt-1 block w-full border-gray-300 rounded-md shadow-sm p-2" required></textarea>
