@@ -122,6 +122,10 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 | # | Hallazgo | Severidad |
 |---|---|---|
 | ~~1~~ | ~~`PATCH/DELETE /api/pedidos/[id]` sin auth check~~ — **✅ Resuelto 2026-05-13** | ✅ Resuelto |
+| 2 | Migración de tabla `clientes` (CREATE TABLE) no documentada en `/scripts/` (DB no recreable desde cero) | 🟡 Media (abierto) |
+| ~~3~~ | ~~`GET /api/clientes/[id]/pedidos` permite ver historial de clientes ajenos~~ — **✅ Resuelto** (valida rol + `asesor_id = userId`; verificado 2026-06-02) | ✅ Resuelto |
+
+> La lista completa de hallazgos con su estado actual está en [`05-apis-e-integraciones.md §8`](./05-apis-e-integraciones.md).
 
 ## 🚀 Estado de implementación (mayo 2026)
 
@@ -153,8 +157,6 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 - `Listo_Para_Despacho` (entre `En_Produccion` y `Asignado`)
 
 **Rol nuevo:** `produccion` (asistente de producción que pesa los pedidos)
-| 2 | Migración de tabla `clientes` no documentada en `/scripts/` (DB irrecuperable desde cero) | 🟡 Media |
-| 3 | `GET /api/clientes/[id]/pedidos` permite ver historial de clientes ajenos | 🟡 Media |
 
 ---
 

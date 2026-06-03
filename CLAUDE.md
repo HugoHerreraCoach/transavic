@@ -148,9 +148,12 @@ El sistema tiene **4 roles** (el de `produccion` ya está en producción desde e
 | `repartidor` | Motorizados (Marco, Yhorner, Anghelo, etc.) | Solo `/mi-ruta` con SUS pedidos del día | Cambiar estado de SUS pedidos. Scoping por `repartidor_id = userId` |
 | `produccion` | Asistente de producción (en otro distrito que la oficina) | Solo `/dashboard/produccion`: cola del día + búsqueda + ingresar pesos reales | Marcar pesos y "listo para despacho" en SUS pedidos. Scoping en `/api/produccion/*`. Login redirige a `/dashboard/produccion` (`auth.config.ts`). ✅ en producción |
 
-**Login redirige por rol** (ver `auth.config.ts:authorized`):
+**Login redirige por rol** (fuente central: `lib/roles.ts:homeForRole`, usado por los guards de página):
 - `repartidor` → `/dashboard/mi-ruta`
-- todos los demás → `/dashboard/nuevo-pedido`
+- `produccion` → `/dashboard/produccion`
+- `admin` / `asesor` → `/dashboard` (lista de pedidos)
+
+> Matiz (el código tiene dos caminos): el login por formulario (`lib/actions.ts`) cae en `/dashboard`, y ahí `dashboard/page.tsx` deja a admin/asesor o reenvía a repartidor/producción con `homeForRole`. En cambio, el callback `auth.config.ts:authorized` (cuando un usuario YA logueado entra a `/login`) y la raíz `/` mandan a admin/asesor a `/dashboard/nuevo-pedido`. Ambos destinos son válidos para esos roles.
 
 **El scoping NO está en middleware**, está en cada query SQL. Si agregas un nuevo endpoint, **NO te olvides de filtrar por rol** (ver `lib/data.ts:fetchFilteredPedidos` como referencia).
 

@@ -155,9 +155,9 @@ authorized({ auth, request: { nextUrl } }) {
   } else if (isLoggedIn) {
     if (nextUrl.pathname === "/login") {
       const role = auth?.user?.role;
-      const target = role === "repartidor"
-        ? "/dashboard/mi-ruta"
-        : "/dashboard/nuevo-pedido";
+      let target = "/dashboard/nuevo-pedido"; // admin / asesor por defecto
+      if (role === "repartidor") target = "/dashboard/mi-ruta";
+      if (role === "produccion") target = "/dashboard/produccion";
       return Response.redirect(new URL(target, nextUrl));
     }
   }
@@ -248,18 +248,19 @@ export const config = {
 
 ## 4. Redirects por rol
 
-Después del login, el usuario es redirigido a una página distinta según su rol. Esto lo maneja el callback `authorized` (`auth.config.ts:43-58`):
+Después del login, el usuario llega a una pantalla según su rol. Intervienen tres piezas: el server action `authenticate()` (cae en `/dashboard`), el guard de `src/app/dashboard/page.tsx` con `homeForRole` (`lib/roles.ts`), y el callback `authorized` (`auth.config.ts`, para quien YA logueado entra a `/login`):
 
 | Caso | Origen | Destino |
 |---|---|---|
-| Login exitoso (cualquier rol) | `/login` → server action → `redirect('/dashboard')` | El middleware después redirige según rol (ver abajo) |
+| Login exitoso (cualquier rol) | `/login` → server action `authenticate()` → `redirect('/dashboard')` | Cae en `/dashboard`; ahí `dashboard/page.tsx` reenvía por rol (ver abajo) |
 | Logged in + va a `/login` | `/login` | `/dashboard/mi-ruta` (si rol = `repartidor`) |
+| Logged in + va a `/login` | `/login` | `/dashboard/produccion` (si rol = `produccion`) |
 | Logged in + va a `/login` | `/login` | `/dashboard/nuevo-pedido` (si rol = `admin` o `asesor`) |
 | Logged in + va a raíz `/` | `/` | `/dashboard/nuevo-pedido` (server-side redirect en `src/app/page.tsx`) |
-| Logged in + va a `/dashboard` (lista de pedidos) | `/dashboard` | Si rol = `repartidor`, redirect a `/dashboard/mi-ruta` (lógica en la página) |
+| Logged in + va a `/dashboard` (lista de pedidos) | `/dashboard` | Si el rol NO es admin/asesor (repartidor o produccion), redirect a `homeForRole(role)` → `/dashboard/mi-ruta` o `/dashboard/produccion` (lógica en `src/app/dashboard/page.tsx` vía `lib/roles.ts`) |
 | **No** logged in + va a `/dashboard/*` | `/dashboard/anything` | `/login` (vía middleware → `authorized` retorna `false`) |
 
-**⚠️ El callback `authorized` NO redirige proactivamente** desde `/dashboard` a `/dashboard/mi-ruta` para repartidores. Eso lo hace la página `src/app/dashboard/page.tsx` internamente.
+**⚠️ El callback `authorized` NO redirige proactivamente** desde `/dashboard` a la pantalla del rol. Eso lo hace `src/app/dashboard/page.tsx` con `homeForRole(role)` (`lib/roles.ts`): si el rol NO es admin/asesor (repartidor o produccion), lo manda a su pantalla. **`homeForRole` es la fuente central del "inicio" de cada rol** → admin/asesor: `/dashboard` · repartidor: `/dashboard/mi-ruta` · produccion: `/dashboard/produccion`. (Ojo: el destino del callback `authorized` para admin/asesor es `/dashboard/nuevo-pedido`, distinto de `homeForRole` pero igualmente válido — pequeña inconsistencia interna del código, no un bug.)
 
 ---
 
