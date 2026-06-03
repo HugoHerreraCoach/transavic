@@ -228,19 +228,24 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             )}
 
             <div className="flex items-center justify-end gap-2 relative">
-                {/* 1. Botón Principal: Entregar/Anular */}
+                {/* 1. Botón Principal: Entregar/Anular.
+                    El control de la ENTREGA es del motorizado (y del admin): una asesora
+                    NO debe poder "Anular" (revertir) una entrega ya hecha. Por eso, cuando
+                    el pedido ya está Entregado, este botón se oculta para el rol asesor. */}
+                {!(isDelivered && userRole === 'asesor') && (
                 <button
                     onClick={handleToggleDelivery}
                     disabled={isProcessing}
                     className={`px-3 py-2 flex items-center justify-center gap-1.5 text-white rounded-lg transition-all text-xs font-bold shadow-sm active:scale-95 cursor-pointer ${
-                        isDelivered 
-                            ? 'bg-amber-500 hover:bg-amber-600' 
+                        isDelivered
+                            ? 'bg-amber-500 hover:bg-amber-600'
                             : 'bg-teal-600 hover:bg-teal-700'
                     }`}
                 >
                     {isDelivered ? <FiXCircle /> : <FiCheckCircle />}
                     <span>{isDelivered ? 'Anular' : 'Entregar'}</span>
                 </button>
+                )}
 
                 {/* 2. Botón Principal: Facturar / Facturado (con color de marca dinámico) */}
                 {['Entregado', 'Listo_Para_Despacho', 'Asignado', 'En_Produccion'].includes(pedido.estado) && userRole !== 'repartidor' && (

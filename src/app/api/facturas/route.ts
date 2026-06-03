@@ -48,6 +48,8 @@ export async function GET(request: Request) {
         TO_CHAR(f.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
         TO_CHAR(f.fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
         f.estado, f.numero_comprobante, f.notas,
+        f.metodo_pago, f.pago_detalle,
+        (f.pago_img_base64 IS NOT NULL) AS tiene_pago_img,
         u.name AS asesor_name
       FROM facturas f
       LEFT JOIN users u ON f.asesor_id = u.id
