@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSunatConfig } from "@/lib/sunat/config-transavic";
 import type { EmpresaId } from "@/lib/sunat/types";
 import { parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
+import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -37,10 +38,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   if (role !== "admin" && role !== "asesor") {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
-  // Acceso (decisión de negocio jun 2026): admin y asesoras ven/descargan TODOS los
-  // comprobantes (transparencia total del equipo), igual que la lista de /comprobantes.
-  // Por eso NO se filtra por asesor → la asesora puede bajar el PDF de CUALQUIER
-  // comprobante, incluidas las notas de crédito y los standalone (sin pedido).
+  // Scoping (Antonio jun 2026): admin ve todo; la asesora SOLO sus comprobantes
+  // (de sus pedidos o emitidos por ella). El chequeo va tras leer el comprobante,
+  // con asesoraPuedeVerComprobante().
   const rows = (await sql`
         SELECT
           c.id, c.pedido_id, c.ruc_emisor, c.empresa, c.tipo, c.serie, c.numero,
@@ -48,7 +48,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           c.monto_subtotal, c.monto_igv, c.monto_total, c.moneda,
           c.estado, c.hash_cpe, c.xml_firmado_base64, c.cdr_base64,
           c.observaciones, c.mensaje_sunat, c.created_at,
-          c.forma_pago, c.fecha_vencimiento,
+          c.forma_pago, c.fecha_vencimiento, c.emitido_por,
+          p.asesor_id AS pedido_asesor_id,
           p.cliente AS pedido_cliente, p.direccion AS pedido_direccion,
           p.whatsapp AS pedido_whatsapp
         FROM comprobantes c
@@ -80,6 +81,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     created_at: string | Date;
     forma_pago: string | null;
     fecha_vencimiento: string | Date | null;
+    emitido_por: string | null;
+    pedido_asesor_id: string | null;
     pedido_cliente: string | null;
     pedido_direccion: string | null;
     pedido_whatsapp: string | null;
@@ -89,6 +92,15 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
   const c = rows[0];
+
+  // Scoping por rol: la asesora solo accede a SUS comprobantes. 404 (no 403) para no
+  // revelar la existencia de comprobantes de otras.
+  if (!asesoraPuedeVerComprobante(role, session.user.id, session.user.name, {
+    pedidoAsesorId: c.pedido_asesor_id,
+    emitidoPor: c.emitido_por,
+  })) {
+    return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
+  }
 
   // ÍTEMS PARA EL PDF — fuente de verdad por prioridad:
   //  (1) El XML firmado (lo que SUNAT recibió): fiel SIEMPRE e incluye el código.

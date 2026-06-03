@@ -23,6 +23,7 @@ import {
   type EmpresaId,
 } from "@/lib/sunat/types";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
+import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const rows = (await sql`
     SELECT c.empresa, c.tipo, c.serie, c.numero, c.serie_numero, c.estado,
            c.monto_subtotal, c.cliente_doc_num, c.cliente_razon_social,
-           c.observaciones, c.pedido_id, p.asesor_id
+           c.observaciones, c.pedido_id, c.emitido_por, p.asesor_id
     FROM comprobantes c
     LEFT JOIN pedidos p ON c.pedido_id = p.id
     WHERE c.id = ${id}::uuid LIMIT 1
@@ -79,17 +80,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     cliente_razon_social: string | null;
     observaciones: string | null;
     pedido_id: string | null;
+    emitido_por: string | null;
     asesor_id: string | null;
   }>;
   if (rows.length === 0)
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   const c = rows[0];
 
-  // Acceso (decisión de negocio jun 2026): todas las asesoras y el admin pueden
-  // emitir nota de crédito sobre CUALQUIER comprobante (el equipo se cubre entre
-  // sí cuando una falta). Antes la asesora solo podía sobre los suyos; se abrió a
-  // pedido de Antonio. Queda registrado quién la emite en `emitido_por` (rastro).
-  // El check de rol asesor/admin ya se hizo arriba.
+  // Scoping (Antonio jun 2026): la asesora solo puede acreditar SUS comprobantes
+  // (los de sus pedidos o los que ella emitió); el admin, cualquiera. (El check de
+  // rol asesor/admin ya se hizo arriba.)
+  if (
+    !asesoraPuedeVerComprobante(session.user.role, session.user.id, session.user.name, {
+      pedidoAsesorId: c.asesor_id,
+      emitidoPor: c.emitido_por,
+    })
+  ) {
+    return NextResponse.json(
+      { error: "Solo puedes emitir notas de crédito sobre tus propios comprobantes." },
+      { status: 403 }
+    );
+  }
 
   if (c.tipo !== "01" && c.tipo !== "03")
     return NextResponse.json(

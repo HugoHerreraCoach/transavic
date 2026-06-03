@@ -30,11 +30,17 @@ export async function GET(request: Request) {
       params.push(pedidoId);
     }
 
-    // Acceso (decisión de negocio jun 2026): TODAS las asesoras y el admin ven
-    // TODOS los comprobantes (transparencia total del equipo). Antes la asesora
-    // solo veía los de sus pedidos; ese límite se quitó a pedido de Antonio. La
-    // atribución de quién emitió cada uno se muestra con la columna `emitido_por`.
-    // (La separación por asesora se mantiene SOLO en los insights de IA.)
+    // Scoping por rol (Antonio, jun 2026): la asesora ve SOLO SUS comprobantes —
+    // los de SUS pedidos (pedidos.asesor_id) o los que ELLA emitió (emitido_por,
+    // match por nombre con TRIM+lower por la data legacy con espacios). El admin ve
+    // todos. (La asesora conserva permisos completos sobre los suyos: PDF/XML/NC/etc.)
+    if (session.user.role === "asesor") {
+      conditions.push(
+        `(c.pedido_id IN (SELECT id FROM pedidos WHERE asesor_id = $${i}) OR LOWER(TRIM(c.emitido_por)) = LOWER(TRIM($${i + 1})))`
+      );
+      params.push(session.user.id, session.user.name ?? "");
+      i += 2;
+    }
 
     if (tipo && (tipo === "01" || tipo === "03" || tipo === "07" || tipo === "08")) {
       conditions.push(`c.tipo = $${i++}`);
