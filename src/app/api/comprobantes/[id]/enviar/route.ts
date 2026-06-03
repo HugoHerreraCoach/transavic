@@ -62,7 +62,6 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   if (role !== "admin" && role !== "asesor") {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
-  const userId = session.user.id;
 
   const { id } = await params;
   if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
@@ -80,21 +79,14 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
-  // Privacy boundary: solo el dueño del pedido (asesor) o admin puede enviar
-  const rows = (role === "admin"
-    ? ((await sql`
+  // Acceso (jun 2026): admin y asesoras pueden enviar por correo CUALQUIER comprobante
+  // (transparencia total del equipo, igual que la lista). No se filtra por asesor.
+  const rows = (await sql`
         SELECT c.serie_numero, c.ruc_emisor, c.tipo, c.empresa, c.monto_total,
                c.cliente_razon_social, c.xml_firmado_base64
         FROM comprobantes c
         WHERE c.id = ${id}::uuid LIMIT 1
-      `) as unknown)
-    : ((await sql`
-        SELECT c.serie_numero, c.ruc_emisor, c.tipo, c.empresa, c.monto_total,
-               c.cliente_razon_social, c.xml_firmado_base64
-        FROM comprobantes c
-        INNER JOIN pedidos p ON p.id = c.pedido_id
-        WHERE c.id = ${id}::uuid AND p.asesor_id = ${userId}::uuid LIMIT 1
-      `) as unknown)) as Array<{
+      `) as Array<{
     serie_numero: string;
     ruc_emisor: string;
     tipo: string;
