@@ -1,9 +1,10 @@
 # 04 — Flujos de Negocio
 
-> **Última verificación contra código:** 2026-05-13
-> **Última actualización del flujo real:** 2026-05-13 (post-reunión Antonio)
-> **Commit del proyecto:** `d2a49cd`
-> **Archivos clave:** `src/components/PedidoForm.tsx`, `ClienteAutocomplete.tsx`, `ProductSelector.tsx`, `MapInput.tsx`, `TicketPedido.tsx`, `src/app/dashboard/despacho/despacho-content.tsx`, `mapa-despacho.tsx`, `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`, `src/lib/offline-queue.ts`, `src/app/api/pedidos/[id]/*/route.ts`
+> **Última verificación contra código:** 2026-06-02
+> **Última actualización del flujo real:** 2026-06-02 (lanzamiento + mejoras post-lanzamiento)
+> **Archivos clave:** `src/lib/types.ts` (enum `EstadoPedido`), `src/components/PedidoForm.tsx`, `ClienteAutocomplete.tsx`, `ProductSelector.tsx`, `MapInput.tsx`, `TicketPedido.tsx`, `src/app/dashboard/despacho/despacho-content.tsx`, `mapa-despacho.tsx`, `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`, `src/lib/offline-queue.ts`, `src/app/api/pedidos/[id]/*/route.ts`, `src/app/api/produccion/pedidos/[id]/*/route.ts`, `src/app/api/comprobantes/**`, `src/lib/cobranzas.ts`, `src/lib/metas.ts`, `src/lib/incentivos.ts`, `src/lib/notificaciones.ts`
+>
+> **Qué cambió desde 2026-05-13** (verificado contra código): (1) la máquina de estados ahora tiene **7 estados** — se sumaron `En_Produccion` y `Listo_Para_Despacho` **antes** de `Asignado` (rol `produccion`, Mejora 1, en producción). (2) El "lazo del dinero" está cerrado en código: **Pedido → Producción (pesos reales) → Despacho → Entrega → Comprobante (SUNAT) → Cobranza** (ver §7). (3) Nota de Crédito que anula factura/boleta (§7.4). (4) Sistema de incentivos/metas medido por `created_at` (§8). (5) Notificaciones automáticas entre áreas (§9). Las secciones 1–6 (creación del pedido, despacho, ruta del repartidor, offline) siguen vigentes con ajustes menores marcados en línea.
 
 ---
 
@@ -700,14 +701,36 @@ Abren la app nativa de navegación en el celular del repartidor.
 
 ## 3. Máquina de estados completa
 
+> **Cambio mayo 2026 (en producción):** el enum `EstadoPedido` (`src/lib/types.ts:3-10`) tiene ahora **7 estados**. Se sumaron `En_Produccion` y `Listo_Para_Despacho` **entre `Pendiente` y `Asignado`**, para el rol `produccion` (la asistente que pesa). El "camino feliz" pasó de `Pendiente → Asignado → En_Camino → Entregado` a **`Pendiente → En_Produccion → Listo_Para_Despacho → Asignado → En_Camino → Entregado`**. Los saltos siguen permitidos (no es obligatorio pasar por las etapas de producción: un pedido se puede asignar directo desde `Pendiente`).
+
+```typescript
+// src/lib/types.ts
+export type EstadoPedido =
+  | 'Pendiente'
+  | 'En_Produccion'         // ← nuevo: producción empezó a pesar
+  | 'Listo_Para_Despacho'   // ← nuevo: pesado terminado, listo para asignar
+  | 'Asignado'
+  | 'En_Camino'
+  | 'Entregado'
+  | 'Fallido';
+```
+
 ```mermaid
 stateDiagram-v2
     [*] --> Pendiente: POST /api/pedidos<br/>(asesor crea)
 
-    Pendiente --> Asignado: POST /api/despacho/asignar<br/>(admin asigna)
-    Pendiente --> En_Camino: POST /iniciar-viaje<br/>(repartidor / salto)
+    Pendiente --> En_Produccion: PATCH /produccion/.../pesos<br/>(producción pesa)
+    Pendiente --> Listo_Para_Despacho: POST /produccion/.../listo<br/>(salto: ya estaba pesado)
+    Pendiente --> Asignado: POST /api/despacho/asignar<br/>(admin asigna — salta producción)
+    Pendiente --> En_Camino: POST /iniciar-viaje<br/>(salto)
     Pendiente --> Entregado: POST /entregar Entregado<br/>(salto directo)
     Pendiente --> Fallido: POST /entregar Fallido<br/>(salto directo)
+
+    En_Produccion --> En_Produccion: PATCH /produccion/.../pesos<br/>(seguir registrando pesos)
+    En_Produccion --> Listo_Para_Despacho: POST /produccion/.../listo<br/>(todos los ítems pesados)
+
+    Listo_Para_Despacho --> En_Produccion: POST /produccion/.../reabrir<br/>(corregir pesos)
+    Listo_Para_Despacho --> Asignado: POST /api/despacho/asignar<br/>(admin asigna)
 
     Asignado --> En_Camino: POST /iniciar-viaje
     Asignado --> Entregado: POST /entregar Entregado<br/>(entrega directa)
@@ -725,36 +748,65 @@ stateDiagram-v2
     Fallido --> [*]
 ```
 
+**Nota sobre `/api/despacho/asignar`:** no valida que el pedido venga de `Listo_Para_Despacho` — toma cualquier pedido del día y lo pone en `Asignado` (`asignar/route.ts:119-128`). Por eso en el diagrama se puede asignar tanto desde `Pendiente` (saltando producción) como desde `Listo_Para_Despacho`. La transición a producción es **opcional**: si Antonio asigna directo, el pedido nunca pasa por las etapas de pesado.
+
 ### 3.1 Reglas críticas
 
 | Regla | Donde se aplica |
 |---|---|
-| `Fallido` requiere `razon_fallo` ≥5 caracteres | `api/pedidos/[id]/entregar/route.ts:9-15` (zod refine) |
-| `Entregado` debe llenar `entregado_por` desde `session.user.name` | `entregar/route.ts:81-88` |
-| `cancelar-viaje` solo permite origen `En_Camino` | `cancelar-viaje/route.ts:41-46` |
-| `iniciar-viaje` permite `Asignado` **o** `Pendiente` como origen | `iniciar-viaje/route.ts:48-52` |
-| `entregar` permite `Asignado`, `En_Camino` **o** `Pendiente` | `entregar/route.ts:66` |
-| PATCH `entregar` (revertir) solo desde `Entregado` o `Fallido` | `entregar/route.ts:135-141` |
-| Volver a `Pendiente` en update genérico limpia `repartidor_id`, `orden_ruta`, `entregado_por`, etc. | `api/pedidos/[id]/route.ts:91-99` |
+| `pesos` (registrar peso real) solo desde `Pendiente` o `En_Produccion`; deja el pedido en `En_Produccion` | `api/produccion/pedidos/[id]/pesos/route.ts:69-114` |
+| `listo` (→ `Listo_Para_Despacho`) solo desde `Pendiente`/`En_Produccion` **y** exige que **todos** los `pedido_items` tengan `cantidad_real` | `api/produccion/pedidos/[id]/listo/route.ts:46-74` |
+| `reabrir` (→ `En_Produccion`) solo desde `Listo_Para_Despacho` | `api/produccion/pedidos/[id]/reabrir/route.ts:35-48` |
+| Endpoints de producción: solo rol `admin` o `produccion` | `produccion/pedidos/[id]/*/route.ts` (check `["admin","produccion"]`) |
+| `Fallido` requiere `razon_fallo` ≥5 caracteres | `api/pedidos/[id]/entregar/route.ts:12-18` (zod refine) |
+| `Entregado` debe llenar `entregado_por` desde `session.user.name` | `entregar/route.ts:78-89` |
+| `cancelar-viaje` solo permite origen `En_Camino` | `cancelar-viaje/route.ts:42-47` |
+| `iniciar-viaje` permite `Asignado` **o** `Pendiente` como origen | `iniciar-viaje/route.ts:48-53` |
+| `entregar` permite `Asignado`, `En_Camino` **o** `Pendiente` | `entregar/route.ts:69` |
+| PATCH `entregar` (revertir) solo desde `Entregado` o `Fallido` → vuelve a `Asignado` | `entregar/route.ts:291-308` |
+| Volver a `Pendiente` en update genérico limpia `repartidor_id`, `orden_ruta`, `entregado_por`, etc. | `api/pedidos/[id]/route.ts:193-199` |
+| El PATCH genérico (`/api/pedidos/[id]`) acepta los 7 estados del enum en su `zod` | `route.ts:27` |
 
 ### 3.2 Por qué hay saltos directos
+
+**Producción es opcional:** la asistente puede pesar (`En_Produccion`) y marcar listo (`Listo_Para_Despacho`), pero el admin puede asignar un pedido directo desde `Pendiente` saltándose esas dos etapas. Útil cuando el pedido ya viene preparado o cuando no se necesita registrar pesos en el sistema.
 
 **Asignado → Entregado** (sin pasar por En_Camino): caso típico de **venta mostrador**, cuando el cliente viene a recoger al local. Ahorra al repartidor tocar "Ir al cliente" antes de "Entregado".
 
 **Pendiente → cualquiera**: edge case útil cuando el admin quiere marcar un pedido sin tener que asignarlo formalmente (raro pero soportado).
 
-### 3.3 Side effects de cada transición — tabla maestra
+### 3.3 La etapa de Producción en detalle (rol `produccion`)
+
+La asistente de producción está en otro distrito y solo ve `/dashboard/produccion`: la cola de pedidos del día (estados `Pendiente`/`En_Produccion`/`Listo_Para_Despacho`), ordenada por urgencia (hora de entrega más temprana primero — `GET /api/produccion/pedidos`). Su trabajo:
+
+1. **Registrar pesos reales** — `PATCH /api/produccion/pedidos/[id]/pesos` con `{ items: [{ item_id, cantidad_real, unidad?, precio_unitario? }] }`:
+   - Por cada ítem guarda `cantidad_real` y **recalcula `subtotal_real`** (`precio_unitario × cantidad_real`).
+   - Producción puede **ajustar la unidad y el precio** al pesar (ej.: el pedido vino en "uni" pero se cobra por kg, o cambió el precio del día).
+   - Marca el pedido como `En_Produccion` + `pesado_por` + `pesado_at`.
+   - **Esto cierra la juntura [A] Oficina → Producción** del flujo humano (§0.3): los pesos ya no viven solo en papel/foto, quedan en `pedido_items.cantidad_real`/`subtotal_real`.
+2. **Marcar "Listo para despacho"** — `POST /api/produccion/pedidos/[id]/listo`:
+   - Solo si **todos** los ítems tienen `cantidad_real` (si falta alguno, responde 400 con cuántos faltan).
+   - Pasa el pedido a `Listo_Para_Despacho` y **notifica a la asesora** (`listo_para_despacho`, ver §9).
+3. **Reabrir** — `POST /api/produccion/pedidos/[id]/reabrir`: si lo marcó listo por error, lo devuelve a `En_Produccion` para seguir ajustando.
+
+**Distinción de campos** (gotcha del proyecto): `detalle` = lo que pidió el cliente (texto, se arma al crear el pedido); `pedido_items.cantidad` = lo pedido por ítem; `pedido_items.cantidad_real`/`subtotal_real` = el **peso/monto reales** que registra producción. La cobranza y el comprobante usan `COALESCE(subtotal_real, subtotal)` — prefieren el real si existe (ver §7).
+
+### 3.4 Side effects de cada transición — tabla maestra
 
 | Transición | Endpoint | Método | Body | Columnas mutadas | Side effects externos |
 |---|---|---|---|---|---|
 | (crear) → Pendiente | `/api/pedidos` | POST | Schema completo | INSERT pedidos + N×INSERT pedido_items | - |
-| Pendiente → Asignado | `/api/despacho/asignar` | POST | `{pedido_ids[], repartidor_id}` | `repartidor_id`, `estado='Asignado'`, `orden_ruta`, `distancia_km`, `duracion_estimada_min` | Google Directions (1× por pedido) |
+| Pendiente/En_Produccion → En_Produccion | `/api/produccion/pedidos/[id]/pesos` | PATCH | `{items:[{item_id, cantidad_real, unidad?, precio_unitario?}]}` | `pedido_items.cantidad_real/subtotal_real/unidad/precio_unitario`; `pedidos.estado='En_Produccion'`, `pesado_por`, `pesado_at` | - |
+| Pendiente/En_Produccion → Listo_Para_Despacho | `/api/produccion/pedidos/[id]/listo` | POST | - | `estado='Listo_Para_Despacho'` (exige todos los ítems con `cantidad_real`) | **Notifica** a la asesora (`listo_para_despacho`) |
+| Listo_Para_Despacho → En_Produccion | `/api/produccion/pedidos/[id]/reabrir` | POST | - | `estado='En_Produccion'` | - |
+| Pendiente/Listo_Para_Despacho → Asignado | `/api/despacho/asignar` | POST | `{pedido_ids[], repartidor_id}` | `repartidor_id`, `estado='Asignado'`, `orden_ruta`, `distancia_km`, `duracion_estimada_min` | Google Directions (1× por pedido). **Notifica** al repartidor (`pedido_asignado`) |
 | Pendiente → Asignado (externo) | `/api/despacho/asignar-externo` | POST | `{pedido_id, nombre_delivery}` | `es_delivery_externo=true`, `delivery_externo_nombre`, `estado='Asignado'`, `repartidor_id=NULL` | - |
-| Asignado/Pendiente → En_Camino | `/api/pedidos/[id]/iniciar-viaje` | POST | `{driverLat?, driverLng?}` | `estado='En_Camino'`, `inicio_viaje_at`, `hora_llegada_estimada`, `entregado=FALSE` | Google Directions (1×) |
-| Asignado/En_Camino/Pendiente → Entregado | `/api/pedidos/[id]/entregar` | POST | `{resultado:'Entregado'}` | `estado='Entregado'`, `entregado=TRUE`, `entregado_por`, `entregado_at`, `razon_fallo=NULL` | - |
-| Asignado/En_Camino/Pendiente → Fallido | `/api/pedidos/[id]/entregar` | POST | `{resultado:'Fallido', razon_fallo}` | `estado='Fallido'`, `entregado=FALSE`, `razon_fallo`, `entregado_por`, `entregado_at` | - |
+| Asignado/Pendiente → En_Camino | `/api/pedidos/[id]/iniciar-viaje` | POST | `{driverLat?, driverLng?}` | `estado='En_Camino'`, `inicio_viaje_at`, `hora_llegada_estimada`, `entregado=FALSE` | Google Directions (1×). **Notifica** a la asesora (`pedido_en_camino`) |
+| Asignado/En_Camino/Pendiente → Entregado | `/api/pedidos/[id]/entregar` | POST | `{resultado:'Entregado'}` | `estado='Entregado'`, `entregado=TRUE`, `entregado_por`, `entregado_at`, `razon_fallo=NULL` | **Crea cobranza** del pedido si monto>0 (`crearFacturaParaPedido`). **Notifica** a la asesora (`pedido_entregado`) + posible `meta_diaria_alcanzada`. Opcional: auto-emisión SUNAT si `AUTO_EMITIR_COMPROBANTE=true` (ver §7) |
+| Asignado/En_Camino/Pendiente → Fallido | `/api/pedidos/[id]/entregar` | POST | `{resultado:'Fallido', razon_fallo}` | `estado='Fallido'`, `entregado=FALSE`, `razon_fallo`, `entregado_por`, `entregado_at` | **Notifica** a la asesora (`pedido_fallido`) |
 | En_Camino → Asignado | `/api/pedidos/[id]/cancelar-viaje` | POST | - | `estado='Asignado'`, `inicio_viaje_at=NULL`, `hora_llegada_estimada=NULL` | - |
 | Entregado/Fallido → Asignado | `/api/pedidos/[id]/entregar` | PATCH | - | Limpia entregado_por, entregado_at, razon_fallo, inicio_viaje_at, hora_llegada_estimada, estado='Asignado' | - |
+| (subir foto de orden firmada) | `/api/pedidos/[id]/guia-firmada` | POST | `multipart: foto` | `guia_firmada_data` (base64), `guia_firmada_mime`, `guia_firmada_at` | **Notifica** a la asesora (`guia_firmada`). Cierra la juntura [C] del flujo humano |
 | (reordenar mismo repartidor) | `/api/despacho/reordenar` | PATCH | `{repartidor_id, orden[]}` | `orden_ruta` por pedido | - |
 | (optimizar ruta) | `/api/despacho/optimizar-ruta` | POST | `{repartidor_id}` | `orden_ruta`, `duracion_estimada_min` (NO toca `distancia_km`) | Google Directions con waypoints (1× para todos los pedidos del repartidor) |
 | Delivery externo → Entregado/Fallido | `/api/despacho/asignar-externo` | PATCH | `{pedido_id, estado, razon_fallo?}` | `estado`, `entregado` (legacy), `entregado_at`, `razon_fallo` | - |
@@ -922,14 +974,22 @@ Esto **evita inconsistencias** y race conditions. El repartidor ve la UI actuali
 
 ### 5.4 Otras pantallas
 
-| Pantalla | Para qué |
-|---|---|
-| `/dashboard` | Lista paginada de pedidos (25/pág) con filtros y búsqueda. Redirige a `/mi-ruta` si rol=repartidor. |
-| `/dashboard/clientes` | CRUD de clientes con filtro por asesora (admin) o solo los propios (asesor). |
-| `/dashboard/productos` | CRUD del catálogo (admin only). |
-| `/dashboard/users` | CRUD de usuarios (admin only). |
-| `/dashboard/analytics` | KPIs, top productos, ranking de asesoras, ventas por día, por distrito, por empresa. |
-| `/dashboard/resumen` | Reporte diario con totales por producto (la "lista de compras" del día siguiente). |
+> **Nota de navegación (mayo 2026):** el menú lateral se reorganizó en grupos (Operación / Comercial / Reportes / Configuración) y varias pantallas se consolidaron. Productos+Precios → **Catálogo**; Panel gerencial+Analítica+Resumen → **Reportes** (2 pestañas: Ventas · Día a día). Las rutas viejas (`/dashboard/productos`, `/precios`, `/analytics`, `/panel-gerencial`, `/resumen` como reporte) **redirigen** a las nuevas. La IA salió del menú (botón flotante + insights embebidos).
+
+| Pantalla | Rol | Para qué |
+|---|---|---|
+| `/dashboard` | admin, asesor | Lista paginada de pedidos con filtros, búsqueda y edición. Redirige a `/mi-ruta` si rol=repartidor. |
+| `/dashboard/produccion` | admin, produccion | Cola del día para pesar (ver §3.3). |
+| `/dashboard/resumen` | admin, produccion | "Resumen del día": totales por producto a preparar para una fecha de entrega. |
+| `/dashboard/clientes` + `/clientes/[id]` | admin, asesor | Directorio de clientes (scoping por asesora) + perfil 360° (KPIs, pedidos, comprobantes, cobranzas). |
+| `/dashboard/catalogo` | admin | Catálogo unificado (producto · código · precios · margen), edición inline. |
+| `/dashboard/comprobantes` (+ `/nuevo`) | admin, asesor | Lista de comprobantes SUNAT + emisión (desde pedido o standalone). Visibilidad total (todas ven todos); NC/Excel/Reintentar (ver §7). |
+| `/dashboard/cobranzas` | admin, asesor | Deudas (facturas): pago 1-clic, reverso, aging (ver §7.5). |
+| `/dashboard/reportes` | admin | Ventas por período (S/) + Día a día (operativo). Exporta Excel/PDF. |
+| `/dashboard/mi-dia` | admin, asesor | Panel del día de la asesora (vendido, entregas, cobranzas, clientes dormidos). |
+| `/dashboard/mis-metas` | asesor, admin (vista previa) | Metas día/semana/mes + racha + equipo + ranking (ver §8). |
+| `/dashboard/incentivos` | admin | Configurar los 4 bloques de incentivos (ver §8.2). |
+| `/dashboard/users` | admin | CRUD de usuarios. |
 
 ---
 
@@ -991,14 +1051,164 @@ Después del domingo, los pedidos viejos pasan a ser "del próxima semana" y des
 
 ---
 
-## 7. Cómo verificar que este documento sigue vigente
+## 7. El lazo del dinero (Pedido → Comprobante → Cobranza)
+
+> **Esto es lo que Antonio más quiere entender:** cómo se conectan las áreas para que cada venta termine cobrada. El flujo completo es **Pedido → Producción (pesos reales) → Despacho → Entrega → Comprobante SUNAT → Cobranza**. Las áreas se enlazan por `pedido_id` + `pedidos.estado`; el "dinero" se cierra con tres piezas: **comprobante** (factura/boleta), **cobranza** (deuda con vencimiento) y **nota de crédito** (anulación).
+
+```mermaid
+flowchart LR
+    P["📦 Pedido<br/>(pedido_items con<br/>cantidad estimada)"]
+    PR["⚖️ Producción<br/>cantidad_real +<br/>subtotal_real"]
+    EN["🛵 Entrega<br/>estado=Entregado"]
+    CO["🧾 Comprobante SUNAT<br/>factura(01)/boleta(03)"]
+    CB["💰 Cobranza<br/>(facturas: deuda +<br/>vencimiento)"]
+    NC["↩️ Nota de Crédito (07)<br/>anula factura/boleta"]
+
+    P --> PR --> EN
+    EN -->|"al entregar:<br/>crea cobranza si monto>0"| CB
+    EN -->|"asesora emite<br/>(o AUTO_EMITIR)"| CO
+    CO -->|"factura Contado/Crédito<br/>→ cobranza por default"| CB
+    CO -.->|"si hay error"| NC
+    CB -->|"pago 1-clic + deshacer 5s"| CB
+
+    style P fill:#fff4e1
+    style PR fill:#ede7f6
+    style EN fill:#fce4ec
+    style CO fill:#e3f2fd
+    style CB fill:#e8f5e9
+    style NC fill:#ffebee
+```
+
+### 7.1 Monto de la venta: estimado vs real
+
+El monto siempre se calcula con **`COALESCE(subtotal_real, subtotal)`** por ítem (`calcularMontoPedido` en `src/lib/cobranzas.ts:140-147`): si producción ya registró el peso real (`subtotal_real`), se usa ese; si no, el estimado al vender (`subtotal`). Así la cobranza y el comprobante reflejan **lo que realmente se entregó**, no lo que se pidió.
+
+### 7.2 Cobranza automática al entregar
+
+Cuando un pedido pasa a `Entregado` (`POST /api/pedidos/[id]/entregar`):
+
+1. Calcula el monto con `calcularMontoPedido(id)`.
+2. Si `monto > 0`, crea una fila en `facturas` con `crearFacturaParaPedido` (`cobranzas.ts:71-106`):
+   - El **vencimiento** sale del cliente: `clientes.plazo_pago_dias` si tiene uno > 0, si no el **default del negocio (7 días)** — refleja que en Transavic la mayoría paga días después, no el mismo día.
+   - Guarda `pedido_id`, `cliente_id`, `asesor_id`, `monto`, `plazo_dias`, `fecha_vencimiento`.
+3. Es **no bloqueante**: si falla la creación de la cobranza, la entrega igual queda registrada.
+
+> Esta cobranza nace de la **entrega**, en paralelo al comprobante. Cuidado: si además se emite una **factura** del mismo pedido (que también crea cobranza por default, ver §7.3), puede haber dos cobranzas del mismo pedido. En la práctica la asesora gestiona una sola; es una arista a vigilar.
+
+### 7.3 Comprobante SUNAT (factura / boleta) — y cómo dispara la cobranza
+
+La asesora emite el comprobante desde un pedido entregado (`POST /api/comprobantes/emitir`, badge "Facturado" en la lista) o **standalone** sin pedido (`POST /api/comprobantes/emitir-manual`, venta de mostrador). El módulo SUNAT (XML UBL 2.1 → firma → SOAP → CDR) está documentado en `05-apis-e-integraciones.md` y CLAUDE.md §16; aquí interesa **cómo conecta con la cobranza**:
+
+| Tipo | Regla de cobranza |
+|---|---|
+| **Factura (01)** | **Crea cobranza por default**, sea **Contado** o **Crédito**. Motivo: en Transavic "contado" suele significar "paga después". Excepción: el toggle **"El cliente ya pagó al instante" (`yaCobrado`)** → NO crea cobranza (cash de mano). Crédito → vencimiento = plazo del form; Contado-sin-cobrar → vencimiento = plazo del cliente o el default. |
+| **Boleta (03)** | **Nunca** crea cobranza (consumidor final, paga al instante). |
+
+Reglas verificadas en `emitir/route.ts:341-379` y `emitir-manual/route.ts:229-266`:
+- La cobranza solo se crea si **SUNAT aceptó** (estados `ACEPTADA` / `ACEPTADA_CON_OBSERVACIONES` / `PENDIENTE`) — nunca sobre un rechazado/error (no se registra deuda inválida ni se duplica al reintentar).
+- Identificación del cliente (decisión de negocio jun 2026): **factura** siempre exige RUC válido (11 díg, prefijo 10/15/16/17/20) + razón social; **boleta ≥ S/700** exige DNI/RUC; **boleta < S/700 sin documento válido** se emite a **"CLIENTES VARIOS"** (tipo doc "0"). Helpers en `src/lib/sunat/validacion-cliente.ts`.
+- **Anti-duplicado**: antes de emitir, si ya hay un comprobante igual reciente (misma empresa + tipo + cliente identificado + monto ±0.10, últimos 2 días), responde **409** con `{duplicado, mensaje}` para que el form confirme ("Sí, emitir igual" → reintenta con `confirmarDuplicado:true`).
+- **Auto-emisión opcional**: con `AUTO_EMITIR_COMPROBANTE=true`, al entregar se emite el comprobante solo (factura si el cliente tiene RUC de 11 díg, boleta si no). Por defecto **OFF** — Antonio decide cuándo facturar (`entregar/route.ts:119-183`).
+
+### 7.4 Nota de Crédito (07) — anula factura o boleta
+
+`POST /api/comprobantes/[id]/nota-credito` con `{ motivo, tipoNotaCredito? }` (default `"01"` = anulación de la operación). Es el mecanismo **general** para corregir/anular una venta ya facturada (cubre factura **y** boleta, en cualquier momento — a diferencia de la Comunicación de Baja, que solo aplica a facturas ≤7 días y hoy está deshabilitada en la UI).
+
+Cómo conecta con el comprobante original (`nota-credito/route.ts`):
+- Solo sobre un comprobante **aceptado u observado** (estado válido).
+- La NC se vincula con la fila original vía **`referencia_comprobante_id`** → en la lista aparece "↩ anula F001-11" en la NC y "↩ con N. Crédito" en la factura.
+- **Anti-doble-NC**: bloquea una segunda nota de crédito si el comprobante ya tiene una NC aceptada/observada que lo acredita (detecta por `referencia_comprobante_id` y por las `observaciones` de NC históricas). Evita la doble anulación que pasó en producción.
+- La emite el **admin o la asesora dueña** del comprobante (de sus pedidos, o que ella emitió — scoping en `lib/comprobante-scope.ts`).
+
+### 7.5 Cobranza: registro manual, pago y reverso
+
+La pantalla `/dashboard/cobranzas` lista las `facturas` (deudas). Estados: `Pendiente | Pagada | Vencida` (`cobranzas.ts:5`).
+
+- **Registro manual** (deuda sin pedido): `POST /api/facturas`. El modal autocompleta el cliente desde `/api/clientes?q=` (debounce) y, si el cliente tiene comprobantes emitidos, ofrece un selector que autopobla el monto. `facturas.pedido_id` y `comprobante_id` son nullables.
+- **Marcar pagada (1 clic)** — `POST /api/facturas/[id]/pago` con `{ fecha_pago?, metodo_pago?, pago_detalle?, pago_img_base64? }`: registra **método** (`efectivo|transferencia|yape|plin|otro`) + opcional **captura del pago** (imagen base64 comprimida, cap ~400 KB) y pasa la factura a `Pagada`.
+- **Revertir pago (deshacer)** — `DELETE /api/facturas/[id]/pago`: soporta el patrón "1 clic + deshacer 5 s" (estilo Gmail). Vuelve la factura a `Vencida` si ya pasó el vencimiento, o a `Pendiente` si no; limpia método y captura.
+- **Aging** — `GET /api/cobranzas/aging`: 5 buckets (Por vencer · 0–30 · 31–60 · 61–90 · +90) + top morosos. El asesor solo ve los suyos.
+- **Scoping**: el asesor solo paga/ve sus facturas (`asesor_id`); el admin, todas.
+
+---
+
+## 8. Flujo de incentivos y metas (medición por VENTAS, no por entregas)
+
+> **Regla de oro (decisión de negocio):** el desempeño de la asesora se mide por **lo que VENDE/REGISTRA** (`pedidos.created_at`, zona Lima), **NO** por lo que se entrega (`fecha_pedido` + `Entregado`). La asesora vende; el repartidor entrega días después (~86% de los pedidos se entregan en fecha posterior). Medir por entrega mezclaría su esfuerzo con el del motorizado. **El monto usa `pedido_items.subtotal`** (precio estimado al vender), no `subtotal_real`, y **no se filtra por estado** (un pedido que luego sale Fallido igual fue una venta del día). Fuente: `src/lib/metas.ts:1-43`. _Esto aplica solo a metas/incentivos; los reportes de admin (`lib/insights.ts`, reportes, comprobantes) sí miden facturación entregada._
+
+### 8.1 Meta mensual e individual
+
+`calcularMetaDiaria(asesorId)` en `src/lib/metas.ts:112-164`:
+- **Meta mensual automática** = `ventas_del_mes_anterior × factor`. El **factor** ya no está hardcodeado en 1.15: sale de `settings.incentivos_config.metasIndividuales.factorCrecimientoPct` (default **15** → ×1.15; editable por el admin). `metas.ts` lo lee directo de `settings` para no crear dependencia circular con `lib/incentivos.ts`.
+- **Override manual** por asesora: fila en `metas_asesoras` (mes = `YYYY-MM-01`) con `monto_meta`. Si `monto_meta IS NULL`, la meta sigue siendo automática (la fila puede existir solo para el **bono** personalizado).
+- **Bono personalizado**: columna `metas_asesoras.bono` (texto libre) que la asesora cobra al cumplir su meta del mes.
+- **Meta diaria** = meta_mensual / días hábiles del mes (lunes a **sábado**; domingo no cuenta).
+
+`POST /api/metas/override` (solo admin) fija `monto_meta` (nullable) + `bono`; si ambos quedan vacíos, **borra la fila** (vuelve a automática sin bono).
+
+### 8.2 Configuración de incentivos (una sola pantalla del admin)
+
+Todo vive en `settings.incentivos_config` (JSONB) — **sin migración** (`src/lib/incentivos.ts`). 4 bloques, cada uno con su interruptor on/off:
+
+| Bloque | Qué hace | Criterio configurable |
+|---|---|---|
+| **Racha semanal** | Cada día (lun→`diaFin`, 1=lun…6=sáb) "cuenta" si el valor del día alcanza `minimoDiario`. Cumplir toda la semana gana el premio. Reinicia cada semana. | `monto` (S/) o `pedidos` (N°) |
+| **Meta de equipo semanal** | Objetivo conjunto del equipo en la semana. | `monto` o `pedidos` |
+| **Ranking mensual** | Tabla de posiciones con premios por puesto. | `monto` o `pedidos` |
+| **Metas individuales** | Si está activo, la asesora ve sus tarjetas Hoy/Semana/Mes. Aquí vive `factorCrecimientoPct`. | — |
+
+Premios = **texto libre**. `getRachaSemanal` (`metas.ts:273-344`) devuelve un cuadro por día (cumplido/futuro/hoy) según el criterio. `getVendidoEquipoSemana` y `getRankingMensual` (`incentivos.ts`) calculan equipo y ranking por el criterio elegido — todo por `created_at` (ventas).
+
+### 8.3 Endpoints
+
+- `GET /api/incentivos` (admin+asesor) → `{ config, criterio, equipo, ranking, racha, metasIndividuales }`; marca `esTu:true` en la fila del asesor. `POST` (solo admin) valida con zod y guarda los 4 toggles + criterios.
+- `GET /api/metas` (asesora) → meta diaria/mensual + `ventasSemana` + `racha` + avance.
+- **Pantallas**: admin en `/dashboard/incentivos`; asesora en `/dashboard/mis-metas` (el admin la ve como vista previa). La asesora también tiene `/dashboard/mi-dia` (panel del día: vendido hoy, entregas, cobranzas, clientes dormidos).
+
+---
+
+## 9. Notificaciones entre áreas (la campanita)
+
+> Conecta las áreas en tiempo casi-real sin que nadie tenga que preguntar "¿ya está?". Son **in-app** (tabla `notificaciones`, campanita `NotificationBell.tsx`, polling). El helper `crearNotificacion` (`src/lib/notificaciones.ts`) **nunca lanza error** — una notificación que falla jamás rompe el flujo principal.
+
+### 9.1 Eventos disparados por una acción (en vivo)
+
+| Evento que lo dispara | Tipo | A quién avisa | Dónde se emite |
+|---|---|---|---|
+| Producción marca el pedido **Listo para despacho** | `listo_para_despacho` | Asesora dueña | `produccion/pedidos/[id]/listo/route.ts:80-89` |
+| Admin **asigna** el pedido a un repartidor | `pedido_asignado` | Repartidor asignado | `despacho/asignar/route.ts:132-142` |
+| Repartidor **inicia viaje** (sale a entregar) | `pedido_en_camino` | Asesora dueña | `pedidos/[id]/iniciar-viaje/route.ts:131-140` |
+| Repartidor/admin marca **Entregado** | `pedido_entregado` | Asesora dueña | `pedidos/[id]/entregar/route.ts:191-199` |
+| La entrega hace que la asesora **cruce su meta del día** | `meta_diaria_alcanzada` | Asesora (1 vez/día, guard) | `entregar/route.ts:204-231` |
+| Entrega **fallida** | `pedido_fallido` | Asesora dueña | `entregar/route.ts:232-241` |
+| Se sube la **foto de la orden firmada** | `guia_firmada` | Asesora dueña | `pedidos/[id]/guia-firmada/route.ts:101-110` |
+| SUNAT **rechaza** un comprobante (RECHAZADA) | `comprobante_rechazado` | Admin + asesora dueña | `notificarComprobanteConProblema` (hooked en `/emitir`, `/emitir-manual`, `/[id]/reintentar`, `/[id]/nota-credito`) |
+| **Error de infra** al emitir (ERROR) | `comprobante_error` | Admin + asesora dueña | idem |
+
+### 9.2 Eventos disparados por cron (diarios)
+
+| Cron (Vercel) | Tipo(s) | A quién | Qué chequea |
+|---|---|---|---|
+| `/api/cron/facturas-vencidas` | `factura_vencida`, `factura_por_vencer` | Asesora de la factura | Marca `Vencida` las facturas pendientes que pasaron; avisa de las que vencen mañana |
+| `/api/cron/recordatorios-asesoras` (mediodía Lima) | `meta_atrasada`, `cliente_inactivo`, `factura_por_vencer` | Cada asesora | Meta mensual < 50% (desde día 5); cliente top sin comprar 14–21 días; sus facturas que vencen en ≤3 días |
+| `/api/cron/daily-digest-admin` (8:30 Lima) | una notificación consolidada | Admin (Antonio) | Junta cobranzas vencidas + que vencen hoy + comprobantes en error/rechazado (7 días) + pedidos pendientes sin asignar. Si todo está en cero, **no spamea**. Además purga las notificaciones **ya leídas** de más de 30 días |
+| `/api/cron/resumen-diario-sunat` (2:00 Lima) | (no notifica) | — | Envía el Resumen Diario de boletas (RC-) a SUNAT, con idempotencia |
+
+Los 4 crons exigen `Authorization: Bearer ${CRON_SECRET}` (sin la env var devuelven **503**). Tipos declarados pero **aún no emitidos**: `pedido_creado`, `pesos_listos` (redundante con `listo_para_despacho`). El enum completo está en `notificaciones.ts:5-22`; `NotificationBell.tsx` lo importa con `import type` para no quedar desfasado.
+
+---
+
+## 10. Cómo verificar que este documento sigue vigente
 
 ```bash
-# 1. ¿La máquina de estados sigue con los mismos 5 estados?
-grep -n "EstadoPedido =" src/lib/types.ts
+# 1. ¿La máquina de estados sigue con los mismos 7 estados (incluye producción)?
+grep -A 8 "EstadoPedido =" src/lib/types.ts   # debe listar En_Produccion + Listo_Para_Despacho
 
 # 2. ¿Las transiciones siguen permitidas en cada endpoint?
 grep -A 5 "estadosPermitidos\|estado.*Asignado.*Pendiente" src/app/api/pedidos/\[id\]/*/route.ts
+
+# 2b. ¿Las transiciones de producción siguen igual (pesos/listo/reabrir)?
+grep -rn "Pendiente', 'En_Produccion'\|Listo_Para_Despacho" src/app/api/produccion/pedidos/\[id\]/*/route.ts
 
 # 3. ¿Sigue el debounce de 300ms en ClienteAutocomplete?
 grep -n "useDebounce\|debounce" src/components/ClienteAutocomplete.tsx
@@ -1023,6 +1233,21 @@ grep "Ruta completada\|stats.completados === stats.total" src/app/dashboard/mi-r
 
 # 10. ¿Sigue Google Directions con waypoints=optimize:true?
 grep "optimize:true" src/app/api/despacho/optimizar-ruta/route.ts
+
+# 11. (Lazo del dinero) ¿La factura Contado sigue creando cobranza por default?
+grep -n "facturaContadoSinCobrar\|yaCobrado\|debeCrearCobranza" src/app/api/comprobantes/emitir/route.ts src/app/api/comprobantes/emitir-manual/route.ts
+
+# 12. ¿El monto del pedido sigue usando subtotal_real con fallback a subtotal?
+grep -n "subtotal_real, subtotal" src/lib/cobranzas.ts
+
+# 13. ¿La Nota de Crédito sigue vinculando + bloqueando la doble NC?
+grep -n "referencia_comprobante_id\|ncPrevias\|ncHistorica" src/app/api/comprobantes/\[id\]/nota-credito/route.ts
+
+# 14. (Incentivos) ¿Las metas siguen midiendo por created_at (ventas), no por entrega?
+grep -n "created_at AT TIME ZONE\|sumarVentasCreadas" src/lib/metas.ts
+
+# 15. (Notificaciones) ¿Siguen los mismos tipos de la campanita?
+grep -A 18 "TipoNotificacion =" src/lib/notificaciones.ts
 ```
 
 Si encuentras drift, actualizá las secciones afectadas y bumpeá la fecha del header.

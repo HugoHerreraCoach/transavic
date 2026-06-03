@@ -1,8 +1,9 @@
 # 05 — APIs e Integraciones Externas
 
-> **Última verificación contra código:** 2026-05-13
-> **Commit del proyecto:** `d2a49cd`
-> **Archivos clave:** todos los `src/app/api/**/route.ts`, `src/lib/data.ts`, `src/lib/offline-queue.ts`
+> **Última verificación contra código:** 2026-06-02
+> **Archivos clave:** todos los `src/app/api/**/route.ts`, `src/lib/data.ts`, `src/lib/offline-queue.ts`, `src/lib/sunat/*`, `src/lib/{apisperu,brevo,email,gemini,insights,notificaciones,cobranzas,metas,incentivos,comprobante-scope}.ts`
+
+> **Nota de alcance (jun 2026):** este doc creció mucho desde mayo. El sistema pasó de ~23 endpoints (solo pedidos/despacho/clientes/productos/users) a **~70 route handlers** repartidos en: comprobantes SUNAT, cobranzas/facturas, incentivos/metas, reportes, producción, notificaciones, búsqueda global, paneles agregados (mi-día, perfil 360°) y **4 cron jobs**. Todo lo de abajo está verificado contra el código de `main`. Lo que el repartidor envía por GPS en vivo (tabla `rider_locations`, endpoint de ubicación) **no está en `main`** — vive en una branch local con la app Capacitor; por eso no se documenta aquí.
 
 ---
 
@@ -74,46 +75,45 @@ export async function POST(request: Request) {
 | **400** | Input inválido (zod safeParse falló) |
 | **401** | No autenticado |
 | **403** | Autenticado pero sin permisos (rol incorrecto o ownership ajeno) |
-| **404** | Recurso no encontrado |
-| **409** | Conflicto (estado del recurso no permite la acción, o usuario duplicado) |
+| **404** | Recurso no encontrado (también: asesora pidiendo recurso ajeno — se usa 404, no 403, para no leakear existencia) |
+| **409** | Conflicto (estado del recurso no permite la acción; **comprobante duplicado** `{duplicado}`; 2ª NC bloqueada; reintento sobre comprobante que no está en error/rechazado) |
+| **422** | Entidad no procesable (reintentar SUNAT sin XML ni ítems; CDR vacío/corrupto) |
 | **500** | Error interno (catch genérico) |
-| **502** | Error de upstream (Google Directions falló) |
+| **502** | Error de upstream (Google Directions / apisperu caído) |
+| **503** | Servicio no disponible: `CRON_SECRET` ausente (cron), email/cert SUNAT/token apisperu no configurados |
 
 ### 1.3 Cuándo usar `export const dynamic = "force-dynamic"`
 
 Necesario en handlers que **leen sesión** o **dependen de datos cambiantes**. Sin él, Next.js puede cachear la respuesta a nivel CDN/edge y devolver datos viejos.
 
-**Handlers con `dynamic = "force-dynamic"` (verificado):**
-- `api/pedidos/[id]/route.ts`
-- `api/pedidos/print/route.ts`
-- `api/pedidos/[id]/iniciar-viaje/route.ts`
-- `api/pedidos/[id]/entregar/route.ts`
-- `api/pedidos/[id]/cancelar-viaje/route.ts`
-- `api/despacho/route.ts`
-- `api/despacho/asignar-externo/route.ts`
-- `api/despacho/optimizar-ruta/route.ts`
-- `api/clientes/route.ts`
-- `api/clientes/[id]/route.ts`
-- `api/users/route.ts`
-- `api/users/[id]/route.ts`
-- `api/settings/route.ts`
-- `api/auth/logout/route.ts`
-- `api/dashboard/pedidos/route.ts`
+**A jun 2026, prácticamente TODOS los route handlers nuevos declaran `export const dynamic = "force-dynamic"`** — es ya el patrón de facto del proyecto. Verificado en los grupos comprobantes/`*`, facturas/`*`, incentivos, metas/`*`, reportes/`*`, producción/`*`, notificaciones/`*`, buscar, mi-dia, clientes/`[id]`/perfil, consulta-documento, sunat/empresas y los 4 cron.
 
-**Handlers SIN `dynamic = "force-dynamic"`** (auditoría pendiente):
-- `api/pedidos/route.ts` (POST) — debería tenerlo
-- `api/clientes/[id]/pedidos/route.ts` — debería tenerlo
-- `api/productos/route.ts`
-- `api/productos/[id]/route.ts`
-- `api/analytics/route.ts`
-- `api/resumen-diario/route.ts`
-- `api/version/route.ts` — usa headers `Cache-Control: no-store` en su lugar, intencional
+**Excepciones puntuales (sin `force-dynamic`):**
+- `api/version/route.ts` — usa headers `Cache-Control: no-store` en su lugar (intencional).
+- `api/resumen-diario/route.ts`, `api/reportes/ventas/route.ts` y `api/reportes/ventas/export-xlsx/route.ts` — leen sesión y datos en vivo igual; conviene agregarles `force-dynamic` por consistencia (deuda menor, no rompe nada porque devuelven attachments/JSON con scope por sesión).
+- `api/despacho/reordenar/route.ts` — sin `force-dynamic` (es PATCH, no cacheable).
 
 ---
 
 ## 2. Tabla maestra de endpoints
 
-Resumen de los **23 endpoints** del sistema agrupados por feature:
+Resumen de los **~70 route handlers** del sistema agrupados por feature. La regla de oro: el scoping por rol vive en CADA handler (Neon NO tiene RLS — la BD no sabe de roles). Cada handler hace `await auth()` y, si aplica, revisa `session.user.role` y/o ownership (`asesor_id`, `repartidor_id`, dueño de la cartera).
+
+**Mapa de grupos:**
+- **2.1** `pedidos/*` — CRUD, transiciones, historial, orden firmada
+- **2.2** `despacho/*` — vista admin (kanban + asignación + ruta)
+- **2.3** `repartidor/*` — endpoint del motorizado
+- **2.4** `clientes/*` — directorio + perfil 360°
+- **2.5** `productos/*` y `precios/*` — catálogo (precios `@deprecated`)
+- **2.6** `users/*`
+- **2.7** `produccion/*` — cola + pesos + listo (rol `produccion`)
+- **2.8** `comprobantes/*` — SUNAT (emisión, NC, baja, resumen, PDF/XML/CDR, correo, Excel)
+- **2.9** `facturas/*` + `cobranzas/aging` — cobranzas
+- **2.10** `incentivos`, `metas/*` — metas e incentivos
+- **2.11** `reportes/ventas*`, `resumen-diario`, `dashboard/pedidos` — reportes
+- **2.12** `notificaciones/*` — campanita
+- **2.13** Utilitarios — `buscar` (Cmd+K), `mi-dia`, `consulta-documento`, `sunat/empresas`, `settings`, `version`, `auth/logout`
+- **2.14** `cron/*` — 4 jobs protegidos por `CRON_SECRET`
 
 ### 2.1 `/api/pedidos/*` — CRUD y transiciones
 
@@ -124,11 +124,14 @@ Resumen de los **23 endpoints** del sistema agrupados por feature:
 | `/api/pedidos/[id]` | DELETE | ✅ | Admin (cualquiera) / Asesor (suyos). Repartidor: ❌ | - | DELETE FROM pedidos (CASCADE elimina items) | - |
 | `/api/pedidos/print` | GET | ✅ | Asesor (sus pedidos) / Admin | - | SELECT con filtros | - |
 | `/api/pedidos/[id]/iniciar-viaje` | POST | ✅ | Repartidor asignado / Admin | `{driverLat?, driverLng?}` | UPDATE estado='En_Camino', timestamps, ETA | Google Directions (1×) |
-| `/api/pedidos/[id]/entregar` | POST | ✅ | Repartidor asignado / Admin | `{resultado, razon_fallo?}` | UPDATE estado, entregado, entregado_por, entregado_at | - |
+| `/api/pedidos/[id]/entregar` | POST | ✅ | Cualquier auth (el ownership real lo arrastra el flujo) | `{resultado, razon_fallo?}` | UPDATE estado, entregado, entregado_por, entregado_at; **crea cobranza** (`crearFacturaParaPedido`); **emite notificación** `pedido_entregado`/`pedido_fallido` a la asesora; chequea `meta_diaria_alcanzada` | - |
 | `/api/pedidos/[id]/entregar` | PATCH | ✅ | Repartidor asignado / Admin | - | UPDATE estado='Asignado', limpia timestamps (revertir) | - |
 | `/api/pedidos/[id]/cancelar-viaje` | POST | ✅ | Repartidor asignado / Admin | - | UPDATE estado='Asignado', limpia ETA | - |
+| `/api/pedidos/[id]/ediciones` | GET | ✅ | **Admin only** | - | SELECT `pedido_ediciones` (historial de correcciones, más reciente primero) | - |
+| `/api/pedidos/[id]/guia-firmada` | POST | ✅ | Admin / Repartidor asignado / Asesora dueña | `multipart/form-data` (`foto`, ≤2MB, jpeg/png/webp/heic) | UPDATE `guia_firmada_data/_mime/_at` (base64 en DB); notifica `guia_firmada` a la asesora | - |
+| `/api/pedidos/[id]/guia-firmada` | GET | ✅ | Admin / Repartidor (suyos) / Asesora (su cartera) | - | SELECT imagen → devuelve binario (`Content-Type` del mime) | - |
 
-**✅ Resuelto (2026-05-13):** `PATCH /api/pedidos/[id]` y `DELETE /api/pedidos/[id]` ahora tienen `await auth()` + verificación de ownership al inicio. Asesor solo puede modificar/borrar sus propios pedidos (`asesor_id === userId`), repartidor solo los que tiene asignados (`repartidor_id === userId`), admin pasa siempre. Repartidor explícitamente NO puede borrar pedidos (consistente con `table.tsx:172`).
+**✅ Resuelto:** `PATCH /api/pedidos/[id]` y `DELETE /api/pedidos/[id]` tienen `await auth()` + verificación de ownership al inicio. Asesor solo puede modificar sus propios pedidos (`asesor_id === userId`), repartidor solo los asignados (`repartidor_id === userId`), admin pasa siempre. **`DELETE` es solo admin** (jun 2026): asesor/repartidor reciben 403 (la asesora solo podía borrar los `Pendiente`, hoy el borrado quedó solo-admin). Cada PATCH que toca campos de DATOS del pedido **audita el diff** en `pedido_ediciones` vía `lib/pedido-historial.ts` (no-bloqueante; solo campos de `CAMPOS_AUDITABLES`, no el ruido del ciclo de vida).
 
 ### 2.2 `/api/despacho/*` — Vista admin
 
@@ -157,20 +160,23 @@ Resumen de los **23 endpoints** del sistema agrupados por feature:
 | `/api/clientes/[id]` | GET | ✅ | Asesor (suyos) / Admin | - | SELECT cliente (verifica ownership) | - |
 | `/api/clientes/[id]` | PATCH | ✅ | Asesor (suyos) / Admin (puede transferir) | Schema parcial | UPDATE cliente (validar destino si transfiere asesor_id) | - |
 | `/api/clientes/[id]` | DELETE | ✅ | Asesor (suyos) / Admin | - | DELETE FROM clientes | - |
-| `/api/clientes/[id]/pedidos` | GET | ⚠️ (sin verificación de ownership) | - | - | SELECT pedidos WHERE cliente_id=$1 OR cliente=$nombre | - |
+| `/api/clientes/[id]/pedidos` | GET | ✅ | Admin / Asesor (su cartera) | - | Valida ownership del cliente, luego SELECT pedidos (cliente_id o nombre) | - |
+| `/api/clientes/[id]/perfil` | GET | ✅ | Admin / Asesor (su cartera) | - | Perfil 360°: cliente + stats (facturado/cobrado/pendiente/vencido) + pedidos + comprobantes (por `cliente_doc_num`) + cobranzas + top productos | - |
 
-**⚠️ Hallazgo:** `GET /api/clientes/[id]/pedidos` **no verifica que el cliente pertenezca al asesor que pregunta**. Una asesora puede ver el historial de pedidos de un cliente de otra asesora si conoce el UUID. **DEUDA DE SEGURIDAD MEDIA.**
+**✅ Resuelto:** `GET /api/clientes/[id]/pedidos` (y `/perfil`) **ahora validan ownership**: el asesor solo accede si el cliente es de su cartera (`asesor_id === userId`); si no, 404 (no leakea existencia). El hallazgo de "DEUDA MEDIA" de mayo está cerrado.
 
 ### 2.5 `/api/productos/*`
 
 | Path | Método | Auth | Rol | Body | Side effects DB |
 |---|---|---|---|---|---|
-| `/api/productos` | GET | ❌ (público) | - | - | SELECT productos WHERE activo=TRUE |
-| `/api/productos` | POST | ✅ | Admin only | `{nombre, categoria, unidad}` | INSERT productos |
-| `/api/productos/[id]` | PATCH | ✅ | Admin only | `{nombre?, categoria?, unidad?, activo?}` | UPDATE productos |
+| `/api/productos` | GET | ❌ (público) | - | - | SELECT productos WHERE activo=TRUE; **devuelve también `codigo`, `precio_venta`, `precio_compra`** (jun 2026) |
+| `/api/productos` | POST | ✅ | Admin only | `{nombre, categoria, unidad, precio_venta?, precio_compra?}` | INSERT productos; genera `codigo` (prefijo categoría + correlativo) |
+| `/api/productos/[id]` | PATCH | ✅ | Admin only | `{nombre?, categoria?, unidad?, activo?, precio_venta?, precio_compra?, codigo?}` | UPDATE productos; al cambiar precio **preserva histórico** (cierra el vigente + inserta en `precios_productos`) |
 | `/api/productos/[id]` | DELETE | ✅ | Admin only | - | UPDATE productos SET activo=FALSE (soft delete) |
 
 **Soft delete deliberado** para preservar referencias históricas en `pedido_items`.
+
+**`/api/precios` y `/api/precios/[id]` (`@deprecated`)**: el catálogo unificado (`/dashboard/catalogo`) movió precio/código al endpoint de productos. Estos siguen existiendo como red de seguridad pero ya nadie los consume desde la UI. Candidatos a borrar tras unas semanas sin regresiones.
 
 ### 2.6 `/api/users/*`
 
@@ -181,25 +187,116 @@ Resumen de los **23 endpoints** del sistema agrupados por feature:
 | `/api/users/[id]` | PATCH | ✅ | Admin only | `{name?, password?, role?}` | UPDATE users (hashea password si presente) |
 | `/api/users/[id]` | DELETE | ✅ | Admin only | - | Pre-check `pedidos.asesor_id=$1` → 409 si tiene; DELETE FROM users |
 
-### 2.7 Analytics, settings, version, dashboard
+### 2.7 `/api/produccion/*` — cola del día + pesos (rol `produccion`)
 
-| Path | Método | Auth | Body / Query | Side effects |
+Todos restringidos a `admin + produccion`. El rol `produccion` es la asistente que prepara/pesa la mercadería (Mejora 1, en producción desde 30 may 2026).
+
+| Path | Método | Auth | Rol | Body / Query | Side effects DB |
+|---|---|---|---|---|---|
+| `/api/produccion/pedidos` | GET | ✅ | admin/produccion | `?fecha=&q=` | SELECT cola (`Pendiente`/`En_Produccion`/`Listo_Para_Despacho`) del día + items, ordenada por urgencia |
+| `/api/produccion/pedidos/[id]/pesos` | PATCH | ✅ | admin/produccion | `{items:[{item_id, cantidad_real, unidad?, precio_unitario?}]}` | UPDATE `pedido_items` (cantidad/unidad/precio reales + `subtotal_real`); pasa el pedido a `En_Produccion`; sella `pesado_por`/`pesado_at` |
+| `/api/produccion/pedidos/[id]/listo` | POST | ✅ | admin/produccion | - | Valida que TODOS los items tengan `cantidad_real`; estado → `Listo_Para_Despacho`; **notifica `listo_para_despacho`** a la asesora |
+| `/api/produccion/pedidos/[id]/reabrir` | POST | ✅ | admin/produccion | - | Revierte `Listo_Para_Despacho` → `En_Produccion` |
+
+### 2.8 `/api/comprobantes/*` — SUNAT (factura/boleta/NC + operaciones)
+
+El grupo más grande. Todo lo de emisión/lectura está abierto a **`asesor` + `admin`**; las operaciones fiscales delicadas (reintentar, anular, resumen diario, consultar ticket) son **admin only**. **Scoping de la asesora (Antonio jun 2026): ve SOLO SUS comprobantes** (de sus pedidos `pedidos.asesor_id`, o los que ella misma emitió `emitido_por`), vía el helper `lib/comprobante-scope.ts:asesoraPuedeVerComprobante`. 404 (no 403) cuando no es suyo, para no revelar existencia. El admin ve todos.
+
+| Path | Método | Auth | Rol | Qué hace |
 |---|---|---|---|---|
-| `/api/analytics` | GET | ✅ | `?desde=&hasta=` | SELECT múltiples JOINs (KPIs, top productos, ventas por día, ranking asesoras) |
-| `/api/resumen-diario` | GET | ✅ | `?fecha=` | SELECT pedidos + items del día |
-| `/api/settings` | GET | ✅ | - | SELECT settings |
-| `/api/settings` | POST | ✅ | Admin only | UPSERT settings (zod valida `BaseLocationSchema`) |
-| `/api/version` | GET | ❌ (público) | - | Lee `.next/BUILD_ID` |
-| `/api/dashboard/pedidos` | GET | ✅ | `?query=&fecha=&page=` | Wrapper de `fetchFilteredPedidos` (scoping por rol) |
+| `/api/comprobantes` | GET | ✅ | admin (todos) / asesor (suyos) | Lista (LIMIT 100). Filtros `?tipo=01\|03\|07\|08`, `?empresa=`, `?pedido_id=`, `?cliente_doc_num=`. Devuelve vínculo NC↔factura (`referencia_*`, `tiene_nc`) y `emitido_por` |
+| `/api/comprobantes/[id]` | GET | ✅ | admin / asesor (suyos) | Detalle + ítems para el PDF. **Ítems por prioridad: (1) XML firmado → (2) `pedido_items` → (3) línea global** (gotcha #18). Incluye `formaPago`, `fechaVencimiento`, `emisor` (de `getSunatConfig`) |
+| `/api/comprobantes/[id]/xml` | GET | ✅ | admin / asesor (suyos) | Descarga el XML firmado (`xml_firmado_base64`) como attachment; 404 si no se envió |
+| `/api/comprobantes/[id]/cdr` | GET | ✅ | admin / asesor (suyos) | Sirve el **ZIP crudo de la CDR** tal cual SUNAT lo entrega (gotcha #18); 404 si no hay CDR |
+| `/api/comprobantes/[id]/enviar` | POST | ✅ | admin / asesor (suyos) | Envía PDF (`pdfBase64`, ≤7MB) + XML por correo (Brevo→SMTP). 503 si email no configurado |
+| `/api/comprobantes/[id]/reintentar` | POST | ✅ | **admin only** | Reenvía a SUNAT comprobantes en `error`/`rechazado`, **reusando el mismo correlativo**. Reenvía el XML firmado original tal cual; si no hay, reconstruye desde `items_json`; si no hay nada → 422 (gotcha #19) |
+| `/api/comprobantes/[id]/anular` | POST | ✅ | **admin only** | Comunicación de Baja (RA-) de **facturas** aceptadas ≤7 días. `{motivo}` → ticket SUNAT. (En la UI está **deshabilitada** a favor de la NC) |
+| `/api/comprobantes/[id]/nota-credito` | POST | ✅ | admin / asesor (suyos) | Emite NC (07) sobre factura/boleta aceptada/observada. `{motivo, tipoNotaCredito?}`. **Bloquea una 2ª NC** (por `referencia_comprobante_id` o regex en observaciones, gotcha #19). Series propias FC0x/BC0x |
+| `/api/comprobantes/emitir` | POST | ✅ | asesor (sus pedidos) / admin | Emite factura/boleta **desde un pedido**. Precios CON IGV → ÷1.18. Valida cliente (RUC para factura; boleta <S/700 sin doc → "CLIENTES VARIOS"). Anti-duplicado → **409** `{duplicado}`. Factura → crea cobranza salvo `yaCobrado` |
+| `/api/comprobantes/emitir-manual` | POST | ✅ | asesor / admin | Emite factura/boleta **standalone** (sin pedido). Mismas validaciones. Completa RUC del cliente en su ficha. Factura → cobranza (`crearFacturaStandalone`) |
+| `/api/comprobantes/resumen-diario` | GET/POST | ✅ | **admin only** | GET: boletas del día pendientes de resumen. POST: genera/firma/envía el RC- a SUNAT (`{fecha, empresa, forzar?}`) con idempotencia (`lib/sunat/resumen-diario.ts`) |
+| `/api/comprobantes/consultar-ticket` | POST | ✅ | **admin only** | `getStatus` de un ticket SUNAT (baja/resumen). Persiste en `resumenes_diarios` o marca el comprobante `anulado` si la baja fue aceptada |
+| `/api/comprobantes/resumenes` | GET | ✅ | **admin only** | Lista los últimos 20 RC- enviados (para consultar su ticket días después) |
+| `/api/comprobantes/export-xlsx` | GET | ✅ | admin (todos) / asesor (sus pedidos) | Reporte contable .xlsx multi-hoja. Filtros `?desde&hasta` (zona Lima) + tipo/empresa/cliente_doc_num. NC restan; rechazado/error/anulado fuera de sumas |
+
+> **Detalle del módulo SUNAT real** (XML UBL 2.1 + firma .p12 + SOAP + CDR, 2 RUCs): ver §4.6 y `CLAUDE.md §16`.
+
+### 2.9 `/api/facturas/*` y `/api/cobranzas/*` — cobranzas
+
+"Facturas" aquí = **cobranzas internas** (deudas), NO los comprobantes fiscales. Scoping: asesor ve solo las suyas (`facturas.asesor_id = userId`); admin todas (con `?asesor_id=` para filtrar).
+
+| Path | Método | Auth | Rol | Qué hace |
+|---|---|---|---|---|
+| `/api/facturas` | GET | ✅ | admin (todas) / asesor (suyas) | Lista (LIMIT 200) + stats por estado. Filtros `?estado=`, `?asesor_id=` |
+| `/api/facturas` | POST | ✅ | asesor / admin | Cobranza manual (`crearFacturaStandalone`). Vínculo opcional a `cliente_id` y/o `comprobante_id` (deriva `numero_comprobante`) |
+| `/api/facturas/[id]` | PATCH | ✅ | admin / asesor (suyas) | Edita `fecha_vencimiento`; recalcula estado (Pagada/Vencida/Pendiente) |
+| `/api/facturas/[id]/pago` | POST | ✅ | admin / asesor (suyas) | Marca **Pagada**: fecha, `metodo_pago`, `pago_detalle`, captura `pago_img_base64` (≤400KB) |
+| `/api/facturas/[id]/pago` | DELETE | ✅ | admin / asesor (suyas) | **Revierte** el pago (patrón "deshacer 5s") → Pendiente/Vencida; limpia método y captura |
+| `/api/facturas/[id]/pago-imagen` | GET | ✅ | admin / asesor (suyas) | Sirve la captura del comprobante de pago (binario) |
+| `/api/cobranzas/aging` | GET | ✅ | admin (todas) / asesor (suyas) | Aging en buckets (Por vencer · 0–30 · 31–60 · 61–90 · +90) + top-5 morosos por deuda vencida |
+
+### 2.10 `/api/incentivos` y `/api/metas/*` — metas e incentivos
+
+Medición por **VENTAS** (`created_at` del pedido, zona Lima), no por entregas (gotcha #8). Config en `settings.incentivos_config` (JSONB); overrides en `metas_asesoras`.
+
+| Path | Método | Auth | Rol | Qué hace |
+|---|---|---|---|---|
+| `/api/incentivos` | GET | ✅ | admin / asesor | Config + progreso de meta de equipo + ranking mensual + racha semanal (scoped al usuario) |
+| `/api/incentivos` | POST | ✅ | **admin only** | Guarda la config de incentivos (4 toggles + criterios + premios), zod `ConfigSchema` |
+| `/api/metas` | GET | ✅ | asesor (su meta) / admin (`?asesor_id=`) | Meta del día/semana/mes + ventas reales + racha + bono + % de avance |
+| `/api/metas/asesoras` | GET | ✅ | **admin only** | Lista de asesoras con meta efectiva + ventas del mes + override + bono (para la pantalla de config) |
+| `/api/metas/override` | POST | ✅ | **admin only** | Setea/borra la meta mensual fija + bono de una asesora (`metas_asesoras`, mes `YYYY-MM-01`). Sin meta ni bono → borra la fila (vuelve a automática) |
+
+### 2.11 Reportes, resumen del día, dashboard
+
+| Path | Método | Auth | Rol | Qué hace |
+|---|---|---|---|---|
+| `/api/reportes/ventas` | GET | ✅ | **admin only** | Reporte de ventas (facturación ENTREGADA) por rango `?desde&hasta` (default: este mes). KPIs en dinero + ranking asesoras + top productos + por día/empresa/distrito (`lib/reportes/datos-ventas.ts`) |
+| `/api/reportes/ventas/export-xlsx` | GET | ✅ | **admin only** | El mismo reporte como .xlsx de 4 hojas |
+| `/api/resumen-diario` | GET | ✅ | **admin + produccion** | "Resumen del día" — pedidos del día + `totalesPorProducto` (qué preparar). Default: ayer |
+| `/api/dashboard/pedidos` | GET | ✅ | cualquier auth (scope por rol) | Wrapper de `lib/data.ts:fetchFilteredPedidos` para refrescar la lista del dashboard |
+
+**✅ Resuelto / cambio importante:** el viejo `/api/analytics` y `/api/panel-gerencial` **fueron eliminados** (el rediseño de Reportes los fusionó en `/api/reportes/ventas`; git los preserva). El hallazgo de mayo "analytics/resumen-diario abiertos a cualquier auth" está **cerrado**: `reportes/ventas` es **admin only** y `resumen-diario` quedó scopeado a **admin + produccion**.
+
+### 2.12 `/api/notificaciones/*` — campanita
+
+| Path | Método | Auth | Qué hace |
+|---|---|---|---|
+| `/api/notificaciones` | GET | ✅ | Últimas 30 notificaciones del usuario + `unreadCount` |
+| `/api/notificaciones/[id]/leida` | PATCH | ✅ | Marca una como leída (solo las propias, `user_id = session`) |
+| `/api/notificaciones/leer-todas` | POST | ✅ | Marca todas las propias como leídas |
+
+Tipos (`TipoNotificacion` en `lib/notificaciones.ts`): `pedido_creado · listo_para_despacho · pedido_asignado · pedido_en_camino · pedido_entregado · pedido_fallido · guia_firmada · factura_vencida · factura_por_vencer · meta_diaria_alcanzada · meta_atrasada · cliente_inactivo · comprobante_rechazado · comprobante_error`. La campanita (`NotificationBell.tsx`) importa el tipo del backend para no desfasarse.
+
+### 2.13 Utilitarios — búsqueda, mi-día, consulta de documento, settings, version
+
+| Path | Método | Auth | Rol | Qué hace |
+|---|---|---|---|---|
+| `/api/buscar` | GET | ✅ | admin / asesor (repartidor 403) | Búsqueda global Cmd+K: TOP-5 de clientes/pedidos/comprobantes con scoping por rol. `?q=` (≥2 chars), ILIKE con escape |
+| `/api/mi-dia` | GET | ✅ | asesor / admin | Panel "Mi día": pedidos a entregar hoy + cobranzas vencidas/hoy + clientes dormidos (≥20 días) + ventas del día. Scope al asesor |
+| `/api/consulta-documento` | POST | ✅ | asesor / admin | Consulta RUC/DNI vía apisperu (server-side, token oculto). `{tipo, numero}`. Mapea errores del proveedor (404/429→CUOTA/503→TOKEN/502) |
+| `/api/sunat/empresas` | GET | ✅ | asesor / admin | Datos PÚBLICOS del emisor (RUC + razón social) de ambas empresas (para el form embebido). NO expone cert/clave |
+| `/api/settings` | GET | ✅ | cualquier auth | SELECT settings |
+| `/api/settings` | POST | ✅ | **admin only** | UPSERT settings (zod `BaseLocationSchema`) |
+| `/api/version` | GET | ❌ (público) | - | Lee `.next/BUILD_ID` (`Cache-Control: no-store`) para `VersionChecker` |
 | `/api/auth/logout` | GET | - | - | NextAuth signOut + redirect a `/` |
 
-**⚠️ Hallazgo:** `GET /api/analytics` y `GET /api/resumen-diario` están abiertos a cualquier usuario autenticado, sin filtro por rol. Si una asesora accede directamente, ve KPIs globales (incluyendo ranking de otras asesoras). **DEUDA DE SEGURIDAD BAJA** (no es info de clientes, pero sí de performance interno).
+### 2.14 `/api/cron/*` — 4 jobs protegidos por `CRON_SECRET`
+
+NO usan `auth()`. En su lugar validan el header `Authorization: Bearer <CRON_SECRET>` que manda Vercel Cron: **si `CRON_SECRET` no está en el entorno → 503**; si no coincide → 401. Vercel Pro permite 40 crons (usamos 4). Schedules reales en `vercel.json`:
+
+| Path | Schedule (UTC) | Lima | Qué hace |
+|---|---|---|---|
+| `/api/cron/facturas-vencidas` | `0 13 * * *` | 08:00 | Marca facturas Pendientes vencidas → `Vencida` + notifica; recordatorio de las que vencen mañana |
+| `/api/cron/daily-digest-admin` | `30 13 * * *` | 08:30 | UNA notificación consolidada al admin (vencidas + vencen hoy + comprobantes en error + pedidos sin asignar). No spamea si todo en cero. **Además purga notificaciones leídas >30 días** |
+| `/api/cron/recordatorios-asesoras` | `0 17 * * *` | 12:00 | Por asesora: meta atrasada (<50%) · clientes inactivos (14–21 días) · facturas suyas por vencer (3 días) |
+| `/api/cron/resumen-diario-sunat` | `0 7 * * *` | 02:00 | Para cada empresa: envía a SUNAT el Resumen Diario (RC-) de las boletas de AYER (idempotente vía `lib/sunat/resumen-diario.ts`) |
 
 ---
 
 ## 3. Reference detallado por endpoint
 
-Para cada endpoint con lógica no trivial, expandimos:
+Para cada endpoint con lógica no trivial, expandimos. Las expansiones de abajo cubren **pedidos + despacho** (el core operativo, schemas zod incluidos). Para los grupos nuevos (comprobantes, cobranzas, incentivos/metas, reportes, producción) la tabla de §2 ya trae el detalle de auth/rol/efectos; la lógica fina vive en los helpers de `src/lib/` listados en §4.5–§4.8 (SUNAT/apisperu/Brevo/Gemini) y en `cobranzas.ts` / `metas.ts` / `incentivos.ts` / `comprobante-scope.ts` / `pedido-historial.ts`.
 
 ### 3.1 `POST /api/pedidos` — crear pedido
 
@@ -450,7 +547,7 @@ function haversineKm(lat1, lng1, lat2, lng2): number {
 }
 ```
 
-**⚠️ Duplicación:** Haversine está solo acá, no en `optimizar-ruta`. Centralizar en `lib/utils.ts`.
+**⚠️ Duplicación:** Haversine está solo aquí, no en `optimizar-ruta`. Centralizar en `lib/utils.ts`.
 
 ### 3.5 `POST /api/despacho/optimizar-ruta` — TSP heurístico de Google
 
@@ -577,32 +674,22 @@ await sql`
 `;
 ```
 
-### 3.10 `/api/analytics` — múltiples KPIs en un endpoint
+### 3.10 `/api/reportes/ventas` — reporte de ventas (reemplazó a `/api/analytics`)
 
-**Archivo:** `src/app/api/analytics/route.ts`
+**Archivo:** `src/app/api/reportes/ventas/route.ts` (datos en `lib/reportes/datos-ventas.ts`). **Admin only.**
 
-Ejecuta **8+ queries en paralelo** (no estrictamente, las hace secuencialmente pero podría):
+El viejo `/api/analytics` (8+ queries de KPIs/ranking/top productos, abierto a cualquier auth) **fue eliminado** en el rediseño de Reportes. Lo reemplaza `obtenerReporteVentas(desde, hasta)` — única fuente de cifras para el JSON, el Excel (`export-xlsx`, 4 hojas) y el PDF. Mide **facturación ENTREGADA** (`COALESCE(subtotal_real, subtotal)` de pedidos `Entregado` por `fecha_pedido`), coherente con que los reportes de admin miden entregas (gotcha #8), no `created_at` (eso es para las metas de la asesora).
 
-1. KPIs generales (`total_pedidos, entregados, pendientes, fallidos`).
-2. Top productos (TOP 15).
-3. Ventas por día.
-4. Por empresa.
-5. Por distrito.
-6. Entregas por persona (hoy / semana / mes).
-7. Ranking de asesoras.
-8. Top productos por asesora.
-9. Tendencia diaria por asesora.
-
-**Performance:** sin índices específicos, podría ser lento si la tabla crece. Hoy con ~30 pedidos/día está bien, pero a 500+ pedidos/día va a haber que agregar índices o materializar vistas.
+Query `?desde&hasta` (YYYY-MM-DD; default: este mes). Devuelve KPIs en dinero (facturado, ticket promedio, % de entrega), ranking de asesoras, top productos, y series por día/empresa/distrito.
 
 ### 3.11 `/api/resumen-diario`
 
-**Archivo:** `src/app/api/resumen-diario/route.ts`
+**Archivo:** `src/app/api/resumen-diario/route.ts`. **Admin + produccion** (ya no abierto a cualquier auth).
 
 Default fecha: **ayer** (no hoy). Reporta:
 - Pedidos del día con sus items.
 - KPIs (total, entregados, pendientes).
-- **Totales por producto** del día (la "lista de compras" del día siguiente).
+- **Totales por producto** del día (`totalesPorProducto` = `SUM(cantidad) GROUP BY producto, unidad`) — el "cuánto preparar". Es la fuente de la pantalla `/dashboard/resumen` (abierta a admin + produccion) y de la pestaña "Día a día" de Reportes.
 
 ### 3.12 `/api/dashboard/pedidos`
 
@@ -673,18 +760,68 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 - **`/api/version`** lee este archivo y lo expone — `VersionChecker.tsx` lo polea cada 60s.
 - **Env vars** configuradas en Vercel Dashboard (las del `.env` local).
 
-### 4.5 Próximas integraciones (mejoras 2026)
+### 4.5 SUNAT — facturación electrónica (módulo real, 2 RUCs)
 
-Estas todavía **no están implementadas** pero son parte del roadmap acordado con Antonio:
+**Implementado y en producción** (Mejora 7, desde 30 may 2026). NO se usó un PSE de terceros: se portó el módulo real desde `conexipema-eventos` y se emite directo contra el webservice SOAP de SUNAT con el certificado `.p12` de cada empresa. Validado en BETA (factura 01, boleta 03, NC 07 → ACEPTADA con CDR).
 
-| Servicio | Para qué | Cuándo |
+**Archivos** (todos en `src/lib/sunat/`):
+
+| Archivo | Rol |
+|---|---|
+| `index.ts` | `emitirComprobante()` — orquesta correlativo → XML → firma → SOAP → guarda en `comprobantes`. Series por empresa/tipo (Transavic F001/B001, Avícola F002/B002; NC FC0x/BC0x) |
+| `config-transavic.ts` | `getSunatConfig(empresa)` — lee RUC/razón social/dirección/ubigeo/cert/clave SOL de env vars. Endpoints BETA vs producción |
+| `contador.ts` | Correlativo atómico (`UPDATE … +1 RETURNING`) en `comprobantes_contador`, PK `(ruc, serie)` |
+| `xml-builder.ts` | Genera XML UBL 2.1 (factura/boleta/NC + comunicación de baja) |
+| `xml-signer.ts` | Firma XML-DSig con el `.p12` (`node-forge` + `xml-crypto`) |
+| `soap-client.ts` | POST SOAP a SUNAT + parsea CDR; distingue "SUNAT caído" (`sunatCaido`) de rechazo de datos |
+| `resumen-diario.ts` | Helper compartido del Resumen Diario (RC-) con idempotencia (lo usan el cron y el endpoint manual) |
+| `parse-cpe-items.ts` | Parsea las líneas del XML firmado para el PDF/correo (gotcha #18) |
+| `validacion-cliente.ts` | `esDniValido` / `esRucValido` (módulo 11) / `esReceptorIdentificado` |
+| `duplicado.ts` | Detecta comprobante duplicado reciente (mismo cliente + tipo + monto) |
+| `pdf-comprobante.ts` | PDF formato SUNAT (jsPDF, generado en cliente, sin QR) |
+
+**Endpoints SOAP** (`config-transavic.ts`):
+- **BETA**: `https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl`
+- **Producción**: `https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl`
+
+**Convención crítica de precios:** `pedido_items.precio_unitario` y `productos.precio_venta` se guardan **CON IGV**. Antes de mandar a SUNAT se divide entre 1.18 (en `comprobantes/emitir` y `emitir-manual`). Ver gotcha #10.
+
+**Env vars** (en Vercel, NUNCA en el repo): `SUNAT_TRA_*` y `SUNAT_AVI_*` (RUC, razón social, dirección, ubigeo, SOL user/pass, cert `.p12` en base64 + clave), `SUNAT_ENVIRONMENT` (`beta`/`production`). `AUTO_EMITIR_COMPROBANTE` (flag opcional para emitir al cerrar el pedido). Detalle completo en `CLAUDE.md §4` y `§16`.
+
+### 4.6 apisperu — consulta de RUC/DNI
+
+**Archivo:** `src/lib/apisperu.ts`. Token server-side (`APISPERU_TOKEN`, cuenta `transavicdev@gmail.com`); la UI llama a `POST /api/consulta-documento` (el número va en el body, no en la URL, para no dejar PII en logs).
+
+- `consultarRuc(ruc)` → razón social, dirección, estado, condición, ubigeo (auto-llena el form de cliente / emisión).
+- `consultarDni(dni)` → nombres + apellidos.
+- **Nunca lanza**: devuelve `{ ok:false, code, mensaje }` (`FORMATO`/`NO_ENCONTRADO`/`TOKEN`/`CUOTA`/`RED`) para que la UI siempre permita escribir a mano. `dniruc.apisperu.com/api/v1`.
+
+### 4.7 Correo — Brevo (preferido) con fallback SMTP
+
+**Archivos:** `src/lib/email.ts` (fachada) + `src/lib/brevo.ts`.
+
+- `sendEmail()` usa **Brevo API v3** si `BREVO_API_KEY` está configurada (más confiable en Vercel — no abre conexiones SMTP); si no, cae a **nodemailer/SMTP** (`SMTP_HOST/USER/PASS`).
+- `isEmailConfigured()` → la UI deshabilita el botón de envío si no hay ni Brevo ni SMTP.
+- Sender verificado en Brevo (hoy `transavicdev@gmail.com`). Plan free 300 correos/día. Lo usa `POST /api/comprobantes/[id]/enviar` (PDF + XML adjuntos).
+- Env: `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` (o `SMTP_*`).
+
+### 4.8 Gemini Flash — IA comercial (asistente + insights)
+
+**Archivos:** `src/lib/gemini.ts` (helper `callGemini` + `ClienteAnonymizer`) + `src/lib/insights.ts` (8 insights: 4 admin + 4 asesora, scoped). Endpoint: `GET /api/asistente-ia` (admin/asesor, cache 1h por scope `admin-*`/`asesor-{id}-*`).
+
+- Modelo **`gemini-flash-latest`**; requiere `thinkingConfig: { thinkingBudget: 0 }` o las respuestas se truncan (gotcha #12). Free tier; cuenta dedicada `transavicdev@gmail.com`.
+- **Privacy boundary**: las queries de asesora SIEMPRE filtran `WHERE asesor_id = session.user.id`; antes de mandar nombres a Gemini se anonimizan con `ClienteAnonymizer` ("Cliente A", "Cliente B"…).
+- ⚠️ El cache de insights es **in-memory** y no sobrevive en Vercel serverless → bajo carga se topa el límite gratuito (429). Degrada bien (muestra datos crudos). Fix pendiente: persistir en DB. Ver gotcha #16.
+- Env: `GEMINI_API_KEY`.
+
+### 4.9 Próximas integraciones (no implementadas)
+
+| Servicio | Para qué | Estado |
 |---|---|---|
-| **Pusher Channels** | Tracking GPS en vivo del repartidor (free tier 200K msg/día, suficiente para 6 motorizados) | Etapa 2 de mejoras |
-| **Capacitor** | Wrapper Android de `/mi-ruta` para GPS en background (iOS bloquea PWAs) | Etapa 2 de mejoras |
-| **Gemini API** (Google) | Asistente IA para asesoras (free tier 250-1000 req/día). Anonimizar datos antes de mandar. | Etapa 3 de mejoras |
-| **SUNAT PSE** (proveedor de facturación electrónica autorizado) | Emitir boletas/facturas con los 2 RUCs (Transavic + Avícola de Tony). Costo por comprobante lo asume el cliente. | Etapa 3 de mejoras |
+| **Pusher Channels** | Tracking GPS en vivo del repartidor | ⏳ Pendiente (no iniciado) |
+| **Capacitor** | Wrapper Android de `/mi-ruta` para GPS en background (iOS bloquea PWAs) | 🔧 En branch local (tabla `rider_locations` + endpoint de ubicación). NO en `main` |
 
-Cuando se implementen, agregar acá la sección correspondiente con cómo se conectan.
+> SUNAT y Gemini ya NO son "próximas" — están en producción (§4.5, §4.8).
 
 ---
 
@@ -820,9 +957,24 @@ grep -rln "maps.googleapis.com" src/app/api/
 
 # 10. ¿La offline queue sigue con MAX_RETRIES=3?
 grep "MAX_RETRIES" src/lib/offline-queue.ts
+
+# 11. ¿Cuántos endpoints hay? (el doc dice ~70)
+find src/app/api -name "route.ts" | wc -l
+
+# 12. ¿Los 4 cron siguen protegidos por CRON_SECRET y sus schedules en vercel.json?
+grep -rl "CRON_SECRET" src/app/api/cron/ ; cat vercel.json
+
+# 13. ¿La asesora sigue viendo solo SUS comprobantes? (helper de scope)
+grep -rln "asesoraPuedeVerComprobante" src/app/api/comprobantes/
+
+# 14. ¿SUNAT sigue emitiendo directo (no PSE) contra los endpoints SOAP?
+grep -n "billService?wsdl" src/lib/sunat/config-transavic.ts
+
+# 15. ¿Brevo sigue como preferido con fallback SMTP?
+grep -n "isBrevoConfigured" src/lib/email.ts
 ```
 
-Si encuentras drift, actualizá las secciones afectadas y bumpeá la fecha del header.
+Si encuentras drift, actualiza las secciones afectadas y sube la fecha del header.
 
 ---
 
@@ -831,8 +983,8 @@ Si encuentras drift, actualizá las secciones afectadas y bumpeá la fecha del h
 | # | Hallazgo | Severidad | Archivo |
 |---|---|---|---|
 | 1 | ✅ ~~`PATCH /api/pedidos/[id]` y `DELETE /api/pedidos/[id]` sin `await auth()`~~ — **Resuelto 2026-05-13**: agregado auth + ownership check | ✅ Resuelto | `api/pedidos/[id]/route.ts` |
-| 2 | `GET /api/clientes/[id]/pedidos` sin verificación de ownership | 🟡 Media | `api/clientes/[id]/pedidos/route.ts` |
-| 3 | `GET /api/analytics` y `/api/resumen-diario` abiertos a cualquier auth | 🟢 Baja | `api/analytics/route.ts`, `api/resumen-diario/route.ts` |
+| 2 | ✅ ~~`GET /api/clientes/[id]/pedidos` sin verificación de ownership~~ — **Resuelto**: valida que el cliente sea de la cartera del asesor (404 si no) | ✅ Resuelto | `api/clientes/[id]/pedidos/route.ts` |
+| 3 | ✅ ~~`/api/analytics` y `/api/resumen-diario` abiertos a cualquier auth~~ — **Resuelto/cambiado**: `analytics` eliminado (→ `reportes/ventas`, admin only); `resumen-diario` scopeado a admin+produccion | ✅ Resuelto | `api/reportes/ventas/route.ts`, `api/resumen-diario/route.ts` |
 | 4 | `POST /api/pedidos` no es transaccional (puede dejar pedidos sin items completos) | 🟡 Media | `api/pedidos/route.ts:105-123` |
 | 5 | Logout en dos rutas con destinos distintos | 🟢 Baja (UX) | `api/auth/logout/route.ts` vs `lib/actions.ts` |
 | 6 | Roles dispersos en zod schemas (no centralizados) | 🟢 Baja (DX) | Múltiples |
