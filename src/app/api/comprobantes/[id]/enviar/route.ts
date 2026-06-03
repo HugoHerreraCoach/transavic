@@ -21,6 +21,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { sendEmail, isEmailConfigured } from "@/lib/email";
+import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -79,12 +80,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
-  // Acceso (jun 2026): admin y asesoras pueden enviar por correo CUALQUIER comprobante
-  // (transparencia total del equipo, igual que la lista). No se filtra por asesor.
+  // Scoping (Antonio jun 2026): admin envía cualquiera; la asesora SOLO los suyos.
   const rows = (await sql`
         SELECT c.serie_numero, c.ruc_emisor, c.tipo, c.empresa, c.monto_total,
-               c.cliente_razon_social, c.xml_firmado_base64
+               c.cliente_razon_social, c.xml_firmado_base64,
+               c.emitido_por, p.asesor_id AS pedido_asesor_id
         FROM comprobantes c
+        LEFT JOIN pedidos p ON p.id = c.pedido_id
         WHERE c.id = ${id}::uuid LIMIT 1
       `) as Array<{
     serie_numero: string;
@@ -94,12 +96,20 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     monto_total: string | number;
     cliente_razon_social: string | null;
     xml_firmado_base64: string | null;
+    emitido_por: string | null;
+    pedido_asesor_id: string | null;
   }>;
 
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
   const c = rows[0];
+  if (!asesoraPuedeVerComprobante(role, session.user.id, session.user.name, {
+    pedidoAsesorId: c.pedido_asesor_id,
+    emitidoPor: c.emitido_por,
+  })) {
+    return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
+  }
   const tipoLabel = c.tipo === "01" ? "Factura" : c.tipo === "03" ? "Boleta" : "Comprobante";
   const empresaLabel = c.empresa === "transavic" ? "Transavic" : "Avícola de Tony";
 

@@ -5,6 +5,7 @@
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
 
@@ -27,23 +28,32 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
   const sql = neon(process.env.DATABASE_URL!);
-  // Acceso (jun 2026): admin y asesoras descargan el XML de CUALQUIER comprobante
-  // (transparencia total del equipo, igual que la lista). No se filtra por asesor.
+  // Scoping (Antonio jun 2026): admin ve todo; la asesora SOLO sus comprobantes.
   const rows = (await sql`
-        SELECT c.serie_numero, c.xml_firmado_base64, c.ruc_emisor, c.tipo
+        SELECT c.serie_numero, c.xml_firmado_base64, c.ruc_emisor, c.tipo,
+               c.emitido_por, p.asesor_id AS pedido_asesor_id
         FROM comprobantes c
+        LEFT JOIN pedidos p ON p.id = c.pedido_id
         WHERE c.id = ${id}::uuid LIMIT 1
       `) as Array<{
     serie_numero: string;
     xml_firmado_base64: string | null;
     ruc_emisor: string;
     tipo: string;
+    emitido_por: string | null;
+    pedido_asesor_id: string | null;
   }>;
 
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
   const c = rows[0];
+  if (!asesoraPuedeVerComprobante(role, session.user.id, session.user.name, {
+    pedidoAsesorId: c.pedido_asesor_id,
+    emitidoPor: c.emitido_por,
+  })) {
+    return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
+  }
   if (!c.xml_firmado_base64) {
     return NextResponse.json(
       {
