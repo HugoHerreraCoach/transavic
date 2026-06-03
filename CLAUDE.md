@@ -375,6 +375,9 @@ Sesión con Hugo. Todo en `main` y desplegado (PRs #6–#9). Verificado en produ
 
 **H. App del motorizado (Capacitor, carpeta `android/`)**: sigue **solo en local**, NO está en `main` (track aparte, sin probar en teléfono real). No afecta a la app web.
 
+### Cambiar la asesora encargada de un comprobante (3 jun 2026 — ✅ EN PRODUCCIÓN)
+Pedido de Antonio: el admin necesitaba asignar/cambiar quién ve un comprobante (muchos tenían "Emitido por —" → no le aparecían a ninguna asesora, solo al admin). **Decisión de Antonio: se reescribe directamente `comprobantes.emitido_por`** (NO hay campo separado "encargada"). Como el scoping de `/api/comprobantes` ya filtra por `emitido_por` (match por nombre, TRIM+lower — gotcha #11), al poner el nombre de la asesora el comprobante le aparece en SU lista; `asesorId:null` lo deja en "—" (solo admin). Endpoint nuevo **`PATCH /api/comprobantes/[id]/emisor`** (solo admin; body `{ asesorId: uuid|null }`; resuelve el nombre EXACTO desde `users` con `role='asesor'` para que el match del scoping funcione). UI: ítem **"Cambiar asesora"** en el menú "⋯" de cada fila (solo admin) → modal `ModalAsignarAsesora` (dropdown de asesoras + "Sin asignar"); actualiza la fila al instante. **Sin migración** (la columna `emitido_por` ya existía). NO toca XML/CDR/montos — solo la atribución/visibilidad interna (el dato fiscal de quién emitió SÍ se pierde si se reasigna, era la contra aceptada de esta opción). Aplicada `/mejora-diseño` (modal calcado del estilo de los demás, acento índigo). tsc/eslint limpios.
+
 ### Las 8 mejoras (acordadas con Antonio — S/ 4 000, 17 días)
 | # | Mejora | Fase | Estado |
 |---|---|---|---|

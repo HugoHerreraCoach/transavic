@@ -611,6 +611,128 @@ function ModalNotaCredito({
 }
 
 // ──────────────────────────────────────────────────────────
+// Modal: Cambiar asesora encargada (solo admin) — reescribe `emitido_por`
+// ──────────────────────────────────────────────────────────
+function ModalAsignarAsesora({
+  comprobante,
+  asesoras,
+  onClose,
+  onGuardado,
+}: {
+  comprobante: { id: string; serie_numero: string; emitidoPor: string | null };
+  asesoras: { id: string; name: string }[];
+  onClose: () => void;
+  onGuardado: (emitidoPor: string | null, msg: string) => void;
+}) {
+  // Pre-seleccionar la asesora actual si su nombre coincide con una de la lista.
+  const actual = asesoras.find(
+    (a) =>
+      a.name.trim().toLowerCase() ===
+      (comprobante.emitidoPor ?? "").trim().toLowerCase()
+  );
+  const [asesorId, setAsesorId] = useState<string>(actual?.id ?? "");
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function guardar() {
+    setGuardando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/comprobantes/${comprobante.id}/emisor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ asesorId: asesorId || null }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof j.error === "string" ? j.error : "No se pudo guardar.");
+      } else {
+        const nombre = (j.emitidoPor ?? null) as string | null;
+        onGuardado(
+          nombre,
+          nombre ? `Asignado a ${nombre}` : "Se quitó la asesora (sin asignar)"
+        );
+        onClose();
+      }
+    } catch {
+      setError("Error de conexión al guardar.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <FiUser className="text-indigo-600" />
+            Cambiar asesora
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <FiX className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-500">
+            Define qué asesora ve el comprobante{" "}
+            <strong className="font-mono">{comprobante.serie_numero}</strong> en su
+            lista. Cambia el campo <strong>“Emitido por”</strong>.
+          </p>
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+              Asesora encargada
+            </label>
+            <select
+              value={asesorId}
+              onChange={(e) => setAsesorId(e.target.value)}
+              className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">— Sin asignar (solo el admin lo ve) —</option>
+              {asesoras.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name.trim()}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[11px] text-gray-400">
+              Actual: {comprobante.emitidoPor?.trim() || "sin asignar"}
+            </p>
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+        <div className="px-5 py-4 border-t border-gray-100 flex gap-2">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={guardar}
+            disabled={guardando}
+            className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {guardando ? (
+              <FiRefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <FiUser className="h-4 w-4" />
+            )}
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
 // Modal: Comunicación de Baja (RA-) — anula una factura aceptada (≤7 días)
 // ──────────────────────────────────────────────────────────
 
@@ -1345,6 +1467,15 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     serie_numero: string;
     empresa: string;
   } | null>(null);
+  // Cambiar la asesora encargada de un comprobante (solo admin): reescribe
+  // `emitido_por` → así el comprobante aparece en la lista de esa asesora.
+  const [modalAsesora, setModalAsesora] = useState<{
+    id: string;
+    serie_numero: string;
+    emitidoPor: string | null;
+  } | null>(null);
+  // Lista de asesoras para el modal de reasignación (solo se llena si admin).
+  const [asesoras, setAsesoras] = useState<{ id: string; name: string }[]>([]);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
   const [modalExcel, setModalExcel] = useState(false);
@@ -1421,6 +1552,17 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Cargar la lista de asesoras una sola vez (solo admin) para el modal "Cambiar
+  // asesora". /api/users?role=asesor devuelve un array plano [{id, name}].
+  useEffect(() => {
+    if (userRole !== "admin") return;
+    fetch("/api/users?role=asesor")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setAsesoras(Array.isArray(d) ? d : []))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const descargarPDF = async (c: Comprobante) => {
     setAccionEnProgreso(c.id + "-pdf");
@@ -2123,6 +2265,14 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                   <button onClick={() => { setMenuAcciones(null); setModalEnviar({ id: c.id, defaultEmail: "" }); }} className={`${itemCls} text-gray-700`}>
                     <FiMail className="h-4 w-4 text-emerald-600 flex-shrink-0" /> Enviar por correo
                   </button>
+                  {userRole === "admin" && (
+                    <button
+                      onClick={() => { setMenuAcciones(null); setModalAsesora({ id: c.id, serie_numero: c.serie_numero, emitidoPor: c.emitido_por }); }}
+                      className={`${itemCls} text-gray-700`}
+                    >
+                      <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
+                    </button>
+                  )}
                   {(puedeReintentar(c) || puedeNotaCredito(c) || puedeAnular(c)) && (
                     <div className="my-1 border-t border-gray-100" />
                   )}
@@ -2181,6 +2331,21 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
           onEmitida={(msg) => {
             setToast({ tipo: "ok", msg });
             fetchData();
+          }}
+        />
+      )}
+
+      {modalAsesora && (
+        <ModalAsignarAsesora
+          comprobante={modalAsesora}
+          asesoras={asesoras}
+          onClose={() => setModalAsesora(null)}
+          onGuardado={(emitidoPor, msg) => {
+            const cid = modalAsesora.id;
+            setComprobantes((prev) =>
+              prev.map((c) => (c.id === cid ? { ...c, emitido_por: emitidoPor } : c))
+            );
+            setToast({ tipo: "ok", msg });
           }}
         />
       )}
