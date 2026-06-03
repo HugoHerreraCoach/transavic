@@ -1,14 +1,28 @@
 # 03 — Autenticación y Roles
 
-> **Última verificación contra código:** 2026-05-13
-> **Commit del proyecto:** `d2a49cd`
+> **Última verificación contra código:** 2026-06-02 (modelo de permisos + cambios recientes) · base previa 2026-05-13
+> **Commit del proyecto:** `d2a49cd` (base) + cambios del 2 jun 2026 (PRs #6–#9)
 > **Archivos clave:** `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/actions.ts`, `src/app/login/page.tsx`, `src/app/api/auth/logout/route.ts`, `src/app/api/users/route.ts`, `src/app/api/users/[id]/route.ts`, `src/components/DashboardLayout.tsx`
+
+---
+
+## 0. Dónde viven los permisos (LÉEME PRIMERO)
+
+**La base de datos es Neon Postgres — NO Supabase.** No hay "Supabase CLI", ni Storage/buckets, ni políticas RLS (Row Level Security). Verificado en producción (2 jun 2026): `pg_policies = 0`, tablas con RLS activado = 0, y la app se conecta con el rol **`neondb_owner`**, que tiene **acceso total** (puede `INSERT`/`UPDATE`/`DELETE` en todas las tablas — comprobado con `has_table_privilege`).
+
+**Consecuencia clave (mentalidad correcta para auditar permisos):** la base de datos **no decide quién puede hacer qué**; solo guarda datos y le permite todo a la conexión. TODO el control de acceso (qué ve cada rol, qué puede borrar/editar) vive en la **capa de aplicación** — en las rutas API de Next.js, que hacen `await auth()` y revisan `session.user.role` / `asesor_id` ANTES de tocar la BD.
+
+- ¿Una asesora "tiene permiso en la BD" para borrar un pedido? La BD se lo permite a la conexión. La **restricción real** ("solo los suyos y solo si están `Pendiente`, sin comprobante") está en el **código** (`DELETE /api/pedidos/[id]`), no en la BD.
+- ¿Hay "permisos para guardar la captura del pago"? No hay nada que habilitar: la imagen se guarda como **texto base64 en una columna** de `facturas` (`pago_img_base64 TEXT`), no en un bucket. Si la columna existe (existe), se guarda. Por eso se comprime a ~60-90KB antes.
+- Para **cambiar** un permiso, se edita el **código del endpoint** (y, si aplica, el filtro del sidebar), nunca la base de datos.
+
+**Dónde mirar cuando audites permisos:** la matriz **§5.3** (quién puede qué) y **§6** (los 5 patrones de scoping aplicados en cada API). Esos son la fuente de verdad — no la BD.
 
 ---
 
 ## 1. Resumen ejecutivo
 
-El sistema usa **NextAuth v5 (beta)** con un único provider de **Credentials** + **bcrypt** para hash de contraseñas. Las sesiones son **JWT** (no DB sessions). Hay **3 roles**: `admin`, `asesor`, `repartidor` (un 4to `produccion` viene en las mejoras 2026).
+El sistema usa **NextAuth v5 (beta)** con un único provider de **Credentials** + **bcrypt** para hash de contraseñas. Las sesiones son **JWT** (no DB sessions). Hay **4 roles**: `admin`, `asesor`, `repartidor` y `produccion` (este último **ya está en producción** desde el 30 may 2026).
 
 **El control de acceso es en dos capas:**
 1. **Middleware** protege todas las rutas excepto APIs y assets.
@@ -258,7 +272,7 @@ Después del login, el usuario es redirigido a una página distinta según su ro
 | `admin` | Dueño del negocio (Antonio) | 1 |
 | `asesor` | Vendedoras de WhatsApp (Leslie, Yoshelin, Sarai, Yesica) | 4 |
 | `repartidor` | Motorizados (Marco, Yhorner, Anghelo, etc.) | 6 |
-| `produccion` | (Próximamente) Asistente de producción en otro distrito | 0 |
+| `produccion` | Asistente de producción (otro distrito) | ✅ activo (desde 30 may 2026) |
 
 ### 5.2 Dónde están definidos los roles
 
@@ -309,6 +323,18 @@ Cuando se haga, hay que actualizar todos los lugares mencionados.
 | Ver `/dashboard/resumen` | ✅ | ❌ | ❌ |
 | Editar `base_location` (`POST /api/settings`) | ✅ | ❌ | ❌ |
 | Optimizar ruta (`POST /api/despacho/optimizar-ruta`) | ✅ | ❌ | ✅ (solo de su propia ruta) |
+| **Editar datos de un pedido** (`PATCH /api/pedidos/[id]`) | ✅ (cualquiera) | ✅ (solo los suyos) | ❌ |
+| **Eliminar un pedido** (`DELETE /api/pedidos/[id]`) — *act. 2 jun 2026* | ✅ (cualquiera) | ✅ **solo los SUYOS y solo si están `Pendiente`** (y sin comprobante emitido) | ❌ |
+| **Ver / descargar comprobantes** (PDF·XML·CDR) — *act. 2 jun 2026* | ✅ (todos) | ✅ **solo los suyos** (de sus pedidos o emitidos por ella) | ❌ |
+| **Emitir comprobante / Nota de Crédito** | ✅ | ✅ (sobre comprobantes suyos / de sus pedidos) | ❌ |
+| **Cobranzas: marcar pagada / revertir / subir captura** (`/dashboard/cobranzas`) | ✅ | ✅ (las suyas) | ❌ |
+| **Revertir (Anular) una entrega YA hecha** | ✅ | ❌ (botón oculto desde 2 jun 2026) | ✅ (de sus pedidos) |
+| Ver Incentivos / configurar metas y bonos (`/dashboard/incentivos`) | ✅ | ❌ | ❌ |
+| Ver panel "Mis Metas" / "Mi Día" | ✅ (vista previa) | ✅ (lo suyo) | ❌ |
+
+> **Rol `produccion`** (no figura como columna porque su acceso es muy acotado): ve **solo** `/dashboard/produccion` (cola del día + búsqueda + ingresar pesos reales) y `/dashboard/resumen`; scoping en `/api/produccion/*`. Login redirige a `/dashboard/produccion`.
+>
+> **⚠️ Pantallas renombradas (may 2026):** algunas filas de arriba usan nombres previos — `/productos` y `/precios` → **`/catalogo`**; `/analytics` y `/resumen`(reportes) → **`/reportes`** (los redirects viejos siguen vivos). El acceso por rol se mantiene (admin-only salvo lo indicado).
 
 ---
 
