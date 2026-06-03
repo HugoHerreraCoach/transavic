@@ -1,8 +1,9 @@
 # 02 — Modelo de Datos
 
-> **Última verificación contra código:** 2026-05-13
-> **Commit del proyecto:** `d2a49cd`
-> **Archivos clave:** `scripts/seed.mjs`, `scripts/migrate-*.mjs`, `src/lib/types.ts`, `src/lib/data.ts`, `src/app/api/pedidos/route.ts`, `src/app/api/despacho/asignar-externo/route.ts`
+> **Última verificación contra código:** 2026-06-02
+> **Archivos clave:** `scripts/migrate-produccion-2026-05-29.sql` (esquema consolidado de producción), `scripts/migrations-fase-ab.sql`, `scripts/migrate-*.sql`, `scripts/seed.mjs`, `scripts/migrate-*.mjs`, `src/lib/types.ts`, `src/lib/data.ts`, `src/lib/sunat/index.ts`, `src/app/api/pedidos/route.ts`, `src/app/api/facturas/route.ts`
+
+> **Fuente de verdad del esquema:** `scripts/migrate-produccion-2026-05-29.sql` consolida el estado de producción al 30 may 2026 (6 tablas base + 8 tablas nuevas + 13 columnas). Encima de esa migración se aplicaron por psql (gotcha #17) varias migraciones aditivas posteriores (`migrate-codigo-producto.sql`, `migrate-comprobante-credito.sql`, `migrate-comprobante-items.sql`, `migrate-comprobante-referencia.sql`, `migrate-comprobante-emisor.sql`, `migrate-pedido-ediciones.sql`, `migrate-meta-bono.sql`, `migrate-cobranza-pago.sql`, `migrate-factura-vinculo.sql`). Este documento refleja todas ellas.
 
 ---
 
@@ -10,12 +11,23 @@
 
 ```mermaid
 erDiagram
-    users ||--o{ pedidos : "asesor_id"
-    users ||--o{ pedidos : "repartidor_id"
+    users ||--o{ pedidos : "asesor_id / repartidor_id / pesado_por"
     users ||--o{ clientes : "asesor_id"
-    clientes ||--o{ pedidos : "cliente_id (denormalizado)"
+    users ||--o{ facturas : "asesor_id"
+    users ||--o{ metas_asesoras : "asesor_id (CASCADE)"
+    users ||--o{ notificaciones : "user_id (CASCADE)"
+    users ||--o{ precios_productos : "created_by"
+    users ||--o{ pedido_ediciones : "usuario_id (SET NULL)"
+    clientes ||--o{ pedidos : "cliente_id (denormalizado, NO enforced)"
+    clientes ||--o{ facturas : "cliente_id (SET NULL)"
     pedidos ||--o{ pedido_items : "pedido_id (CASCADE)"
+    pedidos ||--o{ pedido_ediciones : "pedido_id (CASCADE)"
+    pedidos ||--o| comprobantes : "pedido_id (SET NULL)"
+    pedidos ||--o| facturas : "pedido_id (SET NULL)"
     productos ||--o{ pedido_items : "producto_id"
+    productos ||--o{ precios_productos : "producto_id (CASCADE)"
+    comprobantes ||--o{ comprobantes : "referencia_comprobante_id (NC→original, SET NULL)"
+    comprobantes ||--o{ facturas : "comprobante_id (SET NULL)"
 
     users {
         uuid id PK
@@ -39,6 +51,7 @@ erDiagram
         varchar empresa
         decimal latitude
         decimal longitude
+        integer plazo_pago_dias
         uuid asesor_id FK
     }
 
@@ -58,12 +71,12 @@ erDiagram
         varchar ruc_dni
         text notas
         varchar empresa
-        date fecha_pedido
-        timestamp created_at
+        date fecha_pedido "FECHA DE ENTREGA"
+        timestamp created_at "cuándo se REGISTRÓ/vendió"
         decimal latitude
         decimal longitude
         uuid asesor_id FK
-        varchar estado "Pendiente|Asignado|En_Camino|Entregado|Fallido"
+        varchar estado "Pendiente|En_Produccion|Listo_Para_Despacho|Asignado|En_Camino|Entregado|Fallido"
         uuid repartidor_id FK
         integer orden_ruta
         timestamp hora_llegada_estimada
@@ -73,6 +86,12 @@ erDiagram
         integer duracion_estimada_min
         boolean es_delivery_externo
         text delivery_externo_nombre
+        integer numero_guia
+        timestamp guia_firmada_at
+        text guia_firmada_data
+        varchar guia_firmada_mime
+        timestamp pesado_at
+        uuid pesado_por FK
         boolean entregado "LEGACY"
         text entregado_por "LEGACY"
         timestamp entregado_at "LEGACY"
@@ -81,8 +100,11 @@ erDiagram
     productos {
         uuid id PK
         varchar nombre
-        varchar categoria "Pollo|Carnes|Huevos"
+        varchar categoria "Pollo|Carnes|Huevos|custom"
         varchar unidad
+        varchar codigo "código interno SUNAT"
+        numeric precio_compra
+        numeric precio_venta
         boolean activo
         timestamp created_at
     }
@@ -94,7 +116,135 @@ erDiagram
         varchar producto_nombre "DENORMALIZADO"
         decimal cantidad
         varchar unidad
+        numeric precio_unitario "venta estimada (con IGV)"
+        numeric subtotal "venta estimada"
+        numeric cantidad_real "peso real entregado"
+        numeric subtotal_real "subtotal real entregado"
         text notas
+        timestamp created_at
+    }
+
+    precios_productos {
+        uuid id PK
+        uuid producto_id FK "CASCADE"
+        numeric precio_compra
+        numeric precio_venta
+        date vigente_desde
+        date vigente_hasta "NULL = vigente"
+        uuid created_by FK
+        timestamp created_at
+    }
+
+    comprobantes {
+        uuid id PK
+        uuid pedido_id FK "SET NULL"
+        varchar ruc_emisor
+        varchar empresa
+        varchar tipo "01|03|07"
+        varchar serie
+        integer numero
+        varchar serie_numero
+        varchar cliente_doc_tipo
+        varchar cliente_doc_num
+        varchar cliente_razon_social
+        numeric monto_subtotal
+        numeric monto_igv
+        numeric monto_total
+        varchar moneda
+        varchar estado
+        text hash_cpe
+        text xml_firmado_base64
+        text cdr_base64
+        text observaciones
+        text mensaje_sunat
+        varchar forma_pago
+        date fecha_vencimiento
+        jsonb items_json
+        uuid referencia_comprobante_id FK "NC→original (SET NULL)"
+        text emitido_por
+        timestamp created_at
+    }
+
+    comprobantes_contador {
+        varchar ruc PK
+        varchar serie PK
+        integer ultimo_numero
+        timestamp updated_at
+    }
+
+    correlativos {
+        varchar tipo PK
+        integer ultimo_numero
+        timestamp updated_at
+    }
+
+    facturas {
+        uuid id PK
+        uuid pedido_id FK "SET NULL"
+        uuid cliente_id FK "SET NULL"
+        varchar cliente_nombre
+        uuid asesor_id FK
+        numeric monto
+        integer plazo_dias
+        date fecha_emision
+        date fecha_vencimiento
+        date fecha_pago
+        varchar estado "Pendiente|Pagada|Vencida"
+        varchar numero_comprobante
+        uuid comprobante_id FK "SET NULL"
+        varchar metodo_pago
+        text pago_detalle
+        text pago_img_base64
+        varchar pago_img_mime
+        text notas
+        timestamp created_at
+    }
+
+    metas_asesoras {
+        uuid id PK
+        uuid asesor_id FK "CASCADE"
+        date mes
+        numeric monto_meta "NULLABLE (solo-bono)"
+        text bono
+        timestamp created_at
+    }
+
+    notificaciones {
+        uuid id PK
+        uuid user_id FK "CASCADE"
+        varchar tipo
+        text titulo
+        text mensaje
+        text link
+        uuid pedido_id
+        boolean leida
+        timestamp created_at
+    }
+
+    resumenes_diarios {
+        uuid id PK
+        varchar empresa
+        varchar ruc
+        date fecha_referencia
+        integer correlativo
+        varchar nombre_archivo
+        text ticket
+        varchar estado
+        integer boletas_incluidas
+        text mensaje_sunat
+        text xml_firmado_base64
+        text cdr_base64
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    pedido_ediciones {
+        uuid id PK
+        uuid pedido_id FK "CASCADE"
+        uuid usuario_id FK "SET NULL"
+        text usuario_nombre
+        text usuario_rol
+        jsonb cambios
         timestamp created_at
     }
 
@@ -104,6 +254,10 @@ erDiagram
         timestamp updated_at
     }
 ```
+
+**Conteo de tablas:** **14** en producción (`scripts/migrate-produccion-2026-05-29.sql` lo verifica al final). Las 6 base (`users`, `clientes`, `pedidos`, `pedido_items`, `productos`, `settings`) + 8 nuevas (`comprobantes`, `comprobantes_contador`, `correlativos`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`). **`pedido_ediciones`** se agregó *después* de ese conteo (migración aparte, `migrate-pedido-ediciones.sql`), así que en producción hoy son **15 tablas** reales.
+
+> **`rider_locations` NO existe** ni en producción ni en el código commiteado. Se planeó (Mejora 3 — tracking GPS en vivo con Capacitor + Pusher) y figura como "construido local" en notas internas, pero a la fecha de esta verificación **no hay ninguna migración, tabla ni referencia en `scripts/`, `src/` ni `android/`** del repo. Trátalo como pendiente/no-presente. Ver §8 más abajo.
 
 ---
 
@@ -118,31 +272,33 @@ CREATE TABLE users (
     id        UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     name      VARCHAR(255) NOT NULL UNIQUE,
     password  TEXT NOT NULL,           -- hash bcrypt salt 10
-    role      VARCHAR(50) NOT NULL     -- 'admin' | 'asesor' | 'repartidor'
+    role      VARCHAR(50) NOT NULL     -- 'admin' | 'asesor' | 'repartidor' | 'produccion'
 );
 ```
 
 **Sin índices explícitos** más allá de los implícitos de PK y UNIQUE.
 
+**Roles:** el seed inicial creó 3 (`admin`, `asesor`, `repartidor`). El 4º rol **`produccion`** (asistente de producción) ya está en producción (desde 30 may 2026) — es solo un valor de `role`, no requirió cambio de esquema. Ver `CLAUDE.md` §6.
+
 **Cómo se popula:**
-- Inicial: `scripts/seed.mjs:36-52` inserta 8 usuarios (1 admin, 4 asesoras, 3 repartidores).
-- Runtime: `POST /api/users` con bcrypt hash (`src/app/api/users/route.ts:91-95`). Solo admin.
+- Inicial: `scripts/seed.mjs:36-46` inserta 8 usuarios (1 admin, 4 asesoras, 3 repartidores).
+- Runtime: `POST /api/users` con bcrypt hash. Solo admin.
 
 **Quién la lee:**
-- `auth.ts:9-12` (`getUser`) — para login.
+- `auth.ts` (`getUser`) — para login.
 - `lib/data.ts:fetchAsesores`, `fetchRepartidores` — para selects de UI.
 - `api/users/route.ts` — gestión CRUD.
-- Múltiples LEFT JOINs en queries de pedidos para resolver `asesor_name`, `repartidor_name`.
+- Múltiples LEFT JOINs en queries de pedidos/comprobantes/facturas para resolver nombres (`asesor_name`, `repartidor_name`, `emitido_por`, etc.).
 
-**Anti-patrón a evitar:** **No** hardcodear strings de rol fuera de zod schemas — actualmente están dispersos (ver doc 03 §7).
+**⚠️ Gotcha de datos:** la DB de producción tiene nombres con **espacio al final** (`"Leslie "`, `"Jhoselyn "`) — data legacy. NO usar `WHERE name='Leslie'`; filtrar por `id` o `TRIM(name)`. Ver `CLAUDE.md` gotcha #11.
 
 ---
 
 ### 2.2 `clientes`
 
-**⚠️ Origen no documentado en migraciones del repo.** La tabla **se usa** en código (`api/clientes/route.ts`, `api/clientes/[id]/route.ts`) pero **no existe un script que la cree**. Existe `scripts/run-migration.mjs` que **agrega** `asesor_id` asumiendo que la tabla ya existe.
+**⚠️ Origen no documentado en migraciones del repo.** La tabla **se usa** en código (`api/clientes/route.ts`) pero **no existe un script que la cree desde cero**. `scripts/run-migration.mjs` (+ `migration_add_asesor_to_clientes.sql`) solo **agrega** `asesor_id` asumiendo que la tabla ya existe; `migrations-fase-ab.sql` y `migrate-produccion-2026-05-29.sql` solo **agregan** `plazo_pago_dias` con `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`.
 
-**Schema reconstruido del código de uso** (`api/clientes/route.ts:174-180`):
+**Schema reconstruido del código de uso** (`api/clientes/route.ts`) + columnas agregadas:
 
 ```sql
 CREATE TABLE clientes (
@@ -160,6 +316,7 @@ CREATE TABLE clientes (
     empresa         VARCHAR(100) DEFAULT 'Transavic',
     latitude        DECIMAL(10, 8),
     longitude       DECIMAL(11, 8),
+    plazo_pago_dias INTEGER DEFAULT 0,                            -- agregado fase B (cobranzas)
     asesor_id       UUID REFERENCES users(id) ON DELETE SET NULL,
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -167,26 +324,28 @@ CREATE TABLE clientes (
 CREATE INDEX idx_clientes_asesor_id ON clientes(asesor_id);
 ```
 
-**Índice añadido por** `scripts/run-migration.mjs:17`.
+**Columnas agregadas por migración:**
+
+| Columna | Migración | Para qué |
+|---|---|---|
+| `asesor_id` | `run-migration.mjs` (+ `migration_add_asesor_to_clientes.sql`) | Scoping por asesora; índice `idx_clientes_asesor_id`. |
+| `plazo_pago_dias INTEGER DEFAULT 0` | `migrate-cobranzas.mjs` / `migrations-fase-ab.sql` / `migrate-produccion-2026-05-29.sql:213` | Plazo de crédito por cliente (0 = paga al momento). Define el vencimiento de la cobranza. |
 
 **Cómo se popula:**
-- `POST /api/clientes` desde `/dashboard/clientes` (form de cliente nuevo).
-- Desde `PedidoForm` cuando se crea cliente nuevo durante un pedido (lógica en el form).
+- `POST /api/clientes` desde `/dashboard/clientes` (modal de cliente nuevo).
+- Desde el form de pedido al crear un cliente nuevo durante un pedido.
+- `UPDATE clientes ... SET ruc_dni = ...` al emitir un comprobante a un cliente que no tenía documento válido (completa la ficha con el uso; ver `CLAUDE.md` §"Validaciones de emisión").
 
 **Quién la lee:**
-- `GET /api/clientes` con dos modos:
-  - **Autocomplete** (`?q=`) — para `ClienteAutocomplete.tsx` (búsqueda con debounce 300ms).
-  - **Listado paginado** (`?page=&limit=&search=`) — para `/dashboard/clientes`.
-- Ambos con **scoping por rol**: si no es admin, filtra por `asesor_id = userId`.
+- `GET /api/clientes` — autocomplete (`?q=`) y listado paginado (`?page=&limit=&search=`), con scoping por rol (`asesor_id = userId` si no es admin).
 - `GET /api/clientes/[id]/pedidos` — historial de un cliente.
-
-**⚠️ Gotcha de auth:** `GET /api/clientes/[id]/pedidos` **no verifica que el cliente pertenezca al asesor que pregunta**. Riesgo de info disclosure entre asesoras. Ver doc 05.
+- `GET /api/clientes/[id]/perfil` — perfil 360° (KPIs + tabs de pedidos/comprobantes/cobranzas/top productos).
 
 ---
 
 ### 2.3 `pedidos`
 
-La tabla central del sistema. Es la **más mutada** — recibió 6 migraciones encima del seed inicial.
+La tabla central del sistema. Es la **más mutada** — recibió varias migraciones encima del seed inicial.
 
 #### Schema completo final
 
@@ -194,19 +353,19 @@ La tabla central del sistema. Es la **más mutada** — recibió 6 migraciones e
 CREATE TABLE pedidos (
     -- ─── Identidad ───
     id                       UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    cliente_id               UUID,                              -- FK no enforced; agregado en migración no documentada
-    created_at               TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    fecha_pedido             DATE NOT NULL,
+    cliente_id               UUID,                              -- FK no enforced (vínculo "vivo")
+    created_at               TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,  -- cuándo se REGISTRÓ/vendió
+    fecha_pedido             DATE NOT NULL,                     -- FECHA DE ENTREGA (no de venta)
 
     -- ─── Datos del cliente (DENORMALIZADOS, copiados al crear pedido) ───
     cliente                  VARCHAR(255) NOT NULL,
     whatsapp                 VARCHAR(50),
     direccion                TEXT,
-    direccion_mapa           TEXT,                              -- agregado migrate-direccion-mapa.mjs
+    direccion_mapa           TEXT,                              -- migrate-direccion-mapa.mjs
     distrito                 VARCHAR(100),
     tipo_cliente             VARCHAR(50),
-    razon_social             VARCHAR(255),                      -- agregado en migración no documentada
-    ruc_dni                  VARCHAR(50),                       -- agregado en migración no documentada
+    razon_social             VARCHAR(255),                      -- migración no documentada
+    ruc_dni                  VARCHAR(50),                       -- migración no documentada
     hora_entrega             VARCHAR(100),                      -- "HH:MM AM - HH:MM PM"
     latitude                 DECIMAL(10, 8),
     longitude                DECIMAL(11, 8),
@@ -214,118 +373,469 @@ CREATE TABLE pedidos (
 
     -- ─── Detalle del pedido ───
     detalle                  TEXT NOT NULL,                     -- texto generado por ProductSelector
-    detalle_final            TEXT,                              -- peso REAL registrado post-entrega (PesoModal)
+    detalle_final            TEXT,                              -- peso REAL registrado post-entrega
     notas                    TEXT,
 
     -- ─── Asignación de usuarios ───
     asesor_id                UUID REFERENCES users(id),
 
     -- ─── Estado MODERNO + flujo de despacho (migrate-estados.mjs) ───
-    estado                   VARCHAR(20) NOT NULL DEFAULT 'Pendiente',  -- 'Pendiente'|'Asignado'|'En_Camino'|'Entregado'|'Fallido'
+    estado                   VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
     repartidor_id            UUID REFERENCES users(id),
-    orden_ruta               INTEGER,                           -- orden dentro de la ruta del repartidor
-    hora_llegada_estimada    TIMESTAMP WITH TIME ZONE,          -- ETA calculado con Google Directions
+    orden_ruta               INTEGER,
+    hora_llegada_estimada    TIMESTAMP WITH TIME ZONE,
     razon_fallo              TEXT,                              -- requerido si estado='Fallido' (≥5 chars)
-    inicio_viaje_at          TIMESTAMP WITH TIME ZONE,          -- cuando repartidor tocó "Ir al cliente"
+    inicio_viaje_at          TIMESTAMP WITH TIME ZONE,
 
     -- ─── Métricas de ruta (migrate-despacho-v2.mjs) ───
     distancia_km             NUMERIC(6, 2),                     -- distancia DESDE LA BASE (se congela al asignar)
-    duracion_estimada_min    INTEGER,                           -- duración acumulada en la ruta optimizada
+    duracion_estimada_min    INTEGER,                           -- duración acumulada en ruta optimizada
 
-    -- ─── Delivery externo (agregado en migración no documentada) ───
+    -- ─── Delivery externo (migración no documentada) ───
     es_delivery_externo      BOOLEAN DEFAULT FALSE,
     delivery_externo_nombre  TEXT,
 
-    -- ─── LEGACY (pre-migrate-estados.mjs) — se mantiene sincronizado con 'estado' ───
+    -- ─── Guía de remisión / orden de pedido + foto firmada (Fase A) ───
+    numero_guia              INTEGER,                           -- correlativo (UNIQUE WHERE NOT NULL)
+    guia_firmada_data        TEXT,                              -- foto de la guía firmada en base64
+    guia_firmada_mime        VARCHAR(50),
+    guia_firmada_at          TIMESTAMP WITH TIME ZONE,
+
+    -- ─── Pesado real (Fase A) ───
+    pesado_por               UUID REFERENCES users(id),         -- quién pesó (producción/repartidor)
+    pesado_at                TIMESTAMP WITH TIME ZONE,
+
+    -- ─── LEGACY (pre-migrate-estados.mjs) — sincronizado con 'estado' ───
     entregado                BOOLEAN NOT NULL DEFAULT FALSE,    -- ⚠️ NO usar como source of truth
     entregado_por            TEXT,                              -- nombre del repartidor/admin (no FK)
     entregado_at             TIMESTAMP WITH TIME ZONE
 );
 
--- Índices (migrate-estados.mjs:73-79)
-CREATE INDEX idx_pedidos_estado         ON pedidos(estado);
-CREATE INDEX idx_pedidos_repartidor     ON pedidos(repartidor_id);
-CREATE INDEX idx_pedidos_fecha_estado   ON pedidos(fecha_pedido, estado);
+-- Índices
+CREATE INDEX        idx_pedidos_estado       ON pedidos(estado);                          -- migrate-estados.mjs
+CREATE INDEX        idx_pedidos_repartidor   ON pedidos(repartidor_id);                   -- migrate-estados.mjs
+CREATE INDEX        idx_pedidos_fecha_estado ON pedidos(fecha_pedido, estado);            -- migrate-estados.mjs
+CREATE UNIQUE INDEX idx_pedidos_numero_guia  ON pedidos(numero_guia) WHERE numero_guia IS NOT NULL;  -- fase A
 ```
 
 #### Migraciones que la modificaron (cronológico)
 
 | # | Migración | Qué agregó/modificó |
 |---|---|---|
-| 1 | `seed.mjs:58-82` | Creación inicial (sin `estado`, sin `repartidor_id`, sin `distancia_km`). |
-| 2 | `migrate-entregado-por.mjs:6-7` | + `entregado_por TEXT`, `entregado_at TIMESTAMP WITH TIME ZONE`. |
-| 3 | `migrate-direccion-mapa.mjs:6` | + `direccion_mapa TEXT`. |
+| 1 | `seed.mjs:58-80` | Creación inicial (sin `estado`, sin `repartidor_id`, sin `distancia_km`, sin guía/pesado). Ya traía `direccion_mapa`, `detalle_final`, `created_at`, `entregado`, `entregado_por`, `entregado_at`. |
+| 2 | `migrate-entregado-por.mjs` | + `entregado_por TEXT`, `entregado_at TIMESTAMP WITH TIME ZONE` (idempotente; el seed actual ya las trae). |
+| 3 | `migrate-direccion-mapa.mjs` | + `direccion_mapa TEXT`. |
 | 4 | `migrate-estados.mjs:31-47` | + `estado`, `repartidor_id`, `orden_ruta`, `hora_llegada_estimada`, `razon_fallo`, `inicio_viaje_at` + **3 índices**. Migra datos: `entregado=TRUE` → `estado='Entregado'`, etc. |
-| 5 | `migrate-despacho-v2.mjs:36, 42` | + `distancia_km`, `duracion_estimada_min`. |
-| ? | **No documentada** | + `cliente_id`, `razon_social`, `ruc_dni`, `es_delivery_externo`, `delivery_externo_nombre`. Confirmado por uso en `api/pedidos/route.ts:106-108` y `api/despacho/asignar-externo/route.ts:32-37`. |
+| 5 | `migrate-despacho-v2.mjs` | + `distancia_km`, `duracion_estimada_min`. (También crea `settings`.) |
+| 6 | `migrate-correlativos-guias.mjs` / `migrations-fase-ab.sql` / `migrate-produccion-2026-05-29.sql:216-219` | + `numero_guia`, `guia_firmada_data`, `guia_firmada_mime`, `guia_firmada_at` + índice único de `numero_guia`. |
+| 7 | `migrate-cantidad-real.mjs` / `migrations-fase-ab.sql` / `migrate-produccion-2026-05-29.sql:220-221` | + `pesado_por`, `pesado_at`. |
+| ? | **No documentada** (confirmada por uso) | + `cliente_id`, `razon_social`, `ruc_dni`, `es_delivery_externo`, `delivery_externo_nombre`. Ver `api/pedidos/route.ts:118` y `api/despacho/asignar-externo/route.ts:26-27`. |
 
-**⚠️ Esto significa que el schema en producción tiene más columnas que las que aparecen en `/scripts/`.** Si querés reconstruir la DB desde cero, vas a tener que agregar estas columnas manualmente o crear las migraciones faltantes.
+**⚠️ Las columnas "no documentadas" sí existen en producción** (el código las lee/escribe), pero no aparecen como `ALTER TABLE` en `/scripts/`. Si reconstruís la DB desde cero, hay que agregarlas a mano.
 
 #### Cómo se popula
 
-- `POST /api/pedidos` — inserta una fila. Lista de columnas insertadas (`api/pedidos/route.ts:106-108`):
+- `POST /api/pedidos` — inserta una fila. Columnas insertadas (`api/pedidos/route.ts:118`):
   ```
   cliente, cliente_id, whatsapp, direccion, direccion_mapa, distrito,
   tipo_cliente, detalle, hora_entrega, razon_social, ruc_dni, notas,
   empresa, fecha_pedido, latitude, longitude, asesor_id
   ```
   El resto se llena con defaults (`estado='Pendiente'`, `entregado=FALSE`) o se actualiza después.
-
-- `PATCH /api/pedidos/[id]` — update genérico construido dinámicamente desde el body validado.
-
+- `PATCH /api/pedidos/[id]` — update genérico dinámico desde el body validado. Audita los cambios de campos de datos en `pedido_ediciones` (ver §2.13).
 - Transiciones específicas (`api/pedidos/[id]/iniciar-viaje`, `entregar`, `cancelar-viaje`).
-
 - `POST /api/despacho/asignar` — UPDATE de `repartidor_id`, `estado='Asignado'`, `orden_ruta`, `distancia_km`, `duracion_estimada_min`.
+- Producción: pesos reales (`pesado_por`, `pesado_at` + `pedido_items.cantidad_real/subtotal_real`) y guía firmada (`guia_firmada_*`).
 
 #### Quién la lee
 
-- `lib/data.ts:fetchFilteredPedidos` — lista paginada para `/dashboard` (con scoping por rol).
+- `lib/data.ts:fetchFilteredPedidos` — lista paginada para `/dashboard` (scoping por rol).
 - `lib/data.ts:fetchMiRuta` — pedidos del día del repartidor.
-- `api/despacho/route.ts` — vista del admin (pendientes del día + de la semana + asignados + delivery externo).
-- `api/repartidor/mi-ruta/route.ts` — vista del repartidor con stats y ruta optimizada.
-- `api/analytics/route.ts` — KPIs por rango.
-- `api/resumen-diario/route.ts` — reporte agrupado por día.
-- `api/clientes/[id]/pedidos/route.ts` — historial de un cliente.
+- `api/despacho/route.ts` — vista del admin.
+- `api/repartidor/mi-ruta/route.ts` — vista del repartidor.
+- `api/produccion/*` — cola del día (rol `produccion`).
+- `api/reportes/ventas`, `api/resumen-diario`, `api/mi-dia`, `api/clientes/[id]/pedidos`, etc.
 
 #### Decisiones de schema explicadas
 
-**A) Denormalización del cliente** — los campos `cliente`, `whatsapp`, `direccion`, `direccion_mapa`, `distrito`, `tipo_cliente`, `razon_social`, `ruc_dni`, `hora_entrega`, `latitude`, `longitude`, `notas`, `empresa` se **copian** del cliente al pedido en el momento del INSERT.
+**A) Denormalización del cliente** — los campos `cliente`, `whatsapp`, `direccion`, `direccion_mapa`, `distrito`, `tipo_cliente`, `razon_social`, `ruc_dni`, `hora_entrega`, `latitude`, `longitude`, `notas`, `empresa` se **copian** del cliente al pedido en el INSERT.
 
-**Motivo:** Preservar histórico. Si el cliente cambia de dirección la semana que viene, los pedidos pasados no se reescriben — siguen mostrando la dirección donde se entregó realmente.
+**Motivo:** preservar histórico. Si el cliente cambia de dirección la semana que viene, los pedidos pasados no se reescriben — siguen mostrando dónde se entregó realmente.
 
-**Hay también `cliente_id`** como vínculo "vivo" para queries como "todos los pedidos de este cliente" (`api/clientes/[id]/pedidos/route.ts`). **No es FK enforced** — está como UUID sin `REFERENCES clientes(id)`.
+**`cliente_id`** es el vínculo "vivo" para queries como "todos los pedidos de este cliente". **No es FK enforced** — es un `UUID` sin `REFERENCES clientes(id)`, así borrar un cliente no rompe sus pedidos históricos. **No está en el tipo `Pedido` de TS** todavía (ver gotcha #4 del CLAUDE.md / §3).
 
-**Implicación práctica:** si modificás `clientes.nombre`, los pedidos pasados conservan el nombre viejo. Si querés mostrar el nombre actual, JOIN con `clientes` usando `cliente_id`.
-
-**B) Doble fuente de verdad `estado` vs `entregado`** — coexisten dos columnas que representan información solapada:
-
+**B) Doble fuente de verdad `estado` vs `entregado`** — coexisten dos columnas con info solapada:
 - `entregado BOOLEAN NOT NULL DEFAULT FALSE` — original del seed.
 - `estado VARCHAR(20) NOT NULL DEFAULT 'Pendiente'` — agregado por `migrate-estados.mjs`.
 
-Cuando se ejecutó `migrate-estados.mjs:52-60` se hizo la migración de datos: `entregado=TRUE` → `estado='Entregado'`, resto → `'Pendiente'`. Pero **ambas columnas siguen existiendo**.
+`migrate-estados.mjs:52-60` migró los datos (`entregado=TRUE` → `estado='Entregado'`), pero **ambas columnas siguen existiendo**. La lógica de sincronización vive en `api/pedidos/[id]/route.ts` (~líneas 80-114):
+- Si se cambia `estado`, se sincroniza `entregado = (estado === 'Entregado')`.
+- Si se cambia `entregado` (legacy), se sincroniza `estado`.
+- Si `estado='Pendiente'`, se limpian `entregado_por`, `entregado_at`, `razon_fallo`, `repartidor_id`, `orden_ruta`.
 
-**Lógica de sincronización** en `api/pedidos/[id]/route.ts:80-114`:
-- Si se cambia `estado` directamente, se sincroniza `entregado = (estado === 'Entregado')`.
-- Si se cambia `entregado` (legacy), se sincroniza `estado` correspondientemente.
-- Si `estado='Pendiente'`, también se limpia `entregado_por`, `entregado_at`, `razon_fallo`, `repartidor_id`, `orden_ruta`.
+**Source of truth canónica: `estado`.** No leer `entregado` en código nuevo. Se mantiene por compatibilidad; eventualmente se eliminarán `entregado`, `entregado_por`, `entregado_at` (gotcha #1 — por ahora NO eliminar).
 
-**Source of truth canónica:** `estado`. **No leer `entregado`** en código nuevo. La columna `entregado` se mantiene por compatibilidad con queries antiguas y por seguridad — eventualmente se va a eliminar.
+**C) `distancia_km` se congela, `duracion_estimada_min` se actualiza**:
+- `distancia_km` = distancia **desde la base** al cliente. Se calcula UNA VEZ al asignar (`api/despacho/asignar/route.ts`) y no se sobrescribe al optimizar ruta.
+- `duracion_estimada_min` = duración acumulada en la ruta. SÍ se actualiza al optimizar (`api/despacho/optimizar-ruta/route.ts`).
 
-**C) `distancia_km` se congela, `duracion_estimada_min` se actualiza** — decisión deliberada con motivo de negocio.
+**D) `detalle` vs `detalle_final` (+ pesos por ítem)**:
+- `detalle TEXT NOT NULL` — generado por `ProductSelector` al crear el pedido (lo que pidió el cliente, texto libre).
+- `detalle_final TEXT` — el **peso real** registrado por el repartidor/producción al pesar.
+- A nivel de ítem, el peso real se estructura en `pedido_items.cantidad_real` y `subtotal_real` (ver §2.5), y se trackea quién/cuándo pesó con `pedidos.pesado_por` / `pesado_at`.
 
-- `distancia_km` representa la **distancia desde la base** (almacén) hasta el cliente. Se calcula UNA VEZ al asignar el pedido (`api/despacho/asignar/route.ts:96-101`) y no se sobrescribe nunca más.
-- `duracion_estimada_min` representa la **duración acumulada en la ruta** del repartidor. SE actualiza cada vez que se optimiza la ruta (`api/despacho/optimizar-ruta/route.ts:198-201`).
+**E) `created_at` vs `fecha_pedido` (distinción crítica de negocio)**:
+- `fecha_pedido` (`DATE`, sin hora) es la **FECHA DE ENTREGA** (así se rotula en `PedidoForm`), NO la fecha de venta.
+- `created_at` (`TIMESTAMP WITH TIME ZONE`) es **cuándo la asesora REGISTRÓ/vendió** el pedido.
+- ~86% de los pedidos se entregan en fecha posterior a la venta. Las **metas/incentivos** de la asesora miden por `created_at` (ventas); los **reportes de admin/facturación** miden por `fecha_pedido` + `Entregado`. Ver `CLAUDE.md` gotcha #8 y §13.
 
-**Por qué:** el admin/repartidor siempre quiere saber "este cliente está a X km del local" como métrica fija de negocio. La duración acumulada, en cambio, sí cambia según el orden de la ruta.
+**F) Estados de producción ya en producción** — el enum `EstadoPedido` (ver §3) incluye `En_Produccion` y `Listo_Para_Despacho`, que van **antes** de `Asignado`. `estado` sigue siendo un `VARCHAR(20)` sin enum SQL (los valores se validan con zod en `/api/pedidos/[id]/route.ts`). La máquina de estados completa está en `04-flujos-de-negocio.md`.
 
-**D) `detalle` vs `detalle_final`** — diferencia conceptual importante:
+---
 
-- `detalle TEXT NOT NULL` — generado por `ProductSelector` al crear el pedido. Texto con los productos pedidos en formato libre (ej: `"2 uni - Pollo entero\n5 kg - Pechuga"`).
-- `detalle_final TEXT` — el **peso real registrado por el repartidor o la asistente de producción** al pesar. Por ejemplo, si pidieron "10 pollos enteros" pero la suma real fue 27.580 kg, ese número va en `detalle_final`.
+### 2.4 `productos`
 
-**Quién lo actualiza:** `PesoModal.tsx` post-entrega (no es parte del flujo de creación del pedido). En la implementación de las **mejoras 2026**, esto se va a estructurar más (precios y márgenes por item).
+**Origen:** `scripts/migrate-products.mjs:20-29` + columnas de catálogo agregadas en mayo 2026.
 
-**E) `settings` como JSONB extensible** — único valor actual: `base_location`.
+```sql
+CREATE TABLE productos (
+    id            UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    nombre        VARCHAR(255) NOT NULL,
+    categoria     VARCHAR(50) NOT NULL,         -- 'Pollo' | 'Carnes' | 'Huevos' | custom
+    unidad        VARCHAR(50) NOT NULL,         -- 'uni' | 'kg' | 'uni/kg' | 'paquete x N' | etc.
+    codigo        VARCHAR(30),                  -- código interno SUNAT (POL001/CAR001/HUE001…)
+    precio_compra NUMERIC(10, 2),               -- costo
+    precio_venta  NUMERIC(10, 2),               -- precio CON IGV incluido (ver gotcha #10)
+    activo        BOOLEAN DEFAULT TRUE,
+    created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Sin índices** explícitos.
+
+**Columnas agregadas por migración:**
+
+| Columna | Migración | Para qué |
+|---|---|---|
+| `precio_compra`, `precio_venta` | `migrate-precios-productos.mjs` / `migrations-fase-ab.sql:20-21` / `migrate-produccion-2026-05-29.sql:231-232` | Precio de costo y de venta (snapshot del vigente). El histórico vive en `precios_productos`. |
+| `codigo VARCHAR(30)` | `migrate-codigo-producto.sql` / `migrate-produccion-2026-05-29.sql:230` | Código interno estable para el `SellersItemIdentification` de SUNAT. Backfill por categoría: `POL001`, `CAR001`, `HUE001`… (prefijo + correlativo de 3 dígitos). Los nuevos productos lo generan en `POST /api/productos`. |
+
+**⚠️ Convención de precios (gotcha #10):** `precio_venta` se almacena **CON IGV incluido** (lo que Antonio cobra). Antes de mandar a SUNAT se divide entre 1.18 para obtener el neto (`api/comprobantes/emitir/route.ts`).
+
+**Cómo se popula:**
+- Inicial: `migrate-products.mjs` inserta ~35 productos. El seed de precios 2026 (`seed-precios-2026.mjs` / bloque en `migrations-fase-ab.sql:181-248`) puebla `precio_compra`/`precio_venta` para 39 productos del catálogo cuyo nombre coincide exactamente.
+- Runtime: `POST /api/productos` (admin) — genera `codigo`. `PATCH /api/productos` actualiza precios y **preserva histórico** en `precios_productos` (cierra el vigente, inserta el nuevo).
+
+**Quién la lee:** `GET /api/productos` (devuelve `precio_venta`, `precio_compra`, `codigo`); LEFT JOINs en analytics/resumen/reportes para resolver el nombre actual.
+
+**Soft delete:** `DELETE /api/productos/[id]` setea `activo = FALSE` (no borra la fila) — preserva el catálogo histórico que referencian los `pedido_items`.
+
+> Los endpoints `/api/precios*` y los clientes `productos-client.tsx` / `precios-client.tsx` quedaron `@deprecated` tras la unificación en `/dashboard/catalogo`. La fuente de precios hoy es `/api/productos`.
+
+---
+
+### 2.5 `pedido_items`
+
+**Origen:** `scripts/migrate-products.mjs:33-44` + columnas de precios/pesos de la Fase A.
+
+```sql
+CREATE TABLE pedido_items (
+    id                UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    pedido_id         UUID REFERENCES pedidos(id) ON DELETE CASCADE,
+    producto_id       UUID REFERENCES productos(id),
+    producto_nombre   VARCHAR(255) NOT NULL,        -- DENORMALIZADO (snapshot)
+    cantidad          DECIMAL(10, 2) NOT NULL,
+    unidad            VARCHAR(50) NOT NULL,         -- snapshot también
+    precio_unitario   NUMERIC(10, 2),               -- venta estimada al crear (CON IGV)
+    subtotal          NUMERIC(10, 2),               -- venta estimada (cantidad × precio_unitario)
+    cantidad_real     NUMERIC(10, 2),               -- peso REAL entregado (lo registra producción/repartidor)
+    subtotal_real     NUMERIC(10, 2),               -- subtotal REAL entregado
+    notas             TEXT,
+    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**Columnas agregadas por migración** (`migrate-precios-productos.mjs`, `migrate-cantidad-real.mjs`, consolidadas en `migrations-fase-ab.sql:38-46` y `migrate-produccion-2026-05-29.sql:224-227`):
+- `precio_unitario`, `subtotal` — el precio/subtotal **estimado** al momento de vender.
+- `cantidad_real`, `subtotal_real` — el peso/subtotal **real** al entregar (los pedidos avícolas se venden al peso, que difiere del estimado).
+
+**Cascade delete:** si se elimina el pedido, sus ítems se borran (`ON DELETE CASCADE`).
+
+**Denormalización:** `producto_nombre` y `unidad` son snapshots al momento del INSERT. En analytics/resumen se usa `COALESCE(prod.nombre, pi.producto_nombre)` para preferir el nombre actual del catálogo y caer al snapshot si el producto fue eliminado.
+
+**Medición de ventas (incentivos):** usan `pi.subtotal` (estimado al vender), NO `subtotal_real`. Ver `CLAUDE.md` §13.
+
+---
+
+### 2.6 `precios_productos`
+
+**Origen:** `scripts/migrate-precios-productos.mjs` / `migrations-fase-ab.sql:23-36` / `migrate-produccion-2026-05-29.sql:121-131`. Histórico de precios con vigencia.
+
+```sql
+CREATE TABLE precios_productos (
+    id            UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    producto_id   UUID REFERENCES productos(id) ON DELETE CASCADE,
+    precio_compra NUMERIC(10, 2),
+    precio_venta  NUMERIC(10, 2) NOT NULL,
+    vigente_desde DATE NOT NULL DEFAULT (NOW() AT TIME ZONE 'America/Lima')::date,
+    vigente_hasta DATE,                              -- NULL = registro vigente
+    created_at    TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by    UUID REFERENCES users(id)
+);
+
+CREATE INDEX idx_precios_vigentes
+  ON precios_productos(producto_id, vigente_desde DESC)
+  WHERE vigente_hasta IS NULL;
+```
+
+**Patrón de auditoría:** al cambiar el precio de venta (vía `PATCH /api/productos` o el legacy `/api/precios/[id]`), se cierra el registro vigente (`SET vigente_hasta = hoy`) y se inserta uno nuevo con `vigente_hasta = NULL`. El índice parcial acelera "el precio vigente de este producto".
+
+---
+
+### 2.7 `comprobantes`
+
+**Origen:** `scripts/migrate-comprobantes.mjs` / `migrations-fase-ab.sql:146-170` / `migrate-produccion-2026-05-29.sql:35-62` + 4 migraciones aditivas posteriores. Es la tabla de comprobantes electrónicos SUNAT (factura `01`, boleta `03`, nota de crédito `07`).
+
+```sql
+CREATE TABLE comprobantes (
+    id                        UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    pedido_id                 UUID REFERENCES pedidos(id) ON DELETE SET NULL,  -- NULL = standalone
+    ruc_emisor                VARCHAR(11) NOT NULL,
+    empresa                   VARCHAR(50) NOT NULL,             -- 'transavic' | 'avicola'
+    tipo                      VARCHAR(20) NOT NULL,             -- '01' factura | '03' boleta | '07' NC
+    serie                     VARCHAR(10) NOT NULL,             -- F001/B001/FC01/BC01…
+    numero                    INTEGER NOT NULL,
+    serie_numero              VARCHAR(50) NOT NULL,             -- 'F001-23'
+    cliente_doc_tipo          VARCHAR(2),                       -- '0'|'1' DNI |'6' RUC
+    cliente_doc_num           VARCHAR(20),
+    cliente_razon_social      VARCHAR(255),
+    monto_subtotal            NUMERIC(12, 2),                   -- neto (sin IGV)
+    monto_igv                 NUMERIC(12, 2),
+    monto_total               NUMERIC(12, 2),
+    moneda                    VARCHAR(3) DEFAULT 'PEN',
+    estado                    VARCHAR(50) NOT NULL,             -- pendiente|aceptado|observado|rechazado|error|anulado
+    hash_cpe                  TEXT,                             -- digest del CPE
+    xml_firmado_base64        TEXT,                             -- ⚠️ documento legal (fuente para PDF/correo)
+    cdr_base64                TEXT,                             -- ZIP crudo del CDR de SUNAT
+    observaciones             TEXT,
+    mensaje_sunat             TEXT,                             -- motivo de rechazo/observación
+    forma_pago                VARCHAR(10),                      -- 'Contado' | 'Credito'
+    fecha_vencimiento         DATE,                             -- si es crédito
+    items_json                JSONB,                            -- líneas emitidas (red de seguridad para reintento)
+    referencia_comprobante_id UUID REFERENCES comprobantes(id) ON DELETE SET NULL,  -- NC → comprobante original
+    emitido_por               TEXT,                             -- nombre de quien emitió (atribución)
+    created_at                TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (ruc_emisor, serie, numero)
+);
+
+CREATE INDEX idx_comp_pedido     ON comprobantes(pedido_id);
+CREATE INDEX idx_comp_estado     ON comprobantes(estado);
+CREATE INDEX idx_comp_referencia ON comprobantes(referencia_comprobante_id);
+```
+
+**Columnas agregadas DESPUÉS del esquema base** (todas aditivas, idempotentes, aplicadas por psql — gotcha #17):
+
+| Columna(s) | Migración | Para qué |
+|---|---|---|
+| `forma_pago`, `fecha_vencimiento` | `migrate-comprobante-credito.sql` | El PDF arma la sección "INFORMACIÓN DEL CRÉDITO". Antes la forma de pago solo viajaba en el XML, no se persistía. |
+| `items_json` (JSONB) | `migrate-comprobante-items.sql` | Guarda las líneas emitidas (descripción, unidad, cantidad, precio, código, afectación IGV) para que el reintento de un comprobante standalone reconstruya el XML con los ítems reales, no una línea genérica. `index.ts` lo persiste en cada emisión. |
+| `referencia_comprobante_id` | `migrate-comprobante-referencia.sql` | Vincula explícitamente una NC (07) con la factura/boleta que acredita → la UI muestra "↩ anula F001-X" y bloquea una 2ª NC. |
+| `emitido_por` (TEXT) | `migrate-comprobante-emisor.sql` | Atribución (quién emitió), ahora que todas las asesoras ven todos los comprobantes. Denormalizado, mismo patrón que `pedidos.entregado_por`. Backfill best-effort desde la asesora dueña del pedido; sueltos viejos quedan NULL. |
+
+**Persistencia:** `src/lib/sunat/index.ts` hace 3 INSERTs (pendiente/éxito/error) que ya incluyen `forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por` (líneas 208, 285, 327). El **reintento** hace UPDATE (no reinserta) → preserva `emitido_por`.
+
+**⚠️ El PDF y el correo leen las líneas del `xml_firmado_base64`, NO de la DB** (`src/lib/sunat/parse-cpe-items.ts`). Las facturas/boletas standalone (sin pedido) NO guardan sus líneas en `pedido_items` — solo en el XML firmado (y, como respaldo, en `items_json`). Ver `CLAUDE.md` gotcha #18. **El XML firmado nunca se modifica** (es el documento legal aceptado por SUNAT). **El CDR (`cdr_base64`) se sirve como ZIP crudo de SUNAT**, no se intenta extraer el XML.
+
+**Visibilidad:** desde jun 2026, `GET /api/comprobantes` NO scopea por rol — todas las asesoras ven todos los comprobantes. La separación por asesora se mantiene solo en los insights de IA.
+
+---
+
+### 2.8 `comprobantes_contador`
+
+**Origen:** `scripts/migrate-comprobantes.mjs:22-29` / `migrations-fase-ab.sql:138-144` / `migrate-produccion-2026-05-29.sql:64-70`. Correlativo atómico por emisor + serie.
+
+```sql
+CREATE TABLE comprobantes_contador (
+    ruc           VARCHAR(11) NOT NULL,
+    serie         VARCHAR(10) NOT NULL,
+    ultimo_numero INTEGER NOT NULL DEFAULT 0,
+    updated_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (ruc, serie)
+);
+```
+
+**Patrón:** `UPDATE … SET ultimo_numero = ultimo_numero + 1 RETURNING ultimo_numero` (atómico) — `src/lib/sunat/contador.ts`. Una serie por (RUC, tipo): `F001`/`B001` para Transavic, `F002`/`B002` para Avícola de Tony; las NC usan serie propia (`FC01`/`BC01`). Nunca se reusa un número ya aceptado. `migrations-fase-ab.sql:256-261` siembra las 4 filas iniciales (con RUCs placeholder, cambiados luego por los reales).
+
+---
+
+### 2.9 `correlativos`
+
+**Origen:** `scripts/migrate-correlativos-guias.mjs:23-27` / `migrations-fase-ab.sql:55-62` / `migrate-produccion-2026-05-29.sql:72-77`. Correlativo genérico key/value para documentos internos.
+
+```sql
+CREATE TABLE correlativos (
+    tipo          VARCHAR(50) PRIMARY KEY,        -- ej. 'guia_remision'
+    ultimo_numero INTEGER NOT NULL DEFAULT 0,
+    updated_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+```
+
+**Hoy solo tiene `tipo='guia_remision'`** (correlativo de la "orden de pedido"). `src/lib/correlativos.ts:siguienteCorrelativo` usa **UPSERT** (`INSERT … ON CONFLICT (tipo) DO UPDATE SET ultimo_numero = correlativos.ultimo_numero + 1`) → nunca falla aunque la fila no esté sembrada (fix del crash en producción, gotcha #20).
+
+---
+
+### 2.10 `facturas` (cobranzas)
+
+**Origen:** `scripts/migrate-cobranzas.mjs:26-43` / `migrations-fase-ab.sql:112-127` / `migrate-produccion-2026-05-29.sql:79-96` + 2 migraciones aditivas. A pesar del nombre, modela las **cobranzas / cuentas por cobrar** (deuda con plazo), no los comprobantes SUNAT (eso es `comprobantes`).
+
+```sql
+CREATE TABLE facturas (
+    id                 UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    pedido_id          UUID REFERENCES pedidos(id) ON DELETE SET NULL,   -- NULLABLE (cobranza standalone)
+    cliente_id         UUID REFERENCES clientes(id) ON DELETE SET NULL,  -- agregado migrate-factura-vinculo
+    cliente_nombre     VARCHAR(255) NOT NULL,
+    asesor_id          UUID REFERENCES users(id),
+    monto              NUMERIC(12, 2) NOT NULL,
+    plazo_dias         INTEGER NOT NULL DEFAULT 0,
+    fecha_emision      DATE NOT NULL DEFAULT (NOW() AT TIME ZONE 'America/Lima')::date,
+    fecha_vencimiento  DATE NOT NULL,
+    fecha_pago         DATE,                                             -- NULL = no pagada
+    estado             VARCHAR(20) NOT NULL DEFAULT 'Pendiente',         -- Pendiente|Pagada|Vencida
+    numero_comprobante VARCHAR(50),
+    comprobante_id     UUID REFERENCES comprobantes(id) ON DELETE SET NULL,  -- agregado migrate-factura-vinculo
+    metodo_pago        VARCHAR(20),                                      -- agregado migrate-cobranza-pago
+    pago_detalle       TEXT,                                             -- agregado migrate-cobranza-pago
+    pago_img_base64    TEXT,                                             -- agregado migrate-cobranza-pago
+    pago_img_mime      VARCHAR(50),                                      -- agregado migrate-cobranza-pago
+    notas              TEXT,
+    created_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_facturas_vencimiento    ON facturas(fecha_vencimiento) WHERE fecha_pago IS NULL;
+CREATE INDEX idx_facturas_asesor         ON facturas(asesor_id, estado);
+CREATE INDEX idx_facturas_cliente        ON facturas(cliente_id);
+CREATE INDEX idx_facturas_cliente_id     ON facturas(cliente_id);        -- duplicado (migrate-factura-vinculo)
+CREATE INDEX idx_facturas_comprobante_id ON facturas(comprobante_id);
+```
+
+**Columnas agregadas DESPUÉS del esquema base:**
+
+| Columna(s) | Migración | Para qué |
+|---|---|---|
+| `cliente_id`, `comprobante_id` | `migrate-factura-vinculo.sql` | Vincula la cobranza manual a un cliente del catálogo y/o a un comprobante ya emitido (autocomplete + selector de facturas). Ambas `NULL`-ables, `SET NULL` al borrar el referenciado. |
+| `metodo_pago`, `pago_detalle`, `pago_img_base64`, `pago_img_mime` | `migrate-cobranza-pago.sql` | Método de pago (`efectivo`/`transferencia`/`yape`/`plin`/`otro`), nota libre y **captura del comprobante de pago** comprimida (~50-90KB webp) en base64 (sin storage externo, $0). El endpoint limita el tamaño. |
+
+**Lazo cerrado del dinero:** una factura SUNAT (tipo `01`) Contado o Crédito crea una cobranza automáticamente (`lib/cobranzas.ts:crearFacturaStandalone`), salvo opt-out "ya cobrado". Las boletas NO crean cobranza. Pago en 1 clic con undo de 5s (`/api/facturas/[id]/pago`); el DELETE revierte el pago. Cron diario `/api/cron/facturas-vencidas` marca vencidas.
+
+---
+
+### 2.11 `metas_asesoras`
+
+**Origen:** `scripts/migrate-metas.mjs:22-31` / `migrations-fase-ab.sql:76-83` / `migrate-produccion-2026-05-29.sql:98-106` + `migrate-meta-bono.sql`. Overrides manuales de la meta mensual por asesora + bono personalizado.
+
+```sql
+CREATE TABLE metas_asesoras (
+    id         UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    asesor_id  UUID REFERENCES users(id) ON DELETE CASCADE,
+    mes        DATE NOT NULL,                  -- primer día del mes, 'YYYY-MM-01'
+    monto_meta NUMERIC(12, 2),                 -- ⚠️ NULLABLE (ver abajo)
+    bono       TEXT,                           -- premio en texto libre al cumplir la meta
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (asesor_id, mes)
+);
+
+CREATE INDEX idx_metas_asesor_mes ON metas_asesoras(asesor_id, mes);
+```
+
+**Cambios de `migrate-meta-bono.sql`:**
+- `+ bono TEXT` — premio configurable por asesora/mes. La asesora lo ve en "Mis Metas" (banner ámbar → verde al cumplir).
+- `monto_meta` pasó a **NULLABLE** (`ALTER COLUMN monto_meta DROP NOT NULL`): permite una fila con **solo bono** sin override de meta. El código (`lib/metas.ts:calcularMetaDiaria`) trata `monto_meta IS NULL` como "sin override" → usa la **meta automática** (mes anterior × factor de crecimiento configurable).
+
+**Nota:** la **configuración global de incentivos** (meta de equipo, ranking, racha, toggles) NO vive aquí — vive en `settings.incentivos_config` (JSONB). Esta tabla es solo el override individual mensual.
+
+---
+
+### 2.12 `notificaciones`
+
+**Origen:** `scripts/migrate-notificaciones.mjs:22-32` / `migrations-fase-ab.sql:91-101` / `migrate-produccion-2026-05-29.sql:108-119`. Notificaciones in-app (campanita 🔔, polling 30s).
+
+```sql
+CREATE TABLE notificaciones (
+    id         UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    user_id    UUID REFERENCES users(id) ON DELETE CASCADE,
+    tipo       VARCHAR(50) NOT NULL,           -- pedido_asignado | pedido_entregado | comprobante_rechazado | …
+    titulo     TEXT NOT NULL,
+    mensaje    TEXT NOT NULL,
+    link       TEXT,
+    pedido_id  UUID,                           -- NO enforced (denormalizado, opcional)
+    leida      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_notif_user_unread ON notificaciones(user_id, leida, created_at DESC);
+```
+
+**Tipos** (`src/lib/notificaciones.ts:TipoNotificacion`, que `NotificationBell.tsx` importa con `import type` para no desfasarse): `pedido_asignado`, `pedido_en_camino`, `pedido_entregado`, `pedido_fallido`, `guia_firmada`, `listo_para_despacho`, `meta_diaria_alcanzada`, `comprobante_rechazado`, `comprobante_error`, entre otros. El `pedido_id` es opcional y no es FK.
+
+**Limpieza:** el cron `daily-digest-admin` purga las **leídas** de más de 30 días (`limpiarNotificacionesAntiguas(30)`); las no leídas se respetan siempre. Se enganchó a ese cron por el límite de crons de Vercel.
+
+---
+
+### 2.13 `pedido_ediciones`
+
+**Origen:** `scripts/migrate-pedido-ediciones.sql:13-21` (migración aparte, posterior al consolidado de producción). Auditoría de correcciones de datos de un pedido.
+
+```sql
+CREATE TABLE pedido_ediciones (
+    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pedido_id      UUID NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
+    usuario_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+    usuario_nombre TEXT NOT NULL,                  -- denormalizado (sobrevive al borrar el user)
+    usuario_rol    TEXT,
+    cambios        JSONB NOT NULL DEFAULT '[]'::jsonb,  -- [{ campo, etiqueta, antes, despues }]
+    created_at     TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_pedido_ediciones_pedido ON pedido_ediciones(pedido_id, created_at DESC);
+```
+
+**Qué audita:** solo campos de **datos** del pedido (`src/lib/pedido-historial.ts:CAMPOS_AUDITABLES`: cliente, dirección, detalle, fecha, etc.), NO el ruido del ciclo de vida (estado, repartidor, ruta, banderas legacy). El `PATCH /api/pedidos/[id]` inserta la fila de forma **no-bloqueante** (si falla, la edición igual queda aplicada). El admin lo consulta con `GET /api/pedidos/[id]/ediciones` (solo admin) → modal "Ver historial".
+
+---
+
+### 2.14 `resumenes_diarios`
+
+**Origen:** `scripts/migrate-resumenes-diarios.{mjs,sql}` / `migrate-produccion-2026-05-29.sql:133-149`. Idempotencia del Resumen Diario de boletas (RC-) que SUNAT exige.
+
+```sql
+CREATE TABLE resumenes_diarios (
+    id                 UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+    empresa            VARCHAR(50) NOT NULL,
+    ruc                VARCHAR(11) NOT NULL,
+    fecha_referencia   DATE NOT NULL,                 -- el día de las boletas resumidas
+    correlativo        INTEGER,
+    nombre_archivo     VARCHAR(120),
+    ticket             TEXT,                           -- ticket SUNAT para consultar el estado
+    estado             VARCHAR(20) NOT NULL DEFAULT 'enviando',  -- enviando|enviado|aceptado|…
+    boletas_incluidas  INTEGER DEFAULT 0,
+    mensaje_sunat      TEXT,
+    xml_firmado_base64 TEXT,
+    cdr_base64         TEXT,
+    created_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_resumen_ruc_fecha ON resumenes_diarios(ruc, fecha_referencia);
+CREATE INDEX idx_resumen_ticket    ON resumenes_diarios(ticket);
+```
+
+**Idempotencia:** el helper `src/lib/sunat/resumen-diario.ts` (usado por el cron `/api/cron/resumen-diario-sunat` y por el endpoint manual) NO reenvía un RC si ya hay uno `enviado`/`aceptado`/`enviando`-reciente del mismo día. `forzar:true` permite resúmenes complementarios.
+
+---
+
+### 2.15 `settings`
+
+**Origen:** `scripts/migrate-despacho-v2.mjs`. Tabla key/value JSONB extensible.
 
 ```sql
 CREATE TABLE settings (
@@ -339,89 +849,56 @@ INSERT INTO settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 ```
 
-**Estructura del valor:** `{ lat: number, lng: number, address: string, name: string }`.
+**Claves actuales:**
 
-**Quién lo lee:**
-- `api/despacho/route.ts:23-25` — para mostrar en el mapa.
-- `api/despacho/asignar/route.ts:51-54` — origen para Google Directions.
-- `api/despacho/optimizar-ruta/route.ts:54-61` — origen para optimización.
-- `api/repartidor/mi-ruta/route.ts:67-70` — para mapa del repartidor.
+| `key` | Estructura del `value` | Quién lo usa |
+|---|---|---|
+| `base_location` | `{ lat, lng, address, name }` | Origen del almacén para Google Directions/optimización de ruta y mapas (`api/despacho/*`, `api/repartidor/mi-ruta`). Escribe `POST /api/settings` (admin). |
+| `incentivos_config` | `{ metaEquipoSemanal, rankingMensual, rachaSemanal, metasIndividuales }` (ver `CLAUDE.md` §13) | Config global del sistema de incentivos. Helpers `getIncentivosConfig()`/`saveIncentivosConfig()` en `src/lib/incentivos.ts`. `lib/metas.ts` lee de aquí el `factorCrecimientoPct`. |
 
-**Quién lo escribe:** `POST /api/settings` (solo admin) desde el modal de "Ubicación base" en `/despacho`.
+**Fallback de `base_location`** (si no hay row): env vars `BASE_LATITUDE`/`BASE_LONGITUDE`, y como último recurso `-12.0464, -77.0428` (Centro de Lima).
 
-**Fallback en cascada** (si no hay row en `settings`):
-1. Env vars `BASE_LATITUDE` + `BASE_LONGITUDE` (en algunos handlers).
-2. Hardcoded `-12.0464, -77.0428` (Centro de Lima).
-
-### 2.4 `productos`
-
-**Origen:** `scripts/migrate-products.mjs:20-29`.
-
-```sql
-CREATE TABLE productos (
-    id          UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    nombre      VARCHAR(255) NOT NULL,
-    categoria   VARCHAR(50) NOT NULL,         -- 'Pollo' | 'Carnes' | 'Huevos'
-    unidad      VARCHAR(50) NOT NULL,         -- 'uni' | 'kg' | 'uni/kg' | 'paquete x N' | etc.
-    activo      BOOLEAN DEFAULT TRUE,
-    created_at  TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**Sin índices** explícitos.
-
-**Cómo se popula:**
-- Inicial: `migrate-products.mjs:62-105` inserta ~35 productos del catálogo (Pollo entero, Pechuga deshuesada, Bistec de res, Huevos plancha, etc.).
-- Runtime: `POST /api/productos` (solo admin).
-
-**Quién la lee:**
-- `GET /api/productos` — para `ProductSelector` (filtra `WHERE activo = TRUE`, ordena por categoría → nombre).
-- LEFT JOINs en analytics y resumen-diario para resolver `producto_nombre` actualizado (cuando el nombre cambió en catálogo).
-
-**Soft delete:** `DELETE /api/productos/[id]` setea `activo = FALSE` en lugar de eliminar la fila — preserva el catálogo histórico para los `pedido_items` que lo referencian.
-
-### 2.5 `pedido_items`
-
-**Origen:** `scripts/migrate-products.mjs:33-44`.
-
-```sql
-CREATE TABLE pedido_items (
-    id                UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-    pedido_id         UUID REFERENCES pedidos(id) ON DELETE CASCADE,
-    producto_id       UUID REFERENCES productos(id),
-    producto_nombre   VARCHAR(255) NOT NULL,        -- DENORMALIZADO (snapshot)
-    cantidad          DECIMAL(10, 2) NOT NULL,
-    unidad            VARCHAR(50) NOT NULL,         -- snapshot también
-    notas             TEXT,
-    created_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-**Cascade delete:** si se elimina el pedido, sus items se borran automáticamente.
-
-**Denormalización:** `producto_nombre` y `unidad` son snapshots del producto al momento del INSERT. Si después el admin renombra el producto en el catálogo, este item conserva el nombre original.
-
-**En queries de analytics y resumen** se usa `COALESCE(prod.nombre, pi.producto_nombre)` para preferir el nombre actual del catálogo si existe (`producto_id` válido), y fallback al snapshot si el producto fue eliminado o el INSERT no tenía `producto_id`.
-
-### 2.6 `settings`
-
-Ya cubierto arriba (decisión E).
+**Patrón UPSERT:** `INSERT … ON CONFLICT (key) DO UPDATE SET value = …::jsonb, updated_at = NOW()`.
 
 ---
 
 ## 3. Tipos TypeScript (`src/lib/types.ts`)
 
-Mapping completo de tipos a tablas:
+`src/lib/types.ts` solo define los tipos del núcleo (`EstadoPedido`, `Pedido`, `User`, `Producto`, `PedidoItem`, `PedidoRuta`). Las tablas nuevas (comprobantes, facturas, metas, etc.) NO tienen tipo en este archivo — se tipan localmente en cada endpoint/módulo (p. ej. `OpcionesEmision` en el módulo SUNAT, tipos inline en `api/facturas/route.ts`).
 
 ### 3.1 `EstadoPedido`
 
 ```typescript
-export type EstadoPedido = 'Pendiente' | 'Asignado' | 'En_Camino' | 'Entregado' | 'Fallido';
+export type EstadoPedido =
+  | 'Pendiente'
+  | 'En_Produccion'
+  | 'Listo_Para_Despacho'
+  | 'Asignado'
+  | 'En_Camino'
+  | 'Entregado'
+  | 'Fallido';
 ```
 
-Coincide con los valores válidos de `pedidos.estado`. **No hay enum en SQL** — es solo un `VARCHAR(20)` con valores convenidos.
+Coincide con los valores válidos de `pedidos.estado`. **Incluye `En_Produccion` y `Listo_Para_Despacho`** (van antes de `Asignado`). **No hay enum en SQL** — `estado` es `VARCHAR(20)` validado con zod.
 
-### 3.2 `Pedido`
+### 3.2 `Producto`
+
+```typescript
+export type Producto = {
+  id: string;
+  nombre: string;
+  categoria: 'Pollo' | 'Carnes' | 'Huevos' | string;   // permite categorías custom
+  unidad: string;
+  activo: boolean;
+  codigo?: string | null;                               // código interno SUNAT
+  precio_venta?: number | string | null;               // CON IGV
+  precio_compra?: number | string | null;
+};
+```
+
+Se extendió con `codigo`, `precio_venta`, `precio_compra` (opcionales). `precio_venta`/`precio_compra` pueden venir como `string` (el driver de Neon devuelve `NUMERIC` como string).
+
+### 3.3 `Pedido`
 
 ```typescript
 export type Pedido = {
@@ -433,11 +910,11 @@ export type Pedido = {
   tipo_cliente: string | null;
   detalle: string;
   hora_entrega: string | null;
-  razon_social: string | null;       // ⚠️ ver gotchas abajo
-  ruc_dni: string | null;            // ⚠️
+  razon_social: string | null;
+  ruc_dni: string | null;
   notas: string | null;
   empresa: string;
-  fecha_pedido: string;              // viene como 'DD/MM/YYYY' tras TO_CHAR en data.ts
+  fecha_pedido: string;              // formateado en data.ts; otros endpoints usan otro formato
   detalle_final: string | null;
   created_at: Date;
   latitude: number | null;
@@ -451,8 +928,8 @@ export type Pedido = {
   inicio_viaje_at: string | null;
   distancia_km: number | null;
   duracion_estimada_min: number | null;
-  es_delivery_externo: boolean;      // ⚠️
-  delivery_externo_nombre: string | null;  // ⚠️
+  es_delivery_externo: boolean;
+  delivery_externo_nombre: string | null;
   entregado: boolean;
   entregado_por: string | null;
   entregado_at: string | null;
@@ -461,97 +938,35 @@ export type Pedido = {
 };
 ```
 
-#### Gotchas del tipo `Pedido`
+#### Gotchas del tipo `Pedido` (campos de DB que el tipo NO refleja)
 
-| Campo | Status |
+| Campo en DB | Status en el tipo TS |
 |---|---|
-| `razon_social`, `ruc_dni`, `es_delivery_externo`, `delivery_externo_nombre` | **SÍ existen en DB** (confirmado por uso en `api/pedidos/route.ts` y `api/despacho/asignar-externo/route.ts`), pero **no están en migraciones documentadas**. Si recreás la DB, hay que crearlas a mano. |
-| `cliente_id` | **Existe en DB y se inserta** (`api/pedidos/route.ts:106-108`), pero **NO está en el tipo TS**. Falta agregarlo. |
-| `direccion_mapa` | **Existe en DB y se inserta**, pero **NO está en el tipo TS**. Falta agregarlo. |
-| `created_at` | Tipo TS es `Date`, pero la columna es `TIMESTAMP WITH TIME ZONE`. El parser en `lib/data.ts:101` hace `new Date(pedido.created_at)`. |
-| `fecha_pedido` | Tipo TS es `string`, viene formateado en `data.ts:73`: `TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY')`. **Otros endpoints (analytics, resumen-diario) lo devuelven con otro formato (`YYYY-MM-DD`)**. Cuidar al consumir. |
-| `latitude`, `longitude` | Postgres devuelve `DECIMAL` como string vía driver. `lib/data.ts:103-104` hace `parseFloat()` antes de retornar. |
-| `repartidor_name`, `asesor_name` | No son columnas — vienen de LEFT JOIN con `users` (`lib/data.ts:80-81`). Si la query no incluye los JOINs, estos campos vienen `null`. |
+| `cliente_id` | **Existe en DB y se inserta**, pero **NO está en el tipo**. Si lo agregás, actualizá también `fetchFilteredPedidos` para seleccionarlo. (gotcha #4) |
+| `direccion_mapa` | **Existe en DB y se inserta**, pero **NO está en el tipo**. |
+| `numero_guia`, `guia_firmada_data/mime/at` | **Existen en DB** (Fase A), **NO están en el tipo `Pedido`** — se leen en endpoints específicos de guía. |
+| `pesado_por`, `pesado_at` | **Existen en DB** (Fase A), **NO están en el tipo `Pedido`** — se leen en el flujo de producción. |
+| `created_at` | Tipo TS es `Date`; la columna es `TIMESTAMP WITH TIME ZONE`. `lib/data.ts` hace `new Date(...)`. |
+| `fecha_pedido` | Tipo TS es `string`. En `data.ts` viene como `DD/MM/YYYY` (TO_CHAR); otros endpoints (reportes/resumen) lo devuelven `YYYY-MM-DD`. Cuidar al consumir. |
+| `latitude`, `longitude` | El driver devuelve `DECIMAL` como string; `lib/data.ts` hace `parseFloat()`. |
+| `repartidor_name`, `asesor_name` | No son columnas — vienen de LEFT JOIN con `users`. Si la query no incluye los JOINs, vienen `null`. |
 
-### 3.3 `User`
+### 3.4 `User` / `PedidoItem` / `PedidoRuta`
 
-```typescript
-export type User = {
-  id: string;
-  name: string;
-  role: string;             // string, no enum — pero solo 3 valores válidos
-};
-```
+- **`User`** = `{ id, name, role }` — omite `password` (correcto). `role` es `string` (4 valores válidos: admin/asesor/repartidor/produccion).
+- **`PedidoItem`** = `{ id, pedido_id, producto_id, producto_nombre, cantidad, unidad, notas }` — **NO refleja** `precio_unitario`, `subtotal`, `cantidad_real`, `subtotal_real` ni `created_at`, que sí existen en la tabla. Se leen como campos extra donde hacen falta (reportes, pesos).
+- **`PedidoRuta`** = subconjunto de `Pedido` para `/dashboard/mi-ruta` (sin `asesor_id`, `entregado*`, etc.).
 
-Coincide con `users` excepto que omite `password` (correcto, nunca se expone al cliente).
-
-### 3.4 `Producto`
-
-```typescript
-export type Producto = {
-  id: string;
-  nombre: string;
-  categoria: 'Pollo' | 'Carnes' | 'Huevos';   // sí es enum en TS
-  unidad: string;
-  activo: boolean;
-};
-```
-
-Coincide con `productos`. Omite `created_at`.
-
-### 3.5 `PedidoItem`
-
-```typescript
-export type PedidoItem = {
-  id: string;
-  pedido_id: string;
-  producto_id: string;
-  producto_nombre: string;
-  cantidad: number;
-  unidad: string;
-  notas: string | null;
-};
-```
-
-Coincide con `pedido_items`. Omite `created_at`.
-
-### 3.6 `PedidoRuta`
-
-```typescript
-export type PedidoRuta = {
-  id: string;
-  cliente: string;
-  direccion: string | null;
-  distrito: string | null;
-  whatsapp: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  estado: EstadoPedido;
-  orden_ruta: number | null;
-  hora_entrega: string | null;
-  hora_llegada_estimada: string | null;
-  inicio_viaje_at: string | null;
-  razon_fallo: string | null;
-  detalle: string;
-  notas: string | null;
-  distancia_km: number | null;
-  duracion_estimada_min: number | null;
-};
-```
-
-**Vista simplificada** para `/dashboard/mi-ruta` (no incluye `asesor_id`, `repartidor_id`, `entregado*` legacy, etc.). Es un subconjunto de `Pedido`.
-
-### 3.7 Mapping tabla ↔ tipo TS
+### 3.5 Mapping tabla ↔ tipo TS
 
 | Tabla SQL | Tipo TS | Notas |
 |---|---|---|
 | `users` | `User` | Omite `password`. |
-| `productos` | `Producto` | Omite `created_at`. |
-| `pedido_items` | `PedidoItem` | Omite `created_at`. |
-| `pedidos` | `Pedido` | Tiene gotchas (campos que faltan o que están de más). |
+| `productos` | `Producto` | Incluye `codigo`/`precio_venta`/`precio_compra` opcionales; omite `created_at`. |
+| `pedido_items` | `PedidoItem` | NO refleja precios/pesos reales ni `created_at`. |
+| `pedidos` | `Pedido` | Tiene gotchas (faltan `cliente_id`, `direccion_mapa`, guía y pesado). |
 | `pedidos` (subconjunto) | `PedidoRuta` | Para vista del repartidor. |
-| `clientes` | **No hay tipo** | Se trata como `Record<string, unknown>` en uses. **Pendiente:** definir `type Cliente`. |
-| `settings` | **No hay tipo** | Se trata como `{ key: string; value: unknown }`. |
+| `clientes`, `settings`, `comprobantes`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`, `comprobantes_contador`, `correlativos`, `pedido_ediciones` | **Sin tipo central** | Se tipan inline en cada endpoint/módulo. `notificaciones` sí tiene `TipoNotificacion` en `lib/notificaciones.ts`. |
 
 ---
 
@@ -561,93 +976,51 @@ export type PedidoRuta = {
 
 | Elemento | Convención | Ejemplo |
 |---|---|---|
-| Tablas | `snake_case`, plural | `pedidos`, `pedido_items`, `users` |
-| Columnas | `snake_case` | `asesor_id`, `repartidor_id`, `hora_llegada_estimada` |
-| Valores de `estado` | `PascalCase` con underscore en multi-palabra | `'Pendiente'`, `'En_Camino'`, `'Entregado'` |
+| Tablas | `snake_case`, plural | `pedidos`, `pedido_items`, `comprobantes` |
+| Columnas | `snake_case` | `asesor_id`, `repartidor_id`, `referencia_comprobante_id` |
+| Valores de `estado` (pedido) | `PascalCase`, underscore en multi-palabra | `'Pendiente'`, `'En_Produccion'`, `'Listo_Para_Despacho'`, `'En_Camino'` |
+| Valores de `estado` (comprobante/factura) | minúscula / PascalCase según tabla | `'aceptado'`/`'rechazado'` (comprobantes), `'Pendiente'`/`'Pagada'`/`'Vencida'` (facturas) |
 | Valores de `categoria` | `PascalCase` simple | `'Pollo'`, `'Carnes'`, `'Huevos'` |
-| Índices | `idx_<tabla>_<columna>` | `idx_pedidos_estado`, `idx_pedidos_fecha_estado` |
-| PKs | Siempre `id UUID` | Generado con `uuid_generate_v4()` |
+| Índices | `idx_<tabla>_<columna>` | `idx_pedidos_estado`, `idx_comp_referencia` |
+| PKs | `id UUID` (o PK compuesta) | `uuid_generate_v4()`; `comprobantes_contador` usa `(ruc, serie)` |
 
 ### 4.2 UUID
 
-**Extensión:** `uuid-ossp` — creada en `seed.mjs:18` con `CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`.
-
-**Función:** `uuid_generate_v4()`. **No** usar `gen_random_uuid()` (de `pgcrypto`) por consistencia.
+**Extensión:** `uuid-ossp` (`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`). **Función:** `uuid_generate_v4()`. No usar `gen_random_uuid()` por consistencia.
 
 ### 4.3 Timezone
 
-Lima está en **UTC-5** sin daylight saving. Para comparaciones "hoy/esta semana/este mes" en queries, se usa explícitamente:
+Lima es **UTC-5** sin DST. Para "hoy/esta semana/este mes" se usa explícitamente:
 
 ```sql
 (NOW() AT TIME ZONE 'America/Lima')::date
 ```
 
-Aparece en:
-- `lib/data.ts:178` (fetchMiRuta)
-- `api/despacho/route.ts:32, 47, 64, 79`
-- `api/despacho/asignar/route.ts:80`
-- `api/analytics/route.ts:90, 100, 109` (date_trunc semana/mes)
-- `api/pedidos/[id]/iniciar-viaje/route.ts:80`
-- Otros
+Aparece en `lib/data.ts:fetchMiRuta`, `api/despacho/*`, reportes/metas/incentivos, defaults de columnas (`facturas.fecha_emision`, `precios_productos.vigente_desde`), etc. Derivados: `date_trunc('week'|'month', (NOW() AT TIME ZONE 'America/Lima')::date)`.
 
-**Patrones derivados:**
-- `date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)` — inicio de la semana (lunes).
-- `date_trunc('month', ...)` — inicio del mes.
-
-`fecha_pedido` es `DATE` (sin hora). Los timestamps de eventos (`created_at`, `entregado_at`, `inicio_viaje_at`, `hora_llegada_estimada`) son `TIMESTAMP WITH TIME ZONE` (almacenados en UTC).
+`fecha_pedido`/`mes`/`fecha_emision`/`fecha_vencimiento`/`vigente_*` son `DATE` (sin hora). Los timestamps de evento (`created_at`, `entregado_at`, `inicio_viaje_at`, `pesado_at`, `guia_firmada_at`, etc.) son `TIMESTAMP WITH TIME ZONE` (UTC).
 
 ### 4.4 Tipos decimales
 
-| Concepto | Tipo | Precisión |
+| Concepto | Tipo | Notas |
 |---|---|---|
-| Latitud | `DECIMAL(10, 8)` | ±99.99999999° — ~1.1mm de precisión. |
-| Longitud | `DECIMAL(11, 8)` | Un dígito más para coordenadas en el oeste americano. |
+| Latitud | `DECIMAL(10, 8)` | ±99.99999999°. |
+| Longitud | `DECIMAL(11, 8)` | Un dígito más para el oeste americano. |
 | Distancia (km) | `NUMERIC(6, 2)` | Hasta 9999.99 km. |
-| Cantidad de producto | `DECIMAL(10, 2)` | Hasta 99,999,999.99 — fracciones de 2 decimales. |
+| Cantidad de producto | `DECIMAL(10, 2)` | Fracciones de 2 decimales. |
+| Precios de producto / ítem | `NUMERIC(10, 2)` | `productos.precio_*`, `pedido_items.precio_unitario/subtotal/…`, `precios_productos.*`. |
+| Montos de comprobante / cobranza | `NUMERIC(12, 2)` | `comprobantes.monto_*`, `facturas.monto`, `metas_asesoras.monto_meta`. |
 | Duración | `INTEGER` (minutos) | Sin decimales. |
+
+> ⚠️ El driver de Neon devuelve `NUMERIC/DECIMAL` como **string**. Hacer `parseFloat()`/`Number()` al consumir (el tipo `Producto` ya admite `number | string`).
 
 ### 4.5 Drivers y patrones de query
 
-**Driver:** `@neondatabase/serverless` — cliente HTTP (no Postgres binary protocol). **No es un pool**; cada `neon(connectionString)` es barato y se reinstancia por request.
+**Driver:** `@neondatabase/serverless` — cliente HTTP (no es un pool). Reinstanciar por request (`const sql = neon(process.env.DATABASE_URL!)`). **Sin ORM, sin RLS** (Neon no usa Row-Level Security; el scoping por rol vive en cada query SQL, no en la DB).
 
-**Patrón 1: Tagged template literal (preferido cuando los parámetros son fijos)**
-
-```typescript
-const sql = neon(process.env.DATABASE_URL!);
-const result = await sql`
-  SELECT id, name FROM users WHERE role = ${role} ORDER BY name ASC
-`;
-```
-
-**Patrón 2: `sql.query(query, params)` (cuando WHERE es dinámico)**
-
-```typescript
-const sql = neon(process.env.DATABASE_URL!);
-const conditions: string[] = [];
-const params: unknown[] = [];
-let i = 1;
-
-if (search) {
-  conditions.push(`c.nombre ILIKE $${i++}`);
-  params.push(`%${search}%`);
-}
-
-const result = await sql.query(`SELECT * FROM clientes WHERE ${conditions.join(' AND ')}`, params);
-```
-
-Visto en `lib/data.ts:fetchFilteredPedidos:67-92` y `api/clientes/route.ts:GET`.
-
-**Patrón 3: UPSERT con ON CONFLICT**
-
-```typescript
-await sql`
-  INSERT INTO settings (key, value, updated_at)
-  VALUES (${key}, ${JSON.stringify(value)}::jsonb, NOW())
-  ON CONFLICT (key) DO UPDATE SET value = ${JSON.stringify(value)}::jsonb, updated_at = NOW()
-`;
-```
-
-Visto en `api/settings/route.ts:POST`.
+- **Patrón 1 — tagged template** (parámetros fijos): ``await sql`SELECT … WHERE role = ${role}` ``.
+- **Patrón 2 — `sql.query(query, params)`** (WHERE dinámico): construir `conditions[]` + `params[]` con placeholders `$1,$2,…`. Visto en `fetchFilteredPedidos`, `api/clientes/route.ts`, `api/facturas/route.ts`.
+- **Patrón 3 — UPSERT `ON CONFLICT`**: `settings`, `comprobantes_contador`, `correlativos`, `metas_asesoras`.
 
 ---
 
@@ -655,104 +1028,65 @@ Visto en `api/settings/route.ts:POST`.
 
 ### 5.1 Cómo funciona
 
-**Sistema manual** — no hay herramienta automatizada (no se usa Prisma migrate, Drizzle Kit, ni similar). Las migraciones son scripts **`.mjs`** en `/scripts/` que se ejecutan a mano:
+**Sistema manual** — no hay herramienta automatizada (sin Prisma/Drizzle). Dos formatos coexisten:
+- **`.mjs`** (originales, abril–mayo 2026): `node scripts/migrate-<feature>.mjs`. Leen `DATABASE_URL` de dotenv, instancian Neon, ejecutan ALTER/CREATE/INSERT idempotentes.
+- **`.sql`** (mayo–junio 2026): se aplican con **psql** porque **Node 26 + `@neondatabase/serverless` rompe los `.mjs`** con `TypeError: fetch failed` (gotcha #13). `psql "$DATABASE_URL_UNPOOLED" -f scripts/migrate-<feature>.sql`.
 
-```bash
-node scripts/migrate-<feature>.mjs
-```
+Toda migración es **idempotente** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, guards `DO/EXCEPTION` para FKs).
 
-Cada migración:
-1. Lee `DATABASE_URL` de `dotenv`.
-2. Instancia cliente Neon.
-3. Ejecuta ALTER/CREATE/INSERT con `IF NOT EXISTS` o checks previos para ser **idempotente**.
-4. Reporta resultados por consola con emojis.
+### 5.2 El esquema consolidado de producción
 
-### 5.2 Cómo crear una migración nueva
+**`scripts/migrate-produccion-2026-05-29.sql`** es la fuente de verdad: lleva producción de las 6 tablas base a 14 tablas + 13 columnas + backfill de `productos.codigo`, en una sola transacción aditiva e idempotente. Rollback: `scripts/rollback-produccion-2026-05-29.sql`. **Para futuros cambios de esquema:** probar en `dev-hugo`, y al mergear a `main` aplicar la migración a producción **por psql ANTES** de que el deploy del código nuevo quede activo (gotcha #17).
 
-**Patrón** basado en `migrate-despacho-v2.mjs`:
+### 5.3 Migraciones aplicadas (orden lógico)
 
-```javascript
-// scripts/migrate-<nombre>.mjs
-import { neon } from "@neondatabase/serverless";
-import dotenv from "dotenv";
-dotenv.config();
+**Esquema base + Fase A/B** (consolidadas en `migrations-fase-ab.sql` y luego en el consolidado de producción):
 
-const sql = neon(process.env.DATABASE_URL);
-
-async function migrate() {
-  console.log("🔄 Iniciando migración <nombre>...\n");
-
-  // Idempotencia: ADD COLUMN IF NOT EXISTS / CREATE TABLE IF NOT EXISTS / etc.
-  console.log("1️⃣ Agregando columna foo...");
-  await sql`ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS foo TEXT`;
-  console.log("   ✅ foo agregada");
-
-  // Si la migración modifica datos existentes, usar checks
-  const checkColumn = await sql`
-    SELECT column_name FROM information_schema.columns
-    WHERE table_name = 'pedidos' AND column_name = 'foo'
-  `;
-  if (checkColumn.length === 0) {
-    throw new Error("Columna foo no se creó correctamente");
-  }
-
-  console.log("\n🎉 Migración completada!");
-}
-
-migrate().catch((err) => {
-  console.error("❌ Error en migración:", err);
-  process.exit(1);
-});
-```
-
-**Reglas:**
-- **Nunca modificar** una migración ya aplicada en producción. Crear una nueva.
-- **Siempre usar `IF NOT EXISTS`** en `ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`.
-- **Loguear cada paso** con consola descriptiva.
-- **Verificar idempotencia** — debe poder correrse 2 veces sin romper.
-- **Documentar en el header** qué hace y por qué.
-
-### 5.3 Migraciones documentadas vs no documentadas
-
-**Documentadas** (existen en `/scripts/`):
-
-| Orden | Script | Qué hace |
-|---|---|---|
-| 1 | `seed.mjs` | DROP + CREATE inicial de `users` y `pedidos`. Inserta 8 usuarios. **DESTRUCTIVO.** |
-| 2 | `migrate-products.mjs` | Crea `productos` y `pedido_items`. Inserta ~35 productos. |
-| 3 | `migrate-entregado-por.mjs` | + `entregado_por`, `entregado_at` a `pedidos`. |
-| 4 | `migrate-direccion-mapa.mjs` | + `direccion_mapa` a `pedidos`. |
-| 5 | `migrate-estados.mjs` | + `estado` y campos de despacho a `pedidos`. **Migra datos legacy.** Crea 3 índices. |
-| 6 | `migrate-despacho-v2.mjs` | Crea `settings`. + `distancia_km`, `duracion_estimada_min` a `pedidos`. |
-| 7 | `run-migration.mjs` (+ `migration_add_asesor_to_clientes.sql`) | + `asesor_id` a `clientes`. Crea índice. **Asume `clientes` ya existe.** |
-
-**No documentadas** (existen en producción pero no en `/scripts/`):
-
-- `CREATE TABLE clientes (...)` — la tabla base.
-- `ALTER TABLE pedidos ADD COLUMN cliente_id UUID;`
-- `ALTER TABLE pedidos ADD COLUMN razon_social VARCHAR(255);`
-- `ALTER TABLE pedidos ADD COLUMN ruc_dni VARCHAR(50);`
-- `ALTER TABLE pedidos ADD COLUMN es_delivery_externo BOOLEAN DEFAULT FALSE;`
-- `ALTER TABLE pedidos ADD COLUMN delivery_externo_nombre TEXT;`
-
-**Acción recomendada:** crear `scripts/migrate-missing-schema.mjs` que aplique idempotentemente las columnas faltantes, así un developer nuevo puede reconstruir la DB desde cero.
-
-### 5.4 Roles iniciales del seed
-
-`scripts/seed.mjs:36-46` inserta 8 usuarios:
-
-| Nombre | Rol |
+| Script | Qué hace |
 |---|---|
-| Antonio | admin |
-| Leslie | asesor |
-| Yoshelin | asesor |
-| Sarai | asesor |
-| Yesica | asesor |
-| Marco | repartidor |
-| Yhorner | repartidor |
-| Anghelo | repartidor |
+| `seed.mjs` | DROP + CREATE inicial de `users` y `pedidos`. Inserta 8 usuarios. **DESTRUCTIVO.** |
+| `migrate-products.mjs` | Crea `productos` y `pedido_items`. Inserta ~35 productos. |
+| `migrate-entregado-por.mjs` | + `entregado_por`, `entregado_at` a `pedidos`. |
+| `migrate-direccion-mapa.mjs` | + `direccion_mapa` a `pedidos`. |
+| `migrate-estados.mjs` | + `estado` y campos de despacho a `pedidos`. Migra datos legacy. 3 índices. |
+| `migrate-despacho-v2.mjs` | Crea `settings`. + `distancia_km`, `duracion_estimada_min`. |
+| `run-migration.mjs` (+ `migration_add_asesor_to_clientes.sql`) | + `asesor_id` a `clientes`. Índice. Asume `clientes` ya existe. |
+| `migrate-precios-productos.mjs` / `seed-precios-2026.mjs` | + `precio_compra`/`precio_venta` a `productos`, `pedido_items`; crea `precios_productos`; seed de 39 precios. |
+| `migrate-cantidad-real.mjs` | + `cantidad_real`/`subtotal_real` a `pedido_items`; `pesado_por`/`pesado_at` a `pedidos`. |
+| `migrate-correlativos-guias.mjs` | Crea `correlativos`; + columnas de guía a `pedidos`; índice único `numero_guia`. |
+| `migrate-metas.mjs` | Crea `metas_asesoras`. |
+| `migrate-notificaciones.mjs` | Crea `notificaciones`. |
+| `migrate-cobranzas.mjs` | + `plazo_pago_dias` a `clientes`; crea `facturas`. |
+| `migrate-comprobantes.mjs` | Crea `comprobantes_contador` y `comprobantes`. |
+| `migrate-resumenes-diarios.{mjs,sql}` | Crea `resumenes_diarios`. |
+| `migrate-codigo-producto.sql` | + `productos.codigo` + backfill por categoría. |
+| `migrate-comprobante-credito.sql` | + `comprobantes.forma_pago`, `fecha_vencimiento`. |
 
-Las contraseñas están **hardcodeadas en plain text en el script** y se hashean con bcrypt salt 10 antes del INSERT. **Cambiarlas en producción** (no están en este documento por seguridad).
+**Migraciones aditivas posteriores al consolidado** (psql, dev-hugo + producción):
+
+| Script | Qué hace |
+|---|---|
+| `migrate-comprobante-items.sql` | + `comprobantes.items_json` (JSONB). |
+| `migrate-comprobante-referencia.sql` | + `comprobantes.referencia_comprobante_id` (FK self) + índice. |
+| `migrate-comprobante-emisor.sql` | + `comprobantes.emitido_por` + backfill best-effort. |
+| `migrate-factura-vinculo.sql` | + `facturas.cliente_id`, `comprobante_id` (FKs) + índices. |
+| `migrate-cobranza-pago.sql` | + `facturas.metodo_pago`, `pago_detalle`, `pago_img_base64`, `pago_img_mime`. |
+| `migrate-pedido-ediciones.sql` | Crea `pedido_ediciones` + índice. |
+| `migrate-meta-bono.sql` | + `metas_asesoras.bono`; `monto_meta` → NULLABLE. |
+
+**No documentadas** (existen en producción, sin `ALTER TABLE` en `/scripts/`, confirmadas por uso): `pedidos.cliente_id`, `razon_social`, `ruc_dni`, `es_delivery_externo`, `delivery_externo_nombre`, y la tabla base `clientes` (solo existe el ALTER de `asesor_id`/`plazo_pago_dias`).
+
+### 5.4 Cómo crear una migración nueva
+
+Hoy se prefiere **`.sql` aplicado por psql** (por el gotcha #13). Reglas:
+- **Nunca modificar** una migración ya aplicada. Crear una nueva.
+- **Siempre `IF NOT EXISTS`** en `ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`; **FKs** envueltas en `DO $$ … EXCEPTION WHEN duplicate_object THEN NULL; END $$;`.
+- **Aditiva y backwards-compatible** — que la app vieja no se rompa si la migración corre antes del deploy.
+- **Documentar en el header** qué hace, por qué, y el comando psql. Aplicar a producción **antes** del deploy del código que la usa.
+
+### 5.5 Roles iniciales del seed
+
+`scripts/seed.mjs:37-46` inserta 8 usuarios: Antonio (admin); Leslie, Yoshelin, Sarai, Yesica (asesor); Marco, Yhorner, Anghelo (repartidor). Las contraseñas están en plain text en el script y se hashean con bcrypt salt 10. **Cambiarlas en producción.** (El rol `produccion` no viene del seed; se crea por `POST /api/users`.)
 
 ---
 
@@ -760,62 +1094,78 @@ Las contraseñas están **hardcodeadas en plain text en el script** y se hashean
 
 | Decisión | Motivo | Ubicación en código |
 |---|---|---|
-| **`pedidos` denormalizado** | Preservar histórico de cliente | `api/pedidos/route.ts:106-108` (INSERT) |
-| **`cliente_id` sin FK enforced** | Permite eliminar cliente sin romper pedidos | `api/clientes/[id]/route.ts:DELETE` |
-| **`entregado` (boolean) coexiste con `estado` (varchar)** | Migración progresiva — se mantienen sincronizadas | `api/pedidos/[id]/route.ts:80-114` |
-| **`distancia_km` congelada al asignar** | "Cuánto está del local" es info de negocio fija | `api/despacho/optimizar-ruta/route.ts:198-201` (NO actualiza distancia_km) |
-| **`detalle_final` separada de `detalle`** | Peso pedido vs peso real entregado | `PesoModal.tsx`, post-entrega |
-| **`razon_fallo` requerida ≥5 chars si Fallido** | Forzar registro útil de fallos | `api/pedidos/[id]/entregar/route.ts:9-15` (zod refine) |
-| **`pedido_items` con CASCADE delete** | Si se borra pedido, sus items mueren | `migrate-products.mjs:35` |
-| **`productos.activo` con soft delete** | Preservar referencias en `pedido_items` históricos | `api/productos/[id]/route.ts:DELETE` |
-| **`settings` JSONB key/value** | Extensible para futuras configs sin migraciones | `migrate-despacho-v2.mjs:15-21` |
-| **`empresa` como string libre, no FK** | Solo 2 valores ('Transavic', 'Avícola de Tony'), no justifica tabla | Múltiples queries `GROUP BY empresa` |
-| **`asesor_id` ON DELETE SET NULL en clientes** | Cliente sobrevive al borrar asesora | `run-migration.mjs:10` |
-| **Sin enum SQL para `estado` o `categoria`** | Flexibilidad — solo strings consistentes con zod | `migrate-estados.mjs:31` |
+| **`pedidos` denormalizado** | Preservar histórico del cliente | `api/pedidos/route.ts:118` (INSERT) |
+| **`cliente_id` sin FK enforced** | Borrar cliente sin romper pedidos | `api/clientes/[id]/route.ts:DELETE` |
+| **`entregado` (boolean) coexiste con `estado`** | Migración progresiva — se sincronizan | `api/pedidos/[id]/route.ts` (~80-114) |
+| **`distancia_km` congelada al asignar** | "Cuánto está del local" es info fija | `api/despacho/optimizar-ruta/route.ts` (no toca distancia_km) |
+| **`detalle_final` + `*_real` separados del estimado** | Peso pedido vs peso real (venta al peso) | `PesoModal`, flujo de producción |
+| **`created_at` (venta) ≠ `fecha_pedido` (entrega)** | Medir asesora por venta, admin por entrega | `lib/metas.ts` vs `lib/insights.ts` (gotcha #8) |
+| **Precios CON IGV incluido** | Es lo que cobra Antonio; se neteo antes de SUNAT | `api/comprobantes/emitir/route.ts` (gotcha #10) |
+| **`productos.codigo` estable** | `SellersItemIdentification` de SUNAT | `migrate-codigo-producto.sql` |
+| **`precios_productos` con vigencia** | Auditoría de cambios de precio | `PATCH /api/productos` |
+| **`comprobantes` no scopeado por rol** | Todas las asesoras ven todos los comprobantes | `GET /api/comprobantes` (jun 2026) |
+| **PDF/correo leen del `xml_firmado_base64`** | El XML firmado es el documento legal fiel | `lib/sunat/parse-cpe-items.ts` (gotcha #18) |
+| **`items_json` como red de seguridad del reintento** | Reconstruir XML correcto sin pedido | `migrate-comprobante-items.sql` (gotcha #19) |
+| **NC ↔ original vía `referencia_comprobante_id`** | Mostrar el vínculo + bloquear 2ª NC | `migrate-comprobante-referencia.sql` |
+| **`facturas` = cobranzas (no comprobantes)** | CxC con plazo; `pedido_id` nullable | `migrate-cobranzas.mjs`, `lib/cobranzas.ts` |
+| **`metas_asesoras.monto_meta` NULLABLE** | Fila solo-bono sin override de meta | `migrate-meta-bono.sql` |
+| **Captura de pago en base64 en DB** | Sin storage externo ($0) | `migrate-cobranza-pago.sql` |
+| **`pedido_ediciones` auditoría no-bloqueante** | Trazabilidad de correcciones del admin | `lib/pedido-historial.ts` |
+| **`resumenes_diarios` idempotente** | No duplicar el RC de boletas si el cron corre 2× | `lib/sunat/resumen-diario.ts` |
+| **`settings` JSONB key/value** | Configs extensibles sin migración (`base_location`, `incentivos_config`) | `api/settings`, `lib/incentivos.ts` |
+| **`empresa` como string libre, no FK** | Solo 2 valores; no justifica tabla | Múltiples `GROUP BY empresa` |
+| **`pedido_items` con CASCADE delete** | Si se borra el pedido, sus ítems mueren | `migrate-products.mjs` |
+| **`productos.activo` soft delete** | Preservar referencias históricas | `api/productos/[id]:DELETE` |
+| **Sin enum SQL para estados/categorías** | Flexibilidad — consistencia vía zod | `migrate-estados.mjs` |
 
 ---
 
 ## 7. Cómo verificar que este documento sigue vigente
 
 ```bash
-# 1. Estructura de tablas — verificar contra DB real
-psql $DATABASE_URL -c "\d users"
-psql $DATABASE_URL -c "\d clientes"
-psql $DATABASE_URL -c "\d pedidos"
-psql $DATABASE_URL -c "\d productos"
-psql $DATABASE_URL -c "\d pedido_items"
-psql $DATABASE_URL -c "\d settings"
+# 1. Lista de tablas reales (deberían ser ~15: 6 base + 8 del consolidado + pedido_ediciones)
+psql "$DATABASE_URL" -c "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename;"
 
-# 2. Columnas reales de pedidos
-psql $DATABASE_URL -c "
-  SELECT column_name, data_type, is_nullable, column_default
-  FROM information_schema.columns
-  WHERE table_name = 'pedidos'
-  ORDER BY ordinal_position;
-"
+# 2. Estructura de una tabla puntual
+psql "$DATABASE_URL" -c "\d comprobantes"
+psql "$DATABASE_URL" -c "\d facturas"
+psql "$DATABASE_URL" -c "\d pedidos"
 
-# 3. Migraciones aplicadas
+# 3. Columnas de pedidos (debe incluir numero_guia, pesado_*, guia_firmada_*, cliente_id, etc.)
+psql "$DATABASE_URL" -c "
+  SELECT column_name, data_type, is_nullable
+  FROM information_schema.columns WHERE table_name='pedidos'
+  ORDER BY ordinal_position;"
+
+# 4. Migraciones presentes
 ls -1 scripts/*.mjs scripts/*.sql
 
-# 4. ¿El tipo Pedido sigue consistente con DB?
+# 5. ¿El tipo Pedido sigue consistente?
 grep -A 40 "export type Pedido = {" src/lib/types.ts
 
-# 5. ¿Aparecen nuevos INSERTs en pedidos con columnas distintas?
-grep -A 2 "INSERT INTO pedidos" src/app/api/**/*.ts
+# 6. ¿Nuevos INSERT/UPDATE en pedidos con columnas distintas?
+grep -rn "INSERT INTO pedidos\|UPDATE pedidos" src/app/api/
 
-# 6. ¿Aparecen nuevos UPDATEs en pedidos con columnas distintas?
-grep -B 1 -A 5 "UPDATE pedidos" src/app/api/**/*.ts | grep "SET " | sort -u
+# 7. Claves en settings
+psql "$DATABASE_URL" -c "SELECT key FROM settings;"
 
-# 7. ¿Hay nuevas entries en settings?
-psql $DATABASE_URL -c "SELECT key FROM settings;"
+# 8. ¿Apareció rider_locations o tracking GPS persistido?
+grep -rn "rider_location" scripts/ src/ android/
 ```
 
-Si encuentras drift, actualiza las secciones afectadas y bumpea la fecha del header.
+Si encontrás drift, actualizá las secciones afectadas y bumpeá la fecha del header.
+
+---
+
+## 8. Pendiente / no presente en el esquema
+
+- **`rider_locations` (tracking GPS en vivo del repartidor)** — Mejora 3 (Capacitor + Pusher). **No existe** en producción ni en el código commiteado a la fecha de esta verificación: no hay migración, tabla ni referencia en `scripts/`, `src/` ni `android/`. Si se implementa, será una tabla nueva (probablemente `rider_locations` con `repartidor_id FK`, `lat`, `lng`, `accuracy`, `captured_at`) + su endpoint de ingesta y el marker en `mapa-despacho`. Documentar aquí cuando aterrice.
+- **Eliminar columnas legacy de `pedidos`** (`entregado`, `entregado_por`, `entregado_at`) — pendiente hasta que no queden queries que las lean (gotcha #1). Por ahora **NO eliminar**.
 
 ---
 
 ## Siguientes documentos
 
-- **`03-autenticacion-y-roles.md`** — cómo se aplica el scoping por rol en queries (incluye casos concretos del data layer).
-- **`04-flujos-de-negocio.md`** — máquina de estados completa con todas las transiciones.
+- **`03-autenticacion-y-roles.md`** — cómo se aplica el scoping por rol en queries (el scoping vive en SQL, no en la DB — Neon no tiene RLS).
+- **`04-flujos-de-negocio.md`** — máquina de estados completa del pedido (incluye `En_Produccion` / `Listo_Para_Despacho`) + flujos de comprobantes y cobranzas.
 - **`05-apis-e-integraciones.md`** — referencia de endpoints que leen/escriben cada tabla.

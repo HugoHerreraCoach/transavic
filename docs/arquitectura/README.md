@@ -1,7 +1,8 @@
 # Documentación de Arquitectura — Transavic
 
-> **Última actualización:** 2026-05-13
-> **Commit verificado:** `d2a49cd`
+> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha)
+> **Commit base:** `d2a49cd` + cambios hasta el 2 jun 2026 (PRs #6–#11)
+> **Estado:** proyecto **EN PRODUCCIÓN** desde el 30 may 2026 (`transavic.vercel.app`)
 
 Esta carpeta contiene la **referencia técnica de verdad** del sistema Transavic, verificada contra el código real. Está pensada para que el desarrollador principal (Hugo) y agentes IA futuros entiendan el sistema en profundidad sin re-leer 8,000 líneas de implementación.
 
@@ -13,11 +14,11 @@ Para overview rápido y gotchas del día a día, ver **[`/CLAUDE.md`](../../CLAU
 
 | # | Documento | Cuándo leerlo | Líneas |
 |---|---|---|---|
-| 1 | **[01-vision-general.md](./01-vision-general.md)** | Primera vez que entrás al proyecto. Querés entender stack, deployment y decisiones macro. | ~470 |
-| 2 | **[02-modelo-de-datos.md](./02-modelo-de-datos.md)** | Vas a tocar el schema, agregar tablas/columnas, o entender por qué algo está denormalizado. | ~640 |
-| 3 | **[03-autenticacion-y-roles.md](./03-autenticacion-y-roles.md)** | Vas a crear un endpoint nuevo, agregar un rol, o entender cómo se aplica scoping. | ~520 |
-| 4 | **[04-flujos-de-negocio.md](./04-flujos-de-negocio.md)** | Vas a modificar la máquina de estados del pedido, agregar transiciones, o entender qué hace cada pantalla. | ~720 |
-| 5 | **[05-apis-e-integraciones.md](./05-apis-e-integraciones.md)** | Referencia rápida de endpoints, Google Maps, offline queue. También lista deudas de auditoría. | ~720 |
+| 1 | **[01-vision-general.md](./01-vision-general.md)** | Primera vez que entras al proyecto. Quieres entender stack, deployment y decisiones macro. | ~660 |
+| 2 | **[02-modelo-de-datos.md](./02-modelo-de-datos.md)** | Vas a tocar el schema, agregar tablas/columnas, o entender por qué algo está denormalizado. | ~1170 |
+| 3 | **[03-autenticacion-y-roles.md](./03-autenticacion-y-roles.md)** | Vas a crear un endpoint nuevo, agregar un rol, o entender cómo se aplica el scoping (empieza por §0: dónde viven los permisos). | ~675 |
+| 4 | **[04-flujos-de-negocio.md](./04-flujos-de-negocio.md)** | Vas a modificar la máquina de estados del pedido, agregar transiciones, o entender cómo se conectan las áreas (el "lazo del dinero"). | ~1260 |
+| 5 | **[05-apis-e-integraciones.md](./05-apis-e-integraciones.md)** | Referencia de endpoints (~70 handlers), integraciones (SUNAT, Maps, Brevo, apisperu, Gemini), offline queue. | ~1010 |
 
 ---
 
@@ -126,10 +127,10 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 
 | Fase | Estado | Documento detallado |
 |---|---|---|
-| **Sistema base** | ✅ Producción | Doc 01-05 |
-| **Fase A — Base operativa** (precios, producción, guía digital, foto firmada) | ✅ Código completo en local — pendiente migración SQL contra Neon branch | `docs/superpowers/plans/2026-05-13-fase-a-base-operativa.md` |
-| **Fase B — Visibilidad y dinero** (metas, notificaciones, cobranzas, SUNAT stub) | ✅ Código completo en local | `docs/superpowers/plans/2026-05-13-fase-b-visibilidad-y-dinero.md` |
-| **Fase C — Inteligencia + App móvil** (IA Gemini, Capacitor + Pusher) | ⏳ Pendiente | — |
+| **Sistema base** | ✅ En producción | Doc 01-05 |
+| **Fase A — Base operativa** (precios, producción, guía digital, foto firmada) | ✅ **En producción** (30 may 2026) | `docs/superpowers/plans/2026-05-13-fase-a-base-operativa.md` |
+| **Fase B — Visibilidad y dinero** (metas, notificaciones, cobranzas, SUNAT real) | ✅ **En producción** (30 may 2026) | `docs/superpowers/plans/2026-05-13-fase-b-visibilidad-y-dinero.md` |
+| **Fase C — Inteligencia + App móvil** | IA Gemini ✅ **en producción**; app móvil del repartidor (Capacitor + Pusher) ⏳ **solo en local** (carpeta `android/`, sin desplegar) | — |
 
 ### Cambios en el modelo de datos (Fase A + B)
 
