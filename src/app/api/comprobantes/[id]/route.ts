@@ -37,11 +37,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   if (role !== "admin" && role !== "asesor") {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
-  const userId = session.user.id;
-
-  // Traer el comprobante (con scoping según rol)
-  const rows = (role === "admin"
-    ? ((await sql`
+  // Acceso (decisión de negocio jun 2026): admin y asesoras ven/descargan TODOS los
+  // comprobantes (transparencia total del equipo), igual que la lista de /comprobantes.
+  // Por eso NO se filtra por asesor → la asesora puede bajar el PDF de CUALQUIER
+  // comprobante, incluidas las notas de crédito y los standalone (sin pedido).
+  const rows = (await sql`
         SELECT
           c.id, c.pedido_id, c.ruc_emisor, c.empresa, c.tipo, c.serie, c.numero,
           c.serie_numero, c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
@@ -55,22 +55,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         LEFT JOIN pedidos p ON p.id = c.pedido_id
         WHERE c.id = ${id}::uuid
         LIMIT 1
-      `) as unknown)
-    : ((await sql`
-        SELECT
-          c.id, c.pedido_id, c.ruc_emisor, c.empresa, c.tipo, c.serie, c.numero,
-          c.serie_numero, c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
-          c.monto_subtotal, c.monto_igv, c.monto_total, c.moneda,
-          c.estado, c.hash_cpe, c.xml_firmado_base64, c.cdr_base64,
-          c.observaciones, c.mensaje_sunat, c.created_at,
-          c.forma_pago, c.fecha_vencimiento,
-          p.cliente AS pedido_cliente, p.direccion AS pedido_direccion,
-          p.whatsapp AS pedido_whatsapp
-        FROM comprobantes c
-        INNER JOIN pedidos p ON p.id = c.pedido_id
-        WHERE c.id = ${id}::uuid AND p.asesor_id = ${userId}::uuid
-        LIMIT 1
-      `) as unknown)) as Array<{
+      `) as Array<{
     id: string;
     pedido_id: string | null;
     ruc_emisor: string;
