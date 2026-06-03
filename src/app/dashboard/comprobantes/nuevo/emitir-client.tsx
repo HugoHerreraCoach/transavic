@@ -384,20 +384,36 @@ export default function EmitirComprobanteClient({
   }
 
   const handleSelectCliente = (cli: ClienteData) => {
-    setNumDoc(cli.ruc_dni || "");
-    setRazonSocial(cli.razon_social || cli.nombre || "");
-    setDireccionCliente(cli.direccion || "");
+    const doc = (cli.ruc_dni || "").trim();
+    setNumDoc(doc);
     setBusquedaCliente(cli.nombre);
     setShowSugerencias(false);
     setClienteId(cli.id || null);
-    setDocInfo(cli.ruc_dni?.length === 11 ? { estado: "ACTIVO", condicion: "HABIDO" } : null);
-    
-    // Auto-detectar tipo según longitud
-    const doc = (cli.ruc_dni || "").trim();
+
     if (doc.length === 11) {
-      setTipo("01"); // Factura
+      // RUC → FACTURA. NO usamos los datos informales del cliente (su "nombre" y su
+      // dirección de ENTREGA): para una factura los datos legales (razón social +
+      // dirección FISCAL) deben venir de SUNAT. Limpiamos razón social/dirección y
+      // dejamos docInfo en null → la AUTO-CONSULTA (efecto de arriba) los trae
+      // oficiales de SUNAT. Así la factura siempre sale fiel y "Consultar" pasa a
+      // ser, en la práctica, obligatorio para identificar al cliente.
+      setTipo("01");
+      setRazonSocial("");
+      setDireccionCliente("");
+      setDocInfo(null);
     } else if (doc.length === 8) {
-      setTipo("03"); // Boleta
+      // DNI → BOLETA (consumidor final): el nombre del cliente sí sirve.
+      setTipo("03");
+      setRazonSocial(cli.razon_social || cli.nombre || "");
+      setDireccionCliente(cli.direccion || "");
+      setDocInfo(null);
+    } else {
+      // Sin documento válido: NO autocompletar con el nombre informal (evita
+      // facturas/boletas con datos pobres). El aviso ámbar guía a poner RUC/DNI y
+      // tocar Consultar; sin doc, la boleta < S/700 sale a "CLIENTES VARIOS".
+      setRazonSocial("");
+      setDireccionCliente("");
+      setDocInfo(null);
     }
   };
 
@@ -1143,12 +1159,12 @@ export default function EmitirComprobanteClient({
                 {/* Razón Social */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 uppercase mb-1.5">
-                    Razón social / Nombre Completo
+                    {tipo === "01" ? "Razón social" : "Nombre completo"}
                   </label>
                   <input
                     value={razonSocial}
                     onChange={(e) => setRazonSocial(e.target.value)}
-                    placeholder="Razón social o nombre completo del cliente"
+                    placeholder={tipo === "01" ? "Razón social (de la empresa)" : "Nombre completo del cliente"}
                     className={`w-full p-2.5 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring}`}
                   />
                 </div>
