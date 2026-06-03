@@ -68,10 +68,11 @@ type ActionsCellProps = {
     onShare: (pedido: Pedido) => void;
     userRole: string;
     userName: string;
+    userId: string;
     usuarios: string[];
 };
 
-function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName, usuarios }: ActionsCellProps) {
+function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRole, userName, userId, usuarios }: ActionsCellProps) {
     const router = useRouter();
     const [isProcessing, setIsProcessing] = useState(false);
     const [showDeliverySelector, setShowDeliverySelector] = useState(false);
@@ -138,7 +139,10 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
         setIsProcessing(true);
         try {
             const response = await fetch(`/api/pedidos/${pedido.id}`, { method: 'DELETE' });
-            if (!response.ok) throw new Error('Error al eliminar');
+            if (!response.ok) {
+                const j = await response.json().catch(() => null);
+                throw new Error(j?.error || 'Error al eliminar');
+            }
             onDelete(pedido.id);
         } catch (err) {
             alert(`No se pudo eliminar el pedido: ${err instanceof Error ? err.message : 'Error'}`);
@@ -189,6 +193,14 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     };
 
     const isDelivered = pedido.estado === 'Entregado';
+
+    // ── Quién puede ELIMINAR este pedido ──
+    // Admin: cualquiera. Asesora: SOLO el suyo y SOLO mientras sigue 'Pendiente'
+    // (antes de que entre a producción/despacho). El backend revalida lo mismo y
+    // además que no tenga comprobante. El repartidor no ve este menú.
+    const puedeEliminar =
+        userRole === 'admin' ||
+        (userRole === 'asesor' && pedido.asesor_id === userId && pedido.estado === 'Pendiente');
 
     return (
         <>
@@ -367,7 +379,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                         <span>Duplicar pedido</span>
                                     </button>
 
-                                    {userRole === 'admin' && (
+                                    {puedeEliminar && (
                                         <div className="h-px bg-gray-100 my-1" />
                                     )}
 
@@ -384,7 +396,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                         </button>
                                     )}
 
-                                    {userRole === 'admin' && (
+                                    {puedeEliminar && (
                                         <button
                                             onClick={() => {
                                                 setShowMenu(false);
@@ -439,6 +451,7 @@ type PedidoCardProps = {
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
+    userId: string;
     usuarios: string[];
 };
 
@@ -451,6 +464,7 @@ type PedidosTableProps = {
     visibleColumns: Record<Column, boolean>;
     userRole: string;
     userName: string;
+    userId: string;
     usuarios: string[];
 };
 
@@ -464,7 +478,7 @@ function getRowBgClass(estado: EstadoPedido): string {
     }
 }
 
-function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidoCardProps) {
+function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, userId, usuarios }: PedidoCardProps) {
     const getWhatsAppLink = (numero: string | null | undefined) => {
         if (!numero) return '#';
         return `https://wa.me/${numero.replace(/[^0-9]/g, '')}`;
@@ -524,13 +538,13 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
 
             <div className="mt-4 pt-4 border-t border-gray-200">
                 <label className="block text-sm font-medium text-gray-700 mb-2">Acciones</label>
-                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} userId={userId} usuarios={usuarios} />
             </div>
         </div>
     );
 }
 
-export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, usuarios }: PedidosTableProps) {
+export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated, onEditClick, onShareClick, visibleColumns, userRole, userName, userId, usuarios }: PedidosTableProps) {
     if (pedidos.length === 0) {
         return <p className="mt-8 text-center text-gray-500">No se encontraron pedidos.</p>;
     }
@@ -543,7 +557,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
         <>
             <div className="space-y-4 sm:hidden print:hidden">
                 {pedidos.map((pedido) => (
-                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} usuarios={usuarios} />
+                    <PedidoCard key={pedido.id} pedido={pedido} onPedidoDeleted={onPedidoDeleted} onPedidoUpdated={onPedidoUpdated} onEditClick={onEditClick} onShareClick={onShareClick} visibleColumns={visibleColumns} userRole={userRole} userName={userName} userId={userId} usuarios={usuarios} />
                 ))}
             </div>
 
@@ -601,7 +615,7 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
 
                                 <td className="px-4 py-4 whitespace-nowrap">
                                     <div className="print:hidden">
-                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} usuarios={usuarios} />
+                                        <ActionsCell pedido={pedido} onDelete={onPedidoDeleted} onUpdateStatus={onPedidoUpdated} onEdit={onEditClick} onShare={onShareClick} userRole={userRole} userName={userName} userId={userId} usuarios={usuarios} />
                                     </div>
                                     <div className="hidden print:block">{pedido.estado}</div>
                                 </td>

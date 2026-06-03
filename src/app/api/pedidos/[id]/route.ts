@@ -334,11 +334,13 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // ── Rol: SOLO el admin puede eliminar pedidos. Las asesoras corrigen con
-    //    "Editar" (queda en el historial), pero no borran; el repartidor tampoco. ──
-    if (session.user.role !== "admin") {
+    // ── Rol: el admin elimina cualquier pedido; la ASESORA puede eliminar SOLO
+    //    los suyos y SOLO mientras siguen 'Pendiente' (validado más abajo, una vez
+    //    que tenemos el id y la conexión). El repartidor nunca elimina. ──
+    const rol = session.user.role;
+    if (rol !== "admin" && rol !== "asesor") {
       return NextResponse.json(
-        { error: "Solo un administrador puede eliminar pedidos." },
+        { error: "No tienes permiso para eliminar pedidos." },
         { status: 403 }
       );
     }
@@ -357,6 +359,49 @@ export async function DELETE(request: Request) {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
+
+    // ── Asesora: revalidar en el servidor (el frontend solo decide qué botón
+    //    mostrar). Solo su propio pedido, solo si sigue 'Pendiente', y nunca uno
+    //    que ya tenga un comprobante fiscal vivo (eso se anula con Nota de Crédito). ──
+    if (rol === "asesor") {
+      const rows = await sql`SELECT asesor_id, estado FROM pedidos WHERE id = ${id}`;
+      if (rows.length === 0) {
+        return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+      }
+      const { asesor_id, estado } = rows[0] as {
+        asesor_id: string | null;
+        estado: string;
+      };
+      if (asesor_id !== session.user.id) {
+        return NextResponse.json(
+          { error: "Solo puedes eliminar pedidos que tú creaste." },
+          { status: 403 }
+        );
+      }
+      if (estado !== "Pendiente") {
+        return NextResponse.json(
+          {
+            error:
+              "Solo puedes eliminar un pedido que sigue 'Pendiente'. Este ya avanzó (producción, despacho o entrega); pídele al administrador que lo elimine.",
+          },
+          { status: 409 }
+        );
+      }
+      const comp = await sql`
+        SELECT 1 FROM comprobantes
+        WHERE pedido_id = ${id} AND estado IN ('aceptado', 'observado')
+        LIMIT 1
+      `;
+      if (comp.length > 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Este pedido ya tiene un comprobante emitido y no se puede eliminar. Para anularlo, emite una Nota de Crédito.",
+          },
+          { status: 409 }
+        );
+      }
+    }
 
     const result = await sql`
       DELETE FROM pedidos

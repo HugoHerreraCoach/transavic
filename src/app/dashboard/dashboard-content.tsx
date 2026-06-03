@@ -210,6 +210,7 @@ function Dashboard({ session }: DashboardContentProps) {
               visibleColumns={visibleColumns}
               userRole={session.user.role}
               userName={session.user.name || 'Desconocido'}
+              userId={session.user.id}
               usuarios={usuarios}
             />
             {totalPages > 1 && (
