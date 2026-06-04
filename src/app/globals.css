@@ -138,11 +138,24 @@ summary {
   }
 
   /* === Vista de Impresión (VistaImpresion.tsx) === */
-  /* Cada card de pedido: evita cortes internos donde sea posible */
-  .impresion-container > div > div {
+  /* A4 (hoja de tamaño fijo): una tarjeta de pedido NO debe partirse entre hojas. */
+  .formato-a4 > div > div {
     break-inside: avoid;
     page-break-inside: avoid;
     overflow: visible !important;
+  }
+  /* Ticket (tiquetera térmica 80mm = papel continuo): el contenido debe FLUIR como
+     texto corrido. break-inside:avoid + grid dejaban enormes espacios en blanco:
+     cuando un pedido no cabía en lo que restaba de "página", saltaba a la siguiente
+     y dejaba el resto vacío → mucho papel en blanco en el rollo. En bloque y sin
+     break-inside, cada página se llena y el reporte sale junto, sin huecos. */
+  .formato-ticket > div > div {
+    break-inside: auto;
+    page-break-inside: auto;
+    overflow: visible !important;
+  }
+  .formato-ticket .grid {
+    display: block !important;
   }
 
   /* Cuando un card no cabe y se va a la siguiente página,
