@@ -309,10 +309,12 @@ export async function POST(request: Request) {
             direccion: cliDireccion,
           }
         : {
-            // Boleta < S/700 sin documento válido: consumidor genérico (no inventar DNI de ceros).
+            // Boleta < S/700 sin documento válido: SUNAT permite emitirla A NOMBRE
+            // del cliente (tipo doc "0", número "0"). Si el pedido/form trae un
+            // nombre lo respetamos; si no, "CLIENTES VARIOS". No inventamos DNI de ceros.
             tipoDocumento: TipoDocIdentidad.SIN_DOCUMENTO,
             numDocumento: "0",
-            razonSocial: "CLIENTES VARIOS",
+            razonSocial: cliRazon ? cliRazon.toUpperCase() : "CLIENTES VARIOS",
             direccion: cliDireccion,
           },
       items: itemsSunat,
@@ -342,7 +344,8 @@ export async function POST(request: Request) {
     // Regla del negocio: por defecto TODA factura (tipo 01) crea una cobranza, sea
     // Contado o Crédito, porque en Transavic la mayoría se emite "Contado" pero el
     // cliente paga después. Excepción: el usuario marca `yaCobrado` (cash de mano)
-    // → no se crea cobranza. Boletas (tipo 03) NUNCA crean cobranza (consumidor cash).
+    // → no se crea cobranza. Boletas (tipo 03) al CONTADO no crean cobranza (consumidor
+    // cash), pero una boleta a CRÉDITO SÍ la crea (es venta por cobrar) — lo cubre `esCredito`.
     // Solo se crea si SUNAT aceptó (o el comprobante quedó pendiente por falta de cert);
     // si fue rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
     const emisionOk =
@@ -359,7 +362,11 @@ export async function POST(request: Request) {
       try {
         const { crearFacturaStandalone, plazoDeCobranza } = await import("@/lib/cobranzas");
         await crearFacturaStandalone({
-          clienteNombre: pedido.razon_social ?? pedido.cliente,
+          // Mismo nombre que fue al comprobante (cliRazon ya resuelve override del
+          // form → razón social del pedido → nombre del cliente). Se usa `||` (no
+          // `??`): un razon_social "" (vacío, no null) dejaba la cobranza SIN nombre
+          // → la lista de /cobranzas mostraba solo el número de comprobante.
+          clienteNombre: cliRazon || pedido.cliente || "Cliente",
           clienteId: pedido.cliente_id,
           asesorId: session.user.role === "asesor" ? session.user.id : null,
           monto: totalConIgv,

@@ -435,11 +435,12 @@ export default function EmitirComprobanteClient({
       setDireccionCliente(cli.direccion || "");
       setDocInfo(null);
     } else {
-      // Sin documento válido: NO autocompletar con el nombre informal (evita
-      // facturas/boletas con datos pobres). El aviso ámbar guía a poner RUC/DNI y
-      // tocar Consultar; sin doc, la boleta < S/700 sale a "CLIENTES VARIOS".
-      setRazonSocial("");
-      setDireccionCliente("");
+      // Sin documento válido: para BOLETA, SUNAT permite emitir A NOMBRE del cliente,
+      // así que conservamos su nombre y dirección (le sirven a la asesora y salen en
+      // el comprobante). Para FACTURA igual hará falta el RUC: el aviso ámbar guía a
+      // consultarlo (la consulta sobreescribe estos datos con los oficiales de SUNAT).
+      setRazonSocial(cli.razon_social || cli.nombre || "");
+      setDireccionCliente(cli.direccion || "");
       setDocInfo(null);
     }
   };
@@ -529,11 +530,13 @@ export default function EmitirComprobanteClient({
         clienteValido = true;
         descCliente = "Identificación del cliente válida.";
       } else {
-        // Sin documento válido, monto < S/700 → consumidor genérico (CLIENTES VARIOS).
+        // Sin documento válido, monto < S/700. SUNAT permite emitir la boleta A
+        // NOMBRE del cliente (sin DNI): si hay nombre, sale con ese nombre; si no,
+        // a "CLIENTES VARIOS". El check queda verde porque ambos casos son válidos.
         clienteValido = true;
         descCliente = hayNombre
-          ? "Sin DNI/RUC válido, esta boleta saldrá a CLIENTES VARIOS (el nombre queda en el pedido)."
-          : "Se emitirá a CLIENTES VARIOS (consumidor final, monto menor a S/700).";
+          ? `Sin DNI, esta boleta saldrá a nombre de "${razonSocial.trim()}". Si quieres que figure el DNI, agrégalo arriba.`
+          : "Sin nombre ni documento, se emitirá a CLIENTES VARIOS (consumidor final, monto menor a S/700).";
       }
     }
 
