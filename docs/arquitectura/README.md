@@ -1,6 +1,6 @@
 # Documentación de Arquitectura — Transavic
 
-> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha)
+> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha) · **2026-06-04:** app del repartidor / GPS en vivo pasó a producción (docs 01, 02, 05 actualizados)
 > **Commit base:** `d2a49cd` + cambios hasta el 2 jun 2026 (PRs #6–#11)
 > **Estado:** proyecto **EN PRODUCCIÓN** desde el 30 may 2026 (`transavic.vercel.app`)
 
@@ -134,7 +134,7 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 | **Sistema base** | ✅ En producción | Doc 01-05 |
 | **Fase A — Base operativa** (precios, producción, guía digital, foto firmada) | ✅ **En producción** (30 may 2026) | `docs/superpowers/plans/2026-05-13-fase-a-base-operativa.md` |
 | **Fase B — Visibilidad y dinero** (metas, notificaciones, cobranzas, SUNAT real) | ✅ **En producción** (30 may 2026) | `docs/superpowers/plans/2026-05-13-fase-b-visibilidad-y-dinero.md` |
-| **Fase C — Inteligencia + App móvil** | IA Gemini ✅ **en producción**; app móvil del repartidor (Capacitor + Pusher) ⏳ **solo en local** (carpeta `android/`, sin desplegar) | — |
+| **Fase C — Inteligencia + App móvil** | IA Gemini ✅ **en producción**; app móvil del repartidor (Capacitor, GPS en vivo por **polling** — sin Pusher) ✅ **en producción** (4 jun 2026, PRs #18–#22; publicada en Google Play, Prueba Interna) | — |
 
 ### Cambios en el modelo de datos (Fase A + B)
 

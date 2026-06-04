@@ -1,10 +1,10 @@
 # 01 — Visión General de la Arquitectura
 
-> **Última verificación contra código:** 2026-06-02
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (app del repartidor / GPS en vivo pasó a producción)
 > **Commit del proyecto:** `main` (post-lanzamiento a producción del 30 may 2026)
 > **Archivos clave:** `package.json`, `tsconfig.json`, `next.config.ts`, `vercel.json`, `src/app/layout.tsx`, `src/middleware.ts`, `src/auth.config.ts`, `src/lib/roles.ts`, `src/lib/types.ts`, `src/components/DashboardLayout.tsx`, `src/components/VersionChecker.tsx`, `src/app/api/version/route.ts`, `src/app/globals.css`
 
-> **🚀 Estado: LANZADO A PRODUCCIÓN (30 may 2026).** El sistema base + las mejoras de las Fases A/B y la mayoría de la Fase C están desplegadas en `main` → Vercel (plan **Pro**). Lo único que sigue **solo en local** es la app nativa del motorizado (Capacitor, carpeta `android/`). Ver §10.
+> **🚀 Estado: LANZADO A PRODUCCIÓN (30 may 2026).** El sistema base + las mejoras de las Fases A/B/C están desplegadas en `main` → Vercel (plan **Pro**). **La app nativa del motorizado (Capacitor, carpeta `android/`) también pasó a producción el 4 jun 2026** (PRs #18–#22; tabla `rider_locations` migrada a prod; validada en teléfono real; publicada en Google Play — Prueba Interna). Ver §10.
 
 ---
 
@@ -314,7 +314,7 @@ transavic/
 │   ├── migrate-pedido-ediciones.sql, migrate-meta-bono.sql, migrate-comprobante-{referencia,emisor,…}.sql
 │   └── generar-propuesta-pdf.py     # Script Python para PDF de propuesta comercial (no app)
 │
-├── android/                         # ⚠️ Wrapper Capacitor del repartidor — SOLO LOCAL (untracked, ver §10)
+├── android/                         # Wrapper Capacitor del repartidor — EN PRODUCCIÓN (tracked desde 4 jun 2026, ver §10)
 │
 ├── public/
 │   ├── transavic.jpg, avicola.jpg   # Logos de las 2 marcas (tickets + comprobantes)
@@ -516,13 +516,13 @@ Una tabla con las decisiones no-obvias del proyecto, su motivación, y dónde se
 |---|---|---|
 | **No usar ORM** | Schema simple, queries claras con SQL nativo. Neon HTTP no se beneficia de ORM. | Todo el data layer usa `sql\`SELECT...\`` directo (`lib/data.ts`, `api/*/route.ts`). Hay `sql.query(query, params)` para queries dinámicas. |
 | **Permisos en la app, no en la DB** | Neon no usa RLS; el scoping por rol es más simple y testeable en SQL de la app. | Cada `page.tsx` server-side hace `auth()` + `homeForRole` redirect; cada API filtra por rol (ver `lib/data.ts:fetchFilteredPedidos`). Ver doc 03. |
-| **No PWA pura para repartidor** | iOS bloquea GPS en background para PWAs. Por eso se envuelve `/mi-ruta` con Capacitor (app nativa Android). | Carpeta `android/` (Capacitor) — construida pero **SOLO LOCAL** (untracked). La web manda GPS solo con la app abierta. Ver §10. |
+| **No PWA pura para repartidor** | iOS bloquea GPS en background para PWAs. Por eso se envuelve `/mi-ruta` con Capacitor (app nativa Android). | Carpeta `android/` (Capacitor) — **en producción** (commiteada a `main`, publicada en Google Play). La app nativa rastrea en segundo plano (foreground service); la web manda GPS solo con la app abierta. Ver §10. |
 | **Pedidos denormalizados** | Preservar histórico: si el cliente cambia dirección, los pedidos pasados no se reescriben. | `pedidos` copia `cliente`, `whatsapp`, `direccion`, etc. del cliente al INSERT. Hay también `cliente_id` (FK viva). Ver doc 02. |
 | **Doble fuente de verdad estado/entregado** | Migración progresiva del legacy `entregado: boolean` al moderno `estado: varchar`. Se mantienen sincronizados. | Sync en `PATCH /api/pedidos/[id]`. Ver doc 02, doc 04 y CLAUDE.md gotcha #1. |
 | **Medición de asesora por VENTAS (`created_at`), no por entregas** | La asesora vende, el repartidor entrega días después (~86% en fecha posterior). Medir por entrega mezclaría esfuerzos. | Metas/racha/ranking/equipo cuentan por `created_at` (`lib/metas.ts`). Los reportes de admin sí miden facturación ENTREGADA. Ver CLAUDE.md gotcha #8 / §13. |
 | **Precios CON IGV incluido** | Es lo que Antonio cobra al cliente. | `productos.precio_venta` y `pedido_items.precio_unitario` con IGV; se divide entre 1.18 antes de mandar a SUNAT (`api/comprobantes/emitir`). Ver CLAUDE.md gotcha #10. |
 | **distancia_km se congela al asignar** | El admin/repartidor quiere saber "este cliente está a X km del local", no la distancia desde el pedido anterior en la ruta. | `optimizar-ruta` solo actualiza `orden_ruta` y `duracion_estimada_min`, no `distancia_km`. |
-| **Polling en lugar de websockets** | Volumen actual (~30 pedidos/día) no justifica websockets. Se planea Pusher para tracking GPS en vivo (Fase C). | `/despacho` refresca cada **15s**, `/mi-ruta` cada **60s**, campanita `NotificationBell` cada **30s**. |
+| **Polling en lugar de websockets** | Volumen actual (~30 pedidos/día) no justifica websockets. El tracking GPS en vivo (Fase C) **también salió con polling** — Pusher se evaluó pero se descartó (cero infra, $0). | `/despacho` refresca cada **15s** (y ahí levanta la ubicación viva de cada moto), `/mi-ruta` cada **60s**, campanita `NotificationBell` cada **30s**. La app reporta su GPS cada ~12s a `/api/repartidor/ubicacion`. |
 | **GPS bajo demanda** | Ahorrar batería del motorizado. | El navegador solo pide ubicación cuando el mapa está visible o hay un pedido `En_Camino` (`mi-ruta-content.tsx`). |
 | **Reinstanciación de cliente Neon** | El driver HTTP de Neon no es un pool — es seguro y barato reinstanciar por handler. | `const sql = neon(process.env.DATABASE_URL!)` aparece en cada `route.ts`. |
 | **Settings como key/value JSONB** | Extensible sin migraciones futuras. | Hoy hay 2 entradas: `base_location` y `incentivos_config`. `api/settings/route.ts` lee/escribe. |
@@ -638,11 +638,11 @@ El sistema base + las 8 mejoras acordadas con Antonio están **desplegadas y en 
 | 6 | Cobranzas con plazos + aging + cron diario | ✅ En producción |
 | 7 | SUNAT con 2 RUCs (XML UBL 2.1 + firma + SOAP + CDR) + emisión standalone + NC + consulta RUC/DNI + correo Brevo | ✅ En producción · validado en BETA |
 | 8 | IA comercial Gemini (admin + asesoras scoped) | ✅ En producción ⚠️ (caché 429 — gotcha #16) |
-| 3 | Seguimiento del motorizado en vivo (Capacitor + Pusher) | 🔧 Parcial — ver abajo |
+| 3 | Seguimiento del motorizado en vivo (Capacitor, **polling** — sin Pusher) | ✅ En producción (4 jun 2026) — ver abajo |
 
-### App nativa del motorizado (Capacitor) — SOLO LOCAL
+### App nativa del motorizado (Capacitor) — EN PRODUCCIÓN (4 jun 2026)
 
-La carpeta **`android/`** (wrapper Capacitor de `/mi-ruta` para tener GPS en background, que iOS/PWA bloquean) está **construida pero NO subida**: aparece como `untracked` en git y vive solo en la máquina de Hugo. El marker en vivo en el mapa del admin y el envío de GPS desde la web ya están en producción; lo que falta de desplegar/publicar es el APK/AAB nativo (Pusher para tracking en vivo aún no se integró). Todos los motorizados usan Android (no hay app iOS planificada).
+La carpeta **`android/`** (wrapper Capacitor de `/mi-ruta` para tener GPS en background, que iOS/PWA bloquean) **se commiteó a `main`** y la app se **publicó en Google Play** (Prueba Interna). La app "cascarón" **carga la web** (`server.url=https://transavic.vercel.app`) y aporta lo que el navegador no puede: GPS en segundo plano vía *foreground service*. Reporta su posición cada ~12s a `POST /api/repartidor/ubicacion` (UPSERT en `rider_locations`, 1 fila viva por motorizado); el mapa de despacho del admin la levanta en su poll de 15s. **El tracking en vivo NO usa Pusher** — quedó descartado a favor del polling existente (cero infra, $0). Validada en teléfono real (HONOR Android 15) con la pantalla bloqueada. Todos los motorizados usan Android (no hay app iOS planificada). Detalle técnico completo en CLAUDE.md → sección "App Repartidor — Capacitor + GPS en vivo".
 
 ### Próximas fases (no cotizadas)
 
