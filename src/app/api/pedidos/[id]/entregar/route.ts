@@ -4,7 +4,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { crearNotificacion } from "@/lib/notificaciones";
-import { crearFacturaParaPedido, calcularMontoPedido } from "@/lib/cobranzas";
 import { calcularMetaDiaria, ventasHoy } from "@/lib/metas";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
@@ -100,17 +99,11 @@ export async function POST(request: Request) {
       `;
     }
 
-    // Si fue Entregado, crear factura automáticamente (no bloqueante)
+    // Si fue Entregado: la cobranza NO se crea al entregar — la genera SOLO el
+    // COMPROBANTE emitido (boleta/factura). Entregar un pedido ya no registra deuda;
+    // para cobrar hay que emitir la boleta/factura (decisión de Antonio, jun 2026).
+    // Acá queda únicamente la auto-emisión SUNAT (apagada por defecto).
     if (resultado === "Entregado") {
-      try {
-        const monto = await calcularMontoPedido(id);
-        if (monto > 0) {
-          await crearFacturaParaPedido({ pedidoId: id, monto });
-        }
-      } catch (e) {
-        console.error("No se pudo crear factura automáticamente (no crítico):", e);
-      }
-
       // AUTO-EMISIÓN DE COMPROBANTE SUNAT (configurable, no bloqueante).
       // Se activa con AUTO_EMITIR_COMPROBANTE=true en .env. Por defecto OFF para
       // que Antonio decida cuándo facturar cada pedido. Si lo activa:

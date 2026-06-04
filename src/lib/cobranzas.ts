@@ -64,9 +64,14 @@ export function urgenciaCobranza(fechaVencimiento: Date | string): Urgencia {
 }
 
 /**
+ * @deprecated Ya NO se usa (jun 2026): ENTREGAR un pedido dejó de crear cobranza
+ * — la cobranza la genera SOLO el comprobante emitido (decisión de Antonio). Se
+ * conserva por si se reactiva ese flujo. La cobranza de un comprobante emitido
+ * desde un pedido va por `vincularCobranzaAComprobante`.
+ *
  * Crea una factura asociada a un pedido. Lee el plazo del cliente automáticamente.
- * Retorna el id de la factura + la fecha de vencimiento calculada.
- * NO bloqueante: si falla, lanza error pero no rompe el flujo del pedido.
+ * Retorna el id de la factura + la fecha de vencimiento calculada. Idempotente:
+ * si el pedido ya tiene cobranza, devuelve la existente.
  */
 export async function crearFacturaParaPedido(params: {
   pedidoId: string;
