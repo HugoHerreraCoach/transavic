@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover"
+    />
+    <title>Transavic Reparto</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #dc2626;
+        color: #fff;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 16px 0 4px;
+        font-weight: 700;
+      }
+      p {
+        opacity: 0.85;
+        font-size: 14px;
+        margin: 0;
+      }
+      .dot {
+        width: 42px;
+        height: 42px;
+        border: 4px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Pantalla de respaldo: solo se ve si el servidor (server.url) no responde.
+         Normalmente la app carga la web de Transavic directo. -->
+    <div class="wrap">
+      <div class="dot"></div>
+      <h1>Transavic Reparto</h1>
+      <p>Conectando con el servidor…</p>
+    </div>
+  </body>
+</html>

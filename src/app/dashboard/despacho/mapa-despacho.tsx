@@ -42,6 +42,14 @@ interface Repartidor {
   id: string;
   name: string;
   pedidos: PedidoDespacho[];
+  // Última ubicación reportada por el motorizado (tabla rider_locations).
+  // null si todavía no reportó nada (app sin abrir / sin permiso de GPS).
+  ubicacion?: {
+    lat: number;
+    lng: number;
+    heading: number | null;
+    capturedAt: string;
+  } | null;
 }
 
 interface BaseLocation {
@@ -145,6 +153,41 @@ function createBaseMarkerIcon(): string {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
+// ── Helper: marcador de moto en vivo + "hace cuánto" ──
+
+const EN_VIVO_SEG = 300; // ≤5 min ⇒ consideramos la ubicación "en vivo"
+
+// Marcador circular, distinto al pin de pedido: punto de color con halo (sensación
+// de "ubicación en vivo", como el punto azul de Google) y una flecha que apunta al
+// rumbo (heading). Si la posición no está fresca, sale en gris y sin halo.
+function createRiderMarkerIcon(color: string, heading: number | null, enVivo: boolean): string {
+  const c = enVivo ? color : "#9ca3af";
+  const halo = enVivo ? `<circle cx="24" cy="24" r="21" fill="${c}" opacity="0.18"/>` : "";
+  const centro =
+    heading != null
+      ? `<g transform="rotate(${heading.toFixed(0)} 24 24)"><path d="M24 16 L30 30 L24 26.5 L18 30 Z" fill="#fff"/></g>`
+      : `<circle cx="24" cy="24" r="4.5" fill="#fff"/>`;
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+      ${halo}
+      <circle cx="24" cy="24" r="12" fill="${c}" stroke="#fff" stroke-width="3"/>
+      ${centro}
+    </svg>`;
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+// "hace 15 s" / "hace 3 min" / "hace 2 h" + los segundos (para decidir si está en vivo).
+function haceCuanto(iso: string): { texto: string; segundos: number } {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return { texto: "", segundos: Number.POSITIVE_INFINITY };
+  const seg = Math.max(0, Math.floor((Date.now() - t) / 1000));
+  let texto: string;
+  if (seg < 60) texto = `hace ${seg} s`;
+  else if (seg < 3600) texto = `hace ${Math.floor(seg / 60)} min`;
+  else texto = `hace ${Math.floor(seg / 3600)} h`;
+  return { texto, segundos: seg };
+}
+
 export default function MapaDespacho({ pendientes, repartidores, baseLocation }: MapaDespachoProps) {
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
@@ -161,6 +204,10 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
   const [repartidorFoco, setRepartidorFoco] = useState<string | null>(null);
   const [showPendientes, setShowPendientes] = useState(true);
   const [mapRef, setMapRef] = useState<google.maps.Map | null>(null);
+  // Capa de motos en vivo (default ON; es la función estrella del mapa).
+  const [showRiders, setShowRiders] = useState(true);
+  // Id del motorizado cuyo InfoWindow está abierto (muestra su última posición).
+  const [riderInfo, setRiderInfo] = useState<string | null>(null);
 
   // Color estable por repartidor (según su posición original) — así el marcador y
   // su línea de ruta siempre coinciden, incluso al enfocar uno solo.
@@ -218,23 +265,35 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
       .filter((pl) => pl.path.length > 1);
   }, [repartidores, esVisible, colorPorRepartidor]);
 
-  // Encaja el mapa en lo que está visible. Se vuelve a llamar cuando cambia el
-  // foco → al elegir un motorizado, el mapa hace zoom a SU ruta.
+  // Encaja el mapa en lo que está visible (pedidos + motos en vivo + base).
   const ajustarEncuadre = useCallback(
     (map: google.maps.Map) => {
-      if (allPedidos.length === 0) return;
       const bounds = new google.maps.LatLngBounds();
+      let hayPuntos = false;
       allPedidos.forEach(({ pedido }) => {
         if (pedido.latitude && pedido.longitude) {
           bounds.extend({ lat: pedido.latitude, lng: pedido.longitude });
+          hayPuntos = true;
         }
       });
+      // Incluir la posición en vivo de las motos visibles → al enfocar un
+      // motorizado, el encuadre abarca su moto aunque tenga pocos pedidos.
+      if (showRiders) {
+        repartidores.forEach((r) => {
+          if (esVisible(r.id) && r.ubicacion) {
+            bounds.extend({ lat: r.ubicacion.lat, lng: r.ubicacion.lng });
+            hayPuntos = true;
+          }
+        });
+      }
       if (baseLocation && repartidorFoco === null) {
         bounds.extend({ lat: baseLocation.lat, lng: baseLocation.lng });
+        hayPuntos = true;
       }
+      if (!hayPuntos) return;
       map.fitBounds(bounds, 60);
     },
-    [allPedidos, baseLocation, repartidorFoco]
+    [allPedidos, baseLocation, repartidorFoco, showRiders, repartidores, esVisible]
   );
 
   const onMapLoad = useCallback(
@@ -245,10 +304,14 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
     [ajustarEncuadre]
   );
 
-  // Reencuadrar al cambiar el foco/filtro (sin esperar a recargar el mapa).
+  // Reencuadrar SOLO cuando cambia la SELECCIÓN del usuario (foco, filtros,
+  // toggles), NO en cada poll de 15s. Así el mapa no "salta" mientras el admin
+  // mira: las motos se mueven solas (sus markers se actualizan en cada poll),
+  // pero el viewport se queda quieto hasta que el usuario cambie de vista.
   useEffect(() => {
     if (mapRef) ajustarEncuadre(mapRef);
-  }, [mapRef, ajustarEncuadre]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapRef, repartidorFoco, showRiders, showPendientes, filtroEstados]);
 
   // Toggle filtros
   const toggleEstado = (estado: EstadoPedido) => {
@@ -365,6 +428,35 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
             />
           )}
 
+          {/* Motos en vivo — última ubicación reportada por cada motorizado.
+              Va por ENCIMA de todo (zIndex 300) para no perderlo entre los pines. */}
+          {showRiders &&
+            repartidores
+              .filter((r) => esVisible(r.id) && r.ubicacion)
+              .map((r) => {
+                const u = r.ubicacion!;
+                const { segundos } = haceCuanto(u.capturedAt);
+                const enVivo = segundos <= EN_VIVO_SEG;
+                const color = colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0];
+                return (
+                  <MarkerF
+                    key={`rider-${r.id}`}
+                    position={{ lat: u.lat, lng: u.lng }}
+                    icon={{
+                      url: createRiderMarkerIcon(color, u.heading, enVivo),
+                      scaledSize: new google.maps.Size(44, 44),
+                      anchor: new google.maps.Point(22, 22),
+                    }}
+                    title={`${r.name} · ${enVivo ? "en vivo" : "sin señal reciente"}`}
+                    onClick={() => {
+                      setSelectedPedido(null);
+                      setRiderInfo(r.id);
+                    }}
+                    zIndex={300}
+                  />
+                );
+              })}
+
           {/* InfoWindow */}
           {selectedPedido && selectedPedido.latitude && selectedPedido.longitude && (
             <InfoWindowF
@@ -413,6 +505,44 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
               </div>
             </InfoWindowF>
           )}
+
+          {/* InfoWindow de moto en vivo */}
+          {(() => {
+            if (!riderInfo) return null;
+            const r = repartidores.find((x) => x.id === riderInfo);
+            if (!r || !r.ubicacion) return null;
+            const { texto, segundos } = haceCuanto(r.ubicacion.capturedAt);
+            const enVivo = segundos <= EN_VIVO_SEG;
+            const color = colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0];
+            const enCamino = r.pedidos.filter((p) => p.estado === "En_Camino").length;
+            const porEntregar = r.pedidos.filter((p) =>
+              ["Pendiente", "En_Produccion", "Listo_Para_Despacho", "Asignado", "En_Camino"].includes(p.estado)
+            ).length;
+            return (
+              <InfoWindowF
+                position={{ lat: r.ubicacion.lat, lng: r.ubicacion.lng }}
+                onCloseClick={() => setRiderInfo(null)}
+              >
+                <div className="p-1 max-w-[220px]">
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                    <h3 className="font-bold text-sm text-gray-900 truncate">{r.name}</h3>
+                  </div>
+                  <p className="mt-1 flex items-center gap-1.5 text-xs">
+                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${enVivo ? "bg-emerald-500" : "bg-gray-400"}`} />
+                    <span className={enVivo ? "text-emerald-700 font-semibold" : "text-gray-500"}>
+                      {enVivo ? "En vivo" : "Sin señal reciente"}
+                    </span>
+                    {texto && <span className="text-gray-400">· {texto}</span>}
+                  </p>
+                  <p className="mt-1 text-xs text-gray-600 flex items-center gap-1">
+                    <FiPackage size={10} className="flex-shrink-0" /> {porEntregar} por entregar
+                    {enCamino > 0 && <span className="text-indigo-600">· {enCamino} en camino</span>}
+                  </p>
+                </div>
+              </InfoWindowF>
+            );
+          })()}
         </GoogleMap>
       </div>
 
@@ -511,6 +641,23 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
               . Toca <span className="font-semibold">Todos los motorizados</span> para ver el resto.
             </p>
           )}
+
+          {/* Motos en vivo — muestra/oculta la capa de ubicación en tiempo real */}
+          <div className="mt-2 pt-2 border-t border-gray-100">
+            <button
+              onClick={() => setShowRiders(!showRiders)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all active:scale-[0.98] ${
+                showRiders ? "text-emerald-700" : "text-gray-400"
+              }`}
+            >
+              <FiNavigation size={13} className="flex-shrink-0" />
+              <span className="flex-1 text-left">Motos en vivo</span>
+              <span className="text-[10px] font-bold tabular-nums">
+                {repartidores.filter((r) => r.ubicacion).length}
+              </span>
+              {showRiders ? <FiEye size={12} /> : <FiEyeOff size={12} />}
+            </button>
+          </div>
         </div>
 
         {/* Estados — presets rápidos (1 clic) + toggles finos */}

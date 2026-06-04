@@ -71,6 +71,13 @@ interface Repartidor {
   name: string;
   role: string;
   pedidos: PedidoDespacho[];
+  // Última ubicación en vivo del motorizado (viene de /api/despacho → rider_locations).
+  ubicacion?: {
+    lat: number;
+    lng: number;
+    heading: number | null;
+    capturedAt: string;
+  } | null;
 }
 
 interface BaseLocation {
