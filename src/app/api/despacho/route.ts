@@ -8,7 +8,13 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const session = await auth();
-    if (!session?.user || session.user.role !== "admin") {
+    // Despacho lo leen admin (gestión) y asesor (SOLO LECTURA: monitorea
+    // motorizados y entregas en vivo). El alcance es total — la asesora ve
+    // todos los pedidos y motorizados, igual que el admin. Las MUTACIONES
+    // (asignar/optimizar/reordenar/asignar-externo) siguen siendo admin-only
+    // en sus propios endpoints, así que esto no le da poder de gestión.
+    const rol = session?.user?.role;
+    if (!session?.user || (rol !== "admin" && rol !== "asesor")) {
       return NextResponse.json({ error: "No autorizado." }, { status: 403 });
     }
 
