@@ -170,8 +170,6 @@ export default function EmitirComprobanteClient({
   const [tipo, setTipo] = useState<Tipo>("01");
   const [empresa, setEmpresa] = useState<Empresa>("transavic");
   const [formaPago, setFormaPago] = useState<FormaPago>("Contado");
-  // Solo aplica a FACTURAS contado: si está true, NO se crea cobranza al emitir.
-  const [yaCobrado, setYaCobrado] = useState<boolean>(false);
   const [fechaVenc, setFechaVenc] = useState<string>(() => isoLocalMasDias(7));
   
   // Datos del receptor/cliente
@@ -606,7 +604,6 @@ export default function EmitirComprobanteClient({
     setEmitiendo(true);
     try {
       const plazo = formaPago === "Credito" ? diasHasta(fechaVenc) : 0;
-      const cobradoYa = formaPago === "Contado" ? yaCobrado : false;
       // Si venimos de un pedido → /emitir (vincula el comprobante al pedido, su
       // cobranza y el badge "Facturado"). Si es emisión suelta → /emitir-manual.
       // Misma interfaz para ambos; solo cambia el endpoint y el armado del payload.
@@ -619,7 +616,6 @@ export default function EmitirComprobanteClient({
               tipo,
               formaPago,
               plazoDias: plazo,
-              yaCobrado: cobradoYa,
               confirmarDuplicado,
               // Datos del receptor tal como están en el form (precargados del
               // pedido + editables/consultables por el usuario).
@@ -658,7 +654,6 @@ export default function EmitirComprobanteClient({
               })),
               formaPago,
               plazoDias: plazo,
-              yaCobrado: cobradoYa,
               confirmarDuplicado,
             }),
           });
@@ -1410,19 +1405,12 @@ export default function EmitirComprobanteClient({
                     </div>
                   )}
 
-                  {/* Contado (factura O boleta) → cobranza por defecto, salvo "ya pagó" */}
+                  {/* Toda venta crea cobranza (sin excepción). Si el cliente ya
+                      pagó, la asesora la marca como pagada en /cobranzas. */}
                   {formaPago === "Contado" && (
-                    <label className="mt-2 flex items-start gap-2.5 text-[11px] text-gray-750 cursor-pointer select-none bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 animate-[slideDown_0.2s_ease-out] hover:bg-amber-50 transition-colors">
-                      <input
-                        type="checkbox"
-                        checked={yaCobrado}
-                        onChange={(e) => setYaCobrado(e.target.checked)}
-                        className={`mt-0.5 ${theme.ringAccent} h-4 w-4 border-gray-300 rounded`}
-                      />
-                      <span className="flex-1 min-w-0">
-                        <strong>¿El cliente pagó en el acto?</strong> Si lo marcas, no se crea cobranza. Si no, se registra una cobranza pendiente para seguir el pago.
-                      </span>
-                    </label>
+                    <p className="mt-2 text-[11px] text-gray-500 font-medium leading-normal bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                      Se registrará una <strong>cobranza pendiente</strong> para seguir el pago. Si el cliente ya pagó, márcala como pagada en <strong>Cobranzas</strong>.
+                    </p>
                   )}
                 </div>
               </div>

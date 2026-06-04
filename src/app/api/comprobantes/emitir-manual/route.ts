@@ -45,10 +45,6 @@ const Schema = z.object({
   // Forma de pago: "Credito" genera una cobranza automática (factura en /cobranzas).
   formaPago: z.enum(["Contado", "Credito"]).default("Contado"),
   plazoDias: z.number().int().min(0).max(120).default(0),
-  // Para FACTURAS contado: si el usuario lo marca, NO crea cobranza (cash de mano).
-  // Default false = se crea cobranza también para contado (refleja realidad del
-  // negocio Transavic: la mayoría son "contado" pero el cliente paga después).
-  yaCobrado: z.boolean().default(false),
   // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
   confirmarDuplicado: z.boolean().default(false),
 });
@@ -229,21 +225,19 @@ export async function POST(request: Request) {
       }
     }
 
-    // Regla del negocio (Transavic, jun 2026): TODA venta —factura O boleta— crea
-    // una cobranza por defecto, sea Contado o Crédito, porque el "contado" casi
-    // siempre se cobra días después (el cliente no paga el mismo día). Excepción:
-    // el usuario marca `yaCobrado` (pagó cash de mano) → no se crea cobranza.
-    // Solo se crea si SUNAT aceptó (o quedó pendiente por falta de cert); si fue
-    // rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
+    // Regla del negocio (Transavic, jun 2026): TODA venta —factura O boleta,
+    // Contado o Crédito— crea SIEMPRE una cobranza, sin excepción. El "contado"
+    // casi siempre se cobra días después; si el cliente ya pagó, la asesora marca
+    // la cobranza como pagada a mano en /cobranzas. (Se quitó el check "¿ya pagó
+    // en el acto?" porque confundía y dejaba ventas sin cobranza.) Solo se crea
+    // si SUNAT aceptó (o quedó pendiente por falta de cert); si fue rechazado/
+    // erró, no registramos deuda inválida ni duplicamos al reintentar.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
       resultado.estado === EstadoSunat.PENDIENTE;
     const esCredito = parsed.data.formaPago === "Credito";
-    // Contado sin "ya cobrado" también crea cobranza (paga después). Aplica por
-    // igual a factura y boleta — incluido "CLIENTES VARIOS" (decisión de Antonio).
-    const debeCrearCobranza =
-      !!resultado.serieNumero && emisionOk && (esCredito || !parsed.data.yaCobrado);
+    const debeCrearCobranza = !!resultado.serieNumero && emisionOk;
 
     if (debeCrearCobranza) {
       try {
