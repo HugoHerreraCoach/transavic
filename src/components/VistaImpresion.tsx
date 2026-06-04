@@ -16,6 +16,16 @@ export default function VistaImpresion({ pedidos, formato }: VistaImpresionProps
 
   return (
     <div className={`impresion-container bg-white text-black p-4 ${formato === 'Ticket' ? 'formato-ticket' : 'formato-a4'}`}>
+      {/* Tamaño de página según formato. CLAVE para la tiquetera: "80mm auto" =
+          papel continuo (altura automática), sin páginas de altura fija. Sin
+          esto el navegador pagina como A4 y, junto con el break-inside:avoid de
+          cada pedido, empuja los que no caben a la "siguiente página A4",
+          dejando enormes espacios en blanco en el rollo térmico. */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `@media print { @page { size: ${formato === 'Ticket' ? '80mm auto' : 'A4'}; margin: ${formato === 'Ticket' ? '0' : '1cm'}; } }`,
+        }}
+      />
       <div className="text-center mb-6">
         <h1 className="text-xl font-bold">REPORTE DE PEDIDOS</h1>
         <p className="text-sm text-gray-600">Total: {pedidosImprimibles.length} pedidos</p>
