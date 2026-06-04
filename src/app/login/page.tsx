@@ -1,10 +1,10 @@
 // src/app/login/page.tsx
 'use client'; 
 
-import { useActionState } from 'react';
+import { useActionState, useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import { authenticate } from '@/lib/actions';
-import { FiLogIn, FiArrowLeft } from 'react-icons/fi';
+import { FiLogIn, FiArrowLeft, FiEye, FiEyeOff } from 'react-icons/fi';
 import Link from 'next/link';
 
 function LoginButton() {
@@ -22,6 +22,7 @@ function LoginButton() {
 
 export default function LoginPage() {
     const [errorMessage, dispatch] = useActionState(authenticate, undefined);
+    const [showPassword, setShowPassword] = useState(false);
 
     return (
         <main className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
@@ -45,14 +46,25 @@ export default function LoginPage() {
                             <label className="mb-3 mt-5 block text-xs font-medium text-gray-900" htmlFor="password">
                                 Contraseña
                             </label>
-                            <input
-                                className="peer block w-full rounded-md border border-gray-200 py-[9px] px-3 text-sm outline-2 text-black placeholder:text-gray-500"
-                                id="password"
-                                type="password"
-                                name="password"
-                                placeholder="Ingresa tu contraseña"
-                                required
-                            />
+                            <div className="relative">
+                                <input
+                                    className="peer block w-full rounded-md border border-gray-200 py-[9px] pl-3 pr-10 text-sm outline-2 text-black placeholder:text-gray-500"
+                                    id="password"
+                                    type={showPassword ? 'text' : 'password'}
+                                    name="password"
+                                    placeholder="Ingresa tu contraseña"
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword((v) => !v)}
+                                    className="absolute inset-y-0 right-0 flex items-center px-3 text-gray-500 hover:text-gray-700 cursor-pointer"
+                                    aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                                    tabIndex={-1}
+                                >
+                                    {showPassword ? <FiEyeOff className="h-4 w-4" /> : <FiEye className="h-4 w-4" />}
+                                </button>
+                            </div>
                             <LoginButton />
 
                             {errorMessage && (
