@@ -7,7 +7,11 @@ import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { getSunatConfig } from "@/lib/sunat/config-transavic";
 import type { EmpresaId } from "@/lib/sunat/types";
-import { parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
+import {
+  parseCpeItems,
+  parseCpeClienteDireccion,
+  type CpeItem,
+} from "@/lib/sunat/parse-cpe-items";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
@@ -111,12 +115,18 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   // cuando no había pedido → el PDF de las facturas standalone salía con
   // cantidad/unidad/código/descripción equivocados. El XML lo corrige.
   let items: CpeItem[] = [];
+  // Dirección del CLIENTE: preferimos la del XML firmado (fiel a lo emitido y
+  // declarado a SUNAT) y, si no, la del pedido. Antes solo se usaba la del pedido
+  // → las facturas standalone salían sin dirección del cliente y el PDF mostraba
+  // la del EMISOR con la etiqueta "Establecimiento del Emisor" (confundía).
+  let clienteDireccionXml: string | null = null;
 
   // (1) XML firmado — la representación impresa DEBE coincidir con el XML.
   if (c.xml_firmado_base64) {
     try {
       const xml = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
       items = parseCpeItems(xml);
+      clienteDireccionXml = parseCpeClienteDireccion(xml);
     } catch {
       items = [];
     }
@@ -234,7 +244,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       tipoDocumento: c.cliente_doc_tipo,
       numDocumento: c.cliente_doc_num,
       razonSocial: c.cliente_razon_social || c.pedido_cliente,
-      direccion: c.pedido_direccion,
+      direccion: clienteDireccionXml || c.pedido_direccion,
       whatsapp: c.pedido_whatsapp,
     },
     items,

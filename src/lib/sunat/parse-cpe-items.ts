@@ -108,3 +108,29 @@ export function parseCpeItems(xml: string): CpeItem[] {
 
   return items;
 }
+
+/**
+ * Extrae la DIRECCIÓN del cliente (adquirente) del XML CPE firmado.
+ * Es la dirección fiel a lo emitido (la fiscal declarada a SUNAT). El PDF la
+ * usa para mostrar la dirección del CLIENTE (no la del emisor).
+ *
+ * Se acota al bloque <cac:AccountingCustomerParty> a propósito: el emisor
+ * (<cac:AccountingSupplierParty>) tiene su propia RegistrationAddress y NO debe
+ * confundirse con la del cliente.
+ *
+ * Devuelve null si el XML no trae dirección del cliente (boletas a consumidor
+ * final sin dirección, etc.).
+ */
+export function parseCpeClienteDireccion(xml: string): string | null {
+  if (!xml || typeof xml !== "string") return null;
+  const cust = xml.match(
+    /<cac:AccountingCustomerParty>([\s\S]*?)<\/cac:AccountingCustomerParty>/
+  );
+  if (!cust) return null;
+  const line = cust[1].match(
+    /<cac:RegistrationAddress>[\s\S]*?<cbc:Line>([\s\S]*?)<\/cbc:Line>/
+  );
+  if (!line) return null;
+  const dir = decodeEntities(stripCdata(line[1])).trim();
+  return dir || null;
+}
