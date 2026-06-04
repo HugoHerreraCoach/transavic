@@ -863,8 +863,8 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
             />
 
             <p className="text-[11px] text-gray-400 mt-2">
-              Queda como <strong>Anulada</strong> (no se borra), con tu nombre y el motivo. Si
-              corresponde a una factura/boleta vigente, primero emite la Nota de Crédito.
+              Queda como <strong>Anulada</strong> (no se borra), con tu nombre y el motivo. Sale
+              de la lista y de los totales.
             </p>
 
             {anularError && (
