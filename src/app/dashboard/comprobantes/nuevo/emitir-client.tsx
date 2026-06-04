@@ -75,6 +75,29 @@ function unidadSunatDesde(u: string | null | undefined): "NIU" | "KGM" {
   return aUnitCodeSunat(u);
 }
 
+/** ¿La unidad del catálogo es INEQUÍVOCA? "kg"→KGM, "uni"/"unidad"→NIU.
+ *  Las ambiguas ("uni/kg", "kg/uni") y las desconocidas devuelven `null`: en ese
+ *  caso NO se debe sobrescribir la unidad que la fila ya tiene (la que la asesora
+ *  eligió a mano o la que vino del pedido), para no degradarla en silencio a
+ *  "Unidad". 53 de 88 productos son "uni/kg" y se venden por kilo o por unidad
+ *  según el caso → solo la asesora sabe cuál, no hay que adivinar por ella. */
+function unidadInequivoca(u: string | null | undefined): "NIU" | "KGM" | null {
+  const s = (u || "").trim().toLowerCase();
+  if (s.includes("/")) return null; // "uni/kg", "kg/uni" → ambiguo, no tocar
+  if (
+    s === "kg" ||
+    s === "kgm" ||
+    s === "kilo" ||
+    s === "kilos" ||
+    s === "kilogramo" ||
+    s === "kilogramos"
+  ) {
+    return "KGM";
+  }
+  if (s === "uni" || s === "und" || s === "unidad" || s === "niu") return "NIU";
+  return null; // valor desconocido → no tocar la unidad actual
+}
+
 /** Fecha local (YYYY-MM-DD) de hoy + `dias`. Para el selector de vencimiento. */
 function isoLocalMasDias(dias: number): string {
   const d = new Date();
@@ -235,7 +258,11 @@ export default function EmitirComprobanteClient({
               }) => ({
                 descripcion: it.producto_nombre || "",
                 cantidad: Number(it.cantidad) || 1,
-                unidad: it.unidad || "NIU",
+                // Normalizamos a código SUNAT (KGM/NIU) para que el desplegable
+                // muestre la unidad REAL del pedido. Si viniera cruda ("kg"), el
+                // <select> (opciones NIU/KGM) no la mostraría y caería a "Unidad",
+                // confundiendo a la asesora aunque el pedido diga kilos.
+                unidad: unidadSunatDesde(it.unidad),
                 precio: Number(it.precio_unitario) || 0,
                 codigo: it.codigo || undefined,
               })
@@ -451,10 +478,14 @@ export default function EmitirComprobanteClient({
     );
     if (prod) {
       patch.codigo = prod.codigo || undefined;
-      patch.unidad = unidadSunatDesde(prod.unidad);
+      // Solo fijamos la unidad si el catálogo es INEQUÍVOCO (kg o unidad). Si es
+      // ambiguo ("uni/kg"), respetamos la unidad que la fila ya tiene (la que la
+      // asesora eligió o la que vino del pedido) en vez de degradarla a "Unidad".
+      const unidadCat = unidadInequivoca(prod.unidad);
+      if (unidadCat) patch.unidad = unidadCat;
       const precio = Number(prod.precio_venta) || 0;
       if (precio > 0) patch.precio = precio;
-      
+
       // Activar destello de autocompletado en esta fila
       setPulseIndex(i);
       setTimeout(() => setPulseIndex(null), 1200);
