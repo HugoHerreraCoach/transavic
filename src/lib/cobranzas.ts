@@ -74,6 +74,21 @@ export async function crearFacturaParaPedido(params: {
 }): Promise<{ id: string; vencimiento: Date }> {
   const sql = neon(process.env.DATABASE_URL!);
 
+  // Idempotencia — UN pedido tiene UNA sola cobranza. Si ya existe (se entregó
+  // dos veces, o ya se le emitió comprobante y eso creó su cobranza), NO creamos
+  // otra: evita la deuda duplicada (entregar + facturar). Devolvemos la existente.
+  const yaExiste = (await sql`
+    SELECT id, fecha_vencimiento FROM facturas
+    WHERE pedido_id = ${params.pedidoId}::uuid
+    ORDER BY created_at ASC LIMIT 1
+  `) as Array<{ id: string; fecha_vencimiento: string | Date }>;
+  if (yaExiste.length > 0) {
+    return {
+      id: yaExiste[0].id,
+      vencimiento: new Date(yaExiste[0].fecha_vencimiento),
+    };
+  }
+
   // Cargar datos del pedido + cliente (joineado)
   const pedidoRows = (await sql`
     SELECT p.cliente, p.cliente_id, p.asesor_id,
@@ -132,6 +147,73 @@ export async function crearFacturaStandalone(params: {
   `) as Array<{ id: string }>;
 
   return res[0].id;
+}
+
+/**
+ * Registra la cobranza de un comprobante emitido DESDE un pedido, garantizando
+ * UNA sola cobranza por pedido (evita la duplicación entregar + facturar):
+ *  - Si el pedido ya tiene una cobranza SIN comprobante (la creada al entregar),
+ *    la ACTUALIZA con el número/monto/vencimiento del comprobante (no duplica).
+ *  - Si ya tiene una con ESTE mismo comprobante, la devuelve (idempotente al reintentar).
+ *  - Si no tiene ninguna, crea una nueva.
+ * Devuelve el id de la cobranza.
+ */
+export async function vincularCobranzaAComprobante(params: {
+  pedidoId: string;
+  clienteNombre: string;
+  clienteId?: string | null;
+  asesorId?: string | null;
+  monto: number;
+  plazoDias: number;
+  numeroComprobante: string;
+}): Promise<string> {
+  const sql = neon(process.env.DATABASE_URL!);
+  const plazoNum = Number(params.plazoDias);
+  const vencimiento = calcularVencimiento(new Date(), plazoNum);
+  const venIso = `${vencimiento.getFullYear()}-${String(vencimiento.getMonth() + 1).padStart(2, "0")}-${String(vencimiento.getDate()).padStart(2, "0")}`;
+
+  // (a) Cobranza existente del pedido SIN comprobante (la de la entrega) → la
+  // "ascendemos" a la del comprobante en vez de crear otra.
+  const sinComp = (await sql`
+    SELECT id FROM facturas
+    WHERE pedido_id = ${params.pedidoId}::uuid
+      AND COALESCE(numero_comprobante, '') = ''
+    ORDER BY created_at ASC LIMIT 1
+  `) as Array<{ id: string }>;
+  if (sinComp.length > 0) {
+    await sql`
+      UPDATE facturas SET
+        numero_comprobante = ${params.numeroComprobante},
+        cliente_nombre = ${params.clienteNombre},
+        cliente_id = COALESCE(${params.clienteId ?? null}, cliente_id),
+        asesor_id = COALESCE(${params.asesorId ?? null}, asesor_id),
+        monto = ${params.monto},
+        plazo_dias = ${plazoNum},
+        fecha_vencimiento = ${venIso}::date
+      WHERE id = ${sinComp[0].id}
+    `;
+    return sinComp[0].id;
+  }
+
+  // (b) ¿Ya existe una cobranza con ESTE comprobante? (idempotencia al reintentar)
+  const yaConComp = (await sql`
+    SELECT id FROM facturas
+    WHERE pedido_id = ${params.pedidoId}::uuid
+      AND numero_comprobante = ${params.numeroComprobante}
+    LIMIT 1
+  `) as Array<{ id: string }>;
+  if (yaConComp.length > 0) return yaConComp[0].id;
+
+  // (c) Sin cobranza previa → crear una nueva (con el comprobante).
+  return crearFacturaStandalone({
+    clienteNombre: params.clienteNombre,
+    clienteId: params.clienteId ?? null,
+    asesorId: params.asesorId ?? null,
+    monto: params.monto,
+    plazoDias: params.plazoDias,
+    numeroComprobante: params.numeroComprobante,
+    pedidoId: params.pedidoId,
+  });
 }
 
 /**
