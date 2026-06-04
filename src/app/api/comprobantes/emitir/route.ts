@@ -359,8 +359,12 @@ export async function POST(request: Request) {
 
     if (debeCrearCobranza) {
       try {
-        const { crearFacturaStandalone, plazoDeCobranza } = await import("@/lib/cobranzas");
-        await crearFacturaStandalone({
+        const { vincularCobranzaAComprobante, plazoDeCobranza } = await import("@/lib/cobranzas");
+        // "Un pedido = una cobranza": si el pedido ya tiene cobranza (la creada al
+        // entregar, sin comprobante), la ACTUALIZA con este comprobante en vez de
+        // duplicar la deuda; si no, crea una nueva.
+        await vincularCobranzaAComprobante({
+          pedidoId: parsed.data.pedido_id,
           // Mismo nombre que fue al comprobante (cliRazon ya resuelve override del
           // form → razón social del pedido → nombre del cliente). Se usa `||` (no
           // `??`): un razon_social "" (vacío, no null) dejaba la cobranza SIN nombre
@@ -374,8 +378,7 @@ export async function POST(request: Request) {
           plazoDias: esCredito
             ? parsed.data.plazoDias
             : await plazoDeCobranza(pedido.cliente_id),
-          numeroComprobante: resultado.serieNumero,
-          pedidoId: parsed.data.pedido_id,
+          numeroComprobante: resultado.serieNumero!,
         });
       } catch (errCobranza) {
         console.error(
