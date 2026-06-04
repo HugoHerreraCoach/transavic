@@ -435,11 +435,12 @@ export default function EmitirComprobanteClient({
       setDireccionCliente(cli.direccion || "");
       setDocInfo(null);
     } else {
-      // Sin documento válido: NO autocompletar con el nombre informal (evita
-      // facturas/boletas con datos pobres). El aviso ámbar guía a poner RUC/DNI y
-      // tocar Consultar; sin doc, la boleta < S/700 sale a "CLIENTES VARIOS".
-      setRazonSocial("");
-      setDireccionCliente("");
+      // Sin documento válido: para BOLETA, SUNAT permite emitir A NOMBRE del cliente,
+      // así que conservamos su nombre y dirección (le sirven a la asesora y salen en
+      // el comprobante). Para FACTURA igual hará falta el RUC: el aviso ámbar guía a
+      // consultarlo (la consulta sobreescribe estos datos con los oficiales de SUNAT).
+      setRazonSocial(cli.razon_social || cli.nombre || "");
+      setDireccionCliente(cli.direccion || "");
       setDocInfo(null);
     }
   };
@@ -529,11 +530,13 @@ export default function EmitirComprobanteClient({
         clienteValido = true;
         descCliente = "Identificación del cliente válida.";
       } else {
-        // Sin documento válido, monto < S/700 → consumidor genérico (CLIENTES VARIOS).
+        // Sin documento válido, monto < S/700. SUNAT permite emitir la boleta A
+        // NOMBRE del cliente (sin DNI): si hay nombre, sale con ese nombre; si no,
+        // a "CLIENTES VARIOS". El check queda verde porque ambos casos son válidos.
         clienteValido = true;
         descCliente = hayNombre
-          ? "Sin DNI/RUC válido, esta boleta saldrá a CLIENTES VARIOS (el nombre queda en el pedido)."
-          : "Se emitirá a CLIENTES VARIOS (consumidor final, monto menor a S/700).";
+          ? `Sin DNI, esta boleta saldrá a nombre de "${razonSocial.trim()}". Si quieres que figure el DNI, agrégalo arriba.`
+          : "Sin nombre ni documento, se emitirá a CLIENTES VARIOS (consumidor final, monto menor a S/700).";
       }
     }
 
@@ -603,7 +606,7 @@ export default function EmitirComprobanteClient({
     setEmitiendo(true);
     try {
       const plazo = formaPago === "Credito" ? diasHasta(fechaVenc) : 0;
-      const cobradoYa = tipo === "01" && formaPago === "Contado" ? yaCobrado : false;
+      const cobradoYa = formaPago === "Contado" ? yaCobrado : false;
       // Si venimos de un pedido → /emitir (vincula el comprobante al pedido, su
       // cobranza y el badge "Facturado"). Si es emisión suelta → /emitir-manual.
       // Misma interfaz para ambos; solo cambia el endpoint y el armado del payload.
@@ -1407,8 +1410,8 @@ export default function EmitirComprobanteClient({
                     </div>
                   )}
 
-                  {/* Facturas Contado (Cobranza por defecto) */}
-                  {tipo === "01" && formaPago === "Contado" && (
+                  {/* Contado (factura O boleta) → cobranza por defecto, salvo "ya pagó" */}
+                  {formaPago === "Contado" && (
                     <label className="mt-2 flex items-start gap-2.5 text-[11px] text-gray-750 cursor-pointer select-none bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 animate-[slideDown_0.2s_ease-out] hover:bg-amber-50 transition-colors">
                       <input
                         type="checkbox"
@@ -1417,7 +1420,7 @@ export default function EmitirComprobanteClient({
                         className={`mt-0.5 ${theme.ringAccent} h-4 w-4 border-gray-300 rounded`}
                       />
                       <span className="flex-1 min-w-0">
-                        <strong>¿El cliente pagó en el acto?</strong> Si marcas esto, no se creará cobranza pendiente. Por default se crea vencida para hoy (uso ERP).
+                        <strong>¿El cliente pagó en el acto?</strong> Si lo marcas, no se crea cobranza. Si no, se registra una cobranza pendiente para seguir el pago.
                       </span>
                     </label>
                   )}

@@ -166,6 +166,15 @@ function getTipoDocLabel(tipo: string): string {
   return map[tipo] || tipo;
 }
 
+/** ¿El receptor es un consumidor SIN documento? (tipo "0" o número vacío/"0").
+ *  Caso boleta < S/700 a nombre del cliente o "CLIENTES VARIOS". Se usa para
+ *  OMITIR la línea del documento en el PDF: mostrar "- : 0" se ve poco prolijo. */
+function clienteSinDocumento(cli: { tipoDocumento?: string; numDocumento: string }): boolean {
+  const tipo = (cli.tipoDocumento || "").trim();
+  const num = (cli.numDocumento || "").trim();
+  return tipo === "" || tipo === "0" || num === "" || num === "0";
+}
+
 function numeroALetras(monto: number): string {
   const unidades = [
     "", "UN", "DOS", "TRES", "CUATRO", "CINCO", "SEIS", "SIETE", "OCHO", "NUEVE",
@@ -420,16 +429,18 @@ function generarPDFFactura(doc: jsPDF, data: PDFComprobanteData): void {
     doc.text(`  ${clientNameLines[i]}`, vx, y);
   }
 
-  // Row 3: Document type label (dynamic: DNI, RUC, etc.)
-  y += 5;
-  const tipoDocCliente = data.cliente.tipoDocumento
-    ? getTipoDocLabel(data.cliente.tipoDocumento)
-    : "RUC";
-  doc.setFont("helvetica", "normal");
-  doc.text(tipoDocCliente, lx, y);
-  doc.text(":", vx - 2, y);
-  doc.setFont("helvetica", "bold");
-  doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
+  // Row 3: documento del cliente. Se OMITE para consumidor sin documento (tipo "0"
+  // / número "0", p.ej. boleta a nombre sin DNI o "CLIENTES VARIOS"): la línea
+  // "- : 0" se ve poco prolija, mejor dejar solo el nombre.
+  if (!clienteSinDocumento(data.cliente)) {
+    y += 5;
+    const tipoDocCliente = getTipoDocLabel(data.cliente.tipoDocumento || "");
+    doc.setFont("helvetica", "normal");
+    doc.text(tipoDocCliente, lx, y);
+    doc.text(":", vx - 2, y);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
+  }
 
   // Row 4: Establecimiento del Emisor (emisor address — NOT client address)
   y += 5;
@@ -725,16 +736,18 @@ function generarPDFBoleta(doc: jsPDF, data: PDFComprobanteData): void {
   doc.setFont("helvetica", "bold");
   doc.text(`${data.cliente.razonSocial}`, vx + 1, y);
 
-  // DNI / RUC
-  y += 4;
-  const tipoDocCliente = data.cliente.tipoDocumento
-    ? getTipoDocLabel(data.cliente.tipoDocumento)
-    : "DNI";
-  doc.setFont("helvetica", "normal");
-  doc.text(tipoDocCliente, lx, y);
-  doc.text(":", vx - 2, y);
-  doc.setFont("helvetica", "bold");
-  doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
+  // DNI / RUC — se OMITE para consumidor sin documento (tipo "0" / número "0",
+  // p.ej. boleta a nombre sin DNI o "CLIENTES VARIOS"): "- : 0" se ve poco prolijo,
+  // mejor dejar solo el nombre.
+  if (!clienteSinDocumento(data.cliente)) {
+    y += 4;
+    const tipoDocCliente = getTipoDocLabel(data.cliente.tipoDocumento || "");
+    doc.setFont("helvetica", "normal");
+    doc.text(tipoDocCliente, lx, y);
+    doc.text(":", vx - 2, y);
+    doc.setFont("helvetica", "bold");
+    doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
+  }
 
   // Tipo de Moneda
   y += 4;

@@ -309,10 +309,12 @@ export async function POST(request: Request) {
             direccion: cliDireccion,
           }
         : {
-            // Boleta < S/700 sin documento válido: consumidor genérico (no inventar DNI de ceros).
+            // Boleta < S/700 sin documento válido: SUNAT permite emitirla A NOMBRE
+            // del cliente (tipo doc "0", número "0"). Si el pedido/form trae un
+            // nombre lo respetamos; si no, "CLIENTES VARIOS". No inventamos DNI de ceros.
             tipoDocumento: TipoDocIdentidad.SIN_DOCUMENTO,
             numDocumento: "0",
-            razonSocial: "CLIENTES VARIOS",
+            razonSocial: cliRazon ? cliRazon.toUpperCase() : "CLIENTES VARIOS",
             direccion: cliDireccion,
           },
       items: itemsSunat,
@@ -339,27 +341,31 @@ export async function POST(request: Request) {
       });
     }
 
-    // Regla del negocio: por defecto TODA factura (tipo 01) crea una cobranza, sea
-    // Contado o Crédito, porque en Transavic la mayoría se emite "Contado" pero el
-    // cliente paga después. Excepción: el usuario marca `yaCobrado` (cash de mano)
-    // → no se crea cobranza. Boletas (tipo 03) NUNCA crean cobranza (consumidor cash).
-    // Solo se crea si SUNAT aceptó (o el comprobante quedó pendiente por falta de cert);
-    // si fue rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
+    // Regla del negocio (Transavic, jun 2026): TODA venta —factura O boleta— crea
+    // una cobranza por defecto, sea Contado o Crédito, porque el "contado" casi
+    // siempre se cobra días después (el cliente no paga el mismo día). Excepción:
+    // el usuario marca `yaCobrado` (pagó cash de mano) → no se crea cobranza.
+    // Solo se crea si SUNAT aceptó (o quedó pendiente por falta de cert); si fue
+    // rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
       resultado.estado === EstadoSunat.PENDIENTE;
     const esCredito = parsed.data.formaPago === "Credito";
-    const facturaContadoSinCobrar =
-      parsed.data.tipo === "01" && !esCredito && !parsed.data.yaCobrado;
+    // Contado sin "ya cobrado" también crea cobranza (paga después). Aplica por
+    // igual a factura y boleta — incluido "CLIENTES VARIOS" (decisión de Antonio).
     const debeCrearCobranza =
-      !!resultado.serieNumero && emisionOk && (esCredito || facturaContadoSinCobrar);
+      !!resultado.serieNumero && emisionOk && (esCredito || !parsed.data.yaCobrado);
 
     if (debeCrearCobranza) {
       try {
         const { crearFacturaStandalone, plazoDeCobranza } = await import("@/lib/cobranzas");
         await crearFacturaStandalone({
-          clienteNombre: pedido.razon_social ?? pedido.cliente,
+          // Mismo nombre que fue al comprobante (cliRazon ya resuelve override del
+          // form → razón social del pedido → nombre del cliente). Se usa `||` (no
+          // `??`): un razon_social "" (vacío, no null) dejaba la cobranza SIN nombre
+          // → la lista de /cobranzas mostraba solo el número de comprobante.
+          clienteNombre: cliRazon || pedido.cliente || "Cliente",
           clienteId: pedido.cliente_id,
           asesorId: session.user.role === "asesor" ? session.user.id : null,
           monto: totalConIgv,

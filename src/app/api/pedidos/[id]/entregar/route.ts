@@ -151,8 +151,15 @@ export async function POST(request: Request) {
               unidad: string;
               precio_unitario: string | number;
             }>;
-            const tieneRuc =
-              !!datos[0]?.ruc_dni && datos[0].ruc_dni.length === 11;
+            const { esRucValido, esReceptorIdentificado } = await import(
+              "@/lib/sunat/validacion-cliente"
+            );
+            const doc = (datos[0]?.ruc_dni ?? "").trim();
+            const tieneRuc = esRucValido(doc); // RUC con dígito verificador correcto
+            const identificado = esReceptorIdentificado(doc); // DNI u RUC válido
+            const nombreCliente = (
+              datos[0]?.razon_social ?? datos[0]?.cliente ?? ""
+            ).trim();
             const tipo = tieneRuc ? TipoComprobante.FACTURA : TipoComprobante.BOLETA;
             const empresa = empresaFromPedidoString(datos[0]?.empresa ?? "Transavic");
             const IGV_FACTOR = 1.18;
@@ -160,13 +167,24 @@ export async function POST(request: Request) {
               empresa,
               tipo,
               pedidoId: id,
-              cliente: {
-                tipoDocumento: tieneRuc
-                  ? TipoDocumentoIdentidad.RUC
-                  : TipoDocumentoIdentidad.DNI,
-                numDocumento: datos[0]?.ruc_dni ?? "00000000",
-                razonSocial: datos[0]?.razon_social ?? datos[0]?.cliente ?? "Cliente",
-              },
+              cliente: identificado
+                ? {
+                    tipoDocumento: tieneRuc
+                      ? TipoDocumentoIdentidad.RUC
+                      : TipoDocumentoIdentidad.DNI,
+                    numDocumento: doc,
+                    razonSocial: (nombreCliente || "CLIENTES VARIOS").toUpperCase(),
+                  }
+                : {
+                    // Sin documento válido → boleta a NOMBRE del cliente (tipo "0",
+                    // número "0"), sin inventar un DNI de ceros. Si no hay nombre,
+                    // "CLIENTES VARIOS".
+                    tipoDocumento: TipoDocumentoIdentidad.SIN_DOCUMENTO,
+                    numDocumento: "0",
+                    razonSocial: nombreCliente
+                      ? nombreCliente.toUpperCase()
+                      : "CLIENTES VARIOS",
+                  },
               items: items.map((it) => ({
                 descripcion: it.producto_nombre,
                 unidadMedida: aUnitCodeSunat(it.unidad),

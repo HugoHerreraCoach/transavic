@@ -135,8 +135,9 @@ export async function POST(request: Request) {
         );
       }
       // Sin documento válido y < S/700: NO se traba la emisión — la boleta sale a
-      // "CLIENTES VARIOS" (ver clienteFinal). 400 de 404 clientes no tienen doc, así
-      // que exigirlo frenaría casi todas las boletas (decisión de Antonio, jun 2026).
+      // NOMBRE del cliente si lo hay, o a "CLIENTES VARIOS" si no (ver clienteFinal).
+      // 400 de 404 clientes no tienen doc, así que exigirlo frenaría casi todas las
+      // boletas (decisión de Antonio, jun 2026).
     }
 
     // Cliente final: si está identificado, usar su documento; si es una boleta sin
@@ -150,10 +151,13 @@ export async function POST(request: Request) {
           direccion: direccionCliente,
         }
       : {
-          // Sin documento válido (boleta < S/700, sin nombre): consumidor genérico.
+          // Boleta < S/700 sin DNI/RUC válido: SUNAT permite emitirla A NOMBRE del
+          // cliente (tipo doc "0", número "0") — no exige documento en este tramo.
+          // Si la asesora escribió un nombre, lo respetamos; si lo dejó vacío,
+          // recién ahí cae a "CLIENTES VARIOS" (consumidor final genérico).
           tipoDocumento: TipoDocIdentidad.SIN_DOCUMENTO, // "0"
           numDocumento: "0",
-          razonSocial: "CLIENTES VARIOS",
+          razonSocial: razon ? razon.toUpperCase() : "CLIENTES VARIOS",
           direccion: direccionCliente,
         };
 
@@ -225,21 +229,21 @@ export async function POST(request: Request) {
       }
     }
 
-    // Regla del negocio: por defecto TODA factura (tipo 01) crea una cobranza, sea
-    // Contado o Crédito, porque en Transavic la mayoría se emite "Contado" pero el
-    // cliente paga después. Excepción: el usuario marca `yaCobrado` (cash de mano)
-    // → no se crea cobranza. Boletas (tipo 03) NUNCA crean cobranza (consumidor cash).
-    // Solo se crea si SUNAT aceptó (o el comprobante quedó pendiente por falta de cert);
-    // si fue rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
+    // Regla del negocio (Transavic, jun 2026): TODA venta —factura O boleta— crea
+    // una cobranza por defecto, sea Contado o Crédito, porque el "contado" casi
+    // siempre se cobra días después (el cliente no paga el mismo día). Excepción:
+    // el usuario marca `yaCobrado` (pagó cash de mano) → no se crea cobranza.
+    // Solo se crea si SUNAT aceptó (o quedó pendiente por falta de cert); si fue
+    // rechazado/erró, no registramos deuda inválida ni duplicamos al reintentar.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
       resultado.estado === EstadoSunat.PENDIENTE;
     const esCredito = parsed.data.formaPago === "Credito";
-    const facturaContadoSinCobrar =
-      parsed.data.tipo === "01" && !esCredito && !parsed.data.yaCobrado;
+    // Contado sin "ya cobrado" también crea cobranza (paga después). Aplica por
+    // igual a factura y boleta — incluido "CLIENTES VARIOS" (decisión de Antonio).
     const debeCrearCobranza =
-      !!resultado.serieNumero && emisionOk && (esCredito || facturaContadoSinCobrar);
+      !!resultado.serieNumero && emisionOk && (esCredito || !parsed.data.yaCobrado);
 
     if (debeCrearCobranza) {
       try {
