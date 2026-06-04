@@ -606,7 +606,7 @@ export default function EmitirComprobanteClient({
     setEmitiendo(true);
     try {
       const plazo = formaPago === "Credito" ? diasHasta(fechaVenc) : 0;
-      const cobradoYa = tipo === "01" && formaPago === "Contado" ? yaCobrado : false;
+      const cobradoYa = formaPago === "Contado" ? yaCobrado : false;
       // Si venimos de un pedido → /emitir (vincula el comprobante al pedido, su
       // cobranza y el badge "Facturado"). Si es emisión suelta → /emitir-manual.
       // Misma interfaz para ambos; solo cambia el endpoint y el armado del payload.
@@ -1410,8 +1410,8 @@ export default function EmitirComprobanteClient({
                     </div>
                   )}
 
-                  {/* Facturas Contado (Cobranza por defecto) */}
-                  {tipo === "01" && formaPago === "Contado" && (
+                  {/* Contado (factura O boleta) → cobranza por defecto, salvo "ya pagó" */}
+                  {formaPago === "Contado" && (
                     <label className="mt-2 flex items-start gap-2.5 text-[11px] text-gray-750 cursor-pointer select-none bg-amber-50/50 p-2.5 rounded-xl border border-amber-100 animate-[slideDown_0.2s_ease-out] hover:bg-amber-50 transition-colors">
                       <input
                         type="checkbox"
@@ -1420,7 +1420,7 @@ export default function EmitirComprobanteClient({
                         className={`mt-0.5 ${theme.ringAccent} h-4 w-4 border-gray-300 rounded`}
                       />
                       <span className="flex-1 min-w-0">
-                        <strong>¿El cliente pagó en el acto?</strong> Si marcas esto, no se creará cobranza pendiente. Por default se crea vencida para hoy (uso ERP).
+                        <strong>¿El cliente pagó en el acto?</strong> Si lo marcas, no se crea cobranza. Si no, se registra una cobranza pendiente para seguir el pago.
                       </span>
                     </label>
                   )}
