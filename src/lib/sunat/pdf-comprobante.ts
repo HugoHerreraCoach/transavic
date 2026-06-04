@@ -442,22 +442,26 @@ function generarPDFFactura(doc: jsPDF, data: PDFComprobanteData): void {
     doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
   }
 
-  // Row 4: Establecimiento del Emisor (emisor address — NOT client address)
-  y += 5;
-  doc.setFont("helvetica", "normal");
-  doc.text("Establecimiento del Emisor", lx, y);
-  doc.text(":", vx - 2, y);
-  doc.setFont("helvetica", "bold");
-  const maxAddrW = boxX - vx - 5;
-  const addrLines = doc.splitTextToSize(EMISOR.direccion, maxAddrW);
-  doc.text(`${addrLines[0]}`, vx + 1, y);
-  for (let i = 1; i < addrLines.length; i++) {
-    y += 3.5;
-    doc.text(`${addrLines[i]}`, vx + 1, y);
+  // Row 4: Dirección del CLIENTE (adquirente). Se OMITE si no hay (consumidor sin
+  // dirección). Antes esta fila mostraba "Establecimiento del Emisor" con la
+  // dirección de Transavic → confundía: aparecía justo donde el adquirente espera
+  // ver SU dirección. La dirección del cliente viene del XML firmado (endpoint [id]),
+  // así que es fiel a lo emitido y aplica también a las facturas ya emitidas.
+  const dirCliente = (data.cliente.direccion || "").trim();
+  if (dirCliente) {
+    y += 5;
+    doc.setFont("helvetica", "normal");
+    doc.text("Dirección del Cliente", lx, y);
+    doc.text(":", vx - 2, y);
+    doc.setFont("helvetica", "bold");
+    const maxAddrW = boxX - vx - 5;
+    const addrLines = doc.splitTextToSize(dirCliente, maxAddrW);
+    doc.text(`${addrLines[0]}`, vx + 1, y);
+    for (let i = 1; i < addrLines.length; i++) {
+      y += 3.5;
+      doc.text(`${addrLines[i]}`, vx + 1, y);
+    }
   }
-  // Add ubicación below address
-  y += 3.5;
-  doc.text(`${EMISOR.ubicacion.replace(/ - /g, "-")}`, vx + 1, y);
 
   // Row 5: Tipo de Moneda
   y += 5;
@@ -747,6 +751,24 @@ function generarPDFBoleta(doc: jsPDF, data: PDFComprobanteData): void {
     doc.text(":", vx - 2, y);
     doc.setFont("helvetica", "bold");
     doc.text(`${data.cliente.numDocumento}`, vx + 1, y);
+  }
+
+  // Dirección del cliente — solo si la hay (boletas a consumidor final suelen no
+  // tenerla). Viene del XML firmado (endpoint [id]).
+  const dirClienteBol = (data.cliente.direccion || "").trim();
+  if (dirClienteBol) {
+    y += 4;
+    doc.setFont("helvetica", "normal");
+    doc.text("Dirección", lx, y);
+    doc.text(":", vx - 2, y);
+    doc.setFont("helvetica", "bold");
+    const maxAddrW = pageWidth - margin - vx - 2;
+    const addrLines = doc.splitTextToSize(dirClienteBol, maxAddrW);
+    doc.text(`${addrLines[0]}`, vx + 1, y);
+    for (let i = 1; i < addrLines.length; i++) {
+      y += 3.5;
+      doc.text(`${addrLines[i]}`, vx + 1, y);
+    }
   }
 
   // Tipo de Moneda
