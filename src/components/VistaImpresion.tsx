@@ -16,25 +16,19 @@ export default function VistaImpresion({ pedidos, formato }: VistaImpresionProps
 
   return (
     <div className={`impresion-container bg-white text-black p-4 ${formato === 'Ticket' ? 'formato-ticket' : 'formato-a4'}`}>
-      {/* Tamaño de página según formato. CLAVE para la tiquetera: "80mm auto" =
-          papel continuo (altura automática), sin páginas de altura fija. Sin
-          esto el navegador pagina como A4 y, junto con el break-inside:avoid de
-          cada pedido, empuja los que no caben a la "siguiente página A4",
-          dejando enormes espacios en blanco en el rollo térmico. */}
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `@media print { @page { size: ${formato === 'Ticket' ? '80mm auto' : 'A4'}; margin: ${formato === 'Ticket' ? '0' : '1cm'}; } }`,
-        }}
-      />
       <div className="text-center mb-6">
         <h1 className="text-xl font-bold">REPORTE DE PEDIDOS</h1>
         <p className="text-sm text-gray-600">Total: {pedidosImprimibles.length} pedidos</p>
         <p className="text-xs text-gray-500">{new Date().toLocaleDateString('es-PE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
       </div>
 
-      <div className={`grid gap-4 ${formato === 'A4' ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      {/* A4: grid de 2 columnas. Ticket (tiquetera 80mm): bloque continuo (NO grid),
+          para que el reporte fluya como texto corrido y no deje huecos al paginar. */}
+      <div className={formato === 'A4' ? 'grid gap-4 grid-cols-2' : ''}>
         {pedidosImprimibles.map((pedido, index) => (
-          <div key={pedido.id} className="border-b-2 border-dashed border-gray-400 pb-4 mb-2 break-inside-avoid">
+          // break-inside-avoid SOLO en A4 (hoja fija). En el ticket NO se usa:
+          // en papel continuo dejaba enormes espacios en blanco al saltar de página.
+          <div key={pedido.id} className={`border-b-2 border-dashed border-gray-400 pb-4 mb-2 ${formato === 'A4' ? 'break-inside-avoid' : ''}`}>
             <div className="flex justify-between items-start mb-1">
               <h2 className="text-lg font-bold uppercase leading-tight">
                 {index + 1}. {pedido.cliente}
