@@ -16,6 +16,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { registerPlugin, CapacitorHttp } from "@capacitor/core";
 import type { BackgroundGeolocationPlugin } from "@capacitor-community/background-geolocation";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   FiMapPin,
   FiNavigation,
@@ -34,14 +35,65 @@ const BackgroundGeolocation =
 const REPORTAR_CADA_MS = 12000; // máx ~1 reporte cada 12s
 const CONSENT_KEY = "transavic_gps_consent_v1";
 const PAUSA_KEY = "transavic_gps_pausa_v1";
+const PENDIENTE_KEY = "transavic_gps_pendiente_v1"; // última posición sin confirmar (cola offline)
+const REINTENTO_PENDIENTE_MS = 30000; // reintento de la pendiente cuando no hubo movimiento
 
 type EstadoSeguimiento = "inactivo" | "iniciando" | "activo" | "sin-permiso" | "error";
 
-// Enciende el watcher nativo cuando `activo`. Reporta al backend (throttle) y
-// devuelve el estado para que la UI muestre qué está pasando.
+type PayloadUbicacion = {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  heading?: number;
+  speed?: number;
+  capturedAt: string;
+};
+
+// ── Cola offline (modelo "última posición") ──
+// El backend guarda 1 sola fila por motorizado (UPSERT), así que basta con
+// asegurar que la ÚLTIMA posición capturada termine llegando. La guardamos en
+// localStorage; si el envío falla (sin señal), queda "pendiente" y se reintenta
+// hasta que entre. Así el punto del mapa se pone al día apenas vuelve el
+// internet, incluso si el motorizado está parado y el GPS ya no dispara.
+function leerPendiente(): PayloadUbicacion | null {
+  try {
+    const s = localStorage.getItem(PENDIENTE_KEY);
+    return s ? (JSON.parse(s) as PayloadUbicacion) : null;
+  } catch {
+    return null;
+  }
+}
+function guardarPendiente(p: PayloadUbicacion | null) {
+  try {
+    if (p) localStorage.setItem(PENDIENTE_KEY, JSON.stringify(p));
+    else localStorage.removeItem(PENDIENTE_KEY);
+  } catch {
+    // localStorage lleno o no disponible: no es crítico
+  }
+}
+// Envía una posición al backend por HTTP nativo. true solo si el server la aceptó.
+async function enviarUbicacion(p: PayloadUbicacion): Promise<boolean> {
+  const base = typeof window !== "undefined" ? window.location.origin : "";
+  try {
+    const res = await CapacitorHttp.post({
+      url: `${base}/api/repartidor/ubicacion`,
+      headers: { "Content-Type": "application/json" },
+      // En nativo las cookies de sesión las maneja la capa nativa; esto cubre
+      // además el caso de que CapacitorHttp caiga al fetch del WebView.
+      webFetchExtra: { credentials: "include" },
+      data: p,
+    });
+    return typeof res?.status === "number" && res.status >= 200 && res.status < 300;
+  } catch {
+    return false; // sin señal / error de red → queda pendiente para reintento
+  }
+}
+
+// Enciende el watcher nativo cuando `activo`. Reporta al backend (throttle +
+// cola offline) y devuelve el estado para que la UI muestre qué está pasando.
 function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
   const [estado, setEstado] = useState<EstadoSeguimiento>("inactivo");
-  const ultimoRef = useRef(0);
+  const ultimoEnvioRef = useRef(0);
 
   useEffect(() => {
     if (!activo) {
@@ -52,64 +104,97 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
     let cancelado = false;
     setEstado("iniciando");
 
-    BackgroundGeolocation.addWatcher(
-      {
-        backgroundTitle: "Transavic Reparto",
-        backgroundMessage: "Compartiendo tu ubicación con la central mientras repartes.",
-        requestPermissions: true,
-        stale: false,
-        distanceFilter: 20, // metros: filtra micro-movimientos, ahorra datos y batería
-      },
-      (location, error) => {
-        if (error) {
-          setEstado(error.code === "NOT_AUTHORIZED" ? "sin-permiso" : "error");
-          return;
-        }
-        if (!location) return;
-        if (!cancelado) setEstado("activo");
+    // Reintenta mandar la posición pendiente (la guardada cuando no había señal).
+    const flushPendiente = async () => {
+      const p = leerPendiente();
+      if (!p) return;
+      if (await enviarUbicacion(p)) guardarPendiente(null);
+    };
 
-        const ahora = Date.now();
-        if (ahora - ultimoRef.current < REPORTAR_CADA_MS) return;
-        ultimoRef.current = ahora;
+    // Reintento periódico: cubre el caso "parado sin señal" (el watcher no dispara
+    // sin movimiento, así que sin esto la última posición no llegaría hasta el
+    // próximo movimiento). Liviano: solo actúa si hay algo pendiente.
+    const intervalo = setInterval(() => {
+      if (!cancelado) void flushPendiente();
+    }, REINTENTO_PENDIENTE_MS);
 
-        const base = typeof window !== "undefined" ? window.location.origin : "";
-        CapacitorHttp.post({
-          url: `${base}/api/repartidor/ubicacion`,
-          headers: { "Content-Type": "application/json" },
-          // En nativo las cookies de sesión las maneja la capa nativa; esto cubre
-          // además el caso de que CapacitorHttp caiga a fetch web.
-          webFetchExtra: { credentials: "include" },
-          data: {
-            lat: location.latitude,
-            lng: location.longitude,
-            accuracy: typeof location.accuracy === "number" ? location.accuracy : undefined,
-            heading:
-              typeof location.bearing === "number" && location.bearing >= 0
-                ? location.bearing
-                : undefined,
-            speed:
-              typeof location.speed === "number" && location.speed >= 0
-                ? location.speed
-                : undefined,
-            capturedAt: new Date(location.time ?? Date.now()).toISOString(),
-          },
-        }).catch(() => {
-          // best-effort: el próximo fix del GPS reintenta
-        });
+    const iniciar = async () => {
+      // 1) Permiso de notificación (POST_NOTIFICATIONS, Android 13+). El
+      //    seguimiento corre con un "foreground service" que DEBE mostrar una
+      //    notificación fija; sin este permiso Android la oculta y los equipos
+      //    agresivos (HONOR/Xiaomi…) congelan el servicio. Best-effort, no bloquea.
+      try {
+        await LocalNotifications.requestPermissions();
+      } catch {
+        // si falla, el watcher igual intenta arrancar
       }
-    )
-      .then((id) => {
+      if (cancelado) return;
+
+      // 2) Por si quedó una posición sin enviar de una sesión anterior.
+      void flushPendiente();
+
+      // 3) Arrancar el watcher de GPS en segundo plano.
+      try {
+        const id = await BackgroundGeolocation.addWatcher(
+          {
+            backgroundTitle: "Transavic Reparto",
+            backgroundMessage: "Compartiendo tu ubicación con la central mientras repartes.",
+            requestPermissions: true,
+            stale: false,
+            distanceFilter: 20, // metros: filtra micro-movimientos, ahorra datos y batería
+          },
+          (location, error) => {
+            if (error) {
+              setEstado(error.code === "NOT_AUTHORIZED" ? "sin-permiso" : "error");
+              return;
+            }
+            if (!location) return;
+            if (!cancelado) setEstado("activo");
+
+            const payload: PayloadUbicacion = {
+              lat: location.latitude,
+              lng: location.longitude,
+              accuracy: typeof location.accuracy === "number" ? location.accuracy : undefined,
+              heading:
+                typeof location.bearing === "number" && location.bearing >= 0
+                  ? location.bearing
+                  : undefined,
+              speed:
+                typeof location.speed === "number" && location.speed >= 0
+                  ? location.speed
+                  : undefined,
+              capturedAt: new Date(location.time ?? Date.now()).toISOString(),
+            };
+
+            // Guarda SIEMPRE la última posición como pendiente; se borra al
+            // confirmarse el envío. Así nunca se pierde la más reciente.
+            guardarPendiente(payload);
+
+            const ahora = Date.now();
+            if (ahora - ultimoEnvioRef.current < REPORTAR_CADA_MS) return; // throttle de envíos
+            ultimoEnvioRef.current = ahora;
+
+            void (async () => {
+              if (await enviarUbicacion(payload)) guardarPendiente(null);
+            })();
+          }
+        );
         if (cancelado) {
-          BackgroundGeolocation.removeWatcher({ id }).catch(() => {});
+          void BackgroundGeolocation.removeWatcher({ id });
         } else {
           watcherId = id;
         }
-      })
-      .catch(() => setEstado("error"));
+      } catch {
+        if (!cancelado) setEstado("error");
+      }
+    };
+
+    void iniciar();
 
     return () => {
       cancelado = true;
-      if (watcherId) BackgroundGeolocation.removeWatcher({ id: watcherId }).catch(() => {});
+      clearInterval(intervalo);
+      if (watcherId) void BackgroundGeolocation.removeWatcher({ id: watcherId });
     };
   }, [activo]);
 
