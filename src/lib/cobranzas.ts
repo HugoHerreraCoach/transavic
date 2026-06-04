@@ -2,7 +2,7 @@
 // Helpers para gestión de cobranzas: cálculo de vencimiento, urgencia, creación de factura desde pedido.
 import { neon } from "@neondatabase/serverless";
 
-export type EstadoFactura = "Pendiente" | "Pagada" | "Vencida";
+export type EstadoFactura = "Pendiente" | "Pagada" | "Vencida" | "Anulada";
 export type Urgencia = "vencida" | "urgente" | "proxima" | "holgada";
 
 /**
@@ -138,6 +138,11 @@ export async function crearFacturaStandalone(params: {
   plazoDias: number;
   numeroComprobante?: string | null;
   pedidoId?: string | null;
+  // Vínculo SÓLIDO al comprobante (id de la fila en `comprobantes`). A diferencia
+  // de `numeroComprobante` (la serie-número, que las DOS empresas comparten —
+  // ambas tienen F001/B001), el id desambigua la empresa. Sirve para que la NC
+  // anule la cobranza correcta sin tocar la de la otra empresa.
+  comprobanteId?: string | null;
 }): Promise<string> {
   const sql = neon(process.env.DATABASE_URL!);
 
@@ -146,8 +151,8 @@ export async function crearFacturaStandalone(params: {
   const venIso = `${vencimiento.getFullYear()}-${String(vencimiento.getMonth() + 1).padStart(2, "0")}-${String(vencimiento.getDate()).padStart(2, "0")}`;
 
   const res = (await sql`
-    INSERT INTO facturas (cliente_nombre, cliente_id, asesor_id, monto, plazo_dias, fecha_vencimiento, numero_comprobante, pedido_id)
-    VALUES (${params.clienteNombre}, ${params.clienteId ?? null}, ${params.asesorId ?? null}, ${params.monto}, ${plazoNum}, ${venIso}::date, ${params.numeroComprobante ?? null}, ${params.pedidoId ?? null})
+    INSERT INTO facturas (cliente_nombre, cliente_id, asesor_id, monto, plazo_dias, fecha_vencimiento, numero_comprobante, pedido_id, comprobante_id)
+    VALUES (${params.clienteNombre}, ${params.clienteId ?? null}, ${params.asesorId ?? null}, ${params.monto}, ${plazoNum}, ${venIso}::date, ${params.numeroComprobante ?? null}, ${params.pedidoId ?? null}, ${params.comprobanteId ?? null})
     RETURNING id
   `) as Array<{ id: string }>;
 
@@ -231,4 +236,69 @@ export async function calcularMontoPedido(pedidoId: string): Promise<number> {
     FROM pedido_items WHERE pedido_id = ${pedidoId}
   `) as Array<{ total: string | number }>;
   return Number(row[0]?.total ?? 0);
+}
+
+/**
+ * Anula (soft) UNA cobranza por id: pasa a estado 'Anulada' y guarda el rastro
+ * (quién/cuándo/por qué). NO borra la fila — una cobranza anulada ya no es deuda
+ * (queda fuera de la lista y de los totales) pero el registro se conserva.
+ * Las validaciones (propiedad, estado, factura vigente) van en el endpoint.
+ */
+export async function anularCobranza(params: {
+  id: string;
+  motivo: string;
+  anuladaPor: string;
+}): Promise<void> {
+  const sql = neon(process.env.DATABASE_URL!);
+  await sql`
+    UPDATE facturas
+    SET estado = 'Anulada',
+        anulada_at = NOW(),
+        anulada_por = ${params.anuladaPor},
+        anulada_motivo = ${params.motivo}
+    WHERE id = ${params.id}::uuid
+  `;
+}
+
+/**
+ * Anula AUTOMÁTICAMENTE la(s) cobranza(s) ligada(s) a un comprobante que acaba
+ * de anularse con Nota de Crédito: una factura/boleta anulada por NC ya no es
+ * deuda. Pensado para llamarse (no-bloqueante) desde el endpoint de NC.
+ *
+ * Reglas:
+ *  - Solo cobranzas que aún son DEUDA (Pendiente/Vencida). Una **Pagada** NO se
+ *    toca: implica una devolución → lo revisa una persona, no el automatismo.
+ *  - Match SÓLIDO por empresa: `comprobante_id` (id de la fila) o, para las
+ *    cobranzas creadas DESDE un pedido, `pedido_id` + `numero_comprobante`. NO
+ *    se matchea solo por `numero_comprobante`, porque la serie-número (F001-…)
+ *    la comparten las dos empresas y anularía la cobranza de la otra.
+ *
+ * Devuelve cuántas cobranzas anuló.
+ */
+export async function anularCobranzasDeComprobante(params: {
+  comprobanteId: string;
+  pedidoId?: string | null;
+  serieNumero?: string | null;
+  motivo: string;
+  anuladaPor: string;
+}): Promise<number> {
+  const sql = neon(process.env.DATABASE_URL!);
+  const rows = (await sql`
+    UPDATE facturas
+    SET estado = 'Anulada',
+        anulada_at = NOW(),
+        anulada_por = ${params.anuladaPor},
+        anulada_motivo = ${params.motivo}
+    WHERE estado IN ('Pendiente', 'Vencida')
+      AND (
+        comprobante_id = ${params.comprobanteId}::uuid
+        OR (
+          ${params.pedidoId ?? null}::uuid IS NOT NULL
+          AND pedido_id = ${params.pedidoId ?? null}::uuid
+          AND numero_comprobante = ${params.serieNumero ?? null}
+        )
+      )
+    RETURNING id
+  `) as Array<{ id: string }>;
+  return rows.length;
 }

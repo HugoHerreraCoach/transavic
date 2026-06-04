@@ -259,6 +259,10 @@ export async function POST(request: Request) {
             ? parsed.data.plazoDias
             : await plazoDeCobranza(cliente.id ?? null),
           numeroComprobante: resultado.serieNumero,
+          // Vínculo sólido por empresa: si la factura/boleta se anula con NC, la
+          // cobranza se anula sola por este id (no por la serie-número, que las
+          // dos empresas comparten).
+          comprobanteId: comprobanteId ?? null,
         });
       } catch (errCobranza) {
         console.error(

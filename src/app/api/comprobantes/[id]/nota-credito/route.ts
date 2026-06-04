@@ -24,6 +24,7 @@ import {
 } from "@/lib/sunat/types";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
+import { anularCobranzasDeComprobante } from "@/lib/cobranzas";
 
 export const dynamic = "force-dynamic";
 
@@ -186,6 +187,31 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
           ${`Nota de crédito ${resultado.serieNumero} (${resultado.estado}) — ${parsed.data.motivo}`}
         WHERE id = ${id}::uuid
       `;
+    }
+
+    // Anular automáticamente la cobranza ligada a la factura/boleta que esta NC
+    // acredita: una venta anulada con Nota de Crédito ya no es deuda. Solo si la
+    // NC fue aceptada/observada (no rechazada/erró) y la cobranza NO está pagada
+    // (una pagada implica devolución → la revisa una persona). No bloqueante: si
+    // algo falla, la NC igual quedó emitida.
+    if (
+      resultado.estado !== EstadoSunat.RECHAZADA &&
+      resultado.estado !== EstadoSunat.ERROR
+    ) {
+      try {
+        const anuladas = await anularCobranzasDeComprobante({
+          comprobanteId: id,
+          pedidoId: c.pedido_id ?? null,
+          serieNumero: c.serie_numero,
+          motivo: `Anulada por Nota de Crédito ${resultado.serieNumero ?? ""}`.trim(),
+          anuladaPor: session.user.name?.trim() || "Sistema (NC)",
+        });
+        if (anuladas > 0) {
+          console.log(`NC ${resultado.serieNumero}: ${anuladas} cobranza(s) anulada(s).`);
+        }
+      } catch (e) {
+        console.error("No se pudo anular la cobranza ligada a la NC:", e);
+      }
     }
 
     // P2.10 — Si la NC fue rechazada o falló, avisar. La NC ahora también la puede

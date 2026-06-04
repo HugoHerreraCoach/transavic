@@ -18,6 +18,7 @@ import {
   FiCamera,
   FiEye,
   FiCornerUpLeft,
+  FiSlash,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
 
@@ -30,7 +31,7 @@ interface Factura {
   fecha_emision: string;
   fecha_vencimiento: string;
   fecha_pago: string | null;
-  estado: "Pendiente" | "Pagada" | "Vencida";
+  estado: "Pendiente" | "Pagada" | "Vencida" | "Anulada";
   numero_comprobante: string | null;
   notas: string | null;
   asesor_name: string | null;
@@ -38,6 +39,9 @@ interface Factura {
   metodo_pago?: string | null;
   pago_detalle?: string | null;
   tiene_pago_img?: boolean;
+  // Anulación (soft): rastro de quién la anuló y por qué.
+  anulada_por?: string | null;
+  anulada_motivo?: string | null;
 }
 
 interface StatRow {
@@ -51,6 +55,7 @@ function toNum(v: string | number): number {
 }
 
 function urgenciaColor(estado: string, vencimiento: string): { bg: string; text: string; label: string } {
+  if (estado === "Anulada") return { bg: "bg-gray-50", text: "text-gray-400", label: "Anulada" };
   if (estado === "Pagada") return { bg: "bg-gray-50", text: "text-gray-500", label: "Pagada" };
   if (estado === "Vencida") return { bg: "bg-red-50", text: "text-red-700", label: "Vencida" };
 
@@ -327,6 +332,66 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     }
   };
 
+  // ── Anular cobranza (soft) ──
+  // Para cobranzas creadas por error o cuya factura/boleta se anuló con NC. Abre
+  // un modal que pide el motivo; el backend valida (propiedad, que no esté
+  // pagada, y que no respalde una factura vigente sin NC). Si rechaza, mostramos
+  // su mensaje tal cual (p. ej. "emite primero la Nota de Crédito").
+  const [anularModal, setAnularModal] = useState<Factura | null>(null);
+  const [anularMotivo, setAnularMotivo] = useState("");
+  const [anulando, setAnulando] = useState(false);
+  const [anularError, setAnularError] = useState<string | null>(null);
+
+  const abrirAnular = (f: Factura) => {
+    setAnularModal(f);
+    setAnularMotivo("");
+    setAnularError(null);
+  };
+
+  const confirmarAnular = async () => {
+    if (!anularModal) return;
+    const motivo = anularMotivo.trim();
+    if (motivo.length < 3) {
+      setAnularError("Explica el motivo (mín. 3 caracteres).");
+      return;
+    }
+    setAnulando(true);
+    setAnularError(null);
+    try {
+      const res = await fetch(`/api/facturas/${anularModal.id}/anular`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        const msg =
+          typeof j.error === "string" ? j.error : "No se pudo anular la cobranza.";
+        throw new Error(msg);
+      }
+      // Optimista: la sacamos de la vista (salvo que estemos viendo justamente
+      // las anuladas). Refrescamos stats igual.
+      const anuladaId = anularModal.id;
+      setFacturas((prev) =>
+        filtroEstado === "Anulada"
+          ? prev.map((f) =>
+              f.id === anuladaId
+                ? { ...f, estado: "Anulada", anulada_motivo: motivo }
+                : f
+            )
+          : prev.filter((f) => f.id !== anuladaId)
+      );
+      setAnularModal(null);
+      setMensaje("🚫 Cobranza anulada");
+      setTimeout(() => setMensaje(null), 2500);
+      fetchData();
+    } catch (e) {
+      setAnularError(e instanceof Error ? e.message : "No se pudo anular.");
+    } finally {
+      setAnulando(false);
+    }
+  };
+
   // Modal de cobranza manual — registra una factura sin pedido ni comprobante.
   const [showModalManual, setShowModalManual] = useState(false);
   const [guardandoManual, setGuardandoManual] = useState(false);
@@ -555,6 +620,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
           { value: "Pendiente", label: "Pendientes" },
           { value: "Vencida", label: "Vencidas" },
           { value: "Pagada", label: "Pagadas" },
+          { value: "Anulada", label: "Anuladas" },
         ].map((f) => (
           <button
             key={f.value}
@@ -647,13 +713,37 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     </span>
                   </td>
                   <td className="px-3 py-3 text-center">
-                    {f.estado !== "Pagada" ? (
-                      <button
-                        onClick={() => abrirModalPago(f)}
-                        className="px-2.5 py-1 bg-green-500 text-white rounded text-xs font-medium hover:bg-green-600"
-                      >
-                        Marcar pagada
-                      </button>
+                    {f.estado === "Anulada" ? (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[10px] font-medium text-gray-400">Anulada</span>
+                        {f.anulada_motivo && (
+                          <span
+                            className="text-[10px] text-gray-400 italic max-w-[160px] truncate"
+                            title={f.anulada_motivo}
+                          >
+                            &ldquo;{f.anulada_motivo}&rdquo;
+                          </span>
+                        )}
+                        {f.anulada_por && (
+                          <span className="text-[9px] text-gray-300">por {f.anulada_por}</span>
+                        )}
+                      </div>
+                    ) : f.estado !== "Pagada" ? (
+                      <div className="flex flex-col items-center gap-1">
+                        <button
+                          onClick={() => abrirModalPago(f)}
+                          className="px-2.5 py-1 bg-green-500 text-white rounded text-xs font-medium hover:bg-green-600"
+                        >
+                          Marcar pagada
+                        </button>
+                        <button
+                          onClick={() => abrirAnular(f)}
+                          className="text-[10px] font-medium text-gray-400 hover:text-red-600 hover:underline inline-flex items-center gap-0.5"
+                          title="Anular esta cobranza (creada por error o anulada con Nota de Crédito)"
+                        >
+                          <FiSlash className="h-3 w-3" /> Anular
+                        </button>
+                      </div>
                     ) : (
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-[10px] text-gray-500">Pagada {f.fecha_pago}</span>
@@ -728,6 +818,85 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
             >
               <FiX className="h-4 w-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Anular cobranza (pide motivo) */}
+      {anularModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => !anulando && setAnularModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <FiSlash className="text-red-500" /> Anular cobranza
+              </h3>
+              <button
+                onClick={() => !anulando && setAnularModal(null)}
+                className="text-gray-400 hover:text-gray-700"
+                aria-label="Cerrar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              {anularModal.cliente_nombre}
+              {anularModal.numero_comprobante ? ` · ${anularModal.numero_comprobante}` : ""} · S/{" "}
+              {toNum(anularModal.monto).toFixed(2)}
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Motivo <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              value={anularMotivo}
+              onChange={(e) => setAnularMotivo(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Ej: cobranza duplicada / creada por error / factura anulada con NC"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-400 focus:outline-none resize-none"
+            />
+
+            <p className="text-[11px] text-gray-400 mt-2">
+              Queda como <strong>Anulada</strong> (no se borra), con tu nombre y el motivo. Si
+              corresponde a una factura/boleta vigente, primero emite la Nota de Crédito.
+            </p>
+
+            {anularError && (
+              <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {anularError}
+              </div>
+            )}
+
+            <div className="mt-5 flex gap-3 justify-end">
+              <button
+                onClick={() => setAnularModal(null)}
+                disabled={anulando}
+                className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarAnular}
+                disabled={anulando || anularMotivo.trim().length < 3}
+                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-semibold hover:bg-red-700 disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {anulando ? (
+                  <>
+                    <FiRefreshCw className="h-4 w-4 animate-spin" /> Anulando…
+                  </>
+                ) : (
+                  <>
+                    <FiSlash className="h-4 w-4" /> Anular cobranza
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

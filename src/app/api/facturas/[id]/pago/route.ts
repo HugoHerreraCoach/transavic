@@ -47,17 +47,19 @@ export async function POST(request: Request) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Verificar ownership (asesor solo paga las suyas; admin cualquiera)
-    if (session.user.role !== "admin") {
-      const factura = (await sql`
-        SELECT asesor_id FROM facturas WHERE id = ${id}
-      `) as Array<{ asesor_id: string | null }>;
-      if (factura.length === 0) {
-        return NextResponse.json({ error: "Factura no encontrada" }, { status: 404 });
-      }
-      if (factura[0].asesor_id !== session.user.id) {
-        return NextResponse.json({ error: "No es tu factura" }, { status: 403 });
-      }
+    // Cargar dueño + estado: la asesora solo paga las suyas (admin cualquiera) y
+    // NADIE puede marcar pagada una cobranza ANULADA.
+    const factura = (await sql`
+      SELECT asesor_id, estado FROM facturas WHERE id = ${id}
+    `) as Array<{ asesor_id: string | null; estado: string }>;
+    if (factura.length === 0) {
+      return NextResponse.json({ error: "Factura no encontrada" }, { status: 404 });
+    }
+    if (factura[0].estado === "Anulada") {
+      return NextResponse.json({ error: "Esta cobranza está anulada." }, { status: 409 });
+    }
+    if (session.user.role !== "admin" && factura[0].asesor_id !== session.user.id) {
+      return NextResponse.json({ error: "No es tu factura" }, { status: 403 });
     }
 
     const { metodo_pago, pago_detalle, pago_img_base64, pago_img_mime } = parsed.data;
