@@ -1,8 +1,28 @@
 apply plugin: 'com.android.application'
 
+// Firma de release para Google Play. Las credenciales viven en
+// android/keystore.properties (GITIGNORED). Si no existe (otro dev / CI sin la
+// llave), el release sale sin firmar y no rompe el build.
+def keystorePropsFile = rootProject.file("keystore.properties")
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystoreProps.load(new FileInputStream(keystorePropsFile))
+}
+
 android {
     namespace "pe.transavic.reparto"
     compileSdk rootProject.ext.compileSdkVersion
+
+    signingConfigs {
+        release {
+            if (keystorePropsFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
     defaultConfig {
         applicationId "pe.transavic.reparto"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -18,6 +38,9 @@ android {
     }
     buildTypes {
         release {
+            if (keystorePropsFile.exists()) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
