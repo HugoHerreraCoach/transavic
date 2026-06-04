@@ -398,7 +398,7 @@ Sin migración; tsc/eslint limpios. **Por qué "CLIENTES VARIOS":** una boleta <
 | 6 | Cobranzas con plazos flexibles + cron diario | B | ✅ En producción |
 | 7 | SUNAT con 2 RUCs (XML UBL 2.1 + firma + SOAP + CDR) + emisión standalone + NC + consulta RUC/DNI + correo Brevo. Validado en BETA (factura/boleta/NC ACEPTADAS). | B | ✅ En producción · falta 1ª emisión real |
 | 8 | IA comercial Gemini Flash — admin y asesoras (scoped) | C | ✅ En producción ⚠️ (caché 429 — ver gotcha #16) |
-| 3 | Seguimiento motorizado en vivo (app Android Capacitor + GPS en segundo plano) | C | 🔧 Implementado en LOCAL (NO subido) — APK debug compila; falta prueba en teléfono real. Ver "App Repartidor" abajo |
+| 3 | Seguimiento motorizado en vivo (app Android Capacitor + GPS en segundo plano) | C | ✅ EN PRODUCCIÓN (4 jun 2026) — web desplegada (PRs #18/#19) + validado en teléfono real; app **creada en Google Play** (Prueba Interna en preparación). Ver "App Repartidor" abajo |
 
 **Decisiones técnicas tomadas durante implementación:**
 - PDF de guía → HTML + `window.print()` (sin `@react-pdf/renderer`). $0 costo.
@@ -407,8 +407,16 @@ Sin migración; tsc/eslint limpios. **Por qué "CLIENTES VARIOS":** una boleta <
 - Dependencias: `xmlbuilder2`, `xml-crypto`, `node-forge`, `archiver@7` (¡no @8, cambió de API!). `archiver`, `node-forge` y `xml-crypto` listados en `next.config.ts:serverExternalPackages` para evitar bugs de bundling webpack.
 - Gemini Flash Latest → cuenta dedicada `transavicdev@gmail.com`, project 88126347805. Requiere `thinkingConfig: { thinkingBudget: 0 }` en `generationConfig` para evitar que el modelo gaste tokens en thinking interno y trunque respuestas.
 
-### App Repartidor — Capacitor + GPS en vivo (Mejora 3) — 🔧 LOCAL, NO SUBIDO (31 may 2026)
-Implementadas **F1–F6** del spec `docs/superpowers/specs/2026-05-31-app-repartidor-capacitor-gps.md`. **Regla en vigor: NADA se sube (ni a `main`/Vercel ni a Play) hasta comprobar la app en un teléfono real.** Guía práctica completa: **`docs/app-repartidor-guia-prueba-y-build.md`** (cómo probar con `adb reverse` sin tocar producción, reconstruir el APK, y pasar a prod + Play).
+### App Repartidor — Capacitor + GPS en vivo (Mejora 3) — ✅ EN PRODUCCIÓN (4 jun 2026)
+
+> **ACTUALIZACIÓN 4 jun 2026 (esto supera el "LOCAL, NO SUBIDO" histórico de abajo):** el seguimiento GPS del motorizado **pasó a PRODUCCIÓN**.
+> - **Web desplegada a `main`/Vercel:** **PR #18** (integración a main + tabla `rider_locations` migrada a prod por psql + `/api/despacho` endurecido para tolerar ausencia de la tabla), **PR #19** (la app pide solo el permiso de notificación + **cola offline** de GPS: guarda la última posición y la reenvía al volver la señal), **PR #20** (firma de release + página pública `/privacidad`).
+> - **Validado en teléfono real** (HONOR, Android 15): GPS en vivo con la pantalla bloqueada cuando hay datos. Hallazgos de la prueba de calle: (1) el permiso de **notificación** debía estar activo —si no, el HONOR congela el foreground service— ahora la app lo pide solo (PR #19); (2) **sin señal** las posiciones se perdían → ahora hay cola offline; (3) el bloqueo agresivo de HONOR/Xiaomi se resuelve con ajustes de **batería/inicio automático** (Android no deja automatizarlo → va en el instructivo por equipo).
+> - **Google Play:** app **"Transavic Reparto"** creada (appId interno `4972377973183273901`, paquete `pe.transavic.reparto`, español, gratuita). **AAB firmado** listo (`ANDROID_HOME=~/Library/Android/sdk npm run app:build:prod` → `android/app/build/outputs/bundle/release/app-release.aab`). **Llave de firma (upload key):** `android/app/upload-keystore.jks` + `android/keystore.properties` (gitignored) con respaldo en `backups/firma-play/` y credenciales en `CREDENCIALES-PRODUCCION.local.md` (huella SHA1 `49:51:0D:…`). Assets de la ficha (ícono 512, gráfico 1024×500, 2 capturas) en `docs/play-assets/`. **Pendiente para publicar en Prueba Interna:** completar "Contenido de la app" (declaraciones — respuestas en `docs/play-store-transavic-reparto.local.md`), subir el AAB y agregar testers (los 6 Gmail de los motorizados). Cuenta de prueba en prod: `repartidorprueba` / `Repartidor1234`.
+
+**Lo de abajo es el registro histórico de cuando estaba solo en local (31 may 2026):**
+
+Implementadas **F1–F6** del spec `docs/superpowers/specs/2026-05-31-app-repartidor-capacitor-gps.md`. (En su momento la regla era: nada se sube hasta probar en teléfono real — ya cumplido.) Guía práctica completa: **`docs/app-repartidor-guia-prueba-y-build.md`** (cómo probar con `adb reverse` sin tocar producción, reconstruir el APK, y pasar a prod + Play).
 
 - **Qué es:** app Android "cascarón" Capacitor que **carga la web** (`server.url`), no la re-empaqueta. Solo el repartidor la usa. Aporta **GPS en segundo plano** (pantalla apagada) vía *foreground service*, que el navegador móvil no puede.
 - **Backend (F1):** tabla `rider_locations` (1 fila viva por rider, UPSERT; migraciones `scripts/migrate-rider-locations.sql` + `scripts/migrate-rider-locations-accuracy.sql` — esta última amplía `accuracy` a `NUMERIC(10,2)`: con señal mala el GPS reporta miles de metros y `NUMERIC(6,2)` desbordaba → 500 → ping perdido; el endpoint además recorta `accuracy`. Ambas aplicadas SOLO en dev-hugo). Endpoint `POST /api/repartidor/ubicacion` (rol `repartidor`, scoping por sesión, zod). `GET /api/despacho` ahora adjunta `ubicacion` por rider.
