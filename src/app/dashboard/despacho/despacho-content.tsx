@@ -210,6 +210,7 @@ function RepartidorColumn({
   isCollapsed,
   onToggleCollapse,
   isOptimizing,
+  soloLectura,
 }: {
   repartidor: Repartidor;
   onDesasignar: (pedidoId: string) => void;
@@ -217,6 +218,7 @@ function RepartidorColumn({
   isCollapsed: boolean;
   onToggleCollapse: () => void;
   isOptimizing: boolean;
+  soloLectura: boolean;
 }) {
   const entregados = repartidor.pedidos.filter((p) => p.estado === "Entregado").length;
   const fallidos = repartidor.pedidos.filter((p) => p.estado === "Fallido").length;
@@ -290,8 +292,8 @@ function RepartidorColumn({
           </div>
         )}
 
-        {/* Botón Optimizar Ruta */}
-        {activos.length >= 2 && (
+        {/* Botón Optimizar Ruta — solo admin (la asesora solo mira) */}
+        {!soloLectura && activos.length >= 2 && (
           <button
             onClick={(e) => { e.stopPropagation(); onOptimizarRuta(repartidor.id); }}
             disabled={isOptimizing}
@@ -333,7 +335,7 @@ function RepartidorColumn({
             )}
             {pedidosOrdenados.map((pedido, index) => (
               <Draggable key={pedido.id} draggableId={pedido.id} index={index}
-                isDragDisabled={pedido.estado === "Entregado" || pedido.estado === "En_Camino"}
+                isDragDisabled={soloLectura || pedido.estado === "Entregado" || pedido.estado === "En_Camino"}
               >
                 {(provided, snapshot) => (
                   <div
@@ -343,7 +345,7 @@ function RepartidorColumn({
                     className="group relative"
                   >
                     <PedidoMiniCard pedido={pedido} isDragging={snapshot.isDragging} />
-                    {pedido.estado === "Asignado" && (
+                    {!soloLectura && pedido.estado === "Asignado" && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onDesasignar(pedido.id); }}
                         className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
@@ -371,10 +373,12 @@ function DeliveryExternoCard({
   pedidos,
   onRemove,
   onStatusChange,
+  soloLectura,
 }: {
   pedidos: PedidoDespacho[];
   onRemove: (id: string) => void;
   onStatusChange: () => void;
+  soloLectura: boolean;
 }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -467,7 +471,7 @@ ${mapsLink ? `🗺️ *Ruta:* ${mapsLink}` : ""}`.trim();
               </div>
             )}
             {pedidos.map((pedido, index) => (
-              <Draggable key={pedido.id} draggableId={pedido.id} index={index}>
+              <Draggable key={pedido.id} draggableId={pedido.id} index={index} isDragDisabled={soloLectura}>
                 {(provided) => (
                   <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps}>
                     <div className="px-3 py-2.5 rounded-xl border border-orange-200 bg-white shadow-sm">
@@ -478,45 +482,49 @@ ${mapsLink ? `🗺️ *Ruta:* ${mapsLink}` : ""}`.trim();
                             <span className="text-[10px] text-orange-600 font-medium">🚚 {pedido.delivery_externo_nombre}</span>
                           )}
                         </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            onClick={() => handleCopy(pedido)}
-                            className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
-                              copiedId === pedido.id
-                                ? "bg-green-100 text-green-700"
-                                : "bg-orange-100 text-orange-700 hover:bg-orange-200"
-                            }`}
-                          >
-                            <FiCopy size={12} />
-                            <span>{copiedId === pedido.id ? "✓" : "WA"}</span>
-                          </button>
-                          <button
-                            onClick={() => handleUnassign(pedido.id)}
-                            className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
-                            title="Devolver a pendientes"
-                          >
-                            <FiXCircle size={14} />
-                          </button>
-                        </div>
+                        {!soloLectura && (
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button
+                              onClick={() => handleCopy(pedido)}
+                              className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
+                                copiedId === pedido.id
+                                  ? "bg-green-100 text-green-700"
+                                  : "bg-orange-100 text-orange-700 hover:bg-orange-200"
+                              }`}
+                            >
+                              <FiCopy size={12} />
+                              <span>{copiedId === pedido.id ? "✓" : "WA"}</span>
+                            </button>
+                            <button
+                              onClick={() => handleUnassign(pedido.id)}
+                              className="p-1 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                              title="Devolver a pendientes"
+                            >
+                              <FiXCircle size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                       <p className="text-xs text-gray-500 mt-1 truncate">{pedido.distrito} · {pedido.direccion}</p>
-                      {/* Estado buttons */}
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <button
-                          onClick={() => handleStatusChange(pedido.id, "Entregado")}
-                          disabled={updatingId === pedido.id}
-                          className="flex-1 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-colors disabled:opacity-50"
-                        >
-                          ✅ Entregado
-                        </button>
-                        <button
-                          onClick={() => handleStatusChange(pedido.id, "Fallido")}
-                          disabled={updatingId === pedido.id}
-                          className="flex-1 py-1.5 rounded-lg bg-red-50 text-red-700 text-[10px] font-semibold hover:bg-red-100 transition-colors disabled:opacity-50"
-                        >
-                          ❌ Fallido
-                        </button>
-                      </div>
+                      {/* Estado buttons — solo admin (mutan el pedido) */}
+                      {!soloLectura && (
+                        <div className="flex items-center gap-1.5 mt-2">
+                          <button
+                            onClick={() => handleStatusChange(pedido.id, "Entregado")}
+                            disabled={updatingId === pedido.id}
+                            className="flex-1 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 text-[10px] font-semibold hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                          >
+                            ✅ Entregado
+                          </button>
+                          <button
+                            onClick={() => handleStatusChange(pedido.id, "Fallido")}
+                            disabled={updatingId === pedido.id}
+                            className="flex-1 py-1.5 rounded-lg bg-red-50 text-red-700 text-[10px] font-semibold hover:bg-red-100 transition-colors disabled:opacity-50"
+                          >
+                            ❌ Fallido
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -886,7 +894,15 @@ function BaseLocationMapPicker({
 
 // ── Componente Principal ──
 
-export default function DespachoContent({ }: { session: Session }) {
+export default function DespachoContent({ session }: { session: Session }) {
+  // Las asesoras entran a Despacho en SOLO LECTURA: ven todo el mapa y la lista
+  // en vivo (alcance total, igual que el admin), pero sin ninguna acción de
+  // gestión (asignar, optimizar, reordenar, desasignar, delivery externo,
+  // ubicación base). Esas son exclusivas del admin y, además, sus endpoints
+  // las bloquean con 403. Acá solo ocultamos los controles para que la vista
+  // quede limpia "para mirar".
+  const soloLectura = session.user.role !== "admin";
+
   const [pendientes, setPendientes] = useState<PedidoDespacho[]>([]);
   const [pendientesAnteriores, setPendientesAnteriores] = useState<PedidoDespacho[]>([]);
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
@@ -1013,6 +1029,7 @@ export default function DespachoContent({ }: { session: Session }) {
 
   // ── Drag & Drop Handler ──
   const handleDragEnd = async (result: DropResult) => {
+    if (soloLectura) return; // asesora en solo lectura: no reasigna ni reordena
     const { source, destination, draggableId } = result;
     if (!destination) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
@@ -1204,7 +1221,14 @@ export default function DespachoContent({ }: { session: Session }) {
               <h1 className="text-xl lg:text-2xl font-bold text-gray-900">
                 📋 Centro de Despacho
               </h1>
-              <p className="text-xs text-gray-500 capitalize">{today}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-gray-500 capitalize">{today}</p>
+                {soloLectura && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[10px] font-medium">
+                    👁️ Solo lectura
+                  </span>
+                )}
+              </div>
             </div>
             {/* Tab toggle */}
             <div className="flex bg-gray-100 rounded-xl p-1">
@@ -1237,14 +1261,16 @@ export default function DespachoContent({ }: { session: Session }) {
             <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 text-xs font-medium text-emerald-700">
               <FiCheckCircle size={12} /> {totalEntregados}/{totalHoy} entregados
             </div>
-            {/* Base location button */}
-            <button
-              onClick={() => setShowBaseLocationModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 text-xs font-medium text-violet-700 hover:bg-violet-200 transition-colors cursor-pointer"
-              title={`Local: ${baseLocation.name} - ${baseLocation.address}`}
-            >
-              <FiSettings size={12} /> 🏭 {baseLocation.name}
-            </button>
+            {/* Base location button — solo admin (escribe en /api/settings) */}
+            {!soloLectura && (
+              <button
+                onClick={() => setShowBaseLocationModal(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-100 text-xs font-medium text-violet-700 hover:bg-violet-200 transition-colors cursor-pointer"
+                title={`Local: ${baseLocation.name} - ${baseLocation.address}`}
+              >
+                <FiSettings size={12} /> 🏭 {baseLocation.name}
+              </button>
+            )}
             <button
               onClick={() => fetchData(true)}
               disabled={refreshing}
@@ -1340,7 +1366,7 @@ export default function DespachoContent({ }: { session: Session }) {
                       </div>
                     )}
                     {pedidosFiltrados.map((pedido, index) => (
-                      <Draggable key={pedido.id} draggableId={pedido.id} index={index}>
+                      <Draggable key={pedido.id} draggableId={pedido.id} index={index} isDragDisabled={soloLectura}>
                         {(provided, snapshot) => (
                           <div
                             ref={provided.innerRef}
@@ -1348,18 +1374,20 @@ export default function DespachoContent({ }: { session: Session }) {
                             {...provided.dragHandleProps}
                           >
                             <PedidoMiniCard pedido={pedido} isDragging={snapshot.isDragging} />
-                            {/* Quick assign */}
-                            <select
-                              className="w-full mt-1 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 hover:border-indigo-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
-                              value=""
-                              onChange={(e) => { if (e.target.value) quickAssign(pedido.id, e.target.value, "pendientes"); }}
-                            >
-                              <option value="">⚡ Asignar a...</option>
-                              {repartidores.filter(r => r.role === "repartidor").map((r) => (
-                                <option key={r.id} value={r.id}>{r.name}</option>
-                              ))}
-                              <option value="__externo__">📦 Delivery Externo</option>
-                            </select>
+                            {/* Quick assign — solo admin */}
+                            {!soloLectura && (
+                              <select
+                                className="w-full mt-1 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 hover:border-indigo-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                                value=""
+                                onChange={(e) => { if (e.target.value) quickAssign(pedido.id, e.target.value, "pendientes"); }}
+                              >
+                                <option value="">⚡ Asignar a...</option>
+                                {repartidores.filter(r => r.role === "repartidor").map((r) => (
+                                  <option key={r.id} value={r.id}>{r.name}</option>
+                                ))}
+                                <option value="__externo__">📦 Delivery Externo</option>
+                              </select>
+                            )}
                           </div>
                         )}
                       </Draggable>
@@ -1399,7 +1427,7 @@ export default function DespachoContent({ }: { session: Session }) {
                               ? new Date(pedido.fecha_pedido + "T12:00:00").toLocaleDateString("es-PE", { weekday: "short", day: "numeric" })
                               : "";
                             return (
-                              <Draggable key={pedido.id} draggableId={pedido.id} index={index}>
+                              <Draggable key={pedido.id} draggableId={pedido.id} index={index} isDragDisabled={soloLectura}>
                                 {(provided, snapshot) => (
                                   <div
                                     ref={provided.innerRef}
@@ -1414,18 +1442,20 @@ export default function DespachoContent({ }: { session: Session }) {
                                         </span>
                                       )}
                                     </div>
-                                    {/* Quick assign */}
-                                    <select
-                                      className="w-full mt-1 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 hover:border-indigo-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
-                                      value=""
-                                      onChange={(e) => { if (e.target.value) quickAssign(pedido.id, e.target.value, "anteriores"); }}
-                                    >
-                                      <option value="">⚡ Asignar a...</option>
-                                      {repartidores.filter(r => r.role === "repartidor").map((r) => (
-                                        <option key={r.id} value={r.id}>{r.name}</option>
-                                      ))}
-                                      <option value="__externo__">📦 Delivery Externo</option>
-                                    </select>
+                                    {/* Quick assign — solo admin */}
+                                    {!soloLectura && (
+                                      <select
+                                        className="w-full mt-1 text-[10px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1 hover:border-indigo-300 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition-colors"
+                                        value=""
+                                        onChange={(e) => { if (e.target.value) quickAssign(pedido.id, e.target.value, "anteriores"); }}
+                                      >
+                                        <option value="">⚡ Asignar a...</option>
+                                        {repartidores.filter(r => r.role === "repartidor").map((r) => (
+                                          <option key={r.id} value={r.id}>{r.name}</option>
+                                        ))}
+                                        <option value="__externo__">📦 Delivery Externo</option>
+                                      </select>
+                                    )}
                                   </div>
                                 )}
                               </Draggable>
@@ -1476,6 +1506,7 @@ export default function DespachoContent({ }: { session: Session }) {
                         });
                       }}
                       isOptimizing={optimizingId === repartidor.id}
+                      soloLectura={soloLectura}
                     />
                   );
                 });
@@ -1486,6 +1517,7 @@ export default function DespachoContent({ }: { session: Session }) {
                 pedidos={externosPedidos}
                 onRemove={handleRemoveExterno}
                 onStatusChange={() => fetchData(true)}
+                soloLectura={soloLectura}
               />
             </div>
 

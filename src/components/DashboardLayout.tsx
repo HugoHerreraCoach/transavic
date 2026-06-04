@@ -90,7 +90,10 @@ const navItems: NavItem[] = [
     href: "/dashboard/despacho",
     label: "Despacho",
     icon: <FiTruck className="h-5 w-5 flex-shrink-0" />,
-    roles: ["admin"],
+    // Admin gestiona el despacho (asignar/optimizar). La asesora entra en SOLO
+    // LECTURA: ve todos los motorizados y entregas en vivo (mapa + lista) para
+    // poder avisarle a su cliente, sin tocar la operación.
+    roles: ["admin", "asesor"],
   },
 
   // ── COMERCIAL ──
