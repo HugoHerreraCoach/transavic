@@ -166,5 +166,8 @@ ahí se sube. Orden:
 - **Reporte web vs nativo:** en navegador reporta `useGeolocation` (mi-ruta-content); en la
   app reporta el plugin (seguimiento-nativo). `esPlataformaNativa()` (en `src/lib/plataforma.ts`)
   evita que se dupliquen.
-- **NADA de esto está subido** todavía (regla de Antonio). El proyecto `android/` y las
-  dependencias de Capacitor están solo en local.
+- **✅ YA EN PRODUCCIÓN (4 jun 2026).** El proyecto `android/` y las dependencias de Capacitor
+  se commitearon a `main` (PRs #18–#22); la tabla `rider_locations` se migró a producción; la app
+  se validó en teléfono real y se publicó en Google Play (Prueba Interna). Esta guía sigue siendo
+  útil para **probar en local** (con `adb reverse`, sin tocar prod) y para **reconstruir el AAB**
+  (`npm run app:build:prod`) en cada release — recordá subir el `versionCode` en `android/app/build.gradle`.

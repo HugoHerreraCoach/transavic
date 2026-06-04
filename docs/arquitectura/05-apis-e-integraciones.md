@@ -1,9 +1,9 @@
 # 05 — APIs e Integraciones Externas
 
-> **Última verificación contra código:** 2026-06-02
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (endpoint de ubicación del repartidor + Capacitor ya en producción)
 > **Archivos clave:** todos los `src/app/api/**/route.ts`, `src/lib/data.ts`, `src/lib/offline-queue.ts`, `src/lib/sunat/*`, `src/lib/{apisperu,brevo,email,gemini,insights,notificaciones,cobranzas,metas,incentivos,comprobante-scope}.ts`
 
-> **Nota de alcance (jun 2026):** este doc creció mucho desde mayo. El sistema pasó de ~23 endpoints (solo pedidos/despacho/clientes/productos/users) a **~70 route handlers** repartidos en: comprobantes SUNAT, cobranzas/facturas, incentivos/metas, reportes, producción, notificaciones, búsqueda global, paneles agregados (mi-día, perfil 360°) y **4 cron jobs**. Todo lo de abajo está verificado contra el código de `main`. Lo que el repartidor envía por GPS en vivo (tabla `rider_locations`, endpoint de ubicación) **no está en `main`** — vive en una branch local con la app Capacitor; por eso no se documenta aquí.
+> **Nota de alcance (jun 2026):** este doc creció mucho desde mayo. El sistema pasó de ~23 endpoints (solo pedidos/despacho/clientes/productos/users) a **~70 route handlers** repartidos en: comprobantes SUNAT, cobranzas/facturas, incentivos/metas, reportes, producción, notificaciones, búsqueda global, paneles agregados (mi-día, perfil 360°) y **4 cron jobs**. Todo lo de abajo está verificado contra el código de `main`. **El GPS en vivo del repartidor YA está en `main`** (4 jun 2026): tabla `rider_locations` + `POST /api/repartidor/ubicacion` (rol repartidor, scoping por sesión, UPSERT idempotente) + `GET /api/despacho` que adjunta la última ubicación de cada moto. El tracking se resolvió con **polling** (no Pusher).
 
 ---
 
@@ -819,8 +819,8 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 
 | Servicio | Para qué | Estado |
 |---|---|---|
-| **Pusher Channels** | Tracking GPS en vivo del repartidor | ⏳ Pendiente (no iniciado) |
-| **Capacitor** | Wrapper Android de `/mi-ruta` para GPS en background (iOS bloquea PWAs) | 🔧 En branch local (tabla `rider_locations` + endpoint de ubicación). NO en `main` |
+| **Pusher Channels** | Se evaluó para tracking GPS en vivo | ❌ Descartado — el tracking salió con polling (cero infra, $0) |
+| **Capacitor** | Wrapper Android de `/mi-ruta` para GPS en background (iOS bloquea PWAs) | ✅ En producción (4 jun 2026) — carpeta `android/` en `main`, app publicada en Google Play (Prueba Interna). Tabla `rider_locations` + endpoint de ubicación, ya en `main` |
 
 > SUNAT y Gemini ya NO son "próximas" — están en producción (§4.5, §4.8).
 

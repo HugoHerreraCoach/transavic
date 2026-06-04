@@ -1,6 +1,6 @@
 # 02 — Modelo de Datos
 
-> **Última verificación contra código:** 2026-06-02
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (tabla `rider_locations` migrada a producción — ya no es "pendiente"; ver §8)
 > **Archivos clave:** `scripts/migrate-produccion-2026-05-29.sql` (esquema consolidado de producción), `scripts/migrations-fase-ab.sql`, `scripts/migrate-*.sql`, `scripts/seed.mjs`, `scripts/migrate-*.mjs`, `src/lib/types.ts`, `src/lib/data.ts`, `src/lib/sunat/index.ts`, `src/app/api/pedidos/route.ts`, `src/app/api/facturas/route.ts`
 
 > **Fuente de verdad del esquema:** `scripts/migrate-produccion-2026-05-29.sql` consolida el estado de producción al 30 may 2026 (6 tablas base + 8 tablas nuevas + 13 columnas). Encima de esa migración se aplicaron por psql (gotcha #17) varias migraciones aditivas posteriores (`migrate-codigo-producto.sql`, `migrate-comprobante-credito.sql`, `migrate-comprobante-items.sql`, `migrate-comprobante-referencia.sql`, `migrate-comprobante-emisor.sql`, `migrate-pedido-ediciones.sql`, `migrate-meta-bono.sql`, `migrate-cobranza-pago.sql`, `migrate-factura-vinculo.sql`). Este documento refleja todas ellas.
@@ -255,9 +255,9 @@ erDiagram
     }
 ```
 
-**Conteo de tablas:** **14** en producción (`scripts/migrate-produccion-2026-05-29.sql` lo verifica al final). Las 6 base (`users`, `clientes`, `pedidos`, `pedido_items`, `productos`, `settings`) + 8 nuevas (`comprobantes`, `comprobantes_contador`, `correlativos`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`). **`pedido_ediciones`** se agregó *después* de ese conteo (migración aparte, `migrate-pedido-ediciones.sql`), así que en producción hoy son **15 tablas** reales.
+**Conteo de tablas:** **14** en producción (`scripts/migrate-produccion-2026-05-29.sql` lo verifica al final). Las 6 base (`users`, `clientes`, `pedidos`, `pedido_items`, `productos`, `settings`) + 8 nuevas (`comprobantes`, `comprobantes_contador`, `correlativos`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`). **`pedido_ediciones`** se agregó *después* de ese conteo (migración aparte, `migrate-pedido-ediciones.sql`) → 15; y **`rider_locations`** se migró a producción el 4 jun 2026 (Mejora 3 — tracking GPS) → **16 tablas** reales hoy.
 
-> **`rider_locations` NO existe** ni en producción ni en el código commiteado. Se planeó (Mejora 3 — tracking GPS en vivo con Capacitor + Pusher) y figura como "construido local" en notas internas, pero a la fecha de esta verificación **no hay ninguna migración, tabla ni referencia en `scripts/`, `src/` ni `android/`** del repo. Trátalo como pendiente/no-presente. Ver §8 más abajo.
+> **`rider_locations` YA EXISTE** (desde el 4 jun 2026, migrada a producción por psql — `scripts/migrate-rider-locations.sql` + `…-accuracy.sql`). Guarda la **última posición viva** de cada motorizado (modelo "1 fila por rider", `PRIMARY KEY = repartidor_id`, UPSERT `ON CONFLICT`; **NO** guarda histórico de recorrido). La llena `POST /api/repartidor/ubicacion` (la app nativa o la web de `/mi-ruta`) y la lee `GET /api/despacho` para el marker en vivo. Schema y detalle en §8. El tracking NO usa Pusher (salió con polling).
 
 ---
 
@@ -1149,7 +1149,7 @@ grep -rn "INSERT INTO pedidos\|UPDATE pedidos" src/app/api/
 # 7. Claves en settings
 psql "$DATABASE_URL" -c "SELECT key FROM settings;"
 
-# 8. ¿Apareció rider_locations o tracking GPS persistido?
+# 8. rider_locations en prod (esperado: la tabla existe desde el 4 jun 2026)
 grep -rn "rider_location" scripts/ src/ android/
 ```
 
@@ -1157,9 +1157,27 @@ Si encontrás drift, actualizá las secciones afectadas y bumpeá la fecha del h
 
 ---
 
-## 8. Pendiente / no presente en el esquema
+## 8. rider_locations (tracking GPS en vivo) — ✅ EN PRODUCCIÓN (4 jun 2026)
 
-- **`rider_locations` (tracking GPS en vivo del repartidor)** — Mejora 3 (Capacitor + Pusher). **No existe** en producción ni en el código commiteado a la fecha de esta verificación: no hay migración, tabla ni referencia en `scripts/`, `src/` ni `android/`. Si se implementa, será una tabla nueva (probablemente `rider_locations` con `repartidor_id FK`, `lat`, `lng`, `accuracy`, `captured_at`) + su endpoint de ingesta y el marker en `mapa-despacho`. Documentar aquí cuando aterrice.
+Mejora 3. Migrada a producción por psql (`scripts/migrate-rider-locations.sql` + `migrate-rider-locations-accuracy.sql`; rollback en `rollback-rider-locations.sql`). Guarda la **última posición conocida** de cada motorizado — **no** hay histórico de recorrido.
+
+```sql
+CREATE TABLE rider_locations (
+  repartidor_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, -- 1 fila por rider → habilita el UPSERT
+  latitude      DECIMAL(10,8) NOT NULL,   -- convención del repo (§7 CLAUDE.md)
+  longitude     DECIMAL(11,8) NOT NULL,
+  accuracy      NUMERIC(10,2),            -- radio de confianza en metros; ampliado de (6,2) a (10,2): con señal mala el GPS reporta miles de m y (6,2) desbordaba → 500 → ping perdido
+  heading       NUMERIC(6,2),             -- rumbo 0–360 (para la flecha del marker)
+  speed         NUMERIC(6,2),             -- m/s (opcional)
+  captured_at   TIMESTAMP WITH TIME ZONE NOT NULL, -- cuándo lo midió el GPS del teléfono (el frontend decide "fresca" si ≤5 min)
+  updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
+```
+
+- **Escritura:** `POST /api/repartidor/ubicacion` (rol `repartidor`, scoping por sesión — siempre contra `session.user.id`, nunca un id del body, zod). UPSERT `ON CONFLICT (repartidor_id) DO UPDATE` → **idempotente** (la cola offline / el reintento del plugin pueden mandar la misma posición sin romper nada).
+- **Lectura:** `GET /api/despacho` adjunta `ubicacion` a cada rider (envuelto en try/catch: si la tabla faltara en un entorno, el resto del mapa sigue vivo). El marker "moto" en vivo está en `mapa-despacho.tsx`.
+- **NO usa Pusher** — el plan original lo mencionaba, pero el tracking salió con el **polling** existente de `/despacho` (15s). Cero infra nueva.
+
 - **Eliminar columnas legacy de `pedidos`** (`entregado`, `entregado_por`, `entregado_at`) — pendiente hasta que no queden queries que las lean (gotcha #1). Por ahora **NO eliminar**.
 
 ---
