@@ -38,6 +38,11 @@ export async function GET(request: Request) {
     if (estado) {
       conditions.push(`f.estado = $${i++}`);
       params.push(estado);
+    } else {
+      // Por defecto la lista Y los stats EXCLUYEN las anuladas: una cobranza
+      // anulada (por error o por Nota de Crédito) ya no es deuda. Para revisarlas,
+      // el filtro `?estado=Anulada` las trae explícitamente.
+      conditions.push(`f.estado <> 'Anulada'`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
@@ -49,6 +54,7 @@ export async function GET(request: Request) {
         TO_CHAR(f.fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
         f.estado, f.numero_comprobante, f.notas,
         f.metodo_pago, f.pago_detalle,
+        f.anulada_por, f.anulada_motivo,
         (f.pago_img_base64 IS NOT NULL) AS tiene_pago_img,
         u.name AS asesor_name
       FROM facturas f

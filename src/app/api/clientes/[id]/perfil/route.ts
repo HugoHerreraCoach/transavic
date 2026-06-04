@@ -101,8 +101,9 @@ export async function GET(
         TO_CHAR(f.fecha_pago, 'DD/MM/YYYY') AS fecha_pago,
         f.fecha_vencimiento AS fecha_vencimiento_raw
       FROM facturas f
-      WHERE f.cliente_id = ${id}::uuid
-         OR (f.cliente_id IS NULL AND LOWER(f.cliente_nombre) = LOWER(${nombre}))
+      WHERE (f.cliente_id = ${id}::uuid
+         OR (f.cliente_id IS NULL AND LOWER(f.cliente_nombre) = LOWER(${nombre})))
+        AND f.estado <> 'Anulada'
       ORDER BY f.fecha_emision DESC
       LIMIT 50
     `) as Array<Record<string, unknown>>;
