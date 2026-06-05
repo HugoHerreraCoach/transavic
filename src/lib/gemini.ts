@@ -102,6 +102,103 @@ export async function callGemini(
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// Respaldo: Groq (free tier, sin tarjeta, API compatible con OpenAI).
+// Se usa SOLO cuando Gemini falla (429 u otro error). Modelo configurable
+// con GROQ_MODEL (default Llama 3.3 70B). Recibe los MISMOS prompts ya
+// anonimizados que Gemini → no cambia la frontera de privacidad.
+// ════════════════════════════════════════════════════════════════════════
+
+const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+
+/**
+ * Llama a Groq (Chat Completions, OpenAI-compatible). Misma firma/retorno que
+ * callGemini para que sea intercambiable. Lanza Error legible si falla.
+ */
+export async function callGroq(
+  prompt: string,
+  opts: GeminiOptions = {}
+): Promise<GeminiResult> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    throw new Error("GROQ_API_KEY no está definida en el entorno");
+  }
+
+  const {
+    temperature = 0.4,
+    maxOutputTokens = 600,
+    timeoutMs = 15000,
+  } = opts;
+  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(GROQ_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature,
+        max_tokens: maxOutputTokens,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Groq API ${res.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) {
+      throw new Error("Groq no devolvió texto en la respuesta");
+    }
+
+    return {
+      text: text.trim(),
+      promptTokens: data?.usage?.prompt_tokens ?? 0,
+      responseTokens: data?.usage?.completion_tokens ?? 0,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Groq timeout (>${timeoutMs}ms) — Groq sobrecargado o sin red`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Orquestador con respaldo automático: intenta Gemini y, si falla (429 u otro
+ * error), reintenta con Groq cuando hay GROQ_API_KEY configurada. Sin esa key,
+ * se comporta idéntico a callGemini (no es disruptivo). Si AMBOS fallan,
+ * propaga el error → el insight degrada a "datos crudos abajo" como hoy.
+ */
+export async function callIA(
+  prompt: string,
+  opts: GeminiOptions = {}
+): Promise<GeminiResult> {
+  try {
+    return await callGemini(prompt, opts);
+  } catch (err) {
+    if (process.env.GROQ_API_KEY) {
+      console.warn(
+        `Gemini falló (${(err as Error).message.slice(0, 60)}); usando Groq de respaldo…`
+      );
+      return await callGroq(prompt, opts);
+    }
+    throw err;
+  }
+}
+
 /**
  * Anonimiza un nombre de cliente para mandar a Gemini.
  * Usa un mapping consistente dentro del mismo llamado.
