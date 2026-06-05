@@ -1,6 +1,6 @@
 # 01 — Visión General de la Arquitectura
 
-> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (app del repartidor / GPS en vivo pasó a producción)
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (app del repartidor / GPS en vivo pasó a producción; IA con caché persistente + respaldo Groq; traductor de Chrome desactivado)
 > **Commit del proyecto:** `main` (post-lanzamiento a producción del 30 may 2026)
 > **Archivos clave:** `package.json`, `tsconfig.json`, `next.config.ts`, `vercel.json`, `src/app/layout.tsx`, `src/middleware.ts`, `src/auth.config.ts`, `src/lib/roles.ts`, `src/lib/types.ts`, `src/components/DashboardLayout.tsx`, `src/components/VersionChecker.tsx`, `src/app/api/version/route.ts`, `src/app/globals.css`
 
@@ -98,7 +98,7 @@ flowchart TB
 **Lectura del diagrama:**
 - Hay **4 UIs por rol** (asesor, admin, produccion, repartidor) — cada una ve solo sus pantallas (ver §6 / doc 03).
 - La **capa `lib/`** centraliza la lógica reutilizable: `data.ts` (queries con **scoping por rol**), `sunat/*` (facturación electrónica), `cobranzas.ts`, `metas.ts`/`incentivos.ts`, `insights.ts`/`gemini.ts` (IA), `notificaciones.ts`.
-- **Neon Postgres** es la fuente de verdad. No hay caché intermedio (Redis/etc.); el caché de IA es in-memory por proceso (ver gotcha #16 de CLAUDE.md). **Neon no tiene RLS** — todos los permisos viven en la capa de aplicación (cada API route hace `auth()` + filtra por rol en SQL).
+- **Neon Postgres** es la fuente de verdad. No hay caché intermedio (Redis/etc.); el caché de IA es **persistente en Postgres** (tabla `ia_insights_cache`, TTL 1h por scope — resuelve el 429, gotcha #16 de CLAUDE.md). **Neon no tiene RLS** — todos los permisos viven en la capa de aplicación (cada API route hace `auth()` + filtra por rol en SQL).
 - **Google Maps** se invoca server-side (con `Maps_SERVER_KEY` para distancias y ETAs) y client-side (con `NEXT_PUBLIC_MAPS_API_KEY` para visualización y autocomplete).
 - **SUNAT, Brevo, apisperu y Gemini** son integraciones server-only (claves nunca expuestas al cliente).
 - **localStorage** es el storage del repartidor para acciones offline.
@@ -190,6 +190,7 @@ export default nextConfig;
 - `@theme inline` define variables CSS custom: `--color-background`/`--color-foreground` y `--font-sans`/`--font-mono` mapeados a Geist (`next/font/google`).
 - **Light-mode forzado (NO re-agregar dark mode):** `globals.css` fija `color-scheme: light` y **ya no tiene** el bloque `@media (prefers-color-scheme: dark)`. La app está diseñada solo para modo claro (tarjetas blancas, texto oscuro); con el dark del SO activo los textos quedaban invisibles. Ver CLAUDE.md gotcha #15.
 - **Animaciones de UI:** `globals.css` define keyframes reutilizables `fadeIn`/`modalIn`/`toastIn` (clases `.anim-fade`/`.anim-modal`/`.anim-toast`, curva ease-out) + un bloque global `@media (prefers-reduced-motion: reduce)`. Los modales y toasts del dashboard los usan (introducidos en el barrido de `/mejora-diseño`).
+- **Traductor de Chrome desactivado (4 jun 2026):** el root layout (`src/app/layout.tsx`) declara **`<html lang="es" translate="no">`** + `metadata.other = { google: "notranslate" }` → `<meta name="google" content="notranslate">`. Antes el layout decía `lang="en"` y Chrome auto-traducía la app (100% en español), alterando nombres propios ("Clever"→"Inteligente", "Wilder"→"Salvaje", "Alas"→"¡Ay!"). Es un ERP interno solo en español: apagar la traducción protege nombres, direcciones y productos de ser alterados en el navegador. Si una pestaña ya tenía la traducción activa, requiere una recarga a fondo una vez.
 - **Existe** un `tailwind.config.js` legacy con `content` paths viejos, pero **no es la fuente principal de config en v4**. Es vestigio del scaffolding.
 
 ### 3.5 Estilos de impresión (`globals.css`, bloque `@media print`)
@@ -357,7 +358,7 @@ El sistema tiene **4 roles**, todos ya en producción. Los permisos viven **100%
 | `repartidor` | Motorizados (6) | `/dashboard/mi-ruta` | Solo `/mi-ruta` con SUS pedidos del día (scoping por `repartidor_id`); cambia estado offline-first |
 | `produccion` | Asistente de producción | `/dashboard/produccion` | `/produccion` (cola + pesos) y `/resumen` (totales por producto). En prod desde 30 may 2026 |
 
-> **Comprobantes:** todas las asesoras ven TODOS los comprobantes (cambio del 2 jun 2026); la separación por asesora se mantiene solo en los insights de IA. Ver CLAUDE.md §13.
+> **Comprobantes:** cada asesora ve **solo los suyos** (de sus pedidos o los que ella emitió, vía `lib/comprobante-scope.ts`); el admin ve todos. La "visibilidad total" se probó el 2 jun 2026 y se **revirtió** el mismo día. Ver CLAUDE.md §13.
 
 > **Ojo (drift de CLAUDE.md):** CLAUDE.md §6 dice que admin/asesor redirigen a `/dashboard/nuevo-pedido`, pero el código (`auth.config.ts` + `lib/roles.ts`) los manda a `/dashboard` (Lista de Pedidos). Este doc refleja el **código**.
 
@@ -396,7 +397,7 @@ Los **módulos nuevos** requieren más vars (en producción están todas en Verc
 | Comprobante automático | `AUTO_EMITIR_COMPROBANTE` (flag opcional `"true"`) |
 | Correo de comprobantes | `BREVO_API_KEY` + `BREVO_SENDER_*` (preferido); fallback `SMTP_*` + `SMTP_FROM_*` |
 | Consulta RUC/DNI | `APISPERU_TOKEN` |
-| IA comercial | `GEMINI_API_KEY` |
+| IA comercial | `GEMINI_API_KEY` + respaldo opcional `GROQ_API_KEY` / `GROQ_MODEL` (si Gemini falla con 429, reintenta con Groq) |
 | Cron jobs | `CRON_SECRET` (sin él, los 4 crons devuelven 503) |
 
 > `.env` define más variables (POSTGRES_*, PGHOST, NEXT_PUBLIC_STACK_*) pero **no se usan en código activo** — residuo de templates de Vercel/Neon Auth. `ADMIN_USER`/`ADMIN_PASSWORD` también son legacy: la auth real lee de la tabla `users`.
@@ -637,7 +638,7 @@ El sistema base + las 8 mejoras acordadas con Antonio están **desplegadas y en 
 | 5 | Dashboard comercial + metas/incentivos + reportes | ✅ En producción |
 | 6 | Cobranzas con plazos + aging + cron diario | ✅ En producción |
 | 7 | SUNAT con 2 RUCs (XML UBL 2.1 + firma + SOAP + CDR) + emisión standalone + NC + consulta RUC/DNI + correo Brevo | ✅ En producción · validado en BETA |
-| 8 | IA comercial Gemini (admin + asesoras scoped) | ✅ En producción ⚠️ (caché 429 — gotcha #16) |
+| 8 | IA comercial Gemini (admin + asesoras scoped) | ✅ En producción (caché persistente en DB + respaldo Groq → 429 resuelto, gotcha #16) |
 | 3 | Seguimiento del motorizado en vivo (Capacitor, **polling** — sin Pusher) | ✅ En producción (4 jun 2026) — ver abajo |
 
 ### App nativa del motorizado (Capacitor) — EN PRODUCCIÓN (4 jun 2026)
@@ -647,7 +648,7 @@ La carpeta **`android/`** (wrapper Capacitor de `/mi-ruta` para tener GPS en bac
 ### Próximas fases (no cotizadas)
 
 - CRM con WhatsApp Business API (Antonio lo postpuso).
-- Persistir el caché de IA en la DB para evitar el 429 de Gemini bajo carga (gotcha #16).
+- Cargar `precio_venta` en el catálogo (hoy 0/88 productos lo tienen) para que metas/reportes muestren montos reales en vez de S/0 (gotcha #8).
 
 ---
 
