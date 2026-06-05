@@ -1,9 +1,9 @@
 # 02 — Modelo de Datos
 
-> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (tabla `rider_locations` migrada a producción — ya no es "pendiente"; ver §8)
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (tabla `rider_locations` migrada a producción — ya no es "pendiente"; ver §8 — y tabla `ia_insights_cache` para el caché persistente de IA — ver §2.16)
 > **Archivos clave:** `scripts/migrate-produccion-2026-05-29.sql` (esquema consolidado de producción), `scripts/migrations-fase-ab.sql`, `scripts/migrate-*.sql`, `scripts/seed.mjs`, `scripts/migrate-*.mjs`, `src/lib/types.ts`, `src/lib/data.ts`, `src/lib/sunat/index.ts`, `src/app/api/pedidos/route.ts`, `src/app/api/facturas/route.ts`
 
-> **Fuente de verdad del esquema:** `scripts/migrate-produccion-2026-05-29.sql` consolida el estado de producción al 30 may 2026 (6 tablas base + 8 tablas nuevas + 13 columnas). Encima de esa migración se aplicaron por psql (gotcha #17) varias migraciones aditivas posteriores (`migrate-codigo-producto.sql`, `migrate-comprobante-credito.sql`, `migrate-comprobante-items.sql`, `migrate-comprobante-referencia.sql`, `migrate-comprobante-emisor.sql`, `migrate-pedido-ediciones.sql`, `migrate-meta-bono.sql`, `migrate-cobranza-pago.sql`, `migrate-factura-vinculo.sql`). Este documento refleja todas ellas.
+> **Fuente de verdad del esquema:** `scripts/migrate-produccion-2026-05-29.sql` consolida el estado de producción al 30 may 2026 (6 tablas base + 8 tablas nuevas + 13 columnas). Encima de esa migración se aplicaron por psql (gotcha #17) varias migraciones aditivas posteriores (`migrate-codigo-producto.sql`, `migrate-comprobante-credito.sql`, `migrate-comprobante-items.sql`, `migrate-comprobante-referencia.sql`, `migrate-comprobante-emisor.sql`, `migrate-pedido-ediciones.sql`, `migrate-meta-bono.sql`, `migrate-cobranza-pago.sql`, `migrate-factura-vinculo.sql`, `migrate-ia-insights-cache.sql`). Este documento refleja todas ellas.
 
 ---
 
@@ -255,7 +255,7 @@ erDiagram
     }
 ```
 
-**Conteo de tablas:** **14** en producción (`scripts/migrate-produccion-2026-05-29.sql` lo verifica al final). Las 6 base (`users`, `clientes`, `pedidos`, `pedido_items`, `productos`, `settings`) + 8 nuevas (`comprobantes`, `comprobantes_contador`, `correlativos`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`). **`pedido_ediciones`** se agregó *después* de ese conteo (migración aparte, `migrate-pedido-ediciones.sql`) → 15; y **`rider_locations`** se migró a producción el 4 jun 2026 (Mejora 3 — tracking GPS) → **16 tablas** reales hoy.
+**Conteo de tablas:** **14** en producción (`scripts/migrate-produccion-2026-05-29.sql` lo verifica al final). Las 6 base (`users`, `clientes`, `pedidos`, `pedido_items`, `productos`, `settings`) + 8 nuevas (`comprobantes`, `comprobantes_contador`, `correlativos`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`). **`pedido_ediciones`** se agregó *después* de ese conteo (migración aparte, `migrate-pedido-ediciones.sql`) → 15; y **`rider_locations`** se migró a producción el 4 jun 2026 (Mejora 3 — tracking GPS) → 16; y **`ia_insights_cache`** (4 jun 2026, caché persistente de IA — §2.16) → **17 tablas** reales hoy.
 
 > **`rider_locations` YA EXISTE** (desde el 4 jun 2026, migrada a producción por psql — `scripts/migrate-rider-locations.sql` + `…-accuracy.sql`). Guarda la **última posición viva** de cada motorizado (modelo "1 fila por rider", `PRIMARY KEY = repartidor_id`, UPSERT `ON CONFLICT`; **NO** guarda histórico de recorrido). La llena `POST /api/repartidor/ubicacion` (la app nativa o la web de `/mi-ruta`) y la lee `GET /api/despacho` para el marker en vivo. Schema y detalle en §8. El tracking NO usa Pusher (salió con polling).
 
@@ -640,13 +640,13 @@ CREATE INDEX idx_comp_referencia ON comprobantes(referencia_comprobante_id);
 | `forma_pago`, `fecha_vencimiento` | `migrate-comprobante-credito.sql` | El PDF arma la sección "INFORMACIÓN DEL CRÉDITO". Antes la forma de pago solo viajaba en el XML, no se persistía. |
 | `items_json` (JSONB) | `migrate-comprobante-items.sql` | Guarda las líneas emitidas (descripción, unidad, cantidad, precio, código, afectación IGV) para que el reintento de un comprobante standalone reconstruya el XML con los ítems reales, no una línea genérica. `index.ts` lo persiste en cada emisión. |
 | `referencia_comprobante_id` | `migrate-comprobante-referencia.sql` | Vincula explícitamente una NC (07) con la factura/boleta que acredita → la UI muestra "↩ anula F001-X" y bloquea una 2ª NC. |
-| `emitido_por` (TEXT) | `migrate-comprobante-emisor.sql` | Atribución (quién emitió), ahora que todas las asesoras ven todos los comprobantes. Denormalizado, mismo patrón que `pedidos.entregado_por`. Backfill best-effort desde la asesora dueña del pedido; sueltos viejos quedan NULL. |
+| `emitido_por` (TEXT) | `migrate-comprobante-emisor.sql` | Atribución (quién emitió) **y visibilidad por asesora**: cada asesora ve los comprobantes de sus pedidos (`pedidos.asesor_id`) **o** los que ella emitió (`emitido_por`, match TRIM+lower). Denormalizado, mismo patrón que `pedidos.entregado_por`. Backfill best-effort desde la asesora dueña del pedido; sueltos viejos quedan NULL (solo los ve el admin). |
 
 **Persistencia:** `src/lib/sunat/index.ts` hace 3 INSERTs (pendiente/éxito/error) que ya incluyen `forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por` (líneas 208, 285, 327). El **reintento** hace UPDATE (no reinserta) → preserva `emitido_por`.
 
 **⚠️ El PDF y el correo leen las líneas del `xml_firmado_base64`, NO de la DB** (`src/lib/sunat/parse-cpe-items.ts`). Las facturas/boletas standalone (sin pedido) NO guardan sus líneas en `pedido_items` — solo en el XML firmado (y, como respaldo, en `items_json`). Ver `CLAUDE.md` gotcha #18. **El XML firmado nunca se modifica** (es el documento legal aceptado por SUNAT). **El CDR (`cdr_base64`) se sirve como ZIP crudo de SUNAT**, no se intenta extraer el XML.
 
-**Visibilidad:** desde jun 2026, `GET /api/comprobantes` NO scopea por rol — todas las asesoras ven todos los comprobantes. La separación por asesora se mantiene solo en los insights de IA.
+**Visibilidad (scoping por asesora):** `GET /api/comprobantes` SÍ scopea por rol — cada asesora ve **solo los suyos** (de sus pedidos vía `pedidos.asesor_id` **o** los que ella emitió vía `emitido_por`, match TRIM+lower); el admin ve todos. Helper `lib/comprobante-scope.ts:asesoraPuedeVerComprobante`, aplicado en `GET /api/comprobantes` y en los endpoints por id. _(La "visibilidad total" se probó por unas horas el 2 jun 2026 y se **revirtió** el mismo día por decisión de Antonio — CLAUDE.md §13.)_
 
 ---
 
@@ -862,6 +862,26 @@ ON CONFLICT (key) DO NOTHING;
 
 ---
 
+### 2.16 `ia_insights_cache`
+
+**Origen:** `scripts/migrate-ia-insights-cache.sql` (4 jun 2026). Caché PERSISTENTE de los insights del Asistente IA — reemplaza el viejo `new Map()` in-memory que no sobrevivía a los cold starts de Vercel y disparaba el 429 de Gemini (gotcha #16).
+
+```sql
+CREATE TABLE ia_insights_cache (
+    cache_key   VARCHAR(120) PRIMARY KEY,   -- 'admin-{tipo}' / 'asesor-{uuid}-{tipo}'
+    value       JSONB NOT NULL,             -- el insight serializado
+    expires_at  TIMESTAMP WITH TIME ZONE NOT NULL,  -- NOW() + 1h
+    updated_at  TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX idx_ia_insights_cache_expires ON ia_insights_cache (expires_at);
+```
+
+- **Una fila por (scope, tipo)**, upsert por `cache_key` (mismas claves que el caché anterior). TTL 1h vía `expires_at`. Lo manejan `cached()`/`clearInsightsCacheFor()` en `src/lib/insights.ts`.
+- **Sin cron de purga**: las claves son acotadas (4 admin + 4 × Nº asesoras) y se upsertean, así que la tabla no crece (~24 filas). `expires_at` solo controla la frescura.
+- **No guarda datos sensibles sin anonimizar** del lado del prompt — guarda el insight ya generado (texto + datos agregados que la UI muestra).
+
+---
+
 ## 3. Tipos TypeScript (`src/lib/types.ts`)
 
 `src/lib/types.ts` solo define los tipos del núcleo (`EstadoPedido`, `Pedido`, `User`, `Producto`, `PedidoItem`, `PedidoRuta`). Las tablas nuevas (comprobantes, facturas, metas, etc.) NO tienen tipo en este archivo — se tipan localmente en cada endpoint/módulo (p. ej. `OpcionesEmision` en el módulo SUNAT, tipos inline en `api/facturas/route.ts`).
@@ -966,7 +986,7 @@ export type Pedido = {
 | `pedido_items` | `PedidoItem` | NO refleja precios/pesos reales ni `created_at`. |
 | `pedidos` | `Pedido` | Tiene gotchas (faltan `cliente_id`, `direccion_mapa`, guía y pesado). |
 | `pedidos` (subconjunto) | `PedidoRuta` | Para vista del repartidor. |
-| `clientes`, `settings`, `comprobantes`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`, `comprobantes_contador`, `correlativos`, `pedido_ediciones` | **Sin tipo central** | Se tipan inline en cada endpoint/módulo. `notificaciones` sí tiene `TipoNotificacion` en `lib/notificaciones.ts`. |
+| `clientes`, `settings`, `comprobantes`, `facturas`, `metas_asesoras`, `notificaciones`, `precios_productos`, `resumenes_diarios`, `comprobantes_contador`, `correlativos`, `pedido_ediciones`, `rider_locations`, `ia_insights_cache` | **Sin tipo central** | Se tipan inline en cada endpoint/módulo. `notificaciones` sí tiene `TipoNotificacion` en `lib/notificaciones.ts`. |
 
 ---
 
@@ -1073,6 +1093,9 @@ Toda migración es **idempotente** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, g
 | `migrate-cobranza-pago.sql` | + `facturas.metodo_pago`, `pago_detalle`, `pago_img_base64`, `pago_img_mime`. |
 | `migrate-pedido-ediciones.sql` | Crea `pedido_ediciones` + índice. |
 | `migrate-meta-bono.sql` | + `metas_asesoras.bono`; `monto_meta` → NULLABLE. |
+| `migrate-rider-locations.sql` (+ `…-accuracy.sql`) | Crea `rider_locations` (tracking GPS en vivo). `accuracy` ampliado a `NUMERIC(10,2)`. |
+| `migrate-cobranza-anular.sql` | + `facturas.anulada_por`, `anulada_at`, `anulada_motivo` (estado `Anulada`). |
+| `migrate-ia-insights-cache.sql` | Crea `ia_insights_cache` (caché persistente de IA — §2.16). |
 
 **No documentadas** (existen en producción, sin `ALTER TABLE` en `/scripts/`, confirmadas por uso): `pedidos.cliente_id`, `razon_social`, `ruc_dni`, `es_delivery_externo`, `delivery_externo_nombre`, y la tabla base `clientes` (solo existe el ALTER de `asesor_id`/`plazo_pago_dias`).
 
@@ -1103,7 +1126,7 @@ Hoy se prefiere **`.sql` aplicado por psql** (por el gotcha #13). Reglas:
 | **Precios CON IGV incluido** | Es lo que cobra Antonio; se neteo antes de SUNAT | `api/comprobantes/emitir/route.ts` (gotcha #10) |
 | **`productos.codigo` estable** | `SellersItemIdentification` de SUNAT | `migrate-codigo-producto.sql` |
 | **`precios_productos` con vigencia** | Auditoría de cambios de precio | `PATCH /api/productos` |
-| **`comprobantes` no scopeado por rol** | Todas las asesoras ven todos los comprobantes | `GET /api/comprobantes` (jun 2026) |
+| **`comprobantes` scopeado por asesora** | Cada asesora ve solo los suyos (de sus pedidos o emitidos por ella); admin ve todos | `lib/comprobante-scope.ts` · `GET /api/comprobantes` |
 | **PDF/correo leen del `xml_firmado_base64`** | El XML firmado es el documento legal fiel | `lib/sunat/parse-cpe-items.ts` (gotcha #18) |
 | **`items_json` como red de seguridad del reintento** | Reconstruir XML correcto sin pedido | `migrate-comprobante-items.sql` (gotcha #19) |
 | **NC ↔ original vía `referencia_comprobante_id`** | Mostrar el vínculo + bloquear 2ª NC | `migrate-comprobante-referencia.sql` |

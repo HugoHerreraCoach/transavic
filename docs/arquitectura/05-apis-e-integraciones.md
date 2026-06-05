@@ -1,6 +1,6 @@
 # 05 — APIs e Integraciones Externas
 
-> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (endpoint de ubicación del repartidor + Capacitor ya en producción)
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (endpoint de ubicación del repartidor + Capacitor ya en producción; IA con caché persistente + respaldo Groq §4.8; DELETE de usuario con pre-check de historial completo)
 > **Archivos clave:** todos los `src/app/api/**/route.ts`, `src/lib/data.ts`, `src/lib/offline-queue.ts`, `src/lib/sunat/*`, `src/lib/{apisperu,brevo,email,gemini,insights,notificaciones,cobranzas,metas,incentivos,comprobante-scope}.ts`
 
 > **Nota de alcance (jun 2026):** este doc creció mucho desde mayo. El sistema pasó de ~23 endpoints (solo pedidos/despacho/clientes/productos/users) a **~70 route handlers** repartidos en: comprobantes SUNAT, cobranzas/facturas, incentivos/metas, reportes, producción, notificaciones, búsqueda global, paneles agregados (mi-día, perfil 360°) y **4 cron jobs**. Todo lo de abajo está verificado contra el código de `main`. **El GPS en vivo del repartidor YA está en `main`** (4 jun 2026): tabla `rider_locations` + `POST /api/repartidor/ubicacion` (rol repartidor, scoping por sesión, UPSERT idempotente) + `GET /api/despacho` que adjunta la última ubicación de cada moto. El tracking se resolvió con **polling** (no Pusher).
@@ -185,7 +185,7 @@ Resumen de los **~70 route handlers** del sistema agrupados por feature. La regl
 | `/api/users` | GET | ✅ | Admin (todos) / Otro auth (`?role=X` para selects, sin campo `role` en respuesta) | `?role=` | SELECT users |
 | `/api/users` | POST | ✅ | Admin only | `{name, password, role}` | INSERT users (bcrypt hash) |
 | `/api/users/[id]` | PATCH | ✅ | Admin only | `{name?, password?, role?}` | UPDATE users (hashea password si presente) |
-| `/api/users/[id]` | DELETE | ✅ | Admin only | - | Pre-check `pedidos.asesor_id=$1` → 409 si tiene; DELETE FROM users |
+| `/api/users/[id]` | DELETE | ✅ | Admin only | - | Pre-check de historial (pedidos `asesor_id` **o** `repartidor_id`, `facturas`, `precios_productos`) → 409 con motivo claro si tiene; si no, DELETE FROM users. Catch de FK (23503) → 409 amable |
 
 ### 2.7 `/api/produccion/*` — cola del día + pesos (rol `produccion`)
 
@@ -808,12 +808,13 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 
 ### 4.8 Gemini Flash — IA comercial (asistente + insights)
 
-**Archivos:** `src/lib/gemini.ts` (helper `callGemini` + `ClienteAnonymizer`) + `src/lib/insights.ts` (8 insights: 4 admin + 4 asesora, scoped). Endpoint: `GET /api/asistente-ia` (admin/asesor, cache 1h por scope `admin-*`/`asesor-{id}-*`).
+**Archivos:** `src/lib/gemini.ts` (helpers `callGemini` + `callGroq` + `callIA` + `ClienteAnonymizer`) + `src/lib/insights.ts` (8 insights: 4 admin + 4 asesora, scoped; caché en DB). Endpoint: `GET /api/asistente-ia` (admin/asesor, caché 1h por scope `admin-*`/`asesor-{id}-*`).
 
 - Modelo **`gemini-flash-latest`**; requiere `thinkingConfig: { thinkingBudget: 0 }` o las respuestas se truncan (gotcha #12). Free tier; cuenta dedicada `transavicdev@gmail.com`.
 - **Privacy boundary**: las queries de asesora SIEMPRE filtran `WHERE asesor_id = session.user.id`; antes de mandar nombres a Gemini se anonimizan con `ClienteAnonymizer` ("Cliente A", "Cliente B"…).
-- ⚠️ El cache de insights es **in-memory** y no sobrevive en Vercel serverless → bajo carga se topa el límite gratuito (429). Degrada bien (muestra datos crudos). Fix pendiente: persistir en DB. Ver gotcha #16.
-- Env: `GEMINI_API_KEY`.
+- ✅ **Caché PERSISTENTE en Postgres** (tabla `ia_insights_cache`, ver doc 02): `cached()` en `insights.ts` lee/escribe en DB con TTL 1h por scope (upsert por `cache_key`). Sobrevive a cold starts y deploys → cada insight se genera ≤1 vez/hora. **Resuelve el 429** que disparaba el viejo caché in-memory (`new Map()`). Bonus: si un insight nuevo sale degradado pero hay uno bueno guardado, se sirve el bueno (`esInsightDegradado`). Sin cron de purga (claves acotadas). Ver gotcha #16.
+- ✅ **Respaldo Groq**: los 8 insights llaman a **`callIA()`**, que intenta Gemini y, si falla (429 u otro error), reintenta con **`callGroq()`** (API OpenAI-compatible, Llama 3.3 70B, free tier) cuando hay `GROQ_API_KEY`. Sin esa key se comporta igual que antes (no disruptivo). Groq recibe los **mismos prompts ya anonimizados** que Gemini → misma frontera de privacidad. Si ambos fallan, el insight degrada a "datos crudos".
+- Env: `GEMINI_API_KEY`; respaldo opcional `GROQ_API_KEY` + `GROQ_MODEL` (default `llama-3.3-70b-versatile`). Migración del caché: `scripts/migrate-ia-insights-cache.sql`.
 
 ### 4.9 Próximas integraciones (no implementadas)
 
@@ -992,7 +993,7 @@ Si encuentras drift, actualiza las secciones afectadas y sube la fecha del heade
 | 7 | Tipo `Pedido` declara campos sin migración documentada (`razon_social`, etc.) | 🟢 Baja (deuda doc) | `lib/types.ts` |
 | 8 | `Pedido` TS no incluye `cliente_id` ni `direccion_mapa` que SÍ se insertan en DB | 🟢 Baja | `lib/types.ts` |
 | 9 | Tabla `clientes` sin migración de creación documentada | 🟡 Media (reproducibilidad) | `/scripts/` |
-| 10 | DELETE de usuario solo checkea `asesor_id`, no `repartidor_id` | 🟡 Media | `api/users/[id]/route.ts` |
+| 10 | ✅ ~~DELETE de usuario solo checkea `asesor_id`, no `repartidor_id`~~ — **Resuelto 2026-06-04**: el pre-check ahora cubre pedidos (asesor **o** repartidor), comprobantes y precios → 409 con motivo claro; catch de FK (23503) → 409 amable; el frontend muestra el mensaje real | ✅ Resuelto | `api/users/[id]/route.ts` |
 | 11 | offline-queue trata 403 como network error, no como conflict | 🟢 Baja | `lib/offline-queue.ts` |
 | 12 | Haversine y getBaseLocation duplicados en múltiples handlers | 🟢 Baja (DX) | Múltiples |
 

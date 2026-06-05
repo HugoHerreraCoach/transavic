@@ -1,6 +1,6 @@
 # Documentación de Arquitectura — Transavic
 
-> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha) · **2026-06-04:** app del repartidor / GPS en vivo pasó a producción (docs 01, 02, 05 actualizados)
+> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha) · **2026-06-04:** app del repartidor / GPS en vivo pasó a producción + IA con caché persistente (`ia_insights_cache`) y respaldo Groq (429 resuelto) + traductor de Chrome desactivado + DELETE de usuario con pre-check de historial completo (docs 01, 02, 03, 05 actualizados)
 > **Commit base:** `d2a49cd` + cambios hasta el 2 jun 2026 (PRs #6–#11)
 > **Estado:** proyecto **EN PRODUCCIÓN** desde el 30 may 2026 (`transavic.vercel.app`)
 

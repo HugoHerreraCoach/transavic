@@ -1,6 +1,6 @@
 # 03 — Autenticación y Roles
 
-> **Última verificación contra código:** 2026-06-02 (modelo de permisos + cambios recientes) · base previa 2026-05-13
+> **Última verificación contra código:** 2026-06-02 (modelo de permisos + cambios recientes) · **actualizado 2026-06-04** (DELETE de usuario: pre-check de historial completo + mensaje claro, §7.4) · base previa 2026-05-13
 > **Commit del proyecto:** `d2a49cd` (base) + cambios del 2 jun 2026 (PRs #6–#9)
 > **Archivos clave:** `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/actions.ts`, `src/app/login/page.tsx`, `src/app/api/auth/logout/route.ts`, `src/app/api/users/route.ts`, `src/app/api/users/[id]/route.ts`, `src/components/DashboardLayout.tsx`
 
@@ -530,14 +530,15 @@ Ejemplo de uso: cuando una asesora va a crear un pedido y quiere asignarlo a otr
 
 **Solo admin**. **Hard delete** (no soft).
 
-**Pre-check de integridad referencial:**
+**Pre-check de integridad referencial (completo desde 2026-06-04):** cuenta TODAS las referencias que la base protege con FK `NO ACTION` —pedidos (como `asesor_id` **o** `repartidor_id`), `facturas.asesor_id` y `precios_productos.created_by`— y si hay alguna devuelve **409** con un mensaje claro que nombra el historial (ej. *"No se puede eliminar: este usuario tiene 6 pedido(s) en su historial…"*).
+
 ```sql
-SELECT COUNT(*) FROM pedidos WHERE asesor_id = $1
+SELECT COUNT(*) FROM pedidos   WHERE asesor_id = $1 OR repartidor_id = $1;
+SELECT COUNT(*) FROM facturas  WHERE asesor_id = $1;
+SELECT COUNT(*) FROM precios_productos WHERE created_by = $1;
 ```
 
-Si tiene pedidos asignados → **409 Conflict** (no deja borrar para no romper FK histórica).
-
-**⚠️ Solo checkea `asesor_id`, no `repartidor_id`.** Si querés borrar un repartidor con pedidos asignados, el código lo deja pasar y el FK ON DELETE comportamiento depende del schema (que en este caso es `REFERENCES users(id)` sin clausula explícita → default es `NO ACTION`, lo cual fallaría con error de Postgres). **Inconsistencia a corregir.**
+Si **no** tiene historial, borra (las referencias CASCADE/SET NULL —`notificaciones`, `metas_asesoras`, `rider_locations`, `clientes`, `pedido_ediciones`— se limpian solas). **Defensa extra:** si una FK aún bloquea (Postgres `23503`), el `catch` responde **409** amable en vez del 500 genérico. El frontend (`users-client.tsx`) muestra el `error` real del backend en el toast (antes mostraba siempre "No se pudo eliminar el usuario."). _Antes (≤ jun 2026) el pre-check solo miraba `asesor_id`, así que un repartidor con pedidos fallaba con un 500 confuso — ya corregido._
 
 ---
 
