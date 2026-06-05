@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
   // Cache scope: el admin tiene un namespace global, cada asesora el suyo.
   const cacheScope = role === "admin" ? "admin" : `asesor-${session.user.id}`;
-  if (refresh) clearInsightsCacheFor(cacheScope);
+  if (refresh) await clearInsightsCacheFor(cacheScope);
 
   try {
     if (role === "admin") {

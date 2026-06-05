@@ -4,7 +4,7 @@
 // a Gemini para que escriba un análisis conversacional en español.
 
 import { neon } from "@neondatabase/serverless";
-import { callGemini, ClienteAnonymizer } from "./gemini";
+import { callIA, ClienteAnonymizer } from "./gemini";
 import { calcularMetaDiaria, ventasMesActual } from "./metas";
 
 // Diferencia mínima en ventas (S/) para considerar que un producto "sube" o "baja"
@@ -270,7 +270,7 @@ Dale a Antonio una acción concreta. NO repitas todos los productos, solo destac
 
   let texto = "Analizando tendencias del mes…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 200 });
+    const res = await callIA(prompt, { maxOutputTokens: 200 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA en este momento (${(err as Error).message.slice(0, 80)}). Mostrando datos crudos abajo.`;
@@ -312,7 +312,7 @@ Dale a Antonio una recomendación concreta de acción (en español neutro latino
 
   let texto = "Analizando clientes en riesgo…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 200 });
+    const res = await callIA(prompt, { maxOutputTokens: 200 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Mostrando lista abajo.`;
@@ -344,7 +344,7 @@ Dale a Antonio una observación breve, en español neutro latinoamericano, máxi
 
   let texto = "Analizando performance del mes…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 200 });
+    const res = await callIA(prompt, { maxOutputTokens: 200 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Mostrando ranking abajo.`;
@@ -381,7 +381,7 @@ Dale a Antonio una recomendación práctica para HOY basándote en este resumen.
 
   let texto = "Analizando el día de ayer…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 200 });
+    const res = await callIA(prompt, { maxOutputTokens: 200 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude generar la recomendación (${(err as Error).message.slice(0, 80)}). Datos crudos abajo.`;
@@ -391,37 +391,63 @@ Dale a Antonio una recomendación práctica para HOY basándote en este resumen.
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// Cache simple in-memory (TTL 1h)
-// Próxima iteración: mover a Postgres si quieren persistencia entre deploys
+// Cache PERSISTENTE en Postgres (tabla ia_insights_cache, TTL 1h).
+// Antes era un Map() in-memory que NO sobrevivía a los cold starts de Vercel
+// → cada carga disparaba 4 llamadas frescas a Gemini y topaba la cuota (429).
+// Ahora cada insight se genera ≤1 vez/hora por scope y persiste entre deploys.
+// Las claves son acotadas y se upsertean (no crece la tabla → sin cron de purga).
+// Migración: scripts/migrate-ia-insights-cache.sql
 // ════════════════════════════════════════════════════════════════════════
 
-interface CacheEntry<T> {
-  value: T;
-  expiresAt: number;
+const TTL_INTERVAL = "1 hour"; // mantener en sync con expires_at del INSERT
+
+/** True si el insight salió degradado (la IA falló y dejó el aviso "⚠️ …"). */
+function esInsightDegradado(v: unknown): boolean {
+  return (
+    !!v &&
+    typeof v === "object" &&
+    typeof (v as { texto?: unknown }).texto === "string" &&
+    (v as { texto: string }).texto.startsWith("⚠️")
+  );
 }
 
-const cache = new Map<string, CacheEntry<unknown>>();
-const TTL_MS = 60 * 60 * 1000; // 1 hora
-
 export async function cached<T>(key: string, loader: () => Promise<T>, force = false): Promise<T> {
-  const now = Date.now();
-  if (!force) {
-    const hit = cache.get(key) as CacheEntry<T> | undefined;
-    if (hit && hit.expiresAt > now) return hit.value;
-  }
+  const sql = neon(process.env.DATABASE_URL!);
+
+  // Leemos la fila (aunque esté vencida) para poder servir el último bueno si hace falta.
+  const prev = (await sql`
+    SELECT value, expires_at FROM ia_insights_cache WHERE cache_key = ${key} LIMIT 1
+  `) as Array<{ value: T; expires_at: string }>;
+  const fresco = prev.length > 0 && new Date(prev[0].expires_at).getTime() > Date.now();
+  if (!force && fresco) return prev[0].value; // hit fresco → 0 llamadas a la IA
+
   const value = await loader();
-  cache.set(key, { value, expiresAt: now + TTL_MS });
+
+  // Bonus: si lo nuevo salió degradado pero el guardado era bueno, conservamos el bueno.
+  if (esInsightDegradado(value) && prev.length > 0 && !esInsightDegradado(prev[0].value)) {
+    return prev[0].value;
+  }
+
+  const json = JSON.stringify(value);
+  await sql`
+    INSERT INTO ia_insights_cache (cache_key, value, expires_at)
+    VALUES (${key}, ${json}::jsonb, NOW() + ${TTL_INTERVAL}::interval)
+    ON CONFLICT (cache_key) DO UPDATE
+      SET value = ${json}::jsonb,
+          expires_at = NOW() + ${TTL_INTERVAL}::interval,
+          updated_at = NOW()
+  `;
   return value;
 }
 
-export function clearInsightsCache() {
-  cache.clear();
+export async function clearInsightsCache() {
+  const sql = neon(process.env.DATABASE_URL!);
+  await sql`DELETE FROM ia_insights_cache`;
 }
 
-export function clearInsightsCacheFor(prefix: string) {
-  for (const key of cache.keys()) {
-    if (key.startsWith(prefix)) cache.delete(key);
-  }
+export async function clearInsightsCacheFor(prefix: string) {
+  const sql = neon(process.env.DATABASE_URL!);
+  await sql`DELETE FROM ia_insights_cache WHERE cache_key LIKE ${prefix + "%"}`;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -495,7 +521,7 @@ NO repitas los números crudos — ella ya los ve abajo. Concéntrate en la reco
 
   let texto = "Analizando tu performance del mes…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 600 });
+    const res = await callIA(prompt, { maxOutputTokens: 600 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Mostrando tus datos abajo.`;
@@ -591,7 +617,7 @@ Háblale en segunda persona tuteándola ("tu cliente más importante", "debería
 
   let texto = "Analizando tu cartera en riesgo…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 600 });
+    const res = await callIA(prompt, { maxOutputTokens: 600 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Mostrando lista abajo.`;
@@ -664,7 +690,7 @@ Háblale en segunda persona tuteándola ("tu cartera", "tus clientes prefieren")
 
   let texto = "Analizando los productos de tu cartera…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 600 });
+    const res = await callIA(prompt, { maxOutputTokens: 600 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Tus productos top abajo.`;
@@ -781,7 +807,7 @@ Háblale en segunda persona tuteándola, español neutro latinoamericano. 3 orac
 
   let texto = "Analizando a quién contactar hoy…";
   try {
-    const res = await callGemini(prompt, { maxOutputTokens: 600 });
+    const res = await callIA(prompt, { maxOutputTokens: 600 });
     texto = res.text;
   } catch (err) {
     texto = `⚠️ No pude analizar con IA (${(err as Error).message.slice(0, 80)}). Candidatos abajo.`;
