@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Transavic",
   description: "Generador de pedidos",
+  // ERP interno 100% en español: desactiva el traductor de Chrome para que NO
+  // altere nombres ni datos (ej. "Clever"→"Inteligente", "Wilder"→"Salvaje").
+  other: { google: "notranslate" },
 };
 
 export default function RootLayout({
@@ -23,7 +26,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="es" translate="no">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

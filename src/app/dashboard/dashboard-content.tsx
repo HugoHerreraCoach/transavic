@@ -132,7 +132,12 @@ function Dashboard({ session }: DashboardContentProps) {
         const res = await fetch('/api/users');
         if (res.ok) {
           const data = await res.json();
-          setUsuarios(data.map((u: { name: string }) => u.name));
+          // Solo repartidores: son quienes realizan las entregas (selector "¿Quién realizó la entrega?")
+          setUsuarios(
+            data
+              .filter((u: { role: string }) => u.role === 'repartidor')
+              .map((u: { name: string }) => u.name)
+          );
           setAsesoras(data.filter((u: { role: string }) => u.role === 'asesor' || u.role === 'admin').map((u: { id: string; name: string }) => ({ id: u.id, name: u.name })));
         }
       } catch (e) {
