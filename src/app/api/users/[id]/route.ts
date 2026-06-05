@@ -107,12 +107,21 @@ export async function DELETE(request: NextRequest) {
     }
     const sql = neon(connectionString);
 
-    const result = await sql`SELECT COUNT(*) as count FROM pedidos WHERE asesor_id = ${id}`;
-    const pedidoCount = Number(result[0].count);
+    // Bloquea la eliminación si el usuario tiene historial que la base protege
+    // (FKs NO ACTION): pedidos (como asesor o repartidor), comprobantes y cambios de precio.
+    const [ped, fac, pre] = await Promise.all([
+      sql`SELECT COUNT(*)::int AS n FROM pedidos WHERE asesor_id = ${id} OR repartidor_id = ${id}`,
+      sql`SELECT COUNT(*)::int AS n FROM facturas WHERE asesor_id = ${id}`,
+      sql`SELECT COUNT(*)::int AS n FROM precios_productos WHERE created_by = ${id}`,
+    ]);
+    const partes: string[] = [];
+    if (Number(ped[0].n) > 0) partes.push(`${ped[0].n} pedido(s)`);
+    if (Number(fac[0].n) > 0) partes.push(`${fac[0].n} comprobante(s)`);
+    if (Number(pre[0].n) > 0) partes.push(`${pre[0].n} cambio(s) de precio`);
 
-    if (pedidoCount > 0) {
+    if (partes.length > 0) {
       return NextResponse.json(
-        { error: `Este usuario tiene ${pedidoCount} pedido(s) asignado(s) y no puede ser eliminado.` },
+        { error: `No se puede eliminar: este usuario tiene ${partes.join(", ")} en su historial. Por integridad de los datos, no se borra un usuario con movimientos registrados.` },
         { status: 409 }
       );
     }
@@ -123,6 +132,14 @@ export async function DELETE(request: NextRequest) {
 
   } catch (error) {
     console.error('Error al eliminar usuario:', error);
+    // Si una FK aún bloquea (código Postgres 23503), avisar claro en vez de un 500 genérico.
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/foreign key|23503/i.test(msg)) {
+      return NextResponse.json(
+        { error: 'No se puede eliminar: este usuario tiene movimientos registrados en el sistema.' },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 });
   }
 }

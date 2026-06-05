@@ -126,7 +126,10 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
         setLoading(true);
         try {
             const response = await fetch(`/api/users/${userToDelete.id}`, { method: 'DELETE' });
-            if (!response.ok) throw new Error('No se pudo eliminar el usuario.');
+            if (!response.ok) {
+                const data = await response.json().catch(() => null);
+                throw new Error(data?.error || 'No se pudo eliminar el usuario.');
+            }
             setUsers(users.filter((u) => u.id !== userToDelete.id));
             aviso('ok', 'Usuario eliminado.');
             setUserToDelete(null);
