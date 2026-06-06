@@ -513,6 +513,22 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                     </button>
                   );
                 })}
+                {/* Tarjeta "Sin asesora" — clientes asignados al admin o sin asignar */}
+                {(() => {
+                  const sinAsesora = !filterAsesorId
+                    ? totalClientes - resumen.porAsesora.reduce((s, a) => s + a.total, 0)
+                    : 0;
+                  return sinAsesora > 0 ? (
+                    <div
+                      title="Clientes asignados al admin o sin asesora asignada"
+                      className="flex-1 min-w-[110px] rounded-xl p-3 border border-dashed border-gray-200 bg-gray-50"
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wider mb-1 text-gray-300">Sin asesora</p>
+                      <p className="text-2xl font-bold tabular-nums leading-none text-gray-300">{sinAsesora}</p>
+                      <div className="mt-2 h-1 rounded-full bg-gray-100" />
+                    </div>
+                  ) : null;
+                })()}
               </div>
             </div>
           )}
