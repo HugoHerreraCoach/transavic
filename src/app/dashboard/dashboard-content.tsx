@@ -11,6 +11,7 @@ import PedidosTable from './table';
 import PrintModal from './print-modal';
 import ColumnCustomizer from './column-customizer';
 import VistaImpresion from '@/components/VistaImpresion';
+import { aplicarTamanoPaginaImpresion } from '@/lib/impresion';
 import TicketShareModal from './ticket-share-modal';
 import { Session } from "next-auth";
 import EditPedidoModal from './edit-modal';
@@ -252,7 +253,12 @@ function Dashboard({ session }: DashboardContentProps) {
         setPrintPedidos(fetchedPedidos);
         setFormatoImpresion(fmt);
         setPrintModalOpen(false);
-        setTimeout(() => window.print(), 200);
+        setTimeout(() => {
+          // Fija el alto de página al del contenido (Ticket) para que la ticketera
+          // continua no alimente papel en blanco al final. Ver src/lib/impresion.ts.
+          aplicarTamanoPaginaImpresion(fmt);
+          window.print();
+        }, 200);
       }}
       userRole={session.user.role}
       asesoras={asesoras}
