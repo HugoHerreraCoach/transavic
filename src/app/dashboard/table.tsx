@@ -1,7 +1,7 @@
 // src/app/dashboard/table.tsx
 'use client';
 
-import { useState, Suspense, useCallback, useEffect } from 'react';
+import { useState, Suspense, useCallback, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { Pedido, EstadoPedido } from "@/lib/types";
 import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical, FiChevronDown, FiDownload, FiCamera } from 'react-icons/fi';
@@ -84,6 +84,9 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const [descargando, setDescargando] = useState<string | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showHistorial, setShowHistorial] = useState(false);
+    const [uploading, setUploading] = useState(false);
+    const [showFotoMenu, setShowFotoMenu] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const isAvicola = (pedido.empresa || "").trim().toLowerCase().startsWith("av");
     const yaTieneComprobante = (comprobantes?.length ?? 0) > 0;
 
@@ -148,6 +151,47 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             alert(`No se pudo eliminar el pedido: ${err instanceof Error ? err.message : 'Error'}`);
         } finally {
             setIsProcessing(false);
+        }
+    };
+
+    const handleDeleteFoto = async () => {
+        if (!window.confirm(`¿Seguro que quieres eliminar la foto de la orden firmada de "${pedido.cliente}"?`)) return;
+        setIsProcessing(true);
+        try {
+            const response = await fetch(`/api/pedidos/${pedido.id}/guia-firmada`, { method: 'DELETE' });
+            if (!response.ok) {
+                const j = await response.json().catch(() => null);
+                throw new Error(j?.error || 'Error al eliminar');
+            }
+            onUpdateStatus({ ...pedido, guia_firmada_at: null });
+        } catch (err) {
+            alert(`No se pudo eliminar la foto: ${err instanceof Error ? err.message : 'Error'}`);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const handleUploadFoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setUploading(true);
+        try {
+            const formData = new FormData();
+            formData.append('foto', file);
+            const response = await fetch(`/api/pedidos/${pedido.id}/guia-firmada`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!response.ok) {
+                const j = await response.json().catch(() => null);
+                throw new Error(j?.error || 'Error al subir');
+            }
+            onUpdateStatus({ ...pedido, guia_firmada_at: new Date().toISOString() });
+        } catch (err) {
+            alert(`No se pudo subir la foto: ${err instanceof Error ? err.message : 'Error'}`);
+        } finally {
+            setUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
@@ -310,6 +354,74 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                     )
                 )}
 
+                {/* Cámara — dropdown con opciones de foto */}
+                {userRole !== 'repartidor' && (
+                    <div className="relative">
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept="image/*"
+                            onChange={handleUploadFoto}
+                            className="hidden"
+                        />
+                        <button
+                            onClick={() => setShowFotoMenu(!showFotoMenu)}
+                            disabled={uploading}
+                            title={uploading ? 'Subiendo...' : 'Orden firmada'}
+                            className={`p-2 rounded-lg transition-all flex items-center justify-center cursor-pointer disabled:cursor-wait ${
+                                pedido.guia_firmada_at
+                                    ? 'text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50'
+                                    : 'text-gray-300 hover:text-gray-500 hover:bg-gray-50'
+                            }`}
+                        >
+                            {uploading ? (
+                                <div className="w-[15px] h-[15px] border-2 border-gray-200 border-t-gray-500 rounded-full animate-spin" />
+                            ) : (
+                                <FiCamera size={15} />
+                            )}
+                        </button>
+
+                        {showFotoMenu && (
+                            <>
+                                <div className="fixed inset-0 z-10" onClick={() => setShowFotoMenu(false)} />
+                                <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5">
+                                    {pedido.guia_firmada_at && (
+                                        <a
+                                            href={`/api/pedidos/${pedido.id}/guia-firmada`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={() => setShowFotoMenu(false)}
+                                            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                                        >
+                                            <FiCamera size={13} className="text-indigo-400" />
+                                            Ver orden firmada
+                                        </a>
+                                    )}
+                                    <button
+                                        onClick={() => { setShowFotoMenu(false); fileInputRef.current?.click(); }}
+                                        className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                    >
+                                        <FiCamera size={13} className="text-gray-400" />
+                                        {pedido.guia_firmada_at ? 'Cambiar orden firmada' : 'Subir orden firmada'}
+                                    </button>
+                                    {pedido.guia_firmada_at && (
+                                        <>
+                                            <div className="my-0.5 border-t border-gray-100" />
+                                            <button
+                                                onClick={() => { setShowFotoMenu(false); handleDeleteFoto(); }}
+                                                className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors text-left cursor-pointer"
+                                            >
+                                                <FiTrash2 size={13} className="text-red-400" />
+                                                Eliminar orden firmada
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+
                 {/* 3. Menú de Acciones Secundarias (Stripe/Linear Style Dropdown) */}
                 {userRole !== 'repartidor' && (
                     <div className="relative">
@@ -328,18 +440,6 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                 {/* Click-outside overlay backdrop */}
                                 <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
                                 <div className="absolute right-0 mt-1.5 w-48 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
-                                    {pedido.guia_firmada_at && (
-                                        <a
-                                            href={`/api/pedidos/${pedido.id}/guia-firmada`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={() => setShowMenu(false)}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg transition-colors text-left cursor-pointer"
-                                        >
-                                            <FiCamera className="text-indigo-400" />
-                                            <span>Ver orden firmada</span>
-                                        </a>
-                                    )}
                                     <button
                                         onClick={() => {
                                             setShowMenu(false);

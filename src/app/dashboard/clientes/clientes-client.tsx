@@ -223,6 +223,8 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [filterAsesorId, setFilterAsesorId] = useState<string>('');
   const [filtroDistrito, setFiltroDistrito] = useState('');
+  const [expandirDistritos, setExpandirDistritos] = useState(false);
+  const TOP_DISTRITOS = 8;
   const [resumen, setResumen] = useState<{
     porAsesora: { nombre: string; total: number }[];
     porDistrito: { distrito: string; total: number }[];
@@ -423,6 +425,11 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     if (!isAdmin) loadAsesoras();
   };
 
+  const maxAsesoraTotal = resumen.porAsesora.length > 0
+    ? Math.max(...resumen.porAsesora.map(a => a.total))
+    : 1;
+
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
@@ -453,17 +460,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-white text-gray-900 font-medium placeholder:text-gray-400 shadow-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all"
           />
         </div>
-        {/* Admin: filtro por asesora */}
-        {isAdmin && asesoras.length > 0 && (
-          <select
-            value={filterAsesorId}
-            onChange={(e) => { setFilterAsesorId(e.target.value); setCurrentPage(1); }}
-            className="px-4 py-3 border border-gray-300 rounded-xl bg-white text-sm font-medium text-gray-700 shadow-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
-          >
-            <option value="">Todas las asesoras</option>
-            {asesoras.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        )}
+
         <button
           onClick={() => setShowCreateForm(true)}
           className="flex items-center justify-center gap-2 px-5 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors shadow-sm whitespace-nowrap"
@@ -477,59 +474,114 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
         </div>
       </div>
 
-      {/* Distribución por asesora y distrito */}
+      {/* Distribución: mini-KPI cards (asesoras) + chips de distrito */}
       {(resumen.porDistrito.length > 0 || (isAdmin && resumen.porAsesora.length > 0)) && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 space-y-4">
-          {/* Por asesora — solo admin */}
+        <div className="mb-5 space-y-4">
+          {/* Por asesora — admin: tarjetas con número grande */}
           {isAdmin && resumen.porAsesora.length > 0 && (
             <div>
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Por asesora</p>
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest mb-2">Por asesora</p>
               <div className="flex flex-wrap gap-2">
+                {/* Tarjeta "Todas" */}
                 <button
                   onClick={() => { setFilterAsesorId(''); setCurrentPage(1); }}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${!filterAsesorId ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                  className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${!filterAsesorId ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                 >
-                  Todas
+                  <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${!filterAsesorId ? 'text-red-200' : 'text-gray-400'}`}>Todas</p>
+                  <p className={`text-2xl font-bold tabular-nums leading-none ${!filterAsesorId ? 'text-white' : 'text-gray-700'}`}>{totalClientes}</p>
+                  <div className={`mt-2 h-1 rounded-full ${!filterAsesorId ? 'bg-red-500/40' : 'bg-gray-100'}`} />
                 </button>
+                {/* Una tarjeta por asesora */}
                 {resumen.porAsesora.map(a => {
                   const asesor = asesoras.find(x => x.name.trim() === a.nombre.trim());
                   const activa = !!asesor && filterAsesorId === asesor.id;
+                  const pct = (a.total / maxAsesoraTotal) * 100;
                   return (
                     <button
                       key={a.nombre}
                       onClick={() => { if (asesor) { setFilterAsesorId(activa ? '' : asesor.id); setCurrentPage(1); } }}
-                      className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${activa ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                      className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${activa ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                     >
-                      {a.nombre.trim()} · {a.total}
+                      <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 truncate ${activa ? 'text-red-200' : 'text-gray-400'}`}>{a.nombre.trim()}</p>
+                      <p className={`text-2xl font-bold tabular-nums leading-none ${activa ? 'text-white' : 'text-gray-700'}`}>{a.total}</p>
+                      <div className={`mt-2 h-1 rounded-full ${activa ? 'bg-red-500/40' : 'bg-gray-100'}`}>
+                        <div
+                          className={`h-full rounded-full transition-all ${activa ? 'bg-white/60' : 'bg-red-400'}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
                     </button>
                   );
                 })}
               </div>
             </div>
           )}
-          {/* Por distrito — todos los roles */}
+
+          {/* Por distrito — chips compactos, top 8 visible, "+ N más" para el resto */}
           {resumen.porDistrito.length > 0 && (
             <div>
-              {isAdmin && resumen.porAsesora.length > 0 && <div className="border-t border-gray-200" />}
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Por distrito</p>
-              <div className="flex flex-wrap gap-2">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest mb-2">Por distrito</p>
+              <div className="flex flex-wrap gap-1.5">
                 <button
                   onClick={() => { setFiltroDistrito(''); setCurrentPage(1); }}
-                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${!filtroDistrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors focus:outline-none ${!filtroDistrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
                 >
                   Todos
                 </button>
-                {resumen.porDistrito.map(d => (
+                {(expandirDistritos ? resumen.porDistrito : resumen.porDistrito.slice(0, TOP_DISTRITOS)).map(d => (
                   <button
                     key={d.distrito}
                     onClick={() => { setFiltroDistrito(filtroDistrito === d.distrito ? '' : d.distrito); setCurrentPage(1); }}
-                    className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filtroDistrito === d.distrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors focus:outline-none ${filtroDistrito === d.distrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
                   >
                     {d.distrito} · {d.total}
                   </button>
                 ))}
+                {resumen.porDistrito.length > TOP_DISTRITOS && (
+                  <button
+                    onClick={() => setExpandirDistritos(v => !v)}
+                    className="px-2.5 py-1 rounded-full text-xs font-medium text-gray-400 border border-dashed border-gray-300 hover:bg-gray-50 transition-colors"
+                  >
+                    {expandirDistritos ? 'ver menos' : `+ ${resumen.porDistrito.length - TOP_DISTRITOS} más`}
+                  </button>
+                )}
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* Resumen de filtros activos — sin este strip el usuario no sabe que hay dos filtros simultáneos */}
+      {(filterAsesorId || filtroDistrito) && (
+        <div className="flex items-center gap-2 flex-wrap bg-gray-50 border-l-2 border-red-400 rounded-r-xl pl-3 pr-3 py-2 mb-4">
+          <span className="text-xs text-gray-500 font-medium shrink-0">
+            Mostrando <span className="font-bold text-gray-700 tabular-nums">{totalClientes}</span> {totalClientes === 1 ? 'cliente' : 'clientes'}:
+          </span>
+          {filterAsesorId && (
+            <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-full px-2.5 py-0.5">
+              <FiUser size={10} />
+              {asesoras.find(x => x.id === filterAsesorId)?.name.trim()}
+              <button
+                onClick={() => { setFilterAsesorId(''); setCurrentPage(1); }}
+                className="focus:outline-none hover:text-red-900 text-red-400 ml-0.5 leading-none"
+              >×</button>
+            </span>
+          )}
+          {filtroDistrito && (
+            <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-full px-2.5 py-0.5">
+              <FiMapPin size={10} />
+              {filtroDistrito}
+              <button
+                onClick={() => { setFiltroDistrito(''); setCurrentPage(1); }}
+                className="focus:outline-none hover:text-red-900 text-red-400 ml-0.5 leading-none"
+              >×</button>
+            </span>
+          )}
+          {filterAsesorId && filtroDistrito && (
+            <button
+              onClick={() => { setFilterAsesorId(''); setFiltroDistrito(''); setCurrentPage(1); }}
+              className="text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
+            >· Limpiar todo</button>
           )}
         </div>
       )}
