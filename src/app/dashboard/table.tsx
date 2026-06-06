@@ -4,7 +4,7 @@
 import { useState, Suspense, useCallback, useEffect } from 'react';
 import Link from 'next/link';
 import { Pedido, EstadoPedido } from "@/lib/types";
-import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical, FiChevronDown, FiDownload } from 'react-icons/fi';
+import { FiTruck, FiUser, FiCalendar, FiFileText, FiPhone, FiEdit, FiTrash2, FiMapPin, FiMap, FiTag, FiClock, FiInfo, FiShare2, FiCheckCircle, FiUserCheck, FiXCircle, FiArchive, FiNavigation, FiPackage, FiAlertTriangle, FiCopy, FiMoreVertical, FiChevronDown, FiDownload, FiCamera } from 'react-icons/fi';
 import { useRouter } from 'next/navigation';
 import ModalShell from "@/components/ModalShell";
 import EmitirComprobanteClient from "./comprobantes/nuevo/emitir-client";
@@ -327,7 +327,19 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                             <>
                                 {/* Click-outside overlay backdrop */}
                                 <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                                <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
+                                <div className="absolute right-0 mt-1.5 w-48 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
+                                    {pedido.guia_firmada_at && (
+                                        <a
+                                            href={`/api/pedidos/${pedido.id}/guia-firmada`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={() => setShowMenu(false)}
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg transition-colors text-left cursor-pointer"
+                                        >
+                                            <FiCamera className="text-indigo-400" />
+                                            <span>Ver orden firmada</span>
+                                        </a>
+                                    )}
                                     <button
                                         onClick={() => {
                                             setShowMenu(false);

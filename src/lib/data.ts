@@ -74,6 +74,7 @@ export async function fetchFilteredPedidos(
         p.detalle, p.detalle_final, p.created_at, p.latitude, p.longitude, p.asesor_id, p.entregado,
         p.entregado_por, p.entregado_at,
         p.estado, p.repartidor_id, p.orden_ruta, p.hora_llegada_estimada, p.razon_fallo, p.inicio_viaje_at,
+        p.guia_firmada_at,
         u.name as asesor_name,
         r.name as repartidor_name
       FROM pedidos AS p

@@ -30,6 +30,8 @@ import {
   FiRotateCcw,
   FiZap,
   FiUser,
+  FiHome,
+  FiEdit2,
 } from "react-icons/fi";
 import { useJsApiLoader } from "@react-google-maps/api";
 import nextDynamic from "next/dynamic";
@@ -65,6 +67,14 @@ interface BaseLocation {
   lng: number;
   address: string;
   name: string;
+}
+
+interface PuntoPartida {
+  lat: number;
+  lng: number;
+  nombre: string;
+  esPersonalizado: boolean;
+  fecha: string; // YYYY-MM-DD
 }
 
 // ── Helpers ──
@@ -991,6 +1001,151 @@ function FailureReasonModal({
   );
 }
 
+// ── Modal Punto de Partida ──
+
+function ModalPuntoPartida({
+  baseLocation,
+  onGuardar,
+  onCerrar,
+}: {
+  baseLocation: BaseLocation | null;
+  onGuardar: (punto: PuntoPartida | null) => void;
+  onCerrar: () => void;
+}) {
+  const [modo, setModo] = useState<"planta" | "otro">("planta");
+  const [nombreOtro, setNombreOtro] = useState("");
+  const [coordsOtro, setCoordsOtro] = useState<{ lat: number; lng: number } | null>(null);
+  const [obteniendo, setObteniendo] = useState(false);
+
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const handleUsarGps = () => {
+    if (!navigator.geolocation) return;
+    setObteniendo(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoordsOtro({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setObteniendo(false);
+      },
+      () => { setObteniendo(false); },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  const handleGuardar = () => {
+    if (modo === "planta") {
+      if (!baseLocation) { onCerrar(); return; }
+      onGuardar({
+        lat: baseLocation.lat,
+        lng: baseLocation.lng,
+        nombre: baseLocation.name,
+        esPersonalizado: false,
+        fecha: hoy,
+      });
+    } else {
+      if (!coordsOtro) return;
+      onGuardar({
+        lat: coordsOtro.lat,
+        lng: coordsOtro.lng,
+        nombre: nombreOtro.trim() || "Otro punto",
+        esPersonalizado: true,
+        fecha: hoy,
+      });
+    }
+    onCerrar();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" onClick={onCerrar}>
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div
+        className="relative bg-white w-full max-w-sm rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-3 border-b border-gray-100">
+          <h3 className="text-base font-bold text-gray-900">¿Desde dónde sales hoy?</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Elige tu punto de partida para la ruta de hoy</p>
+        </div>
+
+        <div className="px-4 py-4 space-y-3">
+          {/* Opción: Desde la planta */}
+          <button
+            onClick={() => setModo("planta")}
+            className={`w-full flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all cursor-pointer text-left ${
+              modo === "planta"
+                ? "border-indigo-400 bg-indigo-50"
+                : "border-gray-200 hover:border-gray-300 bg-white"
+            }`}
+          >
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${modo === "planta" ? "bg-indigo-100" : "bg-gray-100"}`}>
+              <FiHome size={18} className={modo === "planta" ? "text-indigo-600" : "text-gray-500"} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-800">Desde la planta</p>
+              <p className="text-xs text-gray-500">{baseLocation?.name ?? "Almacén Transavic"}</p>
+            </div>
+          </button>
+
+          {/* Opción: Otro lugar */}
+          <button
+            onClick={() => setModo("otro")}
+            className={`w-full flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all cursor-pointer text-left ${
+              modo === "otro"
+                ? "border-amber-400 bg-amber-50"
+                : "border-gray-200 hover:border-gray-300 bg-white"
+            }`}
+          >
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${modo === "otro" ? "bg-amber-100" : "bg-gray-100"}`}>
+              <FiMapPin size={18} className={modo === "otro" ? "text-amber-600" : "text-gray-500"} />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-gray-800">Otro punto</p>
+              <p className="text-xs text-gray-500">Sale desde otro lugar con la carga</p>
+            </div>
+          </button>
+
+          {/* Campos del otro punto */}
+          {modo === "otro" && (
+            <div className="space-y-2 pt-1">
+              <input
+                type="text"
+                value={nombreOtro}
+                onChange={(e) => setNombreOtro(e.target.value)}
+                placeholder="Nombre o referencia (ej: Jr. Lima 240)"
+                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-300"
+              />
+              <button
+                onClick={handleUsarGps}
+                disabled={obteniendo}
+                className="w-full py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-sm font-semibold text-gray-700 flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <FiNavigation size={14} />
+                {obteniendo ? "Obteniendo ubicación..." : coordsOtro ? "✓ Ubicación GPS obtenida" : "Usar mi ubicación GPS actual"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="px-4 pb-5 flex gap-2">
+          <button
+            onClick={onCerrar}
+            className="flex-1 py-3 rounded-xl bg-gray-100 text-sm font-semibold text-gray-600 hover:bg-gray-200 transition-colors cursor-pointer"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={handleGuardar}
+            disabled={modo === "otro" && !coordsOtro}
+            className="flex-1 py-3 rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Componente Principal ──
 
 export default function MiRutaContent({ session }: MiRutaContentProps) {
@@ -1011,6 +1166,8 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
   const [syncMessage, setSyncMessage] = useState<{ type: string; text: string } | null>(null);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizeResult, setOptimizeResult] = useState<{ message: string; km: number; min: number } | null>(null);
+  const [puntoPartida, setPuntoPartida] = useState<PuntoPartida | null>(null);
+  const [showPuntoModal, setShowPuntoModal] = useState(false);
 
   const online = useOnlineStatus();
 
@@ -1024,6 +1181,32 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     const ids = new Set(getQueue().map((a) => a.pedidoId));
     setQueuedPedidoIds(ids);
   }, []);
+
+  // Carga el punto de partida del día desde localStorage
+  useEffect(() => {
+    const key = `transavic_punto_partida_${session.user.id}`;
+    try {
+      const saved = localStorage.getItem(key);
+      if (!saved) return;
+      const parsed: PuntoPartida = JSON.parse(saved);
+      const hoy = new Date().toISOString().slice(0, 10);
+      if (parsed.fecha === hoy) {
+        setPuntoPartida(parsed);
+      } else {
+        localStorage.removeItem(key);
+      }
+    } catch {}
+  }, [session.user.id]);
+
+  const guardarPuntoPartida = (punto: PuntoPartida | null) => {
+    const key = `transavic_punto_partida_${session.user.id}`;
+    if (punto) {
+      localStorage.setItem(key, JSON.stringify(punto));
+    } else {
+      localStorage.removeItem(key);
+    }
+    setPuntoPartida(punto);
+  };
 
   const fetchRuta = useCallback(async (showRefresh = false) => {
     if (showRefresh) setRefreshing(true);
@@ -1097,15 +1280,17 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     }
 
     try {
-      // Enviar ubicación GPS real para ETA preciso
+      // Origen de la ruta: si hay punto de partida personalizado lo usamos como origen;
+      // si no, el GPS actual del repartidor. El endpoint lo usa para calcular el ETA.
+      const origenRuta = puntoPartida
+        ? { driverLat: puntoPartida.lat, driverLng: puntoPartida.lng }
+        : driverPosition
+        ? { driverLat: driverPosition.lat, driverLng: driverPosition.lng }
+        : {};
       const fetchOptions: RequestInit = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          driverPosition
-            ? { driverLat: driverPosition.lat, driverLng: driverPosition.lng }
-            : {}
-        ),
+        body: JSON.stringify(origenRuta),
       };
       const res = await fetch(`/api/pedidos/${pedidoId}/iniciar-viaje`, fetchOptions);
       const data = await res.json();
@@ -1283,6 +1468,11 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     month: "long",
   });
 
+  // Origen visual del mapa: punto de partida personalizado o base location del servidor
+  const origenMapa: BaseLocation | null = puntoPartida
+    ? { lat: puntoPartida.lat, lng: puntoPartida.lng, address: puntoPartida.nombre, name: puntoPartida.nombre }
+    : baseLocation;
+
   // Separate active from completed for ordering
   const activePedidos = pedidos.filter((p) => p.estado !== "Entregado" && p.estado !== "Fallido");
   const completedPedidos = pedidos.filter((p) => p.estado === "Entregado" || p.estado === "Fallido");
@@ -1361,9 +1551,38 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
           </button>
           {showMap && (
             <div className="h-[300px]">
-              <MiniMapaRuta pedidos={pedidos} driverPosition={driverPosition} baseLocation={baseLocation} />
+              <MiniMapaRuta pedidos={pedidos} driverPosition={driverPosition} baseLocation={origenMapa} />
             </div>
           )}
+        </div>
+
+        {/* Punto de partida de hoy */}
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-2 text-sm text-gray-600 min-w-0">
+            <FiMapPin size={14} className={puntoPartida?.esPersonalizado ? "text-amber-500 flex-shrink-0" : "text-indigo-500 flex-shrink-0"} />
+            <span className="text-xs text-gray-500 flex-shrink-0">Saliendo desde:</span>
+            <span className="text-xs font-semibold text-gray-800 truncate">
+              {puntoPartida ? puntoPartida.nombre : (baseLocation?.name ?? "Almacén Transavic")}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0 ml-2">
+            {puntoPartida && (
+              <button
+                onClick={() => guardarPuntoPartida(null)}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors cursor-pointer"
+                title="Volver al punto de origen predeterminado"
+              >
+                Resetear
+              </button>
+            )}
+            <button
+              onClick={() => setShowPuntoModal(true)}
+              className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
+            >
+              <FiEdit2 size={12} />
+              Cambiar
+            </button>
+          </div>
         </div>
 
         {/* Progress Bar con resumen de ruta */}
@@ -1524,6 +1743,14 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
           confirmColor="bg-amber-500 hover:bg-amber-600"
           onConfirm={() => handleRevertirEntrega(revertModal.pedidoId)}
           onCancel={() => setRevertModal(null)}
+        />
+      )}
+
+      {showPuntoModal && (
+        <ModalPuntoPartida
+          baseLocation={baseLocation}
+          onGuardar={guardarPuntoPartida}
+          onCerrar={() => setShowPuntoModal(false)}
         />
       )}
     </div>

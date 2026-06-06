@@ -47,6 +47,8 @@ export type Pedido = {
   entregado_at: string | null;
   asesor_id: string | null;
   asesor_name: string | null;
+  // --- Orden firmada por el cliente (foto que sube el repartidor) ---
+  guia_firmada_at?: string | null;
 };
 
 export type User = {
