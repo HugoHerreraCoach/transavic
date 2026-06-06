@@ -1,7 +1,7 @@
 // src/app/dashboard/despacho/mapa-despacho.tsx
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, Fragment } from "react";
 import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF, PolylineF } from "@react-google-maps/api";
 import { EstadoPedido } from "@/lib/types";
 import {
@@ -157,21 +157,38 @@ function createBaseMarkerIcon(): string {
 
 const EN_VIVO_SEG = 300; // ≤5 min ⇒ consideramos la ubicación "en vivo"
 
-// Marcador circular, distinto al pin de pedido: punto de color con halo (sensación
-// de "ubicación en vivo", como el punto azul de Google) y una flecha que apunta al
-// rumbo (heading). Si la posición no está fresca, sale en gris y sin halo.
+// Marcador de moto en vivo, distinto al pin de pedido: badge circular grande con
+// sombra (para "levantar" del mapa), una silueta de motocicleta blanca al centro
+// (siempre vertical, legible) y un chevron en el borde que orbita según el rumbo
+// (heading). EN VIVO = color saturado del repartidor + halo de doble anillo (sensación
+// de "pulso") + chevron. SIN SEÑAL = gris-slate, sin halo y sin chevron (así se
+// distingue del live de un vistazo), pero igual de grande y nítido (no apagado).
 function createRiderMarkerIcon(color: string, heading: number | null, enVivo: boolean): string {
-  const c = enVivo ? color : "#9ca3af";
-  const halo = enVivo ? `<circle cx="24" cy="24" r="21" fill="${c}" opacity="0.18"/>` : "";
-  const centro =
-    heading != null
-      ? `<g transform="rotate(${heading.toFixed(0)} 24 24)"><path d="M24 16 L30 30 L24 26.5 L18 30 Z" fill="#fff"/></g>`
-      : `<circle cx="24" cy="24" r="4.5" fill="#fff"/>`;
+  const c = enVivo ? color : "#94a3b8";
+  // Halo de doble anillo solo en vivo → da sensación de "transmitiendo ahora".
+  const halo = enVivo
+    ? `<circle cx="30" cy="30" r="27" fill="${c}" opacity="0.14"/><circle cx="30" cy="30" r="21" fill="${c}" opacity="0.22"/>`
+    : "";
+  // Chevron de rumbo solo cuando está en vivo (con la posición vieja el rumbo no aplica).
+  const chevron =
+    enVivo && heading != null
+      ? `<g transform="rotate(${heading.toFixed(0)} 30 30)"><path d="M30 3 L35.5 13 L30 10.5 L24.5 13 Z" fill="${c}" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></g>`
+      : "";
+  // Silueta de motocicleta (estilo Material "motorcycle"), blanca, centrada en el badge.
+  const moto = `<g transform="translate(19 20) scale(0.9)" fill="#fff"><path d="M19.44 9.03L15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.79-2.21-5-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.63 0-3-1.37-3-3s1.37-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.63 0-3-1.37-3-3s1.37-3 3-3 3 1.37 3 3-1.37 3-3 3z"/></g>`;
   const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+    <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
+      <defs>
+        <filter id="riderShadow" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#1f2937" flood-opacity="0.4"/>
+        </filter>
+      </defs>
       ${halo}
-      <circle cx="24" cy="24" r="12" fill="${c}" stroke="#fff" stroke-width="3"/>
-      ${centro}
+      ${chevron}
+      <g filter="url(#riderShadow)">
+        <circle cx="30" cy="30" r="15" fill="${c}" stroke="#fff" stroke-width="3.5"/>
+      </g>
+      ${moto}
     </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
@@ -247,23 +264,46 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
     return items;
   }, [pendientes, repartidores, filtroEstados, repartidorFoco, showPendientes, esVisible]);
 
-  // Líneas conectoras por repartidor (solo los visibles)
+  // Ruta de cada moto partida en DOS tramos, para ver de un vistazo cuánto avanzó:
+  //  • recorrido = base → paradas ya hechas (Entregado/Fallido, en orden) → posición
+  //    en vivo de la moto. Es "lo que ya recorrió".
+  //  • faltante  = posición de la moto (o la última parada hecha, o la base) →
+  //    pendientes (en orden). Es "lo que le falta por avanzar".
+  // Se calcula desde r.pedidos (NO desde el filtro de estados) para que el rastro de
+  // lo recorrido se vea aunque el preset "Por entregar" oculte los pines ya entregados.
+  // Sin moto en vivo (GPS apagado) el corte cae en la última parada hecha o la base,
+  // así igual se distinguen los dos tramos.
   const polylines = useMemo(() => {
+    const base = baseLocation ? { lat: baseLocation.lat, lng: baseLocation.lng } : null;
+    const noNulo = (x: { lat: number; lng: number } | null): x is { lat: number; lng: number } =>
+      x != null;
     return repartidores
       .filter((r) => esVisible(r.id))
       .map((r) => {
-        const coords = r.pedidos
-          .filter((p) => p.latitude && p.longitude && !["Entregado", "Fallido"].includes(p.estado))
-          .sort((a, b) => (a.orden_ruta || 99) - (b.orden_ruta || 99))
+        const stops = r.pedidos
+          .filter((p) => p.latitude && p.longitude)
+          .sort((a, b) => (a.orden_ruta || 99) - (b.orden_ruta || 99));
+        const visitados = stops
+          .filter((p) => ["Entregado", "Fallido"].includes(p.estado))
           .map((p) => ({ lat: p.latitude!, lng: p.longitude! }));
+        const pendientes = stops
+          .filter((p) => !["Entregado", "Fallido"].includes(p.estado))
+          .map((p) => ({ lat: p.latitude!, lng: p.longitude! }));
+        const moto = r.ubicacion ? { lat: r.ubicacion.lat, lng: r.ubicacion.lng } : null;
+
+        const recorrido = [base, ...visitados, moto].filter(noNulo);
+        const inicioFaltante = moto ?? visitados[visitados.length - 1] ?? base;
+        const faltante = [inicioFaltante, ...pendientes].filter(noNulo);
+
         return {
           repartidorId: r.id,
-          path: coords,
           color: colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0],
+          recorrido,
+          faltante,
         };
       })
-      .filter((pl) => pl.path.length > 1);
-  }, [repartidores, esVisible, colorPorRepartidor]);
+      .filter((pl) => pl.recorrido.length > 1 || pl.faltante.length > 1);
+  }, [repartidores, esVisible, colorPorRepartidor, baseLocation]);
 
   // Encaja el mapa en lo que está visible (pedidos + motos en vivo + base).
   const ajustarEncuadre = useCallback(
@@ -394,24 +434,41 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
             );
           })}
 
-          {/* Líneas conectoras */}
+          {/* Líneas de ruta: gris = ya recorrido · color del repartidor = lo que falta */}
           {polylines.map((pl) => (
-            <PolylineF
-              key={pl.repartidorId}
-              path={pl.path}
-              options={{
-                strokeColor: pl.color,
-                strokeOpacity: 0.7,
-                strokeWeight: 3,
-                geodesic: true,
-                icons: [
-                  {
-                    icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3 },
-                    offset: "50%",
-                  },
-                ],
-              }}
-            />
+            <Fragment key={pl.repartidorId}>
+              {pl.recorrido.length > 1 && (
+                <PolylineF
+                  path={pl.recorrido}
+                  options={{
+                    strokeColor: "#94a3b8",
+                    strokeOpacity: 0.6,
+                    strokeWeight: 5,
+                    geodesic: true,
+                    zIndex: 1,
+                  }}
+                />
+              )}
+              {pl.faltante.length > 1 && (
+                <PolylineF
+                  path={pl.faltante}
+                  options={{
+                    strokeColor: pl.color,
+                    strokeOpacity: 0.95,
+                    strokeWeight: 4,
+                    geodesic: true,
+                    zIndex: 2,
+                    icons: [
+                      {
+                        icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3 },
+                        offset: "0",
+                        repeat: "120px",
+                      },
+                    ],
+                  }}
+                />
+              )}
+            </Fragment>
           ))}
 
           {/* Base location marker */}
@@ -444,8 +501,8 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                     position={{ lat: u.lat, lng: u.lng }}
                     icon={{
                       url: createRiderMarkerIcon(color, u.heading, enVivo),
-                      scaledSize: new google.maps.Size(44, 44),
-                      anchor: new google.maps.Point(22, 22),
+                      scaledSize: new google.maps.Size(56, 56),
+                      anchor: new google.maps.Point(28, 28),
                     }}
                     title={`${r.name} · ${enVivo ? "en vivo" : "sin señal reciente"}`}
                     onClick={() => {
@@ -518,6 +575,11 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
             const porEntregar = r.pedidos.filter((p) =>
               ["Pendiente", "En_Produccion", "Listo_Para_Despacho", "Asignado", "En_Camino"].includes(p.estado)
             ).length;
+            const totalParadas = r.pedidos.filter((p) => p.latitude && p.longitude).length;
+            const entregados = r.pedidos.filter((p) => p.estado === "Entregado").length;
+            const siguiente = r.pedidos
+              .filter((p) => p.latitude && p.longitude && !["Entregado", "Fallido"].includes(p.estado))
+              .sort((a, b) => (a.orden_ruta || 99) - (b.orden_ruta || 99))[0];
             return (
               <InfoWindowF
                 position={{ lat: r.ubicacion.lat, lng: r.ubicacion.lng }}
@@ -539,6 +601,20 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                     <FiPackage size={10} className="flex-shrink-0" /> {porEntregar} por entregar
                     {enCamino > 0 && <span className="text-indigo-600">· {enCamino} en camino</span>}
                   </p>
+                  {totalParadas > 0 && (
+                    <p className="mt-1 flex items-center gap-1 text-xs">
+                      <FiCheck size={10} className="flex-shrink-0 text-emerald-600" />
+                      <span className="text-emerald-700 font-semibold">
+                        {entregados} de {totalParadas} entregados
+                      </span>
+                    </p>
+                  )}
+                  {siguiente && (
+                    <p className="mt-1 flex items-start gap-1 text-xs text-gray-600">
+                      <FiNavigation size={10} className="mt-0.5 flex-shrink-0" />
+                      <span className="truncate">Siguiente: <span className="font-semibold text-gray-800">{siguiente.cliente}</span></span>
+                    </p>
+                  )}
                 </div>
               </InfoWindowF>
             );
@@ -711,23 +787,38 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
           </div>
         </div>
 
-        {/* Leyenda de líneas (rutas dibujadas) */}
+        {/* Leyenda: cómo leer el recorrido de cada moto */}
         {polylines.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4">
             <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-              {repartidorFoco === null ? "Rutas dibujadas" : "Ruta"}
+              Cómo leer el mapa
             </h3>
-            <div className="space-y-1">
+            <div className="space-y-1.5 text-xs text-gray-600">
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-1 rounded flex-shrink-0" style={{ backgroundColor: "#94a3b8" }} />
+                <span>Lo que ya recorrió</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-6 h-1 rounded flex-shrink-0" style={{ backgroundColor: "#8b5cf6" }} />
+                <span>Lo que le falta (color de cada moto)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm leading-none flex-shrink-0">🏍️</span>
+                <span>Posición en vivo de la moto</span>
+              </div>
+            </div>
+            {/* Qué color tiene la ruta de cada moto (el tramo "lo que le falta") */}
+            <div className="mt-3 pt-3 border-t border-gray-100 space-y-1">
               {repartidores
                 .filter((r) => esVisible(r.id))
                 .filter((r) => polylines.some((pl) => pl.repartidorId === r.id))
                 .map((r) => (
                   <div key={r.id} className="flex items-center gap-2 text-xs text-gray-600">
                     <div
-                      className="w-6 h-0.5 rounded"
+                      className="w-6 h-0.5 rounded flex-shrink-0"
                       style={{ backgroundColor: colorPorRepartidor.get(r.id) }}
                     />
-                    <span>{r.name}</span>
+                    <span className="truncate">{r.name}</span>
                   </div>
                 ))}
             </div>
