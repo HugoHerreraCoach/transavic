@@ -97,4 +97,5 @@ export type PedidoRuta = {
   notas: string | null;
   distancia_km: number | null;
   duracion_estimada_min: number | null;
+  asesor_name: string | null;
 };

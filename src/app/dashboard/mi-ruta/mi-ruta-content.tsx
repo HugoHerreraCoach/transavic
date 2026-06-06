@@ -29,6 +29,7 @@ import {
   FiExternalLink,
   FiRotateCcw,
   FiZap,
+  FiUser,
 } from "react-icons/fi";
 import { useJsApiLoader } from "@react-google-maps/api";
 import nextDynamic from "next/dynamic";
@@ -711,6 +712,12 @@ function PedidoCard({
         <div className="px-4 pb-4 border-t border-gray-100">
           {/* Detalles */}
           <div className="mt-3 space-y-2">
+            {pedido.asesor_name && (
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                <FiUser className="flex-shrink-0 text-gray-400" />
+                <span>Asesora: <span className="font-medium">{pedido.asesor_name.trim()}</span></span>
+              </div>
+            )}
             {pedido.direccion && (
               <div className="flex items-start gap-2 text-sm text-gray-700">
                 <FiMapPin className="mt-0.5 flex-shrink-0 text-gray-400" />
