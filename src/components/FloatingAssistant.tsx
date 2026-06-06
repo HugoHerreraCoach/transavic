@@ -18,7 +18,7 @@ export default function FloatingAssistant({ role }: { role: string }) {
       href="/dashboard/asistente-ia"
       title="Asistente IA"
       aria-label="Abrir Asistente IA"
-      className="group fixed bottom-5 right-5 z-40 flex items-center gap-2 p-3.5 rounded-full bg-red-600 text-white shadow-lg hover:bg-red-700 transition-colors"
+      className="group fixed bottom-5 right-5 z-40 print:hidden flex items-center gap-2 p-3.5 rounded-full bg-red-600 text-white shadow-lg hover:bg-red-700 transition-colors"
     >
       <FiZap className="h-5 w-5 flex-shrink-0" />
       <span className="hidden group-hover:inline text-sm font-medium whitespace-nowrap">
