@@ -310,7 +310,29 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                     )
                 )}
 
-                {/* 3. Menú de Acciones Secundarias (Stripe/Linear Style Dropdown) */}
+                {/* 3. Ícono de orden firmada — visible siempre en pedidos Entregado */}
+                {pedido.estado === 'Entregado' && userRole !== 'repartidor' && (
+                    pedido.guia_firmada_at ? (
+                        <a
+                            href={`/api/pedidos/${pedido.id}/guia-firmada`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Ver orden firmada"
+                            className="p-2 rounded-lg text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 transition-all flex items-center justify-center"
+                        >
+                            <FiCamera size={16} />
+                        </a>
+                    ) : (
+                        <span
+                            title="Sin orden firmada"
+                            className="p-2 rounded-lg text-gray-300 flex items-center justify-center cursor-default"
+                        >
+                            <FiCamera size={16} />
+                        </span>
+                    )
+                )}
+
+                {/* 4. Menú de Acciones Secundarias (Stripe/Linear Style Dropdown) */}
                 {userRole !== 'repartidor' && (
                     <div className="relative">
                         <button
@@ -327,19 +349,8 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                             <>
                                 {/* Click-outside overlay backdrop */}
                                 <div className="fixed inset-0 z-10" onClick={() => setShowMenu(false)} />
-                                <div className="absolute right-0 mt-1.5 w-48 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
-                                    {pedido.guia_firmada_at && (
-                                        <a
-                                            href={`/api/pedidos/${pedido.id}/guia-firmada`}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={() => setShowMenu(false)}
-                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-indigo-700 hover:text-indigo-900 hover:bg-indigo-50 rounded-lg transition-colors text-left cursor-pointer"
-                                        >
-                                            <FiCamera className="text-indigo-400" />
-                                            <span>Ver orden firmada</span>
-                                        </a>
-                                    )}
+                                <div className="absolute right-0 mt-1.5 w-44 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5 animate-fade-in origin-top-right">
+                                    {/* "Ver orden firmada" fue movido como ícono visible en la fila */}
                                     <button
                                         onClick={() => {
                                             setShowMenu(false);
