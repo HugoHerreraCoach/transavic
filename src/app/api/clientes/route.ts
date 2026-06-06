@@ -74,6 +74,7 @@ export async function GET(request: Request) {
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "15")));
     const search = searchParams.get("search")?.trim();
     const filterAsesor = searchParams.get("asesor_id")?.trim();
+    const sinAsesora = userRole === "admin" && searchParams.get("sin_asesora") === "true";
     const distrito = searchParams.get("distrito")?.trim() || "";
     const offset = (page - 1) * limit;
 
@@ -91,7 +92,12 @@ export async function GET(request: Request) {
 
     // Condiciones completas para la query principal y conteo
     const allC = [...baseC]; const allP = [...baseP];
-    if (userRole === "admin" && filterAsesor) { allC.push(`c.asesor_id = $${allP.length + 1}`); allP.push(filterAsesor); }
+    if (sinAsesora) {
+      // Clientes sin asesora asignada O asignados a un usuario que no es role='asesor' (ej. admin)
+      allC.push(`(c.asesor_id IS NULL OR NOT EXISTS (SELECT 1 FROM users u2 WHERE u2.id = c.asesor_id AND u2.role = 'asesor'))`);
+    } else if (userRole === "admin" && filterAsesor) {
+      allC.push(`c.asesor_id = $${allP.length + 1}`); allP.push(filterAsesor);
+    }
     if (distrito) { allC.push(`c.distrito = $${allP.length + 1}`); allP.push(distrito); }
     const whereClause = allC.length > 0 ? `WHERE ${allC.join(' AND ')}` : '';
 

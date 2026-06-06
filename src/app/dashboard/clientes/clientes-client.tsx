@@ -222,6 +222,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [historyPedidos, setHistoryPedidos] = useState<Record<string, unknown[]>>({});
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [filterAsesorId, setFilterAsesorId] = useState<string>('');
+  const [filtroSinAsesora, setFiltroSinAsesora] = useState(false);
   const [filtroDistrito, setFiltroDistrito] = useState('');
   const [expandirDistritos, setExpandirDistritos] = useState(false);
   const TOP_DISTRITOS = 8;
@@ -251,7 +252,8 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(ITEMS_PER_PAGE) });
       if (searchTerm) params.set('search', searchTerm);
-      if (isAdmin && filterAsesorId) params.set('asesor_id', filterAsesorId);
+      if (isAdmin && filtroSinAsesora) params.set('sin_asesora', 'true');
+      else if (isAdmin && filterAsesorId) params.set('asesor_id', filterAsesorId);
       if (filtroDistrito) params.set('distrito', filtroDistrito);
       const res = await fetch(`/api/clientes?${params}`);
       if (res.ok) {
@@ -268,7 +270,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, filterAsesorId, filtroDistrito]);
+  }, [isAdmin, filterAsesorId, filtroSinAsesora, filtroDistrito]);
 
   useEffect(() => { fetchClientes(currentPage, debouncedSearch); }, [currentPage, debouncedSearch, fetchClientes]);
 
@@ -484,12 +486,12 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               <div className="flex flex-wrap gap-2">
                 {/* Tarjeta "Todas" */}
                 <button
-                  onClick={() => { setFilterAsesorId(''); setCurrentPage(1); }}
-                  className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${!filterAsesorId ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
+                  onClick={() => { setFilterAsesorId(''); setFiltroSinAsesora(false); setCurrentPage(1); }}
+                  className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${!filterAsesorId && !filtroSinAsesora ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                 >
-                  <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${!filterAsesorId ? 'text-red-200' : 'text-gray-400'}`}>Todas</p>
-                  <p className={`text-2xl font-bold tabular-nums leading-none ${!filterAsesorId ? 'text-white' : 'text-gray-700'}`}>{totalClientes}</p>
-                  <div className={`mt-2 h-1 rounded-full ${!filterAsesorId ? 'bg-red-500/40' : 'bg-gray-100'}`} />
+                  <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${!filterAsesorId && !filtroSinAsesora ? 'text-red-200' : 'text-gray-400'}`}>Todas</p>
+                  <p className={`text-2xl font-bold tabular-nums leading-none ${!filterAsesorId && !filtroSinAsesora ? 'text-white' : 'text-gray-700'}`}>{totalClientes}</p>
+                  <div className={`mt-2 h-1 rounded-full ${!filterAsesorId && !filtroSinAsesora ? 'bg-red-500/40' : 'bg-gray-100'}`} />
                 </button>
                 {/* Una tarjeta por asesora */}
                 {resumen.porAsesora.map(a => {
@@ -499,7 +501,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                   return (
                     <button
                       key={a.nombre}
-                      onClick={() => { if (asesor) { setFilterAsesorId(activa ? '' : asesor.id); setCurrentPage(1); } }}
+                      onClick={() => { if (asesor) { setFilterAsesorId(activa ? '' : asesor.id); setFiltroSinAsesora(false); setCurrentPage(1); } }}
                       className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${activa ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                     >
                       <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 truncate ${activa ? 'text-red-200' : 'text-gray-400'}`}>{a.nombre.trim()}</p>
@@ -519,14 +521,14 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                     ? totalClientes - resumen.porAsesora.reduce((s, a) => s + a.total, 0)
                     : 0;
                   return sinAsesora > 0 ? (
-                    <div
-                      title="Clientes asignados al admin o sin asesora asignada"
-                      className="flex-1 min-w-[110px] rounded-xl p-3 border border-dashed border-gray-200 bg-gray-50"
+                    <button
+                      onClick={() => { setFilterAsesorId(''); setFiltroSinAsesora(!filtroSinAsesora); setCurrentPage(1); }}
+                      className={`flex-1 min-w-[110px] rounded-xl p-3 text-left border transition-all cursor-pointer active:scale-[0.97] ${filtroSinAsesora ? 'bg-red-600 border-red-600 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'}`}
                     >
-                      <p className="text-[10px] font-semibold uppercase tracking-wider mb-1 text-gray-300">Sin asesora</p>
-                      <p className="text-2xl font-bold tabular-nums leading-none text-gray-300">{sinAsesora}</p>
-                      <div className="mt-2 h-1 rounded-full bg-gray-100" />
-                    </div>
+                      <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${filtroSinAsesora ? 'text-red-200' : 'text-gray-400'}`}>Sin asesora</p>
+                      <p className={`text-2xl font-bold tabular-nums leading-none ${filtroSinAsesora ? 'text-white' : 'text-gray-400'}`}>{sinAsesora}</p>
+                      <div className={`mt-2 h-1 rounded-full ${filtroSinAsesora ? 'bg-red-500/40' : 'bg-gray-100'}`} />
+                    </button>
                   ) : null;
                 })()}
               </div>
@@ -568,7 +570,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       )}
 
       {/* Resumen de filtros activos — sin este strip el usuario no sabe que hay dos filtros simultáneos */}
-      {(filterAsesorId || filtroDistrito) && (
+      {(filterAsesorId || filtroSinAsesora || filtroDistrito) && (
         <div className="flex items-center gap-2 flex-wrap bg-gray-50 border-l-2 border-red-400 rounded-r-xl pl-3 pr-3 py-2 mb-4">
           <span className="text-xs text-gray-500 font-medium shrink-0">
             Mostrando <span className="font-bold text-gray-700 tabular-nums">{totalClientes}</span> {totalClientes === 1 ? 'cliente' : 'clientes'}:
@@ -583,6 +585,16 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               >×</button>
             </span>
           )}
+          {filtroSinAsesora && (
+            <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-full px-2.5 py-0.5">
+              <FiUser size={10} />
+              Sin asesora
+              <button
+                onClick={() => { setFiltroSinAsesora(false); setCurrentPage(1); }}
+                className="focus:outline-none hover:text-red-900 text-red-400 ml-0.5 leading-none"
+              >×</button>
+            </span>
+          )}
           {filtroDistrito && (
             <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-full px-2.5 py-0.5">
               <FiMapPin size={10} />
@@ -593,9 +605,9 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               >×</button>
             </span>
           )}
-          {filterAsesorId && filtroDistrito && (
+          {(filterAsesorId || filtroSinAsesora) && filtroDistrito && (
             <button
-              onClick={() => { setFilterAsesorId(''); setFiltroDistrito(''); setCurrentPage(1); }}
+              onClick={() => { setFilterAsesorId(''); setFiltroSinAsesora(false); setFiltroDistrito(''); setCurrentPage(1); }}
               className="text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
             >· Limpiar todo</button>
           )}
