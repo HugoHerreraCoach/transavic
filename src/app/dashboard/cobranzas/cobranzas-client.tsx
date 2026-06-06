@@ -146,6 +146,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   const [pagoImagenes, setPagoImagenes] = useState<Array<{base64: string; mime: string; preview: string}>>([]);
   const [comprimiendo, setComprimiendo] = useState(false);
   const [revirtiendoId, setRevirtiendoId] = useState<string | null>(null);
+  const [confirmandoEliminarImg, setConfirmandoEliminarImg] = useState<string | null>(null);
 
   const limpiarUndo = () => {
     if (undoTimeoutId) clearTimeout(undoTimeoutId);
@@ -788,13 +789,33 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                                 >
                                   <FiEye className="h-3 w-3" />{idx + 1}
                                 </a>
-                                <button
-                                  onClick={() => eliminarImagenPago(f.id, imgId)}
-                                  className="text-gray-300 hover:text-red-500 transition-colors"
-                                  title="Eliminar captura"
-                                >
-                                  <FiTrash2 className="h-2.5 w-2.5" />
-                                </button>
+                                {confirmandoEliminarImg === imgId ? (
+                                  // Confirm inline: "¿Eliminar? Sí · No"
+                                  <span className="inline-flex items-center gap-0.5 text-[10px]">
+                                    <span className="text-gray-500">¿Eliminar?</span>
+                                    <button
+                                      onClick={() => { setConfirmandoEliminarImg(null); eliminarImagenPago(f.id, imgId); }}
+                                      className="font-semibold text-red-600 hover:text-red-800"
+                                    >
+                                      Sí
+                                    </button>
+                                    <span className="text-gray-300">·</span>
+                                    <button
+                                      onClick={() => setConfirmandoEliminarImg(null)}
+                                      className="text-gray-500 hover:text-gray-700"
+                                    >
+                                      No
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <button
+                                    onClick={() => setConfirmandoEliminarImg(imgId)}
+                                    className="text-gray-300 hover:text-red-500 transition-colors"
+                                    title="Eliminar captura"
+                                  >
+                                    <FiTrash2 className="h-2.5 w-2.5" />
+                                  </button>
+                                )}
                               </span>
                             ))}
                             {/* Placeholder mientras se confirma optimistamente */}
