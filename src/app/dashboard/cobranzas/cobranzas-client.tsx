@@ -20,6 +20,7 @@ import {
   FiCornerUpLeft,
   FiSlash,
   FiTrash2,
+  FiChevronDown,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
 
@@ -147,6 +148,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   const [comprimiendo, setComprimiendo] = useState(false);
   const [revirtiendoId, setRevirtiendoId] = useState<string | null>(null);
   const [confirmandoEliminarImg, setConfirmandoEliminarImg] = useState<string | null>(null);
+  const [expandiendoCapturas, setExpandiendoCapturas] = useState<string | null>(null);
 
   const limpiarUndo = () => {
     if (undoTimeoutId) clearTimeout(undoTimeoutId);
@@ -771,57 +773,95 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-[10px] text-gray-500">Pagada {f.fecha_pago}</span>
                         {(f.metodo_pago || f.imagenes_ids.length > 0) && (
-                          <div className="flex items-center gap-1.5 flex-wrap justify-center">
+                          <div className="flex items-center gap-1.5 justify-center">
                             {f.metodo_pago && (
                               <span className="text-[10px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5 capitalize">
                                 {f.metodo_pago}
                               </span>
                             )}
-                            {/* Links numerados + botón borrar para cada captura */}
-                            {f.imagenes_ids.filter((id) => !id.startsWith("__pending_")).map((imgId, idx) => (
-                              <span key={imgId} className="inline-flex items-center gap-0.5">
-                                <a
-                                  href={`/api/pago-imagenes/${imgId}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[10px] font-medium text-indigo-600 hover:underline inline-flex items-center gap-0.5"
-                                  title={`Ver captura ${idx + 1}`}
-                                >
-                                  <FiEye className="h-3 w-3" />{idx + 1}
-                                </a>
-                                {confirmandoEliminarImg === imgId ? (
-                                  // Confirm inline: "¿Eliminar? Sí · No"
-                                  <span className="inline-flex items-center gap-0.5 text-[10px]">
-                                    <span className="text-gray-500">¿Eliminar?</span>
-                                    <button
-                                      onClick={() => { setConfirmandoEliminarImg(null); eliminarImagenPago(f.id, imgId); }}
-                                      className="font-semibold text-red-600 hover:text-red-800"
+
+                            {/* Capturas de pago */}
+                            {(() => {
+                              const reales = f.imagenes_ids.filter((id) => !id.startsWith("__pending_"));
+                              const pending = f.imagenes_ids.some((id) => id.startsWith("__pending_"));
+
+                              if (pending) return <span className="text-[10px] text-gray-400">guardando…</span>;
+                              if (reales.length === 0) return null;
+
+                              // Una sola captura: link directo + basura
+                              if (reales.length === 1) {
+                                const imgId = reales[0];
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    <a
+                                      href={`/api/pago-imagenes/${imgId}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-[10px] font-medium text-indigo-600 hover:underline inline-flex items-center gap-0.5"
                                     >
-                                      Sí
-                                    </button>
-                                    <span className="text-gray-300">·</span>
-                                    <button
-                                      onClick={() => setConfirmandoEliminarImg(null)}
-                                      className="text-gray-500 hover:text-gray-700"
-                                    >
-                                      No
-                                    </button>
+                                      <FiEye className="h-3 w-3" /> captura
+                                    </a>
+                                    {confirmandoEliminarImg === imgId ? (
+                                      <span className="inline-flex items-center gap-0.5 text-[10px]">
+                                        <button onClick={() => { setConfirmandoEliminarImg(null); eliminarImagenPago(f.id, imgId); }} className="font-semibold text-red-600 hover:text-red-800">Sí</button>
+                                        <span className="text-gray-300">·</span>
+                                        <button onClick={() => setConfirmandoEliminarImg(null)} className="text-gray-500">No</button>
+                                      </span>
+                                    ) : (
+                                      <button onClick={() => setConfirmandoEliminarImg(imgId)} className="text-gray-300 hover:text-red-500 transition-colors" title="Eliminar">
+                                        <FiTrash2 className="h-2.5 w-2.5" />
+                                      </button>
+                                    )}
                                   </span>
-                                ) : (
+                                );
+                              }
+
+                              // Varias capturas: chip compacto + dropdown
+                              const abierto = expandiendoCapturas === f.id;
+                              return (
+                                <div className="relative">
                                   <button
-                                    onClick={() => setConfirmandoEliminarImg(imgId)}
-                                    className="text-gray-300 hover:text-red-500 transition-colors"
-                                    title="Eliminar captura"
+                                    onClick={() => {
+                                      setExpandiendoCapturas(abierto ? null : f.id);
+                                      setConfirmandoEliminarImg(null);
+                                    }}
+                                    className="inline-flex items-center gap-0.5 text-[10px] font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded px-1.5 py-0.5 transition-colors"
                                   >
-                                    <FiTrash2 className="h-2.5 w-2.5" />
+                                    <FiCamera className="h-3 w-3" />
+                                    {reales.length} capturas
+                                    <FiChevronDown className={`h-3 w-3 transition-transform duration-150 ${abierto ? "rotate-180" : ""}`} />
                                   </button>
-                                )}
-                              </span>
-                            ))}
-                            {/* Placeholder mientras se confirma optimistamente */}
-                            {f.imagenes_ids.some((id) => id.startsWith("__pending_")) && (
-                              <span className="text-[10px] text-gray-400">guardando…</span>
-                            )}
+
+                                  {abierto && (
+                                    <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[130px]">
+                                      {reales.map((imgId, idx) => (
+                                        <div key={imgId} className="flex items-center justify-between px-2.5 py-1 hover:bg-gray-50">
+                                          <a
+                                            href={`/api/pago-imagenes/${imgId}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[11px] font-medium text-indigo-600 hover:underline inline-flex items-center gap-1"
+                                          >
+                                            <FiEye className="h-3 w-3" /> Ver {idx + 1}
+                                          </a>
+                                          {confirmandoEliminarImg === imgId ? (
+                                            <span className="inline-flex items-center gap-0.5 text-[10px] ml-2">
+                                              <button onClick={() => { setConfirmandoEliminarImg(null); eliminarImagenPago(f.id, imgId); }} className="font-semibold text-red-600 hover:text-red-800">Sí</button>
+                                              <span className="text-gray-300">·</span>
+                                              <button onClick={() => setConfirmandoEliminarImg(null)} className="text-gray-500">No</button>
+                                            </span>
+                                          ) : (
+                                            <button onClick={() => setConfirmandoEliminarImg(imgId)} className="text-gray-300 hover:text-red-500 transition-colors ml-2" title="Eliminar">
+                                              <FiTrash2 className="h-3 w-3" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         )}
                         <button
