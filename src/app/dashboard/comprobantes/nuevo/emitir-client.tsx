@@ -1332,20 +1332,39 @@ export default function EmitirComprobanteClient({
                       </div>
 
                       {/* Precio Unitario */}
-                      <div className="w-full md:w-28 relative">
+                      <div className="w-full md:w-28">
                         <label className="block md:hidden text-[9px] font-bold text-gray-455 uppercase mb-0.5">Precio c/IGV</label>
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 md:top-2 md:translate-y-0 text-gray-455 text-xs font-semibold">S/</span>
-                        <input
-                          type="number"
-                          value={it.precio || ""}
-                          min={0}
-                          step="0.01"
-                          onChange={(e) => updateItem(i, { precio: parseFloat(e.target.value) || 0 })}
-                          placeholder="0.00"
-                          className={`w-full pl-6 p-2 border rounded-lg text-sm bg-white text-black font-bold focus:ring-2 focus:outline-none ${theme.ring} ${
-                            pulseIndex === i ? "animate-pulse ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/10" : ""
-                          }`}
-                        />
+                        <div className="relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-455 text-xs font-semibold pointer-events-none">S/</span>
+                          {(() => {
+                            const prodP = productos.find(
+                              (p) => p.nombre.trim().toLowerCase() === it.descripcion.trim().toLowerCase()
+                            );
+                            const minimoP = prodP && Number(prodP.precio_venta) > 0 ? Number(prodP.precio_venta) : 0;
+                            const bajoDMinimo = minimoP > 0 && Number(it.precio) < minimoP;
+                            return (
+                              <>
+                                <input
+                                  type="number"
+                                  value={it.precio || ""}
+                                  min={0}
+                                  step="0.01"
+                                  onChange={(e) => updateItem(i, { precio: parseFloat(e.target.value) || 0 })}
+                                  placeholder="0.00"
+                                  className={`w-full pl-6 p-2 border rounded-lg text-sm bg-white text-black font-bold focus:ring-2 focus:outline-none ${theme.ring} ${
+                                    pulseIndex === i ? "animate-pulse ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/10" : ""
+                                  } ${bajoDMinimo ? "border-red-400 bg-red-50/40" : ""}`}
+                                />
+                                {bajoDMinimo && (
+                                  <p className="text-[10px] text-red-600 font-semibold mt-1 flex items-center gap-1 leading-none">
+                                    <FiAlertCircle className="flex-shrink-0 w-3 h-3" />
+                                    Mín. S/ {minimoP.toFixed(2)}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
                       </div>
                     </div>
 
@@ -1363,19 +1382,6 @@ export default function EmitirComprobanteClient({
                       </button>
                     </div>
 
-                    {/* Error de precio mínimo por ítem */}
-                    {(() => {
-                      const prod = productos.find(
-                        (p) => p.nombre.trim().toLowerCase() === it.descripcion.trim().toLowerCase()
-                      );
-                      const minimo = prod && Number(prod.precio_venta) > 0 ? Number(prod.precio_venta) : 0;
-                      return minimo > 0 && Number(it.precio) < minimo ? (
-                        <p className="w-full md:col-span-full text-xs text-red-600 mt-1 flex items-center gap-1">
-                          <FiAlertCircle className="flex-shrink-0 w-3 h-3" />
-                          Precio menor al mínimo del catálogo (S/ {minimo.toFixed(2)})
-                        </p>
-                      ) : null;
-                    })()}
                   </div>
                 ))}
               </div>
@@ -1540,38 +1546,40 @@ export default function EmitirComprobanteClient({
                 </div>
               )}
 
-              {/* Bloque de precio mínimo: error + botón de solicitar */}
-              {reqs.necesitaAutorizacion && (
-                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-3 space-y-2">
-                  <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
-                    <FiAlertCircle className="w-4 h-4 flex-shrink-0" />
-                    Uno o más ítems tienen precio por debajo del mínimo del catálogo.
+              {reqs.necesitaAutorizacion ? (
+                /* Precio bajo mínimo: reemplaza el botón emit */
+                <div className="space-y-2">
+                  <p className="text-[11px] text-red-600 font-medium flex items-start gap-1.5 leading-snug">
+                    <FiAlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    Precio por debajo del mínimo. El admin debe autorizar antes de emitir.
                   </p>
                   <button
                     type="button"
                     onClick={() => setShowModalAutorizacion(true)}
-                    className="w-full py-2 text-xs font-semibold bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors active:scale-[0.97]"
+                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer"
                   >
+                    <FiAlertCircle className="w-4 h-4" />
                     Solicitar autorización al admin
                   </button>
                 </div>
-              )}
-
-              {errorMsg && <p className="text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-lg border border-red-100 leading-normal">{errorMsg}</p>}
-
-              <button
-                onClick={() => emitir()}
-                disabled={!puedeEmitir || emitiendo}
-                className={`w-full py-3.5 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-98 cursor-pointer ${theme.buttonDisabled} disabled:cursor-not-allowed text-sm`}
-              >
-                {emitiendo ? <FiLoader className="animate-spin" /> : <FiFileText />}
-                {emitiendo ? "Enviando a SUNAT…" : `Emitir ${tipo === "01" ? "factura" : "boleta"}`}
-              </button>
-              {emitiendo && (
-                <p className="text-[11px] text-gray-500 text-center font-medium leading-snug -mt-1">
-                  Espera unos segundos — SUNAT puede tardar hasta 10s en responder.
-                  No cierres ni recargues esta pantalla.
-                </p>
+              ) : (
+                <>
+                  {errorMsg && <p className="text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-lg border border-red-100 leading-normal">{errorMsg}</p>}
+                  <button
+                    onClick={() => emitir()}
+                    disabled={!puedeEmitir || emitiendo}
+                    className={`w-full py-3.5 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-98 cursor-pointer ${theme.buttonDisabled} disabled:cursor-not-allowed text-sm`}
+                  >
+                    {emitiendo ? <FiLoader className="animate-spin" /> : <FiFileText />}
+                    {emitiendo ? "Enviando a SUNAT…" : `Emitir ${tipo === "01" ? "factura" : "boleta"}`}
+                  </button>
+                  {emitiendo && (
+                    <p className="text-[11px] text-gray-500 text-center font-medium leading-snug -mt-1">
+                      Espera unos segundos — SUNAT puede tardar hasta 10s en responder.
+                      No cierres ni recargues esta pantalla.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
@@ -1588,14 +1596,25 @@ export default function EmitirComprobanteClient({
             <span className={`text-xl font-mono font-black ${theme.text} mt-0.5`}>{money(totales.total)}</span>
           </div>
           
-          <button
-            onClick={() => emitir()}
-            disabled={!puedeEmitir || emitiendo}
-            className={`px-5 py-3 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs ${theme.buttonDisabled}`}
-          >
-            {emitiendo ? <FiLoader className="animate-spin" /> : <FiFileText />}
-            {emitiendo ? "Enviando…" : `Emitir ${tipo === "01" ? "factura" : "boleta"}`}
-          </button>
+          {reqs.necesitaAutorizacion ? (
+            <button
+              type="button"
+              onClick={() => setShowModalAutorizacion(true)}
+              className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs"
+            >
+              <FiAlertCircle className="w-4 h-4" />
+              Solicitar autorización
+            </button>
+          ) : (
+            <button
+              onClick={() => emitir()}
+              disabled={!puedeEmitir || emitiendo}
+              className={`px-5 py-3 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs ${theme.buttonDisabled}`}
+            >
+              {emitiendo ? <FiLoader className="animate-spin" /> : <FiFileText />}
+              {emitiendo ? "Enviando…" : `Emitir ${tipo === "01" ? "factura" : "boleta"}`}
+            </button>
+          )}
         </div>
       )}
 
