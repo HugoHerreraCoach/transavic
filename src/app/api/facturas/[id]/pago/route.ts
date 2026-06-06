@@ -24,6 +24,8 @@ const Schema = z.object({
       mime:   z.string().max(50),
     })
   ).max(10).optional(),
+  // Si true: agrega las imágenes nuevas sin borrar las existentes (modo "editar pago").
+  appendImagenes: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No es tu factura" }, { status: 403 });
     }
 
-    const { metodo_pago, pago_detalle, imagenes } = parsed.data;
+    const { metodo_pago, pago_detalle, imagenes, appendImagenes } = parsed.data;
 
     await sql`
       UPDATE facturas
@@ -77,15 +79,32 @@ export async function POST(request: Request) {
       WHERE id = ${id}
     `;
 
-    // Reemplazar las capturas previas por las nuevas.
-    await sql`DELETE FROM pago_imagenes WHERE factura_id = ${id}`;
-    if (imagenes && imagenes.length > 0) {
-      for (let idx = 0; idx < imagenes.length; idx++) {
-        const img = imagenes[idx];
-        await sql`
-          INSERT INTO pago_imagenes (factura_id, imagen_base64, imagen_mime, orden)
-          VALUES (${id}, ${img.base64}, ${img.mime}, ${idx + 1})
-        `;
+    if (appendImagenes) {
+      // Modo edición: solo agrega imágenes nuevas sin borrar las existentes.
+      if (imagenes && imagenes.length > 0) {
+        const maxOrden = (await sql`
+          SELECT COALESCE(MAX(orden), 0) AS max_orden FROM pago_imagenes WHERE factura_id = ${id}
+        `) as Array<{ max_orden: number }>;
+        const base = maxOrden[0]?.max_orden ?? 0;
+        for (let idx = 0; idx < imagenes.length; idx++) {
+          const img = imagenes[idx];
+          await sql`
+            INSERT INTO pago_imagenes (factura_id, imagen_base64, imagen_mime, orden)
+            VALUES (${id}, ${img.base64}, ${img.mime}, ${base + idx + 1})
+          `;
+        }
+      }
+    } else {
+      // Modo registro: reemplaza todas las capturas previas.
+      await sql`DELETE FROM pago_imagenes WHERE factura_id = ${id}`;
+      if (imagenes && imagenes.length > 0) {
+        for (let idx = 0; idx < imagenes.length; idx++) {
+          const img = imagenes[idx];
+          await sql`
+            INSERT INTO pago_imagenes (factura_id, imagen_base64, imagen_mime, orden)
+            VALUES (${id}, ${img.base64}, ${img.mime}, ${idx + 1})
+          `;
+        }
       }
     }
 

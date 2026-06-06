@@ -140,13 +140,16 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   // un ref-via-state para poder cancelarlo si el usuario hace undo antes.
   const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
 
-  // M4 — Modal "Registrar pago": método + nota + capturas (comprimidas, hasta 10).
+  // M4 — Modal "Registrar / Editar pago": método + nota + nro operación + capturas.
   const [modalPago, setModalPago] = useState<Factura | null>(null);
+  const [modoEdicion, setModoEdicion] = useState(false);
   const [pagoMetodo, setPagoMetodo] = useState<string>("efectivo");
-  const [pagoDetalle, setPagoDetalle] = useState("");
+  const [pagoNota, setPagoNota] = useState("");       // notas generales
+  const [pagoNumOp, setPagoNumOp] = useState("");     // número de operación (pago_detalle)
   const [pagoImagenes, setPagoImagenes] = useState<Array<{base64: string; mime: string; preview: string}>>([]);
   const [comprimiendo, setComprimiendo] = useState(false);
   const [revirtiendoId, setRevirtiendoId] = useState<string | null>(null);
+  const [confirmandoRevertir, setConfirmandoRevertir] = useState<string | null>(null);
   const [confirmandoEliminarImg, setConfirmandoEliminarImg] = useState<string | null>(null);
   const [expandiendoCapturas, setExpandiendoCapturas] = useState<string | null>(null);
 
@@ -156,11 +159,23 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     setUndoPago(null);
   };
 
-  // M4 — Abre el modal de pago (método + nota + capturas opcionales).
+  // M4 — Abre el modal para REGISTRAR el pago (campos en blanco).
   const abrirModalPago = (f: Factura) => {
+    setModoEdicion(false);
     setPagoMetodo("efectivo");
-    setPagoDetalle("");
+    setPagoNota("");
+    setPagoNumOp("");
     setPagoImagenes([]);
+    setModalPago(f);
+  };
+
+  // M4 — Abre el modal para EDITAR un pago ya registrado (rellena con datos actuales).
+  const abrirEditarPago = (f: Factura) => {
+    setModoEdicion(true);
+    setPagoMetodo(f.metodo_pago || "efectivo");
+    setPagoNota(f.notas || "");
+    setPagoNumOp(f.pago_detalle || "");
+    setPagoImagenes([]);  // solo se agregan nuevas; las existentes siguen en DB
     setModalPago(f);
   };
 
@@ -215,34 +230,40 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
 
   // Confirma el pago desde el modal: optimista + POST con método/nota/captura +
   // toast "Deshacer" 5 s (mismo patrón de siempre).
+  // En modo edición: no muestra undo (el pago ya estaba marcado), solo recarga.
   const confirmarPago = async () => {
     const original = modalPago;
     if (!original) return;
     const id = original.id;
     const metodo = pagoMetodo;
-    const detalle = pagoDetalle.trim();
+    const nota = pagoNota.trim();
+    const numOp = pagoNumOp.trim();
     const imgs = pagoImagenes;
+    const esEdicion = modoEdicion;
 
     if (undoTimeoutId) clearTimeout(undoTimeoutId);
     setModalPago(null);
 
     const hoy = new Date().toISOString().split("T")[0];
-    // Optimistic: no tenemos aún los UUIDs reales (se generan en el servidor),
-    // así que usamos strings vacíos como placeholder para mostrar el conteo.
-    setFacturas((prev) =>
-      prev.map((f) =>
-        f.id === id
-          ? { ...f, estado: "Pagada", fecha_pago: hoy, metodo_pago: metodo, imagenes_ids: imgs.map((_, i) => `__pending_${i}`) }
-          : f
-      )
-    );
-    setUndoPago(original);
-    const t = setTimeout(() => {
-      setUndoPago(null);
-      setUndoTimeoutId(null);
-      fetchData();
-    }, 5000);
-    setUndoTimeoutId(t);
+    let undoTimer: ReturnType<typeof setTimeout> | null = null;
+
+    if (!esEdicion) {
+      // Solo modo registro nuevo usa el optimistic update + undo.
+      setFacturas((prev) =>
+        prev.map((f) =>
+          f.id === id
+            ? { ...f, estado: "Pagada", fecha_pago: hoy, metodo_pago: metodo, imagenes_ids: imgs.map((_, i) => `__pending_${i}`) }
+            : f
+        )
+      );
+      setUndoPago(original);
+      undoTimer = setTimeout(() => {
+        setUndoPago(null);
+        setUndoTimeoutId(null);
+        fetchData();
+      }, 5000);
+      setUndoTimeoutId(undoTimer);
+    }
 
     try {
       const res = await fetch(`/api/facturas/${id}/pago`, {
@@ -250,21 +271,30 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           metodo_pago: metodo,
-          pago_detalle: detalle || undefined,
+          notas: nota || undefined,
+          pago_detalle: numOp || undefined,
           imagenes: imgs.length > 0
             ? imgs.map((i) => ({ base64: i.base64, mime: i.mime }))
             : undefined,
+          appendImagenes: esEdicion ? true : undefined,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(typeof err.error === "string" ? err.error : "Error al registrar pago");
       }
+      if (esEdicion) {
+        setMensaje("✅ Pago actualizado");
+        setTimeout(() => setMensaje(null), 3000);
+        fetchData();
+      }
     } catch (e) {
-      clearTimeout(t);
-      setUndoTimeoutId(null);
-      setUndoPago(null);
-      setFacturas((prev) => prev.map((f) => (f.id === id ? original : f)));
+      if (!esEdicion) {
+        if (undoTimer) clearTimeout(undoTimer);
+        setUndoTimeoutId(null);
+        setUndoPago(null);
+        setFacturas((prev) => prev.map((f) => (f.id === id ? original : f)));
+      }
       setMensaje(e instanceof Error ? `❌ ${e.message}` : "❌ Error al registrar pago");
       setTimeout(() => setMensaje(null), 4000);
     }
@@ -772,11 +802,16 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     ) : (
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-[10px] text-gray-500">Pagada {f.fecha_pago}</span>
-                        {(f.metodo_pago || f.imagenes_ids.length > 0) && (
-                          <div className="flex items-center gap-1.5 justify-center">
+                        {(f.metodo_pago || f.pago_detalle || f.imagenes_ids.length > 0) && (
+                          <div className="flex items-center gap-1.5 justify-center flex-wrap">
                             {f.metodo_pago && (
                               <span className="text-[10px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5 capitalize">
                                 {f.metodo_pago}
+                              </span>
+                            )}
+                            {f.pago_detalle && (
+                              <span className="text-[10px] text-gray-500" title="Número de operación">
+                                N°&nbsp;{f.pago_detalle}
                               </span>
                             )}
 
@@ -864,15 +899,38 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                             })()}
                           </div>
                         )}
-                        <button
-                          onClick={() => revertirPagoPermanente(f.id)}
-                          disabled={revirtiendoId === f.id}
-                          className="text-[10px] font-medium text-amber-700 hover:text-amber-900 hover:underline inline-flex items-center gap-0.5 disabled:opacity-50"
-                          title="Marcar como NO pagada (si se marcó por error)"
-                        >
-                          <FiCornerUpLeft className="h-3 w-3" />
-                          {revirtiendoId === f.id ? "Revirtiendo…" : "Revertir"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => abrirEditarPago(f)}
+                            className="text-[10px] font-medium text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5"
+                            title="Editar método, número de operación o agregar capturas"
+                          >
+                            <FiEdit2 className="h-3 w-3" /> Editar
+                          </button>
+                          <span className="text-gray-200 text-[10px]">·</span>
+                          {confirmandoRevertir === f.id ? (
+                            <span className="inline-flex items-center gap-1 text-[10px]">
+                              <span className="text-gray-500">¿Revertir?</span>
+                              <button
+                                onClick={() => { setConfirmandoRevertir(null); revertirPagoPermanente(f.id); }}
+                                disabled={revirtiendoId === f.id}
+                                className="font-semibold text-red-600 hover:text-red-800 disabled:opacity-50"
+                              >Sí</button>
+                              <span className="text-gray-300">·</span>
+                              <button onClick={() => setConfirmandoRevertir(null)} className="text-gray-500">No</button>
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => setConfirmandoRevertir(f.id)}
+                              disabled={revirtiendoId === f.id}
+                              className="text-[10px] font-medium text-amber-700 hover:text-amber-900 hover:underline inline-flex items-center gap-0.5 disabled:opacity-50"
+                              title="Marcar como NO pagada (borrará método, número y capturas)"
+                            >
+                              <FiCornerUpLeft className="h-3 w-3" />
+                              {revirtiendoId === f.id ? "Revirtiendo…" : "Revertir"}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     )}
                   </td>
@@ -1011,7 +1069,9 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
           >
             <div className="px-5 py-4 border-b flex items-center justify-between sticky top-0 bg-white z-10">
               <div>
-                <h3 className="text-base font-bold text-gray-800">Registrar pago</h3>
+                <h3 className="text-base font-bold text-gray-800">
+                  {modoEdicion ? "Editar pago" : "Registrar pago"}
+                </h3>
                 <p className="text-xs text-gray-500">
                   {modalPago.cliente_nombre} · S/ {toNum(modalPago.monto).toFixed(2)}
                 </p>
@@ -1049,17 +1109,34 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                 </div>
               </div>
 
-              {/* Nota / detalle (sobre todo para "Otro") */}
+              {/* Número de operación (para Yape, Plin, transferencia, etc.) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {pagoMetodo === "otro" ? "¿Cómo pagó? (especifica)" : "Nota del pago (opcional)"}
+                  Número de operación
+                  <span className="font-normal text-gray-400 ml-1">(opcional)</span>
                 </label>
                 <input
                   type="text"
-                  value={pagoDetalle}
-                  onChange={(e) => setPagoDetalle(e.target.value)}
+                  value={pagoNumOp}
+                  onChange={(e) => setPagoNumOp(e.target.value)}
                   maxLength={200}
-                  placeholder={pagoMetodo === "otro" ? "Ej: depósito en agente, vale…" : "Opcional"}
+                  placeholder="Ej: 123456789"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-400 focus:outline-none"
+                />
+              </div>
+
+              {/* Nota / detalle (sobre todo para "Otro" o info extra) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {pagoMetodo === "otro" ? "¿Cómo pagó? (especifica)" : "Nota del pago"}
+                  <span className="font-normal text-gray-400 ml-1">(opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={pagoNota}
+                  onChange={(e) => setPagoNota(e.target.value)}
+                  maxLength={200}
+                  placeholder={pagoMetodo === "otro" ? "Ej: depósito en agente, vale…" : "Ej: acordado con el cliente"}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-400 focus:outline-none"
                 />
               </div>
@@ -1120,7 +1197,9 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                 )}
 
                 <p className="text-[11px] text-gray-400 mt-1">
-                  Se comprimen automáticamente. Quedan guardadas y vinculadas a esta cobranza.
+                  {modoEdicion
+                    ? "Las capturas ya guardadas se conservan. Aquí solo agregas nuevas."
+                    : "Se comprimen automáticamente. Quedan guardadas y vinculadas a esta cobranza."}
                 </p>
               </div>
             </div>
@@ -1137,7 +1216,8 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                 disabled={comprimiendo}
                 className="px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 disabled:opacity-50 inline-flex items-center gap-1.5"
               >
-                <FiCheckCircle className="h-4 w-4" /> Confirmar pago
+                <FiCheckCircle className="h-4 w-4" />
+                {modoEdicion ? "Guardar cambios" : "Confirmar pago"}
               </button>
             </div>
           </div>
