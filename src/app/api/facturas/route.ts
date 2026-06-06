@@ -55,7 +55,11 @@ export async function GET(request: Request) {
         f.estado, f.numero_comprobante, f.notas,
         f.metodo_pago, f.pago_detalle,
         f.anulada_por, f.anulada_motivo,
-        (f.pago_img_base64 IS NOT NULL) AS tiene_pago_img,
+        COALESCE(
+          (SELECT array_agg(pi.id::text ORDER BY pi.orden)
+           FROM pago_imagenes pi WHERE pi.factura_id = f.id),
+          ARRAY[]::text[]
+        ) AS imagenes_ids,
         u.name AS asesor_name
       FROM facturas f
       LEFT JOIN users u ON f.asesor_id = u.id

@@ -1,6 +1,8 @@
 // src/app/api/facturas/[id]/pago-imagen/route.ts
-// Sirve la captura del comprobante de pago (guardada en base64 en `facturas`).
-// Permite VER y DESCARGAR la imagen del pago, vinculada a la cobranza (y a su pedido).
+// Sirve la captura de pago (primera imagen por defecto).
+// Acepta ?index=N (0-based) para imágenes adicionales.
+// Lee de pago_imagenes primero; fallback a facturas.pago_img_base64 para registros
+// migrados antes de la tabla nueva.
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
@@ -21,7 +23,11 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "ID inválido" }, { status: 400 });
   }
 
+  const index = Math.max(0, parseInt(url.searchParams.get("index") ?? "0", 10) || 0);
+
   const sql = neon(process.env.DATABASE_URL!);
+
+  // Verificar ownership.
   const rows = (await sql`
     SELECT asesor_id, pago_img_base64, pago_img_mime
     FROM facturas WHERE id = ${id}::uuid LIMIT 1
@@ -34,25 +40,43 @@ export async function GET(request: Request) {
   if (rows.length === 0) {
     return NextResponse.json({ error: "Cobranza no encontrada" }, { status: 404 });
   }
-  const f = rows[0];
-
-  // Ownership: asesor solo la suya; admin cualquiera (igual que el endpoint de pago).
-  if (session.user.role !== "admin" && f.asesor_id !== session.user.id) {
+  if (session.user.role !== "admin" && rows[0].asesor_id !== session.user.id) {
     return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
   }
-  if (!f.pago_img_base64) {
-    return NextResponse.json({ error: "Esta cobranza no tiene captura de pago." }, { status: 404 });
+
+  // Buscar en la tabla nueva primero.
+  const imgs = (await sql`
+    SELECT imagen_base64, imagen_mime
+    FROM pago_imagenes
+    WHERE factura_id = ${id}::uuid
+    ORDER BY orden
+    LIMIT 1 OFFSET ${index}
+  `) as Array<{ imagen_base64: string; imagen_mime: string }>;
+
+  let base64: string | null = null;
+  let mime = "image/webp";
+
+  if (imgs.length > 0) {
+    base64 = imgs[0].imagen_base64;
+    mime = imgs[0].imagen_mime;
+  } else if (index === 0 && rows[0].pago_img_base64) {
+    // Fallback a columna legacy (registros muy viejos sin migrar).
+    base64 = rows[0].pago_img_base64;
+    mime = rows[0].pago_img_mime || "image/webp";
   }
 
-  const buffer = Buffer.from(f.pago_img_base64, "base64");
-  const mime = f.pago_img_mime || "image/webp";
+  if (!base64) {
+    return NextResponse.json({ error: "Captura no encontrada." }, { status: 404 });
+  }
+
+  const buffer = Buffer.from(base64, "base64");
   const ext = mime.includes("webp") ? "webp" : mime.includes("png") ? "png" : "jpg";
 
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,
     headers: {
       "Content-Type": mime,
-      "Content-Disposition": `inline; filename="comprobante-pago-${id}.${ext}"`,
+      "Content-Disposition": `inline; filename="comprobante-pago-${id}-${index}.${ext}"`,
       "Content-Length": String(buffer.length),
       "Cache-Control": "private, max-age=60",
     },

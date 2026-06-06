@@ -16,11 +16,14 @@ const Schema = z.object({
   // Cómo se pagó (data flexible para el negocio).
   metodo_pago: z.enum(["efectivo", "transferencia", "yape", "plin", "otro"]).optional(),
   pago_detalle: z.string().trim().max(200).optional(),
-  // Captura del pago: ya viene COMPRIMIDA del cliente (~60-90KB). base64 sin el
-  // prefijo "data:...;base64,". Cap a ~400KB de base64 (≈300KB de imagen) para que
-  // la base de datos no crezca rápido aunque el cliente mande algo grande.
-  pago_img_base64: z.string().max(400_000).optional(),
-  pago_img_mime: z.string().max(50).optional(),
+  // Capturas del pago: hasta 10 imágenes ya COMPRIMIDAS en el cliente (~60-90KB c/u).
+  // base64 sin el prefijo "data:...;base64,". Cap a ~400KB c/u.
+  imagenes: z.array(
+    z.object({
+      base64: z.string().max(400_000),
+      mime:   z.string().max(50),
+    })
+  ).max(10).optional(),
 });
 
 export async function POST(request: Request) {
@@ -62,7 +65,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No es tu factura" }, { status: 403 });
     }
 
-    const { metodo_pago, pago_detalle, pago_img_base64, pago_img_mime } = parsed.data;
+    const { metodo_pago, pago_detalle, imagenes } = parsed.data;
 
     await sql`
       UPDATE facturas
@@ -70,11 +73,21 @@ export async function POST(request: Request) {
           estado = 'Pagada',
           notas = COALESCE(${parsed.data.notas ?? null}, notas),
           metodo_pago = ${metodo_pago ?? null},
-          pago_detalle = ${pago_detalle ?? null},
-          pago_img_base64 = ${pago_img_base64 ?? null},
-          pago_img_mime = ${pago_img_mime ?? null}
+          pago_detalle = ${pago_detalle ?? null}
       WHERE id = ${id}
     `;
+
+    // Reemplazar las capturas previas por las nuevas.
+    await sql`DELETE FROM pago_imagenes WHERE factura_id = ${id}`;
+    if (imagenes && imagenes.length > 0) {
+      for (let idx = 0; idx < imagenes.length; idx++) {
+        const img = imagenes[idx];
+        await sql`
+          INSERT INTO pago_imagenes (factura_id, imagen_base64, imagen_mime, orden)
+          VALUES (${id}, ${img.base64}, ${img.mime}, ${idx + 1})
+        `;
+      }
+    }
 
     return NextResponse.json({ message: "Pago registrado" });
   } catch (error) {
@@ -117,7 +130,7 @@ export async function DELETE(request: Request) {
     }
 
     // Estado al revertir: si ya venció → 'Vencida', si no → 'Pendiente'.
-    // Al revertir también limpiamos el método y la captura (el pago se deshizo).
+    // Al revertir también limpiamos el método y las capturas (el pago se deshizo).
     await sql`
       UPDATE facturas
       SET fecha_pago = NULL,
@@ -127,11 +140,10 @@ export async function DELETE(request: Request) {
             ELSE 'Pendiente'
           END,
           metodo_pago = NULL,
-          pago_detalle = NULL,
-          pago_img_base64 = NULL,
-          pago_img_mime = NULL
+          pago_detalle = NULL
       WHERE id = ${id}
     `;
+    await sql`DELETE FROM pago_imagenes WHERE factura_id = ${id}`;
 
     return NextResponse.json({ message: "Pago revertido" });
   } catch (error) {

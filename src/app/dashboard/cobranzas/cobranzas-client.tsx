@@ -19,6 +19,7 @@ import {
   FiEye,
   FiCornerUpLeft,
   FiSlash,
+  FiTrash2,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
 
@@ -38,7 +39,7 @@ interface Factura {
   // M4 — Datos del pago
   metodo_pago?: string | null;
   pago_detalle?: string | null;
-  tiene_pago_img?: boolean;
+  imagenes_ids: string[];  // UUIDs de capturas en pago_imagenes (vacío si no hay)
   // Anulación (soft): rastro de quién la anuló y por qué.
   anulada_por?: string | null;
   anulada_motivo?: string | null;
@@ -138,13 +139,11 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   // un ref-via-state para poder cancelarlo si el usuario hace undo antes.
   const [undoTimeoutId, setUndoTimeoutId] = useState<ReturnType<typeof setTimeout> | null>(null);
 
-  // M4 — Modal "Registrar pago": método + nota + captura (comprimida).
+  // M4 — Modal "Registrar pago": método + nota + capturas (comprimidas, hasta 10).
   const [modalPago, setModalPago] = useState<Factura | null>(null);
   const [pagoMetodo, setPagoMetodo] = useState<string>("efectivo");
   const [pagoDetalle, setPagoDetalle] = useState("");
-  const [pagoImgBase64, setPagoImgBase64] = useState<string | null>(null);
-  const [pagoImgMime, setPagoImgMime] = useState<string | null>(null);
-  const [pagoImgPreview, setPagoImgPreview] = useState<string | null>(null);
+  const [pagoImagenes, setPagoImagenes] = useState<Array<{base64: string; mime: string; preview: string}>>([]);
   const [comprimiendo, setComprimiendo] = useState(false);
   const [revirtiendoId, setRevirtiendoId] = useState<string | null>(null);
 
@@ -154,20 +153,18 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     setUndoPago(null);
   };
 
-  // M4 — Abre el modal de pago (método + nota + captura opcional).
+  // M4 — Abre el modal de pago (método + nota + capturas opcionales).
   const abrirModalPago = (f: Factura) => {
     setPagoMetodo("efectivo");
     setPagoDetalle("");
-    setPagoImgBase64(null);
-    setPagoImgMime(null);
-    setPagoImgPreview(null);
+    setPagoImagenes([]);
     setModalPago(f);
   };
 
-  // Comprime la captura en el cliente a webp pequeñito (~60-90KB) para que pese muy
-  // poco y NO infle la base de datos. Suficiente para leer un Yape/transferencia.
+  // Comprime cada captura a webp ~60-90KB y la agrega al array (máx 10).
   const onSelectImagePago = async (file: File | null) => {
     if (!file) return;
+    if (pagoImagenes.length >= 10) return;
     setComprimiendo(true);
     try {
       const compressed = await imageCompression(file, {
@@ -179,14 +176,37 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
       });
       const dataUrl = await imageCompression.getDataUrlFromFile(compressed);
       const comma = dataUrl.indexOf(",");
-      setPagoImgBase64(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
-      setPagoImgMime(compressed.type || "image/webp");
-      setPagoImgPreview(dataUrl);
+      const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      const mime = compressed.type || "image/webp";
+      setPagoImagenes((prev) => [...prev, { base64, mime, preview: dataUrl }]);
     } catch (e) {
       setMensaje(e instanceof Error ? `❌ ${e.message}` : "❌ No se pudo procesar la imagen");
       setTimeout(() => setMensaje(null), 4000);
     } finally {
       setComprimiendo(false);
+    }
+  };
+
+  // Quita una imagen del array por índice (antes de confirmar).
+  const quitarImagenPago = (idx: number) => {
+    setPagoImagenes((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Elimina una captura ya guardada en DB (post-pago confirmado).
+  const eliminarImagenPago = async (facturaId: string, imgId: string) => {
+    try {
+      const res = await fetch(`/api/pago-imagenes/${imgId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("No se pudo eliminar");
+      setFacturas((prev) =>
+        prev.map((f) =>
+          f.id === facturaId
+            ? { ...f, imagenes_ids: f.imagenes_ids.filter((id) => id !== imgId) }
+            : f
+        )
+      );
+    } catch {
+      setMensaje("❌ No se pudo eliminar la captura");
+      setTimeout(() => setMensaje(null), 4000);
     }
   };
 
@@ -198,17 +218,18 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     const id = original.id;
     const metodo = pagoMetodo;
     const detalle = pagoDetalle.trim();
-    const imgB64 = pagoImgBase64;
-    const imgMime = pagoImgMime;
+    const imgs = pagoImagenes;
 
     if (undoTimeoutId) clearTimeout(undoTimeoutId);
     setModalPago(null);
 
     const hoy = new Date().toISOString().split("T")[0];
+    // Optimistic: no tenemos aún los UUIDs reales (se generan en el servidor),
+    // así que usamos strings vacíos como placeholder para mostrar el conteo.
     setFacturas((prev) =>
       prev.map((f) =>
         f.id === id
-          ? { ...f, estado: "Pagada", fecha_pago: hoy, metodo_pago: metodo, tiene_pago_img: !!imgB64 }
+          ? { ...f, estado: "Pagada", fecha_pago: hoy, metodo_pago: metodo, imagenes_ids: imgs.map((_, i) => `__pending_${i}`) }
           : f
       )
     );
@@ -227,8 +248,9 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
         body: JSON.stringify({
           metodo_pago: metodo,
           pago_detalle: detalle || undefined,
-          pago_img_base64: imgB64 || undefined,
-          pago_img_mime: imgMime || undefined,
+          imagenes: imgs.length > 0
+            ? imgs.map((i) => ({ base64: i.base64, mime: i.mime }))
+            : undefined,
         }),
       });
       if (!res.ok) {
@@ -747,22 +769,37 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     ) : (
                       <div className="flex flex-col items-center gap-1">
                         <span className="text-[10px] text-gray-500">Pagada {f.fecha_pago}</span>
-                        {(f.metodo_pago || f.tiene_pago_img) && (
+                        {(f.metodo_pago || f.imagenes_ids.length > 0) && (
                           <div className="flex items-center gap-1.5 flex-wrap justify-center">
                             {f.metodo_pago && (
                               <span className="text-[10px] font-medium text-gray-600 bg-gray-100 rounded px-1.5 py-0.5 capitalize">
                                 {f.metodo_pago}
                               </span>
                             )}
-                            {f.tiene_pago_img && (
-                              <a
-                                href={`/api/facturas/${f.id}/pago-imagen`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[10px] font-medium text-indigo-600 hover:underline inline-flex items-center gap-0.5"
-                              >
-                                <FiEye className="h-3 w-3" /> captura
-                              </a>
+                            {/* Links numerados + botón borrar para cada captura */}
+                            {f.imagenes_ids.filter((id) => !id.startsWith("__pending_")).map((imgId, idx) => (
+                              <span key={imgId} className="inline-flex items-center gap-0.5">
+                                <a
+                                  href={`/api/pago-imagenes/${imgId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] font-medium text-indigo-600 hover:underline inline-flex items-center gap-0.5"
+                                  title={`Ver captura ${idx + 1}`}
+                                >
+                                  <FiEye className="h-3 w-3" />{idx + 1}
+                                </a>
+                                <button
+                                  onClick={() => eliminarImagenPago(f.id, imgId)}
+                                  className="text-gray-300 hover:text-red-500 transition-colors"
+                                  title="Eliminar captura"
+                                >
+                                  <FiTrash2 className="h-2.5 w-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                            {/* Placeholder mientras se confirma optimistamente */}
+                            {f.imagenes_ids.some((id) => id.startsWith("__pending_")) && (
+                              <span className="text-[10px] text-gray-400">guardando…</span>
                             )}
                           </div>
                         )}
@@ -966,43 +1003,63 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                 />
               </div>
 
-              {/* Captura del pago (opcional, se comprime) */}
+              {/* Capturas del pago (opcional, hasta 10, comprimidas) */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Captura del pago (opcional)</label>
-                {pagoImgPreview ? (
-                  <div className="relative inline-block">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={pagoImgPreview} alt="Captura del pago" className="max-h-44 rounded-lg border border-gray-200" />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPagoImgBase64(null);
-                        setPagoImgMime(null);
-                        setPagoImgPreview(null);
-                      }}
-                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow hover:bg-red-600"
-                    >
-                      <FiX className="h-3.5 w-3.5" />
-                    </button>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-sm font-medium text-gray-700">Capturas del pago (opcional)</label>
+                  {pagoImagenes.length > 0 && (
+                    <span className="text-xs text-gray-400">{pagoImagenes.length} de 10</span>
+                  )}
+                </div>
+
+                {/* Grid de thumbnails seleccionados */}
+                {pagoImagenes.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {pagoImagenes.map((img, idx) => (
+                      <div key={idx} className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.preview}
+                          alt={`Captura ${idx + 1}`}
+                          className="h-20 w-20 object-cover rounded-lg border border-gray-200"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => quitarImagenPago(idx)}
+                          className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow hover:bg-red-600"
+                          title="Quitar esta captura"
+                        >
+                          <FiX className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ) : (
+                )}
+
+                {/* Botón agregar (visible mientras haya menos de 10) */}
+                {pagoImagenes.length < 10 && (
                   <label
-                    className={`flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg py-4 cursor-pointer hover:bg-gray-50 text-sm text-gray-500 ${
+                    className={`flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg py-3 cursor-pointer hover:bg-gray-50 text-sm text-gray-500 ${
                       comprimiendo ? "opacity-60 pointer-events-none" : ""
                     }`}
                   >
                     <FiCamera className="h-4 w-4" />
-                    {comprimiendo ? "Procesando…" : "Subir foto / captura"}
+                    {comprimiendo ? "Procesando…" : pagoImagenes.length === 0 ? "Subir foto / captura" : "Agregar otra captura"}
                     <input
                       type="file"
                       accept="image/*"
                       className="hidden"
-                      onChange={(e) => onSelectImagePago(e.target.files?.[0] ?? null)}
+                      onChange={(e) => {
+                        onSelectImagePago(e.target.files?.[0] ?? null);
+                        // Limpiar el input para poder seleccionar el mismo archivo de nuevo
+                        e.target.value = "";
+                      }}
                     />
                   </label>
                 )}
+
                 <p className="text-[11px] text-gray-400 mt-1">
-                  Se comprime automáticamente para ocupar muy poco espacio. Queda guardada y vinculada a esta cobranza.
+                  Se comprimen automáticamente. Quedan guardadas y vinculadas a esta cobranza.
                 </p>
               </div>
             </div>
