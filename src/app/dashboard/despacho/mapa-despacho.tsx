@@ -36,6 +36,9 @@ interface PedidoDespacho {
   detalle: string;
   notas: string | null;
   empresa: string;
+  // Fecha de ENTREGA (DATE). Se usa para dibujar SOLO la ruta de hoy en el mapa
+  // (el endpoint trae toda la semana; sin este recorte saldría una maraña).
+  fecha_pedido?: string | null;
 }
 
 interface Repartidor {
@@ -139,6 +142,16 @@ function createMarkerIcon(color: string, label: string): string {
 function formatTime(isoString: string | null): string {
   if (!isoString) return "";
   return new Date(isoString).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: true });
+}
+
+// Fecha de HOY en zona Lima como "YYYY-MM-DD" (en-CA da formato ISO).
+function fechaHoyLima(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Lima" });
+}
+
+// ¿La fecha_pedido (entrega) es hoy? Tolera "YYYY-MM-DD" o ISO con hora.
+function esFechaHoy(f: string | null | undefined, hoy: string): boolean {
+  return !!f && String(f).slice(0, 10) === hoy;
 }
 
 // ── Componente Principal ──
@@ -264,17 +277,23 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
     return items;
   }, [pendientes, repartidores, filtroEstados, repartidorFoco, showPendientes, esVisible]);
 
-  // Ruta de cada moto partida en DOS tramos, para ver de un vistazo cuánto avanzó:
-  //  • recorrido = base → paradas ya hechas (Entregado/Fallido, en orden) → posición
-  //    en vivo de la moto. Es "lo que ya recorrió".
-  //  • faltante  = posición de la moto (o la última parada hecha, o la base) →
-  //    pendientes (en orden). Es "lo que le falta por avanzar".
-  // Se calcula desde r.pedidos (NO desde el filtro de estados) para que el rastro de
-  // lo recorrido se vea aunque el preset "Por entregar" oculte los pines ya entregados.
-  // Sin moto en vivo (GPS apagado) el corte cae en la última parada hecha o la base,
-  // así igual se distinguen los dos tramos.
+  // Líneas de ruta SOLO al enfocar un motorizado (filtro "Ver ruta de").
+  // En "Todos los motorizados" NO se dibuja ninguna: serían N zigzags (uno por
+  // repartidor, cada uno uniendo todas sus entregas) = maraña ilegible. El overview
+  // queda limpio (pines pendientes + motos en vivo) y la ruta detallada se ve al
+  // elegir a alguien. Al enfocar, su ruta va partida en DOS tramos:
+  //  • recorrido = base → entregas/fallidas de HOY (en orden) → posición en vivo de
+  //    la moto. Es "lo que recorrió hoy". Recortado al día para no arrastrar el
+  //    histórico de toda la semana (que era el origen de la maraña).
+  //  • faltante  = posición de la moto (o la última parada de hoy, o la base) →
+  //    TODOS los pendientes del repartidor (incluye carry-over de días previos;
+  //    son pocos y sí necesitan entregarse). Es "lo que le falta".
+  // Sin moto en vivo (GPS apagado) el corte cae en la última parada de hoy o la base.
   const polylines = useMemo(() => {
+    if (repartidorFoco === null) return [];
+
     const base = baseLocation ? { lat: baseLocation.lat, lng: baseLocation.lng } : null;
+    const hoy = fechaHoyLima();
     const noNulo = (x: { lat: number; lng: number } | null): x is { lat: number; lng: number } =>
       x != null;
     return repartidores
@@ -284,7 +303,7 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
           .filter((p) => p.latitude && p.longitude)
           .sort((a, b) => (a.orden_ruta || 99) - (b.orden_ruta || 99));
         const visitados = stops
-          .filter((p) => ["Entregado", "Fallido"].includes(p.estado))
+          .filter((p) => ["Entregado", "Fallido"].includes(p.estado) && esFechaHoy(p.fecha_pedido, hoy))
           .map((p) => ({ lat: p.latitude!, lng: p.longitude! }));
         const pendientes = stops
           .filter((p) => !["Entregado", "Fallido"].includes(p.estado))
@@ -303,7 +322,7 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
         };
       })
       .filter((pl) => pl.recorrido.length > 1 || pl.faltante.length > 1);
-  }, [repartidores, esVisible, colorPorRepartidor, baseLocation]);
+  }, [repartidores, esVisible, colorPorRepartidor, baseLocation, repartidorFoco]);
 
   // Encaja el mapa en lo que está visible (pedidos + motos en vivo + base).
   const ajustarEncuadre = useCallback(
@@ -330,10 +349,21 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
         bounds.extend({ lat: baseLocation.lat, lng: baseLocation.lng });
         hayPuntos = true;
       }
+      // Al enfocar un motorizado, enmarcar TODA su ruta de hoy (no solo la moto):
+      // los pines de entregado pueden estar ocultos por el filtro, pero la línea de
+      // recorrido sí está, así que extendemos el encuadre con sus puntos.
+      if (repartidorFoco !== null) {
+        polylines.forEach((pl) => {
+          [...pl.recorrido, ...pl.faltante].forEach((pt) => {
+            bounds.extend(pt);
+            hayPuntos = true;
+          });
+        });
+      }
       if (!hayPuntos) return;
       map.fitBounds(bounds, 60);
     },
-    [allPedidos, baseLocation, repartidorFoco, showRiders, repartidores, esVisible]
+    [allPedidos, baseLocation, repartidorFoco, showRiders, repartidores, esVisible, polylines]
   );
 
   const onMapLoad = useCallback(
@@ -796,7 +826,7 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
             <div className="space-y-1.5 text-xs text-gray-600">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-1 rounded flex-shrink-0" style={{ backgroundColor: "#94a3b8" }} />
-                <span>Lo que ya recorrió</span>
+                <span>Lo que recorrió hoy</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="w-6 h-1 rounded flex-shrink-0" style={{ backgroundColor: "#8b5cf6" }} />
