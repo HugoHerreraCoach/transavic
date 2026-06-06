@@ -1142,15 +1142,52 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
               </div>
 
               {/* Capturas del pago (opcional, hasta 10, comprimidas) */}
+              {(() => {
+                // En edición leemos el estado VIVO de facturas para que el X actualice en tiempo real.
+                const captActuales = modoEdicion && modalPago
+                  ? (facturas.find(f => f.id === modalPago.id)?.imagenes_ids ?? []).filter(id => !id.startsWith("__pending_"))
+                  : [];
+                const totalCapturas = captActuales.length + pagoImagenes.length;
+                return (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-sm font-medium text-gray-700">Capturas del pago (opcional)</label>
-                  {pagoImagenes.length > 0 && (
-                    <span className="text-xs text-gray-400">{pagoImagenes.length} de 10</span>
+                  {totalCapturas > 0 && (
+                    <span className="text-xs text-gray-400">{totalCapturas} de 10</span>
                   )}
                 </div>
 
-                {/* Grid de thumbnails seleccionados */}
+                {/* Capturas ya guardadas en DB (solo modo edición) */}
+                {modoEdicion && captActuales.length > 0 && (
+                  <div className="mb-2">
+                    <p className="text-[11px] text-gray-400 mb-1.5">Capturas guardadas</p>
+                    <div className="flex flex-wrap gap-2">
+                      {captActuales.map((imgId, idx) => (
+                        <div key={imgId} className="relative">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`/api/pago-imagenes/${imgId}`}
+                            alt={`Captura guardada ${idx + 1}`}
+                            className="h-20 w-20 object-cover rounded-lg border border-gray-200"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => eliminarImagenPago(modalPago!.id, imgId)}
+                            className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow hover:bg-red-600"
+                            title="Eliminar esta captura"
+                          >
+                            <FiX className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    {pagoImagenes.length > 0 && (
+                      <p className="text-[11px] text-gray-400 mt-2 mb-1.5">Nuevas a agregar</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Grid de thumbnails nuevos (pendientes de guardar) */}
                 {pagoImagenes.length > 0 && (
                   <div className="flex flex-wrap gap-2 mb-2">
                     {pagoImagenes.map((img, idx) => (
@@ -1158,8 +1195,8 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={img.preview}
-                          alt={`Captura ${idx + 1}`}
-                          className="h-20 w-20 object-cover rounded-lg border border-gray-200"
+                          alt={`Nueva captura ${idx + 1}`}
+                          className="h-20 w-20 object-cover rounded-lg border border-indigo-200"
                         />
                         <button
                           type="button"
@@ -1174,15 +1211,15 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                   </div>
                 )}
 
-                {/* Botón agregar (visible mientras haya menos de 10) */}
-                {pagoImagenes.length < 10 && (
+                {/* Botón agregar (visible mientras haya menos de 10 en total) */}
+                {totalCapturas < 10 && (
                   <label
                     className={`flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-lg py-3 cursor-pointer hover:bg-gray-50 text-sm text-gray-500 ${
                       comprimiendo ? "opacity-60 pointer-events-none" : ""
                     }`}
                   >
                     <FiCamera className="h-4 w-4" />
-                    {comprimiendo ? "Procesando…" : pagoImagenes.length === 0 ? "Subir foto / captura" : "Agregar otra captura"}
+                    {comprimiendo ? "Procesando…" : totalCapturas === 0 ? "Subir foto / captura" : "Agregar otra captura"}
                     <input
                       type="file"
                       accept="image/*"
@@ -1198,10 +1235,12 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
 
                 <p className="text-[11px] text-gray-400 mt-1">
                   {modoEdicion
-                    ? "Las capturas ya guardadas se conservan. Aquí solo agregas nuevas."
+                    ? "Toca ✕ para eliminar una captura guardada. Las que agregues aquí se suman a las existentes."
                     : "Se comprimen automáticamente. Quedan guardadas y vinculadas a esta cobranza."}
                 </p>
               </div>
+              );
+              })()}
             </div>
 
             <div className="px-5 py-4 border-t flex justify-end gap-2 sticky bottom-0 bg-white">
