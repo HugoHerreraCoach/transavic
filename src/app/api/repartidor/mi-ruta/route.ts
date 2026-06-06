@@ -17,16 +17,18 @@ export async function GET() {
     // Fetch pedidos with new fields
     const pedidos = await sql`
       SELECT
-        id, cliente, direccion, distrito, whatsapp,
-        latitude, longitude, estado, orden_ruta,
-        hora_entrega, hora_llegada_estimada, inicio_viaje_at,
-        razon_fallo, detalle, notas,
-        distancia_km, duracion_estimada_min
-      FROM pedidos
-      WHERE repartidor_id = ${session.user.id}
-        AND fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
+        p.id, p.cliente, p.direccion, p.distrito, p.whatsapp,
+        p.latitude, p.longitude, p.estado, p.orden_ruta,
+        p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
+        p.razon_fallo, p.detalle, p.notas,
+        p.distancia_km, p.duracion_estimada_min,
+        u.name AS asesor_name
+      FROM pedidos p
+      LEFT JOIN users u ON p.asesor_id = u.id
+      WHERE p.repartidor_id = ${session.user.id}
+        AND p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
       ORDER BY
-        CASE estado
+        CASE p.estado
           WHEN 'En_Camino' THEN 0
           WHEN 'Asignado' THEN 1
           WHEN 'Listo_Para_Despacho' THEN 2
@@ -35,8 +37,8 @@ export async function GET() {
           WHEN 'Entregado' THEN 5
           WHEN 'Fallido' THEN 6
         END,
-        orden_ruta ASC NULLS LAST,
-        created_at ASC
+        p.orden_ruta ASC NULLS LAST,
+        p.created_at ASC
     `;
 
     const parsedPedidos = pedidos.map((p) => ({
