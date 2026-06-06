@@ -6,14 +6,16 @@
 //   • Ticket (80mm): para impresora térmica / ticketera. Monocromo (las térmicas
 //     no imprimen color), compacto, una columna, separadores punteados.
 //   • A4: el documento completo de toda la vida (logo, tabla, etc.).
-// El tamaño de página (@page size) se cambia según el formato elegido.
+// El tamaño de página (@page size) se calcula justo antes de imprimir en Ticket.
+// En celular Android con ticketera Bluetooth, el botón Bluetooth manda texto directo
+// a RawBT para evitar el paginado HTML/PDF del navegador.
 //
 // Toggle "Incluir precios": cada cliente maneja precios distintos, así que al
 // imprimir el usuario decide si la orden lleva precios o solo cantidades.
 "use client";
 
-import { useEffect, useState } from "react";
-import { FiPrinter, FiShare2 } from "react-icons/fi";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { FiBluetooth, FiPrinter, FiShare2 } from "react-icons/fi";
 
 interface Item {
   producto: string;
@@ -41,6 +43,154 @@ interface Props {
 
 type Formato = "ticket" | "a4";
 
+const PX_A_MM = 25.4 / 96;
+const COLCHON_TICKET_MM = 6;
+const RAWBT_PACKAGE = "ru.a402d.rawbtprinter";
+const RAWBT_PLAY_STORE =
+  "https://play.google.com/store/apps/details?id=ru.a402d.rawbtprinter";
+
+function aplicarTamanoPaginaOrden(
+  formato: Formato,
+  ticketElement: HTMLElement | null
+): void {
+  if (typeof document === "undefined") return;
+
+  let estilo = document.getElementById("page-size-orden") as HTMLStyleElement | null;
+  if (!estilo) {
+    estilo = document.createElement("style");
+    estilo.id = "page-size-orden";
+    document.head.appendChild(estilo);
+  }
+
+  if (formato === "ticket" && ticketElement) {
+    const altoMm = Math.ceil(ticketElement.scrollHeight * PX_A_MM) + COLCHON_TICKET_MM;
+    estilo.textContent = `@media print { @page { size: 80mm ${altoMm}mm; margin: 0; } }`;
+  } else if (formato === "a4") {
+    estilo.textContent = "@media print { @page { size: A4; margin: 1cm; } }";
+  } else {
+    estilo.textContent = "@media print { @page { margin: 0; } }";
+  }
+
+  window.addEventListener(
+    "afterprint",
+    () => {
+      const e = document.getElementById("page-size-orden");
+      if (e) e.textContent = "";
+    },
+    { once: true }
+  );
+}
+
+function formatearCantidad(cantidad: number): string {
+  return Number.isInteger(cantidad)
+    ? String(cantidad)
+    : cantidad.toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function limpiarTexto(texto: string): string {
+  return texto.replace(/\s+/g, " ").trim();
+}
+
+function cortarLinea(texto: string, ancho: number): string[] {
+  const palabras = limpiarTexto(texto).split(" ").filter(Boolean);
+  const lineas: string[] = [];
+  let actual = "";
+
+  for (const palabra of palabras) {
+    if (!actual) {
+      actual = palabra;
+    } else if (`${actual} ${palabra}`.length <= ancho) {
+      actual += ` ${palabra}`;
+    } else {
+      lineas.push(actual);
+      actual = palabra;
+    }
+
+    while (actual.length > ancho) {
+      lineas.push(actual.slice(0, ancho));
+      actual = actual.slice(ancho);
+    }
+  }
+
+  if (actual) lineas.push(actual);
+  return lineas.length > 0 ? lineas : [""];
+}
+
+function centrar(texto: string, ancho: number): string {
+  const limpio = limpiarTexto(texto);
+  if (limpio.length >= ancho) return limpio.slice(0, ancho);
+  const izquierda = Math.floor((ancho - limpio.length) / 2);
+  return `${" ".repeat(izquierda)}${limpio}`;
+}
+
+function lineaDato(label: string, value: string, ancho: number): string[] {
+  if (!value) return [];
+  return cortarLinea(`${label}: ${value}`, ancho);
+}
+
+function construirTicketTexto(props: Props, incluirPrecios: boolean): string {
+  const ancho = 42;
+  const separador = "-".repeat(ancho);
+  const lineas: string[] = [
+    centrar(props.empresa, ancho),
+    centrar("ORDEN DE PEDIDO", ancho),
+    centrar(`Nro ${props.numero}`, ancho),
+    centrar(props.fecha, ancho),
+    separador,
+    ...lineaDato("Cliente", props.cliente, ancho),
+    ...lineaDato("Razon social", props.razonSocial, ancho),
+    ...lineaDato("RUC/DNI", props.rucDni, ancho),
+    ...lineaDato("WhatsApp", props.whatsapp, ancho),
+    ...lineaDato("Direccion", props.direccion, ancho),
+    ...lineaDato("Distrito", props.distrito, ancho),
+    ...lineaDato("Asesor", props.asesor, ancho),
+    separador,
+    incluirPrecios ? "Cant.        Importe" : "Cant. Producto",
+  ];
+
+  props.items.forEach((item) => {
+    const cantidad = `${formatearCantidad(item.cantidad)} ${item.unidad}`.trim();
+    if (incluirPrecios) {
+      const importe = item.subtotal > 0 ? item.subtotal.toFixed(2) : "-";
+      lineas.push(`${cantidad.padEnd(13).slice(0, 13)}${importe.padStart(12)}`);
+      cortarLinea(item.producto, ancho).forEach((linea) => lineas.push(linea));
+    } else {
+      cortarLinea(`${cantidad} ${item.producto}`, ancho).forEach((linea) =>
+        lineas.push(linea)
+      );
+    }
+  });
+
+  if (incluirPrecios) {
+    lineas.push(separador);
+    lineas.push(`TOTAL S/ ${props.total.toFixed(2)}`.padStart(ancho));
+  }
+
+  if (props.notas) {
+    lineas.push(separador);
+    lineas.push(...lineaDato("Notas", props.notas, ancho));
+  }
+
+  lineas.push(
+    "",
+    "",
+    "______________________________",
+    centrar("Firma del cliente", ancho),
+    centrar("Recibi conforme", ancho),
+    "",
+    "",
+    ""
+  );
+
+  return lineas.join("\n");
+}
+
+function abrirRawBt(texto: string): void {
+  const fallback = encodeURIComponent(RAWBT_PLAY_STORE);
+  const payload = encodeURIComponent(texto);
+  window.location.href = `intent:${payload}#Intent;scheme=rawbt;package=${RAWBT_PACKAGE};S.browser_fallback_url=${fallback};end;`;
+}
+
 export default function GuiaImprimibleClient(props: Props) {
   // El botón "Compartir" depende del navegador (navigator.share), que no existe
   // en el servidor. Lo mostramos solo tras montar en el cliente para evitar el
@@ -52,10 +202,18 @@ export default function GuiaImprimibleClient(props: Props) {
   // Cada cliente maneja precios distintos → el usuario decide si la orden muestra
   // precios o solo cantidades. Por defecto los incluye.
   const [incluirPrecios, setIncluirPrecios] = useState(true);
+  const ticketRef = useRef<HTMLDivElement>(null);
   const puedeCompartir =
     mounted && typeof navigator !== "undefined" && "share" in navigator;
 
   const esTicket = formato === "ticket";
+  const imprimirNavegador = () => {
+    aplicarTamanoPaginaOrden(formato, ticketRef.current);
+    window.setTimeout(() => window.print(), 50);
+  };
+  const imprimirBluetooth = () => {
+    abrirRawBt(construirTicketTexto(props, incluirPrecios));
+  };
 
   return (
     <div className="min-h-screen bg-gray-100 print:bg-white">
@@ -102,12 +260,22 @@ export default function GuiaImprimibleClient(props: Props) {
             </label>
 
             <button
-              onClick={() => window.print()}
+              onClick={imprimirNavegador}
               className="px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 flex items-center gap-2 transition-transform active:scale-[0.98]"
             >
               <FiPrinter />
               Imprimir
             </button>
+            {esTicket ? (
+              <button
+                onClick={imprimirBluetooth}
+                className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 flex items-center gap-2 transition-transform active:scale-[0.98]"
+                title="Imprimir con RawBT en Android"
+              >
+                <FiBluetooth />
+                Bluetooth
+              </button>
+            ) : null}
             {puedeCompartir ? (
               <button
                 onClick={async () => {
@@ -131,9 +299,8 @@ export default function GuiaImprimibleClient(props: Props) {
         <div className="max-w-4xl mx-auto px-4 pb-2 text-xs text-gray-500">
           {esTicket ? (
             <>
-              Listo para <strong>impresora de tickets (80mm)</strong>. En el
-              diálogo de impresión elige tu ticketera; o{" "}
-              <strong>&quot;Guardar como PDF&quot;</strong> para enviarlo por WhatsApp.
+              En celular con ticketera Bluetooth usa <strong>Bluetooth</strong>.
+              En PC o para PDF usa <strong>Imprimir</strong>.
             </>
           ) : (
             <>
@@ -147,7 +314,11 @@ export default function GuiaImprimibleClient(props: Props) {
       {/* Documento imprimible */}
       {esTicket ? (
         <div className="flex justify-center py-6 print:py-0 print:block">
-          <TicketLayout {...props} incluirPrecios={incluirPrecios} />
+          <TicketLayout
+            {...props}
+            incluirPrecios={incluirPrecios}
+            referencia={ticketRef}
+          />
         </div>
       ) : (
         <div className="max-w-4xl mx-auto p-4 sm:p-8 print:p-0">
@@ -159,7 +330,7 @@ export default function GuiaImprimibleClient(props: Props) {
       <style jsx global>{`
         @media print {
           @page {
-            size: ${esTicket ? "80mm auto" : "A4"};
+            ${esTicket ? "" : "size: A4;"}
             margin: ${esTicket ? "0" : "1cm"};
           }
           body {
@@ -195,12 +366,14 @@ function TicketLayout({
   items,
   total,
   incluirPrecios,
-}: Props & { incluirPrecios: boolean }) {
+  referencia,
+}: Props & { incluirPrecios: boolean; referencia?: RefObject<HTMLDivElement | null> }) {
   const esTransavic = empresa === "Transavic";
   const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
   const linea = "border-t border-dashed border-gray-500 my-2";
   return (
     <div
+      ref={referencia}
       className="orden-ticket bg-white text-black shadow-lg print:shadow-none"
       style={{ width: "80mm" }}
     >

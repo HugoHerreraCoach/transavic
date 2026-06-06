@@ -2,9 +2,11 @@
 // Cálculo de meta diaria/mensual por asesora.
 // Fórmula: meta_mensual = ventas_mes_anterior × 1.15 (override manual posible en tabla metas_asesoras)
 // meta_diaria = meta_mensual / días_hábiles_del_mes (lunes a sábado)
-// IMPORTANTE: "ventas" = pedidos que la asesora REGISTRÓ (created_at, zona Lima), NO
-// los entregados. La asesora vende; el repartidor entrega días después. Medir por
-// entrega (fecha_pedido + estado Entregado) mezclaría su esfuerzo con el del motorizado.
+// IMPORTANTE (jun 2026): "ventas" = lo que la asesora FACTURÓ (facturas + boletas
+// aceptadas/observadas, menos Notas de Crédito), por fecha de emisión y zona Lima.
+// Antes se medía por pedidos registrados, pero como la mayoría de productos no tiene
+// precio cargado, los pedidos daban S/0. La atribución a la asesora y el signo de las
+// NC viven en la vista `ventas_facturadas` (scripts/migrate-ventas-facturadas-view.sql).
 import { neon } from "@neondatabase/serverless";
 
 const FACTOR_CRECIMIENTO = 1.15; // +15% sobre mes anterior (decisión Antonio)
@@ -19,11 +21,16 @@ export interface MetaResult {
 }
 
 /**
- * Suma del MONTO VENDIDO por la asesora en un rango, medido por el día en que
- * REGISTRÓ el pedido (`created_at`, zona Lima) — NO por la fecha de entrega.
- * Decisión de negocio: la asesora se mide por lo que vende, no por lo que el
- * repartidor entrega (que suele ser días después). Usa `subtotal` (precio estimado
- * al vender) y cuenta todo lo vendido, sin filtrar por estado. Ver CLAUDE.md §"Sistema de Incentivos".
+ * Suma del MONTO FACTURADO por la asesora en un rango, medido por la fecha de
+ * EMISIÓN del comprobante (`created_at` del comprobante, zona Lima).
+ *
+ * Decisión de negocio (jun 2026): el desempeño de la asesora se mide por lo que
+ * realmente FACTURÓ (facturas 01 + boletas 03 aceptadas/observadas), no por los
+ * pedidos registrados — porque la mayoría de productos no tiene precio cargado y
+ * los pedidos daban S/0. Se cuenta el monto CON IGV (`monto_total`) y las Notas de
+ * Crédito RESTAN. Toda la lógica de atribución (a quién se le cuenta) y del signo
+ * de las NC vive en la vista `ventas_facturadas` (ver
+ * scripts/migrate-ventas-facturadas-view.sql). Ver CLAUDE.md §"Sistema de Incentivos".
  */
 async function sumarVentasCreadas(
   asesorId: string,
@@ -32,12 +39,10 @@ async function sumarVentasCreadas(
 ): Promise<number> {
   const sql = neon(process.env.DATABASE_URL!);
   const row = (await sql`
-    SELECT COALESCE(SUM(COALESCE(pi.subtotal, 0)), 0)::numeric AS total
-    FROM pedidos p
-    JOIN pedido_items pi ON pi.pedido_id = p.id
-    WHERE p.asesor_id = ${asesorId}
-      AND (p.created_at AT TIME ZONE 'America/Lima')::date
-          BETWEEN ${desdeIso}::date AND ${hastaIso}::date
+    SELECT COALESCE(SUM(monto_neto), 0)::numeric AS total
+    FROM ventas_facturadas
+    WHERE asesora_id = ${asesorId}
+      AND fecha BETWEEN ${desdeIso}::date AND ${hastaIso}::date
   `) as Array<{ total: string | number }>;
   return Number(row[0]?.total ?? 0);
 }
@@ -206,13 +211,12 @@ export async function rachaDiaria(asesorId: string): Promise<number> {
   if (metaDiaria <= 0) return 0;
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
-    SELECT (p.created_at AT TIME ZONE 'America/Lima')::date AS dia,
-           COALESCE(SUM(COALESCE(pi.subtotal, 0)), 0)::numeric AS total
-    FROM pedidos p
-    JOIN pedido_items pi ON pi.pedido_id = p.id
-    WHERE p.asesor_id = ${asesorId}
-      AND (p.created_at AT TIME ZONE 'America/Lima')::date >= (NOW() AT TIME ZONE 'America/Lima')::date - INTERVAL '40 days'
-    GROUP BY (p.created_at AT TIME ZONE 'America/Lima')::date
+    SELECT fecha AS dia,
+           COALESCE(SUM(monto_neto), 0)::numeric AS total
+    FROM ventas_facturadas
+    WHERE asesora_id = ${asesorId}
+      AND fecha >= (NOW() AT TIME ZONE 'America/Lima')::date - INTERVAL '40 days'
+    GROUP BY fecha
   `) as Array<{ dia: string | Date; total: string | number }>;
   const porDia = new Map<string, number>(
     rows.map((r) => [
@@ -284,16 +288,15 @@ export async function getRachaSemanal(
   finSemana.setDate(lunes.getDate() + (finIdx - 1));
 
   const sql = neon(process.env.DATABASE_URL!);
+  // Monto facturado y N° de comprobantes de venta por día (vista ventas_facturadas).
   const rows = (await sql`
-    SELECT (p.created_at AT TIME ZONE 'America/Lima')::date AS dia,
-           COALESCE(SUM(COALESCE(pi.subtotal, 0)), 0)::numeric AS monto,
-           COUNT(DISTINCT p.id)::int AS pedidos
-    FROM pedidos p
-    LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
-    WHERE p.asesor_id = ${asesorId}
-      AND (p.created_at AT TIME ZONE 'America/Lima')::date
-          BETWEEN ${toIsoDate(lunes)}::date AND ${toIsoDate(finSemana)}::date
-    GROUP BY (p.created_at AT TIME ZONE 'America/Lima')::date
+    SELECT fecha AS dia,
+           COALESCE(SUM(monto_neto), 0)::numeric AS monto,
+           COALESCE(SUM(es_venta), 0)::int AS pedidos
+    FROM ventas_facturadas
+    WHERE asesora_id = ${asesorId}
+      AND fecha BETWEEN ${toIsoDate(lunes)}::date AND ${toIsoDate(finSemana)}::date
+    GROUP BY fecha
   `) as Array<{ dia: string | Date; monto: string | number; pedidos: number }>;
   const porDia = new Map<string, { monto: number; pedidos: number }>(
     rows.map((r) => [

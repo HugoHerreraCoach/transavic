@@ -1,10 +1,14 @@
 // src/lib/incentivos.ts
 // Sistema de incentivos: configuración (en tabla settings, JSONB) + cálculos de
-// meta de equipo semanal y ranking mensual. Todo derivado de pedidos/pedido_items.
+// meta de equipo semanal y ranking mensual. Desde jun 2026 las cifras de venta
+// salen de lo FACTURADO (vista `ventas_facturadas` — comprobantes emitidos, NC
+// restando), no de pedidos/pedido_items (que daban S/0 por falta de precios).
 import { neon } from "@neondatabase/serverless";
 import { ventasMesActual } from "@/lib/metas";
 
-// Cómo se mide un incentivo: por facturación (S/) o por N° de pedidos entregados.
+// Cómo se mide un incentivo: por facturación (S/) o por N° de comprobantes de venta
+// (facturas + boletas emitidas). El valor "pedidos" se mantiene por compatibilidad
+// con la config guardada, pero hoy cuenta comprobantes, no pedidos.
 export type Criterio = "monto" | "pedidos";
 export type CriterioRanking = Criterio; // alias por compatibilidad
 
@@ -101,28 +105,30 @@ function lunesISO(): string {
 }
 
 /**
- * Avance del equipo en la semana actual (lun→hoy), medido por VENTAS (día de registro
- * del pedido — `created_at`, zona Lima — no por entrega). Según `criterio`: monto
- * vendido (S/, `subtotal`) o N° de pedidos vendidos por TODO el equipo. Sin filtrar estado.
+ * Avance del equipo en la semana actual (lun→hoy), medido por lo FACTURADO (fecha de
+ * emisión del comprobante, zona Lima — no por pedido ni por entrega). Según `criterio`:
+ * monto facturado (S/, con IGV, NC restan) o N° de comprobantes de venta de TODO el
+ * equipo. Solo cuenta comprobantes atribuibles a una asesora (`asesora_id IS NOT NULL`)
+ * para que el total del equipo cuadre con la suma del ranking. Fuente: vista
+ * `ventas_facturadas`.
  */
 export async function getVendidoEquipoSemana(criterio: Criterio = "monto"): Promise<number> {
   const sql = neon(process.env.DATABASE_URL!);
   const desde = lunesISO();
   if (criterio === "pedidos") {
     const r = (await sql`
-      SELECT COUNT(*)::int AS total
-      FROM pedidos p
-      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date
-            BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
+      SELECT COALESCE(SUM(es_venta), 0)::int AS total
+      FROM ventas_facturadas
+      WHERE asesora_id IS NOT NULL
+        AND fecha BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
     `) as Array<{ total: number }>;
     return Number(r[0]?.total ?? 0);
   }
   const r = (await sql`
-    SELECT COALESCE(SUM(COALESCE(pi.subtotal, 0)), 0)::numeric AS total
-    FROM pedidos p
-    JOIN pedido_items pi ON pi.pedido_id = p.id
-    WHERE (p.created_at AT TIME ZONE 'America/Lima')::date
-          BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
+    SELECT COALESCE(SUM(monto_neto), 0)::numeric AS total
+    FROM ventas_facturadas
+    WHERE asesora_id IS NOT NULL
+      AND fecha BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
   `) as Array<{ total: string | number }>;
   return Number(r[0]?.total ?? 0);
 }
@@ -134,8 +140,9 @@ export interface RankingRow {
   puesto: number;
 }
 
-/** Ranking mensual de asesoras según el criterio configurado, medido por VENTAS
- * (pedidos registrados en el mes, `created_at`; monto = `subtotal`). No por entrega. */
+/** Ranking mensual de asesoras según el criterio configurado, medido por lo
+ * FACTURADO en el mes (comprobantes emitidos, por fecha de emisión; monto con IGV y
+ * NC restando, o N° de comprobantes de venta). Fuente: vista `ventas_facturadas`. */
 export async function getRankingMensual(criterio: CriterioRanking): Promise<RankingRow[]> {
   const sql = neon(process.env.DATABASE_URL!);
   const asesores = (await sql`
@@ -147,14 +154,15 @@ export async function getRankingMensual(criterio: CriterioRanking): Promise<Rank
     let valor = 0;
     if (criterio === "pedidos") {
       const r = (await sql`
-        SELECT COUNT(*)::int AS n FROM pedidos
-        WHERE asesor_id = ${a.id}
-          AND DATE_TRUNC('month', (created_at AT TIME ZONE 'America/Lima'))
-              = DATE_TRUNC('month', (NOW() AT TIME ZONE 'America/Lima'))
+        SELECT COALESCE(SUM(es_venta), 0)::int AS n
+        FROM ventas_facturadas
+        WHERE asesora_id = ${a.id}
+          AND DATE_TRUNC('month', fecha)
+              = DATE_TRUNC('month', (NOW() AT TIME ZONE 'America/Lima')::date)
       `) as Array<{ n: number }>;
       valor = Number(r[0]?.n ?? 0);
     } else {
-      valor = await ventasMesActual(a.id); // "monto" vendido (created_at)
+      valor = await ventasMesActual(a.id); // "monto" facturado (vista)
     }
     filas.push({ asesorId: a.id, nombre: (a.name || "").trim(), valor });
   }

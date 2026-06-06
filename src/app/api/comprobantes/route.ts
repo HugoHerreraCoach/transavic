@@ -65,6 +65,7 @@ export async function GET(request: Request) {
     const rows = await sql.query(
       `SELECT c.id, c.serie_numero, c.tipo, c.empresa, c.cliente_razon_social,
         c.cliente_doc_num, c.monto_total, c.estado, c.created_at, c.mensaje_sunat,
+        c.pedido_id,
         p.cliente AS pedido_cliente,
         c.emitido_por,
         c.referencia_comprobante_id,

@@ -636,6 +636,66 @@ Plan: `docs/superpowers/plans/2026-05-22-sistema-incentivos.md`. Motiva a las as
 - **Panel asesora** `src/app/dashboard/mis-metas/mis-metas-client.tsx`: cada bloque aparece **solo si su incentivo está activo** (flexibilidad total). Tarjetas **Hoy / Esta semana / Este mes** + indicador de ritmo (solo si `metasIndividuales.activo`); bloque **🔥 Racha de consistencia** (si `rachaSemanal.activo`) = cuadros por día (lun→diaFin) verde ✓/rojo ✗/gris · futuro, hoy con ring, con texto "cada día cuenta si vendes S/X / entregas N pedidos" según criterio; bloque **🏆 Meta del equipo** (si `activo`, progreso en S/ o pedidos según criterio); bloque **🥇 Ranking del mes** (si `activo`, medallas + premios); + `InsightCard` IA. La ven `asesor` y `admin`: para la asesora es su panel; el **admin la abre como VISTA PREVIA** (banner azul + `esVistaPrevia` desde `page.tsx`). **Rediseño con `/mejora-diseño` (mayo 2026 — local, verificado en navegador; UI only, sin tocar `/api/metas` ni `/api/incentivos`):** (1) **jerarquía** — antes 3 barras (Hoy/Semana/Mes) del mismo peso; ahora **"Hoy" es el hero** (% en `text-5xl`, barra gruesa, fondo de semáforo) y **Semana + Mes son 2 tarjetas compactas** de apoyo lado a lado; (2) el hero dice **cuánto falta** ("Te faltan S/ X para tu meta") y maneja el caso `metaDiaria<=0` ("Aún no tienes meta para hoy") en vez de un falso "¡cumplida!"; (3) **coherencia de color** — equipo pasó de **índigo** a la paleta del sistema (barra de semáforo + ícono `FiUsers` azul), racha perdió el **gradiente naranja** (semana perfecta = verde sólido), premios de índigo → **ámbar con `FiGift`**, amarillo → ámbar; (4) emojis de cabecera → íconos Feather (`FiZap` racha · `FiUsers` equipo · `FiAward` ranking; medallas 🥇 se quedan); quité el 🎉 del indicador de ritmo; (5) el `InsightCard` bajó del tope a después del progreso (no compite con "Hoy"); `tabular-nums`, `bg-gray-50` de fondo, `active:scale`. tsc/eslint limpios.
 - **Verificado (dev-hugo)**: tsc/lint limpios; lógica de criterios confirmada por SQL (racha por **pedidos** mín. 1 → L✓ M✗ X✓ J✓ V✓ S✗ = 4 días, donde el Jueves de S/80 que con criterio *monto* fallaba ahora con *pedidos* cuenta; equipo por pedidos = `COUNT(DISTINCT pedidos)`). El round-trip POST/GET del endpoint con on/off por bono se probó en navegador (cada bono aparece/desaparece del panel según su `activo`). **Medición por ventas (created_at) confirmada por SQL**: ranking mensual por pedidos = Jhoselyn 115, Leslie 106, Yali 104, Yesica 73 (datos reales preexistentes en dev-hugo); el monto sale S/0 porque los items de prueba no tienen `precio_venta` (lo explica el banner ámbar del catálogo). Los **datos de prueba ya se borraron** (pedidos `__DEMO_RACHA__`, overrides de meta de Antonio/AsesoraTest y la `incentivos_config` demo) → dev-hugo limpio; `getIncentivosConfig` devuelve `DEFAULT_INCENTIVOS` (todo inactivo) hasta que el admin configure. **Pendiente:** spot-check visual de los selectores de criterio tras re-login en el navegador (la sesión del tab se cerró sola).
 
+### Metas medidas por comprobantes emitidos — vista `ventas_facturadas` (6 jun 2026 — ✅ EN PRODUCCIÓN)
+
+**Contexto:** `pedido_items.subtotal` da S/0 porque 0 de 88 productos tienen `precio_venta` → las metas automáticas de las asesoras mostraban S/0 y se sostenían con overrides manuales (Jhoselyn S/67k, Saraí S/153k, etc.). **Solución permanente:** medir el desempeño de la asesora por los **comprobantes emitidos** (facturas 01 + boletas 03 aceptadas/observadas, menos NC 07), no por pedidos.
+
+**Piezas:**
+
+1. **Vista SQL `ventas_facturadas`** (`scripts/migrate-ventas-facturadas-view.sql`, aplicar por psql antes del deploy):
+   ```sql
+   CREATE OR REPLACE VIEW ventas_facturadas AS
+   SELECT c.id AS comprobante_id, c.tipo, c.empresa,
+     (c.created_at AT TIME ZONE 'America/Lima')::date AS fecha,
+     COALESCE(ue.id, p.asesor_id, uref.id, pref.asesor_id) AS asesora_id,
+     CASE WHEN c.tipo = '07' THEN -c.monto_total ELSE c.monto_total END AS monto_neto,
+     CASE WHEN c.tipo = '07' THEN 0 ELSE 1 END AS es_venta
+   FROM comprobantes c
+   LEFT JOIN pedidos p   ON c.pedido_id = p.id
+   LEFT JOIN users   ue  ON ue.role='asesor' AND LOWER(TRIM(ue.name))=LOWER(TRIM(c.emitido_por))
+   LEFT JOIN comprobantes cref ON c.referencia_comprobante_id = cref.id
+   LEFT JOIN pedidos pref ON cref.pedido_id = pref.id
+   LEFT JOIN users   uref ON uref.role='asesor' AND LOWER(TRIM(uref.name))=LOWER(TRIM(cref.emitido_por))
+   WHERE c.tipo IN ('01','03','07') AND c.estado IN ('aceptado','observado');
+   ```
+   - **Atribución** (única, sin doble conteo): `emitido_por` → match por nombre en `users` (TRIM+lower, gotcha #11); fallback `pedido.asesor_id`; para NC sin señal propia, hereda de la factura que referencia.
+   - **NC (07) resta** con `monto_neto` negativo en el período de emisión de la NC (no de la factura — estándar contable).
+   - **Rechazado/error/pendiente** excluidos (`estado IN ('aceptado','observado')`).
+   - **Monto:** `monto_total` con IGV (lo que paga el cliente), nunca `monto_subtotal`.
+
+2. **`src/lib/metas.ts`**: `sumarVentasCreadas(asesorId, desde, hasta)` reescrita para leer de la vista (`SUM(monto_neto) WHERE asesora_id = X AND fecha BETWEEN`). Cascada: `ventasMesActual`, `ventasHoy`, `ventasSemana`, `calcularMetaDiaria`, `getRachaSemanal` — todos usan la vista.
+
+3. **`src/lib/incentivos.ts`**: `getVendidoEquipoSemana(criterio)` y `getRankingMensual(criterio)` también leen de la vista. El criterio "pedidos" ahora = `SUM(es_venta)` (N° de boletas/facturas), no pedidos.
+
+4. **Vincular comprobante a pedido** — endpoint nuevo `PATCH /api/comprobantes/[id]/pedido` (`src/app/api/comprobantes/[id]/pedido/route.ts`): permite ligar/desligar un comprobante standalone a un pedido. Permisos: admin siempre; asesora solo en sus propios. Valida que empresa coincida. Actualiza también la cobranza ligada.
+
+5. **UI** — `src/app/dashboard/comprobantes/comprobantes-client.tsx`: nuevo ítem **"Vincular a pedido"** en el menú "⋯" + modal `ModalVincularPedido` con buscador via `/api/buscar?q=`.
+
+**Casos que quedan cubiertos automáticamente** (la vista se evalúa al vuelo, `/api/metas` es `force-dynamic`):
+- **NC anula factura** → resta en el período de la NC, no de la factura (correcto contablemente).
+- **"Cambiar asesora" traslada el dinero** → se reescribe `emitido_por`; la vista lo recoge al instante; el monto se mueve al período correcto de la fecha original del comprobante (útil para metas día/semana/mes).
+- **Reintento de comprobante rechazado** → es `UPDATE` de la misma fila (no `INSERT`) → sin duplicación.
+- **Vincular/desvincular a pedido** → cambia el fallback `pedido.asesor_id`, también al instante.
+
+**Regla importante — meta de equipo:** solo cuenta comprobantes con `asesora_id IS NOT NULL` → ventas del admin sin asignar no inflan el equipo.
+
+**Copys actualizados**: `incentivos-client.tsx` ("N° de ventas (facturas/boletas)" en vez de "N° de pedidos vendidos") y `mis-metas-client.tsx` ("ventas" en vez de "pedidos" en el texto de la racha).
+
+**Alcance**: SOLO metas/incentivos de asesoras. Los reportes de admin (`lib/insights.ts`, `lib/reportes/*`, analytics) siguen midiendo pedidos entregados — sin cambio.
+
+**Verificación E2E (6 jun 2026):** boleta BETA `B001-00000007` (S/59.00, CLIENTE PRUEBA METAS, ACEPTADA por SUNAT beta) → asignada a AsesoraTest via "Cambiar asesora" → psql: `ventas_facturadas` muestra `asesora_id=AsesoraTest, monto_neto=59, es_venta=1` → `/api/metas/asesoras` responde `ventasMesActual: 59` para AsesoraTest → **confirmado**. La boleta de prueba puede borrarse de dev-hugo (es solo BETA, no fiscal).
+
+**Deploy a producción:** aplicar la migración de la vista **antes** del deploy del código nuevo:
+```bash
+psql "$DATABASE_URL_UNPOOLED" -f scripts/migrate-ventas-facturadas-view.sql
+```
+Idempotente (`CREATE OR REPLACE VIEW`), sin riesgo para datos existentes.
+
+**Notas de robustez:**
+- Los overrides manuales de meta (`metas_asesoras`) siguen vigentes hasta que se carguen precios en el catálogo; no hay que borrarlos.
+- Una NC en junio sobre una factura de mayo: mayo suma el original, junio resta la NC (período de la NC). Si eso afecta un bono ya cerrado, tenerlo presente (la historia no se congela automáticamente).
+- Si una NC histérica no tiene `referencia_comprobante_id` ni `emitido_por`, no resta de ninguna asesora puntual (caso muy raro, ya pre-existente).
+
 ### Próximas fases (no cotizadas aún)
 - CRM con WhatsApp Business API (Antonio lo postpuso explícitamente).
 - App iOS del repartidor (solo Android por ahora — todos los motorizados usan Android).

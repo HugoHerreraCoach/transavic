@@ -23,6 +23,7 @@ import {
   FiFile,
   FiCornerUpLeft,
   FiUser,
+  FiLink,
   FiMoreVertical,
   FiAlertTriangle,
   FiClock,
@@ -42,6 +43,7 @@ interface Comprobante {
   estado: string;
   created_at: string;
   mensaje_sunat: string | null;
+  pedido_id: string | null;
   pedido_cliente: string | null;
   // Quién emitió el comprobante (asesora/admin). Null en los sueltos viejos.
   emitido_por: string | null;
@@ -725,6 +727,192 @@ function ModalAsignarAsesora({
               <FiUser className="h-4 w-4" />
             )}
             Guardar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
+// Modal: Vincular comprobante a un pedido (admin o asesora dueña)
+// Útil para facturas/boletas emitidas SIN pedido (venta de mostrador): se
+// vinculan a un pedido existente para trazabilidad y mejor atribución de metas.
+// ──────────────────────────────────────────────────────────
+interface PedidoBuscado {
+  id: string;
+  cliente: string;
+  detalle: string | null;
+  estado: string;
+  fecha_pedido: string | null;
+}
+
+function ModalVincularPedido({
+  comprobante,
+  onClose,
+  onGuardado,
+}: {
+  comprobante: { id: string; serie_numero: string; pedidoId: string | null; pedidoCliente: string | null };
+  onClose: () => void;
+  onGuardado: (pedidoId: string | null, pedidoCliente: string | null, msg: string) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [resultados, setResultados] = useState<PedidoBuscado[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Búsqueda de pedidos con debounce, reutilizando /api/buscar (scope por rol).
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResultados([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setBuscando(true);
+      try {
+        const res = await fetch(`/api/buscar?q=${encodeURIComponent(term)}`);
+        const j = await res.json().catch(() => ({}));
+        setResultados(Array.isArray(j.pedidos) ? j.pedidos : []);
+      } catch {
+        setResultados([]);
+      } finally {
+        setBuscando(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  async function vincular(pedidoId: string | null, clienteNombre: string | null) {
+    setGuardando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/comprobantes/${comprobante.id}/pedido`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pedidoId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof j.error === "string" ? j.error : "No se pudo guardar.");
+      } else {
+        onGuardado(
+          pedidoId,
+          pedidoId ? clienteNombre : null,
+          pedidoId ? `Vinculado al pedido de ${clienteNombre ?? "cliente"}` : "Pedido desvinculado"
+        );
+        onClose();
+      }
+    } catch {
+      setError("Error de conexión al guardar.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <FiLink className="text-indigo-600" />
+            Vincular a pedido
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <FiX className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <p className="text-sm text-gray-500">
+            Conecta el comprobante{" "}
+            <strong className="font-mono">{comprobante.serie_numero}</strong> con un pedido
+            existente. Sirve para las ventas que se facturaron sin pedido.
+          </p>
+
+          {comprobante.pedidoId && (
+            <div className="flex items-center justify-between gap-2 p-3 bg-indigo-50 border border-indigo-100 rounded-lg">
+              <span className="text-sm text-indigo-800">
+                Vinculado a: <strong>{comprobante.pedidoCliente?.trim() || "un pedido"}</strong>
+              </span>
+              <button
+                onClick={() => vincular(null, null)}
+                disabled={guardando}
+                className="text-xs font-medium text-red-600 hover:text-red-800 disabled:opacity-50 whitespace-nowrap"
+              >
+                Desvincular
+              </button>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+              Buscar pedido
+            </label>
+            <div className="relative">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Cliente o detalle del pedido…"
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="min-h-[3rem]">
+            {buscando && (
+              <p className="text-sm text-gray-400 flex items-center gap-2 py-2">
+                <FiRefreshCw className="h-4 w-4 animate-spin" /> Buscando…
+              </p>
+            )}
+            {!buscando && q.trim().length >= 2 && resultados.length === 0 && (
+              <p className="text-sm text-gray-400 py-2">No se encontraron pedidos.</p>
+            )}
+            <div className="divide-y divide-gray-100">
+              {resultados.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => vincular(p.id, p.cliente)}
+                  disabled={guardando || p.id === comprobante.pedidoId}
+                  className="w-full text-left py-2.5 px-1 hover:bg-gray-50 disabled:opacity-40 flex items-start gap-2"
+                >
+                  <FiFileText className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-gray-800 truncate">
+                      {p.cliente?.trim() || "Sin nombre"}
+                      {p.id === comprobante.pedidoId && (
+                        <span className="ml-2 text-[11px] text-indigo-600">(ya vinculado)</span>
+                      )}
+                    </span>
+                    <span className="block text-[11px] text-gray-400 truncate">
+                      {p.fecha_pedido ? `Entrega ${p.fecha_pedido} · ` : ""}
+                      {p.estado}
+                      {p.detalle ? ` · ${p.detalle}` : ""}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200"
+          >
+            Cerrar
           </button>
         </div>
       </div>
@@ -1476,6 +1664,13 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   } | null>(null);
   // Lista de asesoras para el modal de reasignación (solo se llena si admin).
   const [asesoras, setAsesoras] = useState<{ id: string; name: string }[]>([]);
+  // Vincular un comprobante (sin pedido o con uno equivocado) a un pedido existente.
+  const [modalVincular, setModalVincular] = useState<{
+    id: string;
+    serie_numero: string;
+    pedidoId: string | null;
+    pedidoCliente: string | null;
+  } | null>(null);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
   const [modalExcel, setModalExcel] = useState(false);
@@ -2272,6 +2467,13 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                       <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
                     </button>
                   )}
+                  <button
+                    onClick={() => { setMenuAcciones(null); setModalVincular({ id: c.id, serie_numero: c.serie_numero, pedidoId: c.pedido_id, pedidoCliente: c.pedido_cliente }); }}
+                    className={`${itemCls} text-gray-700`}
+                  >
+                    <FiLink className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                    {c.pedido_id ? "Cambiar pedido vinculado" : "Vincular a pedido"}
+                  </button>
                   {(puedeReintentar(c) || puedeNotaCredito(c) || puedeAnular(c)) && (
                     <div className="my-1 border-t border-gray-100" />
                   )}
@@ -2343,6 +2545,22 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             const cid = modalAsesora.id;
             setComprobantes((prev) =>
               prev.map((c) => (c.id === cid ? { ...c, emitido_por: emitidoPor } : c))
+            );
+            setToast({ tipo: "ok", msg });
+          }}
+        />
+      )}
+
+      {modalVincular && (
+        <ModalVincularPedido
+          comprobante={modalVincular}
+          onClose={() => setModalVincular(null)}
+          onGuardado={(pedidoId, pedidoCliente, msg) => {
+            const cid = modalVincular.id;
+            setComprobantes((prev) =>
+              prev.map((c) =>
+                c.id === cid ? { ...c, pedido_id: pedidoId, pedido_cliente: pedidoCliente } : c
+              )
             );
             setToast({ tipo: "ok", msg });
           }}

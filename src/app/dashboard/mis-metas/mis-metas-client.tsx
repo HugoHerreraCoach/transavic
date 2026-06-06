@@ -86,7 +86,9 @@ interface IncentivosData {
 const soles = (n: number) => `S/ ${n.toFixed(2)}`;
 
 function formatValor(valor: number, criterio: CriterioRanking): string {
-  if (criterio === "pedidos") return `${valor} pedido${valor === 1 ? "" : "s"}`;
+  // "pedidos" hoy cuenta comprobantes de venta (facturas/boletas) → lo mostramos
+  // como "venta(s)", que es lo que la asesora entiende.
+  if (criterio === "pedidos") return `${valor} venta${valor === 1 ? "" : "s"}`;
   return soles(valor);
 }
 
@@ -388,12 +390,12 @@ export default function MisMetasClient({
               Cada día cuenta si{" "}
               {inc.racha.criterio === "pedidos" ? (
                 <>
-                  vendes <strong>{inc.racha.minimoDiario}</strong> pedido
+                  facturas <strong>{inc.racha.minimoDiario}</strong> venta
                   {inc.racha.minimoDiario === 1 ? "" : "s"} o más
                 </>
               ) : (
                 <>
-                  vendes <strong>S/ {inc.racha.minimoDiario}</strong> o más
+                  facturas <strong>S/ {inc.racha.minimoDiario}</strong> o más
                 </>
               )}
               .
@@ -409,7 +411,7 @@ export default function MisMetasClient({
                     : "bg-red-50 border-red-200 text-red-600";
                 const valorDia =
                   inc.racha!.criterio === "pedidos"
-                    ? `${d.pedidos} pedido${d.pedidos === 1 ? "" : "s"}`
+                    ? `${d.pedidos} venta${d.pedidos === 1 ? "" : "s"}`
                     : soles(d.monto);
                 return (
                   <div

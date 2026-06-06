@@ -56,8 +56,8 @@ const DEFAULT_CONFIG: Config = {
 };
 
 const CRITERIOS: { v: Criterio; l: string }[] = [
-  { v: "monto", l: "Monto vendido (S/)" },
-  { v: "pedidos", l: "N° de pedidos vendidos" },
+  { v: "monto", l: "Monto facturado (S/)" },
+  { v: "pedidos", l: "N° de ventas (facturas/boletas)" },
 ];
 
 const DIAS_FIN: { v: number; l: string }[] = [
@@ -464,8 +464,8 @@ export default function IncentivosClient() {
             <Campo
               label={
                 config.metaEquipoSemanal.criterio === "pedidos"
-                  ? "N° de pedidos en la semana"
-                  : "Monto a vender en la semana (S/)"
+                  ? "N° de ventas en la semana"
+                  : "Monto a facturar en la semana (S/)"
               }
             >
               <input
