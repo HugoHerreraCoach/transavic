@@ -222,6 +222,11 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [historyPedidos, setHistoryPedidos] = useState<Record<string, unknown[]>>({});
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [filterAsesorId, setFilterAsesorId] = useState<string>('');
+  const [filtroDistrito, setFiltroDistrito] = useState('');
+  const [resumen, setResumen] = useState<{
+    porAsesora: { nombre: string; total: number }[];
+    porDistrito: { distrito: string; total: number }[];
+  }>({ porAsesora: [], porDistrito: [] });
   // Dropdown "⋯" de acciones por tarjeta (Editar · Transferir · Eliminar · Pedidos).
   const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
   // Transfer modal
@@ -245,6 +250,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       const params = new URLSearchParams({ page: String(page), limit: String(ITEMS_PER_PAGE) });
       if (searchTerm) params.set('search', searchTerm);
       if (isAdmin && filterAsesorId) params.set('asesor_id', filterAsesorId);
+      if (filtroDistrito) params.set('distrito', filtroDistrito);
       const res = await fetch(`/api/clientes?${params}`);
       if (res.ok) {
         const json = await res.json();
@@ -253,13 +259,14 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
         setTotalClientes(json.pagination.total);
         setCurrentPage(json.pagination.currentPage);
         if (json.asesoras) setAsesoras(json.asesoras);
+        if (json.resumen) setResumen(json.resumen);
       }
     } catch (err) {
       console.error('Error cargando clientes:', err);
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, filterAsesorId]);
+  }, [isAdmin, filterAsesorId, filtroDistrito]);
 
   useEffect(() => { fetchClientes(currentPage, debouncedSearch); }, [currentPage, debouncedSearch, fetchClientes]);
 
@@ -435,7 +442,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       </div>
 
       {/* Search + Create + Stats + Filter */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-7">
+      <div className="flex flex-col sm:flex-row gap-4 mb-4">
         <div className="relative flex-1">
           <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
           <input
@@ -469,6 +476,63 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
           {totalClientes} cliente{totalClientes !== 1 ? 's' : ''}
         </div>
       </div>
+
+      {/* Distribución por asesora y distrito */}
+      {(resumen.porDistrito.length > 0 || (isAdmin && resumen.porAsesora.length > 0)) && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-6 space-y-4">
+          {/* Por asesora — solo admin */}
+          {isAdmin && resumen.porAsesora.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Por asesora</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => { setFilterAsesorId(''); setCurrentPage(1); }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${!filterAsesorId ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                >
+                  Todas
+                </button>
+                {resumen.porAsesora.map(a => {
+                  const asesor = asesoras.find(x => x.name.trim() === a.nombre.trim());
+                  const activa = !!asesor && filterAsesorId === asesor.id;
+                  return (
+                    <button
+                      key={a.nombre}
+                      onClick={() => { if (asesor) { setFilterAsesorId(activa ? '' : asesor.id); setCurrentPage(1); } }}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${activa ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {a.nombre.trim()} · {a.total}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* Por distrito — todos los roles */}
+          {resumen.porDistrito.length > 0 && (
+            <div>
+              {isAdmin && resumen.porAsesora.length > 0 && <div className="border-t border-gray-200" />}
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Por distrito</p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => { setFiltroDistrito(''); setCurrentPage(1); }}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${!filtroDistrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                >
+                  Todos
+                </button>
+                {resumen.porDistrito.map(d => (
+                  <button
+                    key={d.distrito}
+                    onClick={() => { setFiltroDistrito(filtroDistrito === d.distrito ? '' : d.distrito); setCurrentPage(1); }}
+                    className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors ${filtroDistrito === d.distrito ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                  >
+                    {d.distrito} · {d.total}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (

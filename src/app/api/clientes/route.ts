@@ -73,40 +73,27 @@ export async function GET(request: Request) {
     const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
     const limit = Math.min(50, Math.max(1, parseInt(searchParams.get("limit") || "15")));
     const search = searchParams.get("search")?.trim();
-    const filterAsesor = searchParams.get("asesor_id")?.trim(); // Admin puede filtrar por asesora
+    const filterAsesor = searchParams.get("asesor_id")?.trim();
+    const distrito = searchParams.get("distrito")?.trim() || "";
     const offset = (page - 1) * limit;
 
-    // Construir condiciones dinámicamente
-    const conditions: string[] = [];
-    const params: unknown[] = [];
-    let paramIndex = 1;
-
-    // Scoping por rol
+    // Condiciones base: scoping por rol + búsqueda de texto
+    const baseC: string[] = [];
+    const baseP: unknown[] = [];
     if (userRole !== "admin") {
-      conditions.push(`c.asesor_id = $${paramIndex}`);
-      params.push(userId);
-      paramIndex++;
-    } else if (filterAsesor) {
-      // Admin filtrando por asesora específica
-      conditions.push(`c.asesor_id = $${paramIndex}`);
-      params.push(filterAsesor);
-      paramIndex++;
+      baseC.push(`c.asesor_id = $${baseP.length + 1}`);
+      baseP.push(userId);
     }
-
-    // Búsqueda por texto
     if (search) {
-      conditions.push(`(
-        c.nombre ILIKE $${paramIndex}
-        OR c.ruc_dni ILIKE $${paramIndex}
-        OR c.whatsapp ILIKE $${paramIndex}
-        OR c.distrito ILIKE $${paramIndex}
-        OR c.razon_social ILIKE $${paramIndex}
-      )`);
-      params.push('%' + search + '%');
-      paramIndex++;
+      baseC.push(`(c.nombre ILIKE $${baseP.length + 1} OR c.ruc_dni ILIKE $${baseP.length + 1} OR c.whatsapp ILIKE $${baseP.length + 1} OR c.distrito ILIKE $${baseP.length + 1} OR c.razon_social ILIKE $${baseP.length + 1})`);
+      baseP.push('%' + search + '%');
     }
 
-    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    // Condiciones completas para la query principal y conteo
+    const allC = [...baseC]; const allP = [...baseP];
+    if (userRole === "admin" && filterAsesor) { allC.push(`c.asesor_id = $${allP.length + 1}`); allP.push(filterAsesor); }
+    if (distrito) { allC.push(`c.distrito = $${allP.length + 1}`); allP.push(distrito); }
+    const whereClause = allC.length > 0 ? `WHERE ${allC.join(' AND ')}` : '';
 
     // Query principal con JOIN para asesor_name
     const queryData = `
@@ -115,26 +102,61 @@ export async function GET(request: Request) {
       LEFT JOIN users u ON c.asesor_id = u.id
       ${whereClause}
       ORDER BY c.nombre ASC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      LIMIT $${allP.length + 1} OFFSET $${allP.length + 2}
     `;
-    params.push(limit, offset);
+    allP.push(limit, offset);
+    const clientes = await sql.query(queryData, allP);
 
-    const clientes = await sql.query(queryData, params);
-
-    // Count query (mismos filtros sin LIMIT/OFFSET)
-    const countParams = params.slice(0, -2); // sin limit y offset
+    // Count (mismos filtros sin LIMIT/OFFSET)
+    const countParams = allP.slice(0, -2);
     const countQuery = `SELECT COUNT(*) FROM clientes c ${whereClause}`;
     const countResult = await sql.query(countQuery, countParams);
-
     const total = Number(countResult[0].count);
 
-    // Si es admin, también devolver lista de asesoras para el filtro
+    // Lista de asesoras (admin)
     let asesoras = null;
     if (userRole === "admin") {
       asesoras = await sql`
         SELECT id, name FROM users WHERE role IN ('asesor', 'admin') ORDER BY name ASC
       `;
     }
+
+    // ── Resumen de distribución ──
+    // porAsesora: base + distrito (sin filterAsesor → distribución entre asesoras para ese distrito)
+    const asesorC = [...baseC]; const asesorP = [...baseP];
+    if (distrito) { asesorC.push(`c.distrito = $${asesorP.length + 1}`); asesorP.push(distrito); }
+    const condAsesor = asesorC.length > 0
+      ? `${asesorC.join(' AND ')} AND u.role = 'asesor'`
+      : `u.role = 'asesor'`;
+
+    // porDistrito: base + filterAsesor (sin distrito → distribución entre distritos para esa asesora)
+    const distC = [...baseC]; const distP = [...baseP];
+    if (userRole === "admin" && filterAsesor) { distC.push(`c.asesor_id = $${distP.length + 1}`); distP.push(filterAsesor); }
+    const condDist = distC.length > 0
+      ? `${distC.join(' AND ')} AND c.distrito IS NOT NULL`
+      : `c.distrito IS NOT NULL`;
+
+    const [resumenAsesoraRows, resumenDistritoRows] = await Promise.all([
+      userRole === "admin"
+        ? sql.query(
+            `SELECT u.name AS nombre, COUNT(*)::int AS total
+             FROM clientes c
+             LEFT JOIN users u ON c.asesor_id = u.id
+             WHERE ${condAsesor}
+             GROUP BY u.name
+             ORDER BY total DESC`,
+            asesorP
+          )
+        : Promise.resolve([]),
+      sql.query(
+        `SELECT c.distrito, COUNT(*)::int AS total
+         FROM clientes c
+         WHERE ${condDist}
+         GROUP BY c.distrito
+         ORDER BY total DESC`,
+        distP
+      ),
+    ]);
 
     return NextResponse.json({
       data: clientes,
@@ -143,7 +165,11 @@ export async function GET(request: Request) {
         totalPages: Math.ceil(total / limit),
         currentPage: page,
       },
-      asesoras, // null para asesoras, array para admins
+      asesoras,
+      resumen: {
+        porAsesora: resumenAsesoraRows as { nombre: string; total: number }[],
+        porDistrito: resumenDistritoRows as { distrito: string; total: number }[],
+      },
     });
   } catch (error) {
     console.error("Error GET /api/clientes:", error);
