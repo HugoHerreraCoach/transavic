@@ -47,6 +47,8 @@ const Schema = z.object({
   plazoDias: z.number().int().min(0).max(120).default(0),
   // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
   confirmarDuplicado: z.boolean().default(false),
+  // ID de autorización de precio mínimo (aprobada por el admin).
+  autorizacion_id: z.string().uuid().optional().nullable(),
 });
 
 /** Mapea la unidad a código SUNAT — delegado al helper compartido (un solo origen
@@ -156,6 +158,46 @@ export async function POST(request: Request) {
           razonSocial: razon ? razon.toUpperCase() : "CLIENTES VARIOS",
           direccion: direccionCliente,
         };
+
+    // ── Validación de precio mínimo (solo asesoras) ──
+    // El admin puede emitir cualquier precio.
+    if (session.user.role === "asesor") {
+      const autorizacionId = parsed.data.autorizacion_id ?? null;
+      const sqlPrices = neon(process.env.DATABASE_URL!);
+      for (const item of items) {
+        const prodRows = (await sqlPrices`
+          SELECT precio_venta FROM productos
+          WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(${item.descripcion}))
+          LIMIT 1
+        `) as Array<{ precio_venta: string | null }>;
+        const minimo = prodRows[0]?.precio_venta ? Number(prodRows[0].precio_venta) : 0;
+        if (minimo > 0 && item.precio_unitario < minimo) {
+          if (!autorizacionId) {
+            return NextResponse.json(
+              {
+                error: "precio_bajo_sin_autorizacion",
+                producto: item.descripcion,
+                precio_minimo: minimo,
+              },
+              { status: 402 }
+            );
+          }
+          const authRows = (await sqlPrices`
+            SELECT id FROM autorizaciones_precio
+            WHERE id = ${autorizacionId}
+              AND asesora_id = ${session.user.id}
+              AND estado = 'aprobada'
+              AND usada_at IS NULL
+          `) as Array<{ id: string }>;
+          if (authRows.length === 0) {
+            return NextResponse.json(
+              { error: "autorizacion_invalida" },
+              { status: 403 }
+            );
+          }
+        }
+      }
+    }
 
     // Precios CON IGV → sin IGV + código interno por línea (SellersItemIdentification).
     // Si el ítem no trae código, se asigna uno secuencial ("P001"…) para que el XML
@@ -300,6 +342,17 @@ export async function POST(request: Request) {
         empresa,
         asesorId: session.user.role === "asesor" ? session.user.id : null,
       });
+    }
+
+    // Marcar la autorización de precio como usada (una sola emisión por autorización)
+    const autorizacionId = parsed.data.autorizacion_id ?? null;
+    if (autorizacionId && emisionOk) {
+      try {
+        const sqlAuth = neon(process.env.DATABASE_URL!);
+        await sqlAuth`UPDATE autorizaciones_precio SET usada_at = NOW() WHERE id = ${autorizacionId}`;
+      } catch {
+        // no-bloqueante
+      }
     }
 
     return NextResponse.json({ ...resultado, id: comprobanteId });

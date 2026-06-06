@@ -28,6 +28,8 @@ const Schema = z.object({
   plazoDias: z.number().int().min(0).max(120).default(0),
   // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
   confirmarDuplicado: z.boolean().default(false),
+  // ID de autorización de precio mínimo (aprobada por el admin).
+  autorizacion_id: z.string().uuid().optional().nullable(),
   // Datos del receptor desde el form (al facturar desde el modal). Si no vienen,
   // se usan los del pedido en DB. Evita el error SUNAT 2021 (razón social vacía).
   cliente_override: z
@@ -176,6 +178,46 @@ export async function POST(request: Request) {
         },
         { status: 400 }
       );
+    }
+
+    // ── Validación de precio mínimo (solo asesoras) ──
+    // El admin puede emitir cualquier precio.
+    if (session.user.role === "asesor") {
+      const autorizacionId = parsed.data.autorizacion_id ?? null;
+      for (const item of items) {
+        const prodRows = (await sql`
+          SELECT precio_venta FROM productos
+          WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(${item.producto_nombre}))
+          LIMIT 1
+        `) as Array<{ precio_venta: string | null }>;
+        const minimo = prodRows[0]?.precio_venta ? Number(prodRows[0].precio_venta) : 0;
+        if (minimo > 0 && item.precio_unitario < minimo) {
+          if (!autorizacionId) {
+            return NextResponse.json(
+              {
+                error: "precio_bajo_sin_autorizacion",
+                producto: item.producto_nombre,
+                precio_minimo: minimo,
+              },
+              { status: 402 }
+            );
+          }
+          // Verificar que la autorización sea válida para este asesor y no esté usada
+          const authRows = (await sql`
+            SELECT id FROM autorizaciones_precio
+            WHERE id = ${autorizacionId}
+              AND asesora_id = ${session.user.id}
+              AND estado = 'aprobada'
+              AND usada_at IS NULL
+          `) as Array<{ id: string }>;
+          if (authRows.length === 0) {
+            return NextResponse.json(
+              { error: "autorizacion_invalida" },
+              { status: 403 }
+            );
+          }
+        }
+      }
     }
 
     const empresa = empresaFromPedidoString(pedido.empresa);
@@ -399,6 +441,15 @@ export async function POST(request: Request) {
       } catch {
         // si el lookup falla, el ticket igual ofrece "Ver comprobantes"
       }
+    }
+
+    // Marcar la autorización de precio como usada (una sola emisión por autorización)
+    const autorizacionId = parsed.data.autorizacion_id ?? null;
+    if (autorizacionId && emisionOk) {
+      await sql`
+        UPDATE autorizaciones_precio SET usada_at = NOW()
+        WHERE id = ${autorizacionId}
+      `.catch(() => {});
     }
 
     return NextResponse.json({ ...resultado, id: comprobanteId });

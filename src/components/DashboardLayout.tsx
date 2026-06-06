@@ -23,6 +23,7 @@ import {
   FiBox,
   FiAward,
   FiSun,
+  FiCheckSquare,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
 import NotificationBell from "./NotificationBell";
@@ -151,6 +152,12 @@ const navItems: NavItem[] = [
     icon: <FiUsers className="h-5 w-5 flex-shrink-0" />,
     adminOnly: true,
   },
+  {
+    href: "/dashboard/autorizaciones",
+    label: "Autorizaciones",
+    icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
 ];
 
 const GROUP_ORDER = ["Operación", "Comercial", "Reportes", "Configuración"];
@@ -171,6 +178,7 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/catalogo": "Configuración",
   "/dashboard/incentivos": "Configuración",
   "/dashboard/users": "Configuración",
+  "/dashboard/autorizaciones": "Configuración",
 };
 
 interface DashboardLayoutProps {
