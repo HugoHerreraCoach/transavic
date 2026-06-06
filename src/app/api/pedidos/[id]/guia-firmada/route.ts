@@ -123,6 +123,55 @@ export async function POST(request: Request) {
   }
 }
 
+export async function DELETE(request: Request) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
+    const url = new URL(request.url);
+    const segments = url.pathname.split("/");
+    const pedidoId = segments[segments.length - 2];
+    if (!pedidoId || !/^[0-9a-f-]{36}$/i.test(pedidoId)) {
+      return NextResponse.json({ error: "ID inválido" }, { status: 400 });
+    }
+
+    const { role, id: userId } = session.user;
+
+    // Repartidor nunca puede eliminar fotos
+    if (role === "repartidor") {
+      return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    }
+
+    const sql = neon(process.env.DATABASE_URL!);
+
+    // Admin pasa; asesora solo si el pedido es de su cartera
+    if (role !== "admin") {
+      const rows = await sql`SELECT asesor_id FROM pedidos WHERE id = ${pedidoId}::uuid`;
+      if (rows.length === 0) {
+        return NextResponse.json({ error: "Pedido no encontrado" }, { status: 404 });
+      }
+      if (rows[0].asesor_id !== userId) {
+        return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+      }
+    }
+
+    await sql`
+      UPDATE pedidos
+      SET guia_firmada_data = NULL,
+          guia_firmada_mime = NULL,
+          guia_firmada_at   = NULL
+      WHERE id = ${pedidoId}::uuid
+    `;
+
+    return NextResponse.json({ message: "Foto eliminada" });
+  } catch (error) {
+    console.error("Error en DELETE /api/pedidos/[id]/guia-firmada:", error);
+    return NextResponse.json({ error: "Error al eliminar la foto" }, { status: 500 });
+  }
+}
+
 export async function GET(request: Request) {
   try {
     const session = await auth();

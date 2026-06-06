@@ -1117,9 +1117,11 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                 </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
                   value={pagoNumOp}
-                  onChange={(e) => setPagoNumOp(e.target.value)}
-                  maxLength={200}
+                  onChange={(e) => setPagoNumOp(e.target.value.replace(/\D/g, ''))}
+                  maxLength={20}
                   placeholder="Ej: 123456789"
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-400 focus:outline-none"
                 />
@@ -1515,9 +1517,9 @@ function AgingPanel({ userRole }: { userRole: string }) {
       >
         <div className="flex items-center gap-2">
           <FiClock className="text-gray-500" />
-          <span className="font-semibold text-gray-800">Aging de cobranzas</span>
+          <span className="font-semibold text-gray-800">Deuda por antigüedad</span>
           <span className="text-xs text-gray-500">
-            (deuda por antigüedad{userRole === "asesor" ? " — tuya" : ""})
+            {userRole === "asesor" ? "— la tuya" : "— cuánto llevan sin cobrar"}
           </span>
         </div>
         <span className="text-xs text-gray-400">{open ? "Ocultar" : "Mostrar"}</span>
