@@ -19,7 +19,10 @@ export type TipoNotificacion =
   // P2.10 — SUNAT rechaza o error de infraestructura al emitir.
   // Se notifica al admin (Antonio) y a la asesora dueña del pedido (si aplica).
   | "comprobante_rechazado"
-  | "comprobante_error";
+  | "comprobante_error"
+  // Sistema de autorizaciones de precio mínimo.
+  | "autorizacion_solicitada"   // al admin cuando asesora pide precio por debajo del mínimo
+  | "autorizacion_resuelta";    // a la asesora cuando el admin aprueba o rechaza
 
 export interface CrearNotificacionParams {
   userId: string;

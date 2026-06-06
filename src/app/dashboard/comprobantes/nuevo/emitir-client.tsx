@@ -205,6 +205,15 @@ export default function EmitirComprobanteClient({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [descargando, setDescargando] = useState(false);
 
+  // Sistema de autorizaciones de precio mínimo
+  const [autorizacionId, setAutorizacionId] = useState<string | null>(
+    searchParams.get("autorizacion_id")
+  );
+  const [showModalAutorizacion, setShowModalAutorizacion] = useState(false);
+  const [razonSolicitud, setRazonSolicitud] = useState("");
+  const [enviandoSolicitud, setEnviandoSolicitud] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
   // Empresas: si no vinieron por prop (form embebido en un modal), las traemos.
   useEffect(() => {
     if (empresas) return;
@@ -538,14 +547,32 @@ export default function EmitirComprobanteClient({
       }
     }
 
+    // Ítems cuyo precio está por debajo del mínimo del catálogo
+    const itemsConPrecioBajo = items
+      .filter((it) => it.descripcion.trim())
+      .map((it) => {
+        const prod = productos.find(
+          (p) => p.nombre.trim().toLowerCase() === it.descripcion.trim().toLowerCase()
+        );
+        const minimo = prod && Number(prod.precio_venta) > 0 ? Number(prod.precio_venta) : 0;
+        return minimo > 0 && Number(it.precio) < minimo
+          ? { nombre: it.descripcion, precio_solicitado: Number(it.precio), precio_minimo: minimo, cantidad: Number(it.cantidad) }
+          : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    const necesitaAutorizacion = itemsConPrecioBajo.length > 0 && !autorizacionId;
+
     return {
       itemsValidos,
       clienteValido,
       descCliente,
       itemsCount,
-      puedeEmitir: itemsValidos && clienteValido,
+      itemsConPrecioBajo,
+      necesitaAutorizacion,
+      puedeEmitir: itemsValidos && clienteValido && !necesitaAutorizacion,
     };
-  }, [items, numDoc, razonSocial, tipo, boletaGrande]);
+  }, [items, numDoc, razonSocial, tipo, boletaGrande, productos, autorizacionId]);
 
   const puedeEmitir = reqs.puedeEmitir;
 
@@ -617,6 +644,7 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               confirmarDuplicado,
+              autorizacion_id: autorizacionId ?? undefined,
               // Datos del receptor tal como están en el form (precargados del
               // pedido + editables/consultables por el usuario).
               cliente_override: {
@@ -655,6 +683,7 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               confirmarDuplicado,
+              autorizacion_id: autorizacionId ?? undefined,
             }),
           });
       const j = await res.json();
@@ -1333,6 +1362,20 @@ export default function EmitirComprobanteClient({
                         <FiTrash2 size={16} />
                       </button>
                     </div>
+
+                    {/* Error de precio mínimo por ítem */}
+                    {(() => {
+                      const prod = productos.find(
+                        (p) => p.nombre.trim().toLowerCase() === it.descripcion.trim().toLowerCase()
+                      );
+                      const minimo = prod && Number(prod.precio_venta) > 0 ? Number(prod.precio_venta) : 0;
+                      return minimo > 0 && Number(it.precio) < minimo ? (
+                        <p className="w-full md:col-span-full text-xs text-red-600 mt-1 flex items-center gap-1">
+                          <FiAlertCircle className="flex-shrink-0 w-3 h-3" />
+                          Precio menor al mínimo del catálogo (S/ {minimo.toFixed(2)})
+                        </p>
+                      ) : null;
+                    })()}
                   </div>
                 ))}
               </div>
@@ -1480,8 +1523,42 @@ export default function EmitirComprobanteClient({
                 </div>
               </div>
 
+              {/* Banner de autorización activa */}
+              {autorizacionId && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
+                  <FiCheckCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <span>
+                    <strong>Autorización aprobada.</strong> Puedes emitir con el precio solicitado.
+                    {" "}
+                    <button
+                      className="underline text-amber-700 hover:text-amber-900"
+                      onClick={() => setAutorizacionId(null)}
+                    >
+                      Quitar
+                    </button>
+                  </span>
+                </div>
+              )}
+
+              {/* Bloque de precio mínimo: error + botón de solicitar */}
+              {reqs.necesitaAutorizacion && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-3 space-y-2">
+                  <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                    <FiAlertCircle className="w-4 h-4 flex-shrink-0" />
+                    Uno o más ítems tienen precio por debajo del mínimo del catálogo.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowModalAutorizacion(true)}
+                    className="w-full py-2 text-xs font-semibold bg-white border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors active:scale-[0.97]"
+                  >
+                    Solicitar autorización al admin
+                  </button>
+                </div>
+              )}
+
               {errorMsg && <p className="text-xs text-red-600 font-bold bg-red-50 p-2.5 rounded-lg border border-red-100 leading-normal">{errorMsg}</p>}
-              
+
               <button
                 onClick={() => emitir()}
                 disabled={!puedeEmitir || emitiendo}
@@ -1578,6 +1655,104 @@ export default function EmitirComprobanteClient({
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Modal: Solicitar autorización de precio mínimo */}
+      {showModalAutorizacion && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 anim-fade">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden anim-modal">
+            <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex-shrink-0">
+                <FiAlertCircle size={18} />
+              </span>
+              <div>
+                <h3 className="font-bold text-gray-900 text-sm">Solicitar autorización de precio</h3>
+                <p className="text-xs text-gray-500 mt-0.5">El admin recibirá una notificación y podrá aprobar o rechazar</p>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              {/* Tabla de ítems con precio bajo */}
+              <div className="bg-gray-50 rounded-xl p-3 text-xs">
+                <p className="text-gray-500 font-medium mb-2">Ítems con precio por debajo del mínimo:</p>
+                <div className="space-y-1.5">
+                  {reqs.itemsConPrecioBajo.map((it, i) => (
+                    <div key={i} className="flex justify-between items-center gap-2">
+                      <span className="text-gray-800 font-medium truncate">{it.nombre}</span>
+                      <span className="flex-shrink-0 text-gray-500">
+                        S/ {it.precio_solicitado.toFixed(2)}{" "}
+                        <span className="text-red-600">(mín. S/ {it.precio_minimo.toFixed(2)})</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Motivo opcional */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">
+                  Motivo (opcional)
+                </label>
+                <textarea
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 resize-none"
+                  rows={2}
+                  placeholder="Ej: cliente fiel, descuento especial..."
+                  value={razonSolicitud}
+                  onChange={(e) => setRazonSolicitud(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 justify-end">
+              <button
+                onClick={() => { setShowModalAutorizacion(false); setRazonSolicitud(""); }}
+                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                disabled={enviandoSolicitud}
+                onClick={async () => {
+                  setEnviandoSolicitud(true);
+                  try {
+                    const res = await fetch("/api/autorizaciones-precio", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        tipo,
+                        empresa,
+                        items: reqs.itemsConPrecioBajo,
+                        razon: razonSolicitud.trim() || undefined,
+                      }),
+                    });
+                    if (res.ok) {
+                      setShowModalAutorizacion(false);
+                      setRazonSolicitud("");
+                      setToastMsg("Solicitud enviada. El admin la revisará y recibirás una notificación.");
+                      setTimeout(() => setToastMsg(null), 5000);
+                    } else {
+                      const data = await res.json().catch(() => ({}));
+                      setToastMsg(data.error || "No se pudo enviar la solicitud.");
+                      setTimeout(() => setToastMsg(null), 4000);
+                    }
+                  } catch {
+                    setToastMsg("Error de conexión al enviar la solicitud.");
+                    setTimeout(() => setToastMsg(null), 4000);
+                  } finally {
+                    setEnviandoSolicitud(false);
+                  }
+                }}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-40 transition-colors active:scale-[0.97] font-medium"
+              >
+                {enviandoSolicitud ? "Enviando..." : "Enviar solicitud"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-20 left-4 right-4 md:left-auto md:right-6 md:w-96 z-50 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg anim-toast">
+          {toastMsg}
         </div>
       )}
     </div>
