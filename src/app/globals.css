@@ -192,3 +192,16 @@ summary {
     margin: 0 !important;
   }
 }
+
+/* === Medición de altura del reporte Ticket (ver src/lib/impresion.ts) ===
+   Estas reglas van FUERA de @media print: el helper clona el reporte en un nodo
+   `.medir-impresion` fuera de pantalla y lo maqueta IGUAL que en impresión (80mm de
+   ancho + tipografía 9pt + grid colapsado a bloque) para medir su alto real y fijar
+   un @page del tamaño exacto, sin sobrante de papel al final. */
+.medir-impresion .formato-ticket {
+  width: 80mm;
+  font-size: 9pt;
+}
+.medir-impresion .formato-ticket .grid {
+  display: block;
+}
