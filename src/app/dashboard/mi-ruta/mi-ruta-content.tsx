@@ -37,6 +37,9 @@ import { useJsApiLoader } from "@react-google-maps/api";
 import nextDynamic from "next/dynamic";
 import { esPlataformaNativa } from "@/lib/plataforma";
 
+// Constante fuera del componente para no recrear el array en cada render
+const MAPS_LIBRARIES: "places"[] = ["places"];
+
 // Seguimiento de ubicación de la APP NATIVA. Se carga SOLO en el navegador (ssr:false)
 // para que el import de @capacitor/core nunca corra en el servidor. En web devuelve null.
 const SeguimientoUbicacionNativo = nextDynamic(
@@ -310,6 +313,7 @@ function MiniMapaRuta({
 }) {
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || "",
+    libraries: MAPS_LIBRARIES,
   });
 
   const [tilesLoaded, setTilesLoaded] = useState(false);
@@ -1013,21 +1017,95 @@ function ModalPuntoPartida({
   onCerrar: () => void;
 }) {
   const [modo, setModo] = useState<"planta" | "otro">("planta");
-  const [nombreOtro, setNombreOtro] = useState("");
   const [coordsOtro, setCoordsOtro] = useState<{ lat: number; lng: number } | null>(null);
   const [obteniendo, setObteniendo] = useState(false);
+  const [coordsFuente, setCoordsFuente] = useState<"autocomplete" | "gps" | null>(null);
+  const [errorGps, setErrorGps] = useState<string | null>(null);
+
+  const inputRef = useRef<HTMLInputElement>(null);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
 
   const hoy = new Date().toISOString().slice(0, 10);
 
+  // Inicializar Places Autocomplete cuando se muestra el campo "otro"
+  useEffect(() => {
+    if (modo !== "otro") return;
+    if (typeof google === "undefined" || !google.maps?.places) return;
+
+    // Pequeño delay para que el input esté en el DOM tras el render condicional
+    const timer = setTimeout(() => {
+      if (!inputRef.current || autocompleteRef.current) return;
+
+      const ac = new google.maps.places.Autocomplete(inputRef.current, {
+        componentRestrictions: { country: "pe" },
+        fields: ["geometry", "formatted_address", "name"],
+        types: ["geocode", "establishment"],
+      });
+
+      ac.addListener("place_changed", () => {
+        const place = ac.getPlace();
+        if (place?.geometry?.location) {
+          setCoordsOtro({
+            lat: place.geometry.location.lat(),
+            lng: place.geometry.location.lng(),
+          });
+          setCoordsFuente("autocomplete");
+        }
+      });
+
+      autocompleteRef.current = ac;
+    }, 50);
+
+    return () => {
+      clearTimeout(timer);
+      // Limpiar el listener al desmontar
+      if (autocompleteRef.current) {
+        google.maps.event.clearInstanceListeners(autocompleteRef.current);
+        autocompleteRef.current = null;
+      }
+    };
+  }, [modo]);
+
+  // Al cambiar de modo, limpiar coordenadas y el input
+  const handleSetModo = (m: "planta" | "otro") => {
+    setModo(m);
+    setCoordsOtro(null);
+    setCoordsFuente(null);
+    setErrorGps(null);
+    if (inputRef.current) inputRef.current.value = "";
+    if (autocompleteRef.current) {
+      google.maps.event.clearInstanceListeners(autocompleteRef.current);
+      autocompleteRef.current = null;
+    }
+  };
+
   const handleUsarGps = () => {
-    if (!navigator.geolocation) return;
+    if (!navigator.geolocation) {
+      setErrorGps("Tu navegador no soporta GPS.");
+      return;
+    }
     setObteniendo(true);
+    setErrorGps(null);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setCoordsOtro({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setCoordsFuente("gps");
         setObteniendo(false);
+        // Siempre poner texto descriptivo al usar GPS
+        if (inputRef.current) {
+          inputRef.current.value = "Mi ubicación actual (GPS)";
+        }
       },
-      () => { setObteniendo(false); },
+      (err) => {
+        setObteniendo(false);
+        if (err.code === 1) {
+          setErrorGps("Permiso de ubicación denegado. Actívalo en tu navegador.");
+        } else if (err.code === 3) {
+          setErrorGps("Tiempo de espera agotado. Inténtalo de nuevo.");
+        } else {
+          setErrorGps("No se pudo obtener tu ubicación.");
+        }
+      },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   };
@@ -1047,7 +1125,7 @@ function ModalPuntoPartida({
       onGuardar({
         lat: coordsOtro.lat,
         lng: coordsOtro.lng,
-        nombre: nombreOtro.trim() || "Otro punto",
+        nombre: inputRef.current?.value?.trim() || "Otro punto",
         esPersonalizado: true,
         fecha: hoy,
       });
@@ -1070,7 +1148,7 @@ function ModalPuntoPartida({
         <div className="px-4 py-4 space-y-3">
           {/* Opción: Desde la planta */}
           <button
-            onClick={() => setModo("planta")}
+            onClick={() => handleSetModo("planta")}
             className={`w-full flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all cursor-pointer text-left ${
               modo === "planta"
                 ? "border-indigo-400 bg-indigo-50"
@@ -1083,12 +1161,15 @@ function ModalPuntoPartida({
             <div>
               <p className="text-sm font-semibold text-gray-800">Desde la planta</p>
               <p className="text-xs text-gray-500">{baseLocation?.name ?? "Almacén Transavic"}</p>
+              {baseLocation?.address && (
+                <p className="text-xs text-gray-400 mt-0.5 leading-tight">{baseLocation.address}</p>
+              )}
             </div>
           </button>
 
           {/* Opción: Otro lugar */}
           <button
-            onClick={() => setModo("otro")}
+            onClick={() => handleSetModo("otro")}
             className={`w-full flex items-center gap-3 p-3.5 rounded-xl border-2 transition-all cursor-pointer text-left ${
               modo === "otro"
                 ? "border-amber-400 bg-amber-50"
@@ -1107,21 +1188,47 @@ function ModalPuntoPartida({
           {/* Campos del otro punto */}
           {modo === "otro" && (
             <div className="space-y-2 pt-1">
-              <input
-                type="text"
-                value={nombreOtro}
-                onChange={(e) => setNombreOtro(e.target.value)}
-                placeholder="Nombre o referencia (ej: Jr. Lima 240)"
-                className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-amber-300"
-              />
+              <div className="relative">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Busca una dirección en Lima..."
+                  onInput={() => {
+                    // Si el usuario edita a mano, las coords del autocomplete ya no son válidas
+                    if (coordsFuente === "autocomplete") {
+                      setCoordsOtro(null);
+                      setCoordsFuente(null);
+                    }
+                  }}
+                  className={`w-full text-sm border rounded-xl px-3 py-2.5 pr-8 focus:outline-none focus:ring-2 transition-all ${
+                    coordsOtro
+                      ? "border-green-400 focus:ring-green-200 bg-green-50"
+                      : "border-gray-200 focus:ring-amber-300"
+                  }`}
+                />
+                {coordsOtro && (
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-green-500 text-base leading-none select-none">✓</span>
+                )}
+              </div>
+              {!coordsOtro && (
+                <p className="text-xs text-gray-400 px-1">
+                  Escribe la dirección y selecciona de la lista, o usa el GPS
+                </p>
+              )}
               <button
                 onClick={handleUsarGps}
                 disabled={obteniendo}
                 className="w-full py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-sm font-semibold text-gray-700 flex items-center justify-center gap-2 transition-colors disabled:opacity-50 cursor-pointer"
               >
                 <FiNavigation size={14} />
-                {obteniendo ? "Obteniendo ubicación..." : coordsOtro ? "✓ Ubicación GPS obtenida" : "Usar mi ubicación GPS actual"}
+                {obteniendo ? "Obteniendo ubicación..." : coordsFuente === "gps" ? "✓ Ubicación GPS obtenida" : "Usar mi ubicación GPS actual"}
               </button>
+              {errorGps && (
+                <p className="text-xs text-red-500 px-1 flex items-center gap-1">
+                  <FiAlertTriangle size={11} />
+                  {errorGps}
+                </p>
+              )}
             </div>
           )}
         </div>
