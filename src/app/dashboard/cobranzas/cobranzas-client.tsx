@@ -21,6 +21,7 @@ import {
   FiSlash,
   FiTrash2,
   FiChevronDown,
+  FiSearch,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
 
@@ -74,6 +75,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
   const [facturas, setFacturas] = useState<Factura[]>([]);
   const [stats, setStats] = useState<StatRow[]>([]);
   const [filtroEstado, setFiltroEstado] = useState<string>("all");
+  const [busqueda, setBusqueda] = useState("");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -124,6 +126,16 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     () => stats.find((s) => s.estado === "Pagada") ?? { cnt: 0, total: 0 },
     [stats]
   );
+
+  const facturasFiltradas = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return facturas;
+    return facturas.filter((f) =>
+      (f.cliente_nombre ?? "").toLowerCase().includes(q) ||
+      (f.numero_comprobante ?? "").toLowerCase().includes(q) ||
+      (f.asesor_name ?? "").toLowerCase().includes(q)
+    );
+  }, [facturas, busqueda]);
 
   // P1.6 — 1 clic marca pagada (sin modal) + toast "Deshacer" 5 s.
   // Patrón Gmail/Slack para acciones irreversibles-pero-frecuentes:
@@ -668,7 +680,27 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
       {/* ── P3.13 — Aging de cobranzas ── */}
       <AgingPanel userRole={userRole} />
 
-      {/* ── Filtros ── */}
+      {/* ── Buscador ── */}
+      <div className="mb-3 relative">
+        <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={15} />
+        <input
+          type="text"
+          value={busqueda}
+          onChange={(e) => setBusqueda(e.target.value)}
+          placeholder="Buscar por cliente, comprobante o asesora..."
+          className="w-full pl-9 pr-9 py-2.5 border border-gray-200 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all"
+        />
+        {busqueda && (
+          <button
+            onClick={() => setBusqueda("")}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 focus:outline-none"
+          >
+            <FiX size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* ── Filtros de estado ── */}
       <div className="mb-4 flex gap-2 flex-wrap">
         {[
           { value: "all", label: "Todas" },
@@ -689,6 +721,11 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
             {f.label}
           </button>
         ))}
+        {busqueda && (
+          <span className="px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-50 text-gray-500 tabular-nums">
+            {facturasFiltradas.length} resultado{facturasFiltradas.length !== 1 ? "s" : ""}
+          </span>
+        )}
       </div>
 
       {/* ── Tabla ── */}
@@ -706,14 +743,14 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
             </tr>
           </thead>
           <tbody>
-            {facturas.length === 0 && (
+            {facturasFiltradas.length === 0 && (
               <tr>
                 <td colSpan={userRole === "admin" ? 7 : 6} className="text-center text-gray-400 py-8">
-                  No hay facturas
+                  {busqueda ? `Sin resultados para "${busqueda}"` : "No hay cobranzas"}
                 </td>
               </tr>
             )}
-            {facturas.map((f) => {
+            {facturasFiltradas.map((f) => {
               const urg = urgenciaColor(f.estado, f.fecha_vencimiento);
               return (
                 <tr key={f.id} className={`border-t ${urg.bg}`}>
