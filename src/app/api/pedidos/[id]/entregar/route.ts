@@ -315,7 +315,9 @@ export async function PATCH(request: Request) {
           entregado_at = NULL,
           razon_fallo = NULL,
           inicio_viaje_at = NULL,
-          hora_llegada_estimada = NULL
+          hora_llegada_estimada = NULL,
+          notificado_por_llegar = FALSE,
+          notificado_llegada = FALSE
       WHERE id = ${id}
     `;
 

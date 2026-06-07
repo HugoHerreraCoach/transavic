@@ -9,6 +9,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { z } from "zod";
 import { haversineKm } from "@/lib/utils";
+import { crearNotificacion } from "@/lib/notificaciones";
+
 
 
 export const dynamic = "force-dynamic";
@@ -65,7 +67,7 @@ export async function POST(request: Request) {
       try {
         // Recalcular ETA dinámico para el pedido activo En_Camino
         const activePedido = await sql`
-          SELECT id, latitude, longitude
+          SELECT id, latitude, longitude, asesor_id, cliente, notificado_por_llegar, notificado_llegada
           FROM pedidos
           WHERE repartidor_id = ${session.user.id}
             AND estado = 'En_Camino'
@@ -89,9 +91,43 @@ export async function POST(request: Request) {
 
             const newEta = new Date(Date.now() + durationRemaining * 60 * 1000);
 
+            // 1. Alerta 5 minutos antes
+            let flagPorLlegar = p.notificado_por_llegar;
+            if (durationRemaining <= 5 && !p.notificado_por_llegar) {
+              if (p.asesor_id) {
+                await crearNotificacion({
+                  userId: p.asesor_id as string,
+                  tipo: "pedido_por_llegar",
+                  titulo: "⏳ Pedido por llegar",
+                  mensaje: `${p.cliente} — el motorizado está a unos 5 minutos de llegar.`,
+                  link: "/dashboard",
+                  pedidoId: p.id,
+                });
+              }
+              flagPorLlegar = true;
+            }
+
+            // 2. Alerta de llegada (umbral 150 metros)
+            let flagLlegada = p.notificado_llegada;
+            if (dCurrent <= 0.15 && !p.notificado_llegada) {
+              if (p.asesor_id) {
+                await crearNotificacion({
+                  userId: p.asesor_id as string,
+                  tipo: "pedido_llegado",
+                  titulo: "📍 Pedido en destino",
+                  mensaje: `${p.cliente} — el motorizado ha llegado al destino.`,
+                  link: "/dashboard",
+                  pedidoId: p.id,
+                });
+              }
+              flagLlegada = true;
+            }
+
             await sql`
               UPDATE pedidos
-              SET hora_llegada_estimada = ${newEta.toISOString()}
+              SET hora_llegada_estimada = ${newEta.toISOString()},
+                  notificado_por_llegar = ${flagPorLlegar},
+                  notificado_llegada = ${flagLlegada}
               WHERE id = ${p.id}
             `;
           }

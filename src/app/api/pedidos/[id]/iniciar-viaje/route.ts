@@ -123,7 +123,9 @@ export async function POST(request: Request) {
       SET estado = 'En_Camino',
           inicio_viaje_at = ${now},
           hora_llegada_estimada = ${horaLlegadaEstimada},
-          entregado = FALSE
+          entregado = FALSE,
+          notificado_por_llegar = FALSE,
+          notificado_llegada = FALSE
       WHERE id = ${id}
     `;
 

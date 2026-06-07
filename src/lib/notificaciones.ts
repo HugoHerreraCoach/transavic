@@ -22,7 +22,10 @@ export type TipoNotificacion =
   | "comprobante_error"
   // Sistema de autorizaciones de precio mínimo.
   | "autorizacion_solicitada"   // al admin cuando asesora pide precio por debajo del mínimo
-  | "autorizacion_resuelta";    // a la asesora cuando el admin aprueba o rechaza
+  | "autorizacion_resuelta"     // a la asesora cuando el admin aprueba o rechaza
+  // Alertas de arribo del motorizado
+  | "pedido_por_llegar"
+  | "pedido_llegado";
 
 export interface CrearNotificacionParams {
   userId: string;

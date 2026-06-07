@@ -51,7 +51,9 @@ export async function POST(request: Request) {
       UPDATE pedidos
       SET estado = 'Asignado',
           inicio_viaje_at = NULL,
-          hora_llegada_estimada = NULL
+          hora_llegada_estimada = NULL,
+          notificado_por_llegar = FALSE,
+          notificado_llegada = FALSE
       WHERE id = ${id}
     `;
 

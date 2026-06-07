@@ -43,8 +43,10 @@ function iconoParaTipo(tipo: TipoNotificacion) {
     case "listo_para_despacho":
       return <FiPackage className="text-purple-600" />;
     case "pedido_en_camino":
+    case "pedido_por_llegar":
       return <FiTruck className="text-indigo-600" />;
     case "pedido_entregado":
+    case "pedido_llegado":
     case "guia_firmada":
       return <FiCheckCircle className="text-green-600" />;
     case "pedido_fallido":
