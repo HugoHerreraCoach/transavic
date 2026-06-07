@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Session } from "next-auth";
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import {
   FiPlus,
   FiList,
@@ -24,11 +25,14 @@ import {
   FiAward,
   FiSun,
   FiCheckSquare,
+  FiMessageSquare,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
 import NotificationBell from "./NotificationBell";
 import FloatingAssistant from "./FloatingAssistant";
 import CmdKModal from "./CmdKModal";
+
+const ComunicadoPopup = dynamic(() => import("./ComunicadoPopup"), { ssr: false });
 
 interface NavItem {
   href: string;
@@ -158,6 +162,12 @@ const navItems: NavItem[] = [
     icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />,
     adminOnly: true,
   },
+  {
+    href: "/dashboard/comunicados",
+    label: "Comunicados",
+    icon: <FiMessageSquare className="h-5 w-5 flex-shrink-0" />,
+    adminOnly: true,
+  },
 ];
 
 const GROUP_ORDER = ["Operación", "Comercial", "Reportes", "Configuración"];
@@ -179,6 +189,7 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/incentivos": "Configuración",
   "/dashboard/users": "Configuración",
   "/dashboard/autorizaciones": "Configuración",
+  "/dashboard/comunicados": "Configuración",
 };
 
 interface DashboardLayoutProps {
@@ -415,6 +426,9 @@ export default function DashboardLayout({
       {/* P2.9 — Búsqueda global Cmd+K. Disponible solo para admin/asesor
           (el repartidor opera con /mi-ruta, no necesita búsqueda transversal). */}
       {(userRole === "admin" || userRole === "asesor") && <CmdKModal />}
+
+      {/* Popup de comunicados pendientes para los destinatarios */}
+      <ComunicadoPopup />
     </div>
   );
 }
