@@ -285,6 +285,46 @@ export default function EmitirComprobanteClient({
     };
   }, [searchParams, pedidoIdProp]);
 
+  // Pre-carga cuando la asesora vuelve con ?autorizacion_id=XXX aprobada.
+  // Rellena empresa, tipo, ítems y datos del cliente para que no tenga que
+  // re-escribir todo desde cero.
+  useEffect(() => {
+    if (!autorizacionId) return;
+    // Si ya hay un pedido cargado en el form, ese tiene prioridad.
+    if (pedidoIdProp ?? searchParams.get("pedido")) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/autorizaciones-precio/${autorizacionId}`);
+        if (!res.ok || !active) return;
+        const a = await res.json();
+        if (!active) return;
+        setEmpresa(a.empresa as Empresa);
+        setTipo(a.tipo as Tipo);
+        if (Array.isArray(a.items_json) && a.items_json.length > 0) {
+          setItems(
+            a.items_json.map(
+              (it: { nombre: string; precio_solicitado: number; cantidad: number; codigo?: string; unidad?: string }) => ({
+                descripcion: it.nombre,
+                cantidad: Number(it.cantidad) || 1,
+                unidad: it.unidad || "NIU",
+                precio: Number(it.precio_solicitado) || 0,
+                codigo: it.codigo || undefined,
+              })
+            )
+          );
+        }
+        if (a.cliente_json) {
+          if (a.cliente_json.numDocumento) setNumDoc(a.cliente_json.numDocumento);
+          if (a.cliente_json.razonSocial) setRazonSocial(a.cliente_json.razonSocial);
+        }
+      } catch {
+        /* si falla, el form queda en blanco y la asesora puede llenarlo igual */
+      }
+    })();
+    return () => { active = false; };
+  }, [autorizacionId, searchParams, pedidoIdProp]);
+
   const totales = useMemo(() => {
     const total = items.reduce(
       (s, it) => s + (Number(it.precio) || 0) * (Number(it.cantidad) || 0),
@@ -556,7 +596,14 @@ export default function EmitirComprobanteClient({
         );
         const minimo = prod && Number(prod.precio_venta) > 0 ? Number(prod.precio_venta) : 0;
         return minimo > 0 && Number(it.precio) < minimo
-          ? { nombre: it.descripcion, precio_solicitado: Number(it.precio), precio_minimo: minimo, cantidad: Number(it.cantidad) }
+          ? {
+              nombre: it.descripcion,
+              precio_solicitado: Number(it.precio),
+              precio_minimo: minimo,
+              cantidad: Number(it.cantidad),
+              codigo: it.codigo || undefined,
+              unidad: it.unidad || undefined,
+            }
           : null;
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
@@ -1740,6 +1787,10 @@ export default function EmitirComprobanteClient({
                         empresa,
                         items: reqs.itemsConPrecioBajo,
                         razon: razonSolicitud.trim() || undefined,
+                        cliente: {
+                          numDocumento: numDoc.trim() || undefined,
+                          razonSocial: razonSocial.trim() || undefined,
+                        },
                       }),
                     });
                     if (res.ok) {

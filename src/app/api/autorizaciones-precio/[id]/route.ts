@@ -8,6 +8,34 @@ import { crearNotificacion } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+    if (!["admin", "asesor"].includes(session.user.role)) {
+      return NextResponse.json({ error: "Sin permiso" }, { status: 403 });
+    }
+    const sql = neon(process.env.DATABASE_URL!);
+    const rows =
+      session.user.role === "admin"
+        ? await sql`SELECT * FROM autorizaciones_precio WHERE id = ${id}`
+        : await sql`SELECT * FROM autorizaciones_precio WHERE id = ${id} AND asesora_id = ${session.user.id}`;
+    if (rows.length === 0) {
+      return NextResponse.json({ error: "Autorización no encontrada" }, { status: 404 });
+    }
+    return NextResponse.json(rows[0]);
+  } catch (error) {
+    console.error("Error GET /api/autorizaciones-precio/[id]:", error);
+    return NextResponse.json({ error: "Error al obtener autorización" }, { status: 500 });
+  }
+}
+
 const PatchSchema = z.object({
   estado: z.enum(["aprobada", "rechazada"]),
   razon_rechazo: z.string().trim().max(500).optional(),

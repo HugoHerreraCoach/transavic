@@ -14,6 +14,13 @@ const ItemSchema = z.object({
   precio_solicitado: z.number().positive(),
   precio_minimo: z.number().positive(),
   cantidad: z.number().positive(),
+  codigo: z.string().optional(),
+  unidad: z.string().optional(),
+});
+
+const ClienteSchema = z.object({
+  numDocumento: z.string().optional(),
+  razonSocial: z.string().optional(),
 });
 
 const CreateSchema = z.object({
@@ -21,6 +28,7 @@ const CreateSchema = z.object({
   empresa: z.enum(["transavic", "avicola"]),
   items: z.array(ItemSchema).min(1),
   razon: z.string().trim().max(500).optional(),
+  cliente: ClienteSchema.optional(),
 });
 
 export async function GET(request: Request) {
@@ -93,7 +101,7 @@ export async function POST(request: Request) {
     }
 
     const sql = neon(process.env.DATABASE_URL!);
-    const { tipo, empresa, items, razon } = parsed.data;
+    const { tipo, empresa, items, razon, cliente } = parsed.data;
     const asesoraId = session.user.id;
     const asesoraNombre = session.user.name?.trim() || "Asesora";
 
@@ -103,9 +111,14 @@ export async function POST(request: Request) {
       avicola: "Avícola de Tony",
     };
 
+    const clienteJson =
+      cliente && (cliente.numDocumento || cliente.razonSocial)
+        ? JSON.stringify(cliente)
+        : null;
+
     const result = (await sql`
       INSERT INTO autorizaciones_precio
-        (asesora_id, asesora_nombre, tipo, empresa, items_json, razon, estado)
+        (asesora_id, asesora_nombre, tipo, empresa, items_json, razon, cliente_json, estado)
       VALUES (
         ${asesoraId},
         ${asesoraNombre},
@@ -113,6 +126,7 @@ export async function POST(request: Request) {
         ${empresa},
         ${JSON.stringify(items)},
         ${razon ?? null},
+        ${clienteJson},
         'pendiente'
       )
       RETURNING id

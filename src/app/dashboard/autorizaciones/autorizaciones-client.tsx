@@ -32,6 +32,7 @@ interface Autorizacion {
   created_at: string;
   resuelta_at: string | null;
   usada_at: string | null;
+  cliente_json: { numDocumento?: string; razonSocial?: string } | null;
 }
 
 type Filtro = "pendiente" | "aprobada" | "rechazada";
@@ -137,6 +138,20 @@ function CardAutorizacion({
             </span>
             <span className="text-xs text-gray-500">{empresaLabel[a.empresa] ?? a.empresa}</span>
           </div>
+          {a.cliente_json && (a.cliente_json.razonSocial || a.cliente_json.numDocumento) && (
+            <div className="flex items-center gap-1 mt-1 flex-wrap">
+              {a.cliente_json.razonSocial && (
+                <span className="text-xs text-gray-600 font-medium truncate">
+                  {a.cliente_json.razonSocial}
+                </span>
+              )}
+              {a.cliente_json.numDocumento && (
+                <span className="text-xs text-gray-400 flex-shrink-0">
+                  {a.cliente_json.razonSocial ? "· " : ""}{a.cliente_json.numDocumento}
+                </span>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* Badge de estado */}
