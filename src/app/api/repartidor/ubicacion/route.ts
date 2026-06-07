@@ -8,6 +8,8 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { z } from "zod";
+import { haversineKm } from "@/lib/utils";
+
 
 export const dynamic = "force-dynamic";
 
@@ -43,24 +45,64 @@ export async function POST(request: Request) {
   // por las dudas para que un fix degradado NUNCA tumbe el INSERT y se pierda el ping.
   const accuracyClamp = accuracy != null ? Math.min(accuracy, 99999999.99) : null;
 
-  try {
-    const sql = neon(process.env.DATABASE_URL!);
-    await sql`
-      INSERT INTO rider_locations
-        (repartidor_id, latitude, longitude, accuracy, heading, speed, captured_at, updated_at)
-      VALUES
-        (${session.user.id}, ${lat}, ${lng}, ${accuracyClamp}, ${heading ?? null}, ${speed ?? null}, ${captured}, now())
-      ON CONFLICT (repartidor_id) DO UPDATE SET
-        latitude    = EXCLUDED.latitude,
-        longitude   = EXCLUDED.longitude,
-        accuracy    = EXCLUDED.accuracy,
-        heading     = EXCLUDED.heading,
-        speed       = EXCLUDED.speed,
-        captured_at = EXCLUDED.captured_at,
-        updated_at  = now()
-    `;
-    return NextResponse.json({ ok: true });
-  } catch (error) {
+    try {
+      const sql = neon(process.env.DATABASE_URL!);
+      await sql`
+        INSERT INTO rider_locations
+          (repartidor_id, latitude, longitude, accuracy, heading, speed, captured_at, updated_at)
+        VALUES
+          (${session.user.id}, ${lat}, ${lng}, ${accuracyClamp}, ${heading ?? null}, ${speed ?? null}, ${captured}, now())
+        ON CONFLICT (repartidor_id) DO UPDATE SET
+          latitude    = EXCLUDED.latitude,
+          longitude   = EXCLUDED.longitude,
+          accuracy    = EXCLUDED.accuracy,
+          heading     = EXCLUDED.heading,
+          speed       = EXCLUDED.speed,
+          captured_at = EXCLUDED.captured_at,
+          updated_at  = now()
+      `;
+
+      try {
+        // Recalcular ETA dinámico para el pedido activo En_Camino
+        const activePedido = await sql`
+          SELECT id, latitude, longitude
+          FROM pedidos
+          WHERE repartidor_id = ${session.user.id}
+            AND estado = 'En_Camino'
+            AND fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
+          LIMIT 1
+        `;
+
+        if (activePedido.length > 0) {
+          const p = activePedido[0];
+          if (p.latitude && p.longitude && (accuracy == null || accuracy <= 150)) {
+            const destLat = parseFloat(p.latitude as string);
+            const destLng = parseFloat(p.longitude as string);
+            const dCurrent = haversineKm(lat, lng, destLat, destLng);
+
+            // Si la distancia es menor a 150m (0.15 km), ya llegó (0 minutos)
+            let durationRemaining = 0;
+            if (dCurrent > 0.15) {
+              // Estimar 3 minutos por km lineal (velocidad efectiva de 20 km/h en Lima)
+              durationRemaining = Math.max(1, Math.round(dCurrent * 3.0));
+            }
+
+            const newEta = new Date(Date.now() + durationRemaining * 60 * 1000);
+
+            await sql`
+              UPDATE pedidos
+              SET hora_llegada_estimada = ${newEta.toISOString()}
+              WHERE id = ${p.id}
+            `;
+          }
+        }
+      } catch (etaError) {
+        console.warn("Error al recalcular ETA dinámico:", etaError);
+        // Continuamos sin fallar la petición de ubicación principal
+      }
+
+      return NextResponse.json({ ok: true });
+    } catch (error) {
     console.error("Error guardando ubicación del motorizado:", error);
     return NextResponse.json({ error: "Error interno del servidor" }, { status: 500 });
   }
