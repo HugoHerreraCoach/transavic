@@ -12,6 +12,11 @@ const CreateUserSchema = z.object({
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']),
+  chofer_dni: z.string().trim().optional().nullable(),
+  chofer_licencia: z.string().trim().optional().nullable(),
+  vehiculo_placa: z.string().trim().optional().nullable(),
+  chofer_nombres: z.string().trim().optional().nullable(),
+  chofer_apellidos: z.string().trim().optional().nullable(),
 });
 
 // Función para obtener usuarios
@@ -36,7 +41,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
       const users = await sql`
-        SELECT id, name FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users WHERE role = ${roleFilter} ORDER BY name ASC
       `;
       return NextResponse.json(users);
     }
@@ -45,11 +50,11 @@ export async function GET(request: Request) {
     let users;
     if (roleFilter) {
       users = await sql`
-        SELECT id, name, role FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users WHERE role = ${roleFilter} ORDER BY name ASC
       `;
     } else {
       users = await sql`
-        SELECT id, name, role FROM users ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users ORDER BY name ASC
       `;
     }
 
@@ -78,7 +83,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
 
-    const { name, password, role } = parsedData.data;
+    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos } = parsedData.data;
 
     const connectionString = process.env.DATABASE_URL!;
     const sql = neon(connectionString);
@@ -92,9 +97,9 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [newUser] = await sql`
-      INSERT INTO users (name, password, role)
-      VALUES (${name}, ${hashedPassword}, ${role})
-      RETURNING id, name, role
+      INSERT INTO users (name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos)
+      VALUES (${name}, ${hashedPassword}, ${role}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null})
+      RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos
     `;
 
     return NextResponse.json(newUser, { status: 201 });

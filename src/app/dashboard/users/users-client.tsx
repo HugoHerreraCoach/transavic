@@ -201,7 +201,16 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                                                 >
                                                     {nombre.charAt(0).toUpperCase()}
                                                 </span>
-                                                <span className="font-medium text-gray-800">{nombre}</span>
+                                                <div>
+                                                    <span className="font-medium text-gray-800 block">{nombre}</span>
+                                                    {user.role === 'repartidor' && (user.chofer_dni || user.vehiculo_placa) && (
+                                                        <span className="text-[11px] text-gray-400 block mt-0.5 font-mono">
+                                                            {user.chofer_dni ? `DNI: ${user.chofer_dni}` : ''}
+                                                            {user.chofer_licencia ? ` · Lic: ${user.chofer_licencia}` : ''}
+                                                            {user.vehiculo_placa ? ` · Placa: ${user.vehiculo_placa}` : ''}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </td>
                                         <td className="px-5 py-3">

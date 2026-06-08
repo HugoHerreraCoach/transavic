@@ -134,3 +134,97 @@ export function parseCpeClienteDireccion(xml: string): string | null {
   const dir = decodeEntities(stripCdata(line[1])).trim();
   return dir || null;
 }
+
+// ─── Guía de Remisión (GRE) ───────────────────────────────────────────────────
+
+export interface DespatchItem {
+  descripcion: string;
+  unidadMedida: string; // unitCode SUNAT (ej. "KGM", "NIU", "ZZ")
+  cantidad: number;
+  codigo: string; // SellersItemIdentification/ID
+}
+
+/**
+ * Parsea los ítems de una Guía de Remisión Electrónica (DespatchAdvice UBL 2.1).
+ * Cada línea viene en <cac:DespatchLine>…</cac:DespatchLine>.
+ * Devuelve [] si el XML no tiene líneas reconocibles.
+ */
+export function parseDespatchItems(xml: string): DespatchItem[] {
+  if (!xml || typeof xml !== "string") return [];
+  const items: DespatchItem[] = [];
+
+  const lineRe = /<cac:DespatchLine>([\s\S]*?)<\/cac:DespatchLine>/g;
+  let m: RegExpExecArray | null;
+  while ((m = lineRe.exec(xml)) !== null) {
+    const b = m[1];
+
+    // Cantidad: <cbc:DeliveredQuantity unitCode="KGM">0.40</cbc:DeliveredQuantity>
+    const q = b.match(
+      /<cbc:DeliveredQuantity\s+unitCode="([^"]*)"[^>]*>([\d.]+)<\/cbc:DeliveredQuantity>/
+    );
+    const unidadMedida = q ? q[1] : "NIU";
+    const cantidad = q ? num(q[2]) : 0;
+
+    // Descripción: <cbc:Description>…</cbc:Description>
+    const desc = b.match(/<cbc:Description>([\s\S]*?)<\/cbc:Description>/);
+    const descripcion = desc ? decodeEntities(stripCdata(desc[1])).trim() : "";
+
+    // Código interno: <cac:Item><cac:SellersItemIdentification><cbc:ID>…</cbc:ID>
+    const cod = b.match(
+      /<cac:SellersItemIdentification>\s*<cbc:ID>([^<]*)<\/cbc:ID>/
+    );
+    const codigo = cod ? cod[1].trim() : "";
+
+    items.push({ descripcion, unidadMedida, cantidad, codigo });
+  }
+
+  return items;
+}
+
+export interface GuiaPuntoLlegada {
+  ubigeo: string;       // código ubigeo (ej. "150115")
+  direccion: string;    // calle / dirección libre
+}
+
+/**
+ * Extrae el Punto de Llegada de un XML de Guía de Remisión.
+ * Busca en <cac:Delivery><cac:DeliveryAddress>…</cac:DeliveryAddress>.
+ * Devuelve null si no encuentra la sección.
+ */
+export function parseGuiaPuntoLlegada(xml: string): GuiaPuntoLlegada | null {
+  if (!xml || typeof xml !== "string") return null;
+
+  // El Punto de Llegada está en el segundo <cac:Delivery> (el primero es Punto de Partida).
+  // SUNAT GRE: Partida = primer Shipment/Consignment/…; Llegada = cac:Delivery directo.
+  // En nuestro xml-builder-guia.ts el Punto de Llegada se emite como:
+  // <cac:Delivery><cac:DeliveryAddress>…</cac:DeliveryAddress></cac:Delivery>
+  // fuera de cac:Shipment.
+  const deliveryMatch = xml.match(
+    /<cac:Delivery>([\s\S]*?)<\/cac:Delivery>/g
+  );
+  if (!deliveryMatch) return null;
+
+  // Tomamos el primer bloque <cac:Delivery> que contenga <cac:DeliveryAddress>
+  for (const block of deliveryMatch) {
+    const addrBlock = block.match(
+      /<cac:DeliveryAddress>([\s\S]*?)<\/cac:DeliveryAddress>/
+    );
+    if (!addrBlock) continue;
+
+    const inner = addrBlock[1];
+
+    const ubigeoMatch = inner.match(/<cbc:ID>([\s\S]*?)<\/cbc:ID>/);
+    const ubigeo = ubigeoMatch ? ubigeoMatch[1].trim() : "";
+
+    const streetMatch = inner.match(/<cbc:StreetName>([\s\S]*?)<\/cbc:StreetName>/);
+    const direccion = streetMatch
+      ? decodeEntities(stripCdata(streetMatch[1])).trim()
+      : "";
+
+    if (ubigeo || direccion) {
+      return { ubigeo, direccion };
+    }
+  }
+
+  return null;
+}

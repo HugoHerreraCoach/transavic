@@ -1,0 +1,873 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Pedido } from "@/lib/types";
+import { FiX, FiTruck, FiAlertCircle, FiCheck, FiCalendar, FiFileText, FiMapPin, FiEdit2, FiInfo, FiEye, FiUser, FiPackage } from "react-icons/fi";
+import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
+import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
+
+interface MotorizadoUser {
+  id: string;
+  name: string;
+  role: string;
+  chofer_dni?: string | null;
+  chofer_licencia?: string | null;
+  vehiculo_placa?: string | null;
+  chofer_nombres?: string | null;
+  chofer_apellidos?: string | null;
+}
+
+export interface ComprobanteInfo {
+  id: string;
+  /** Campos devueltos por /api/comprobantes/[id] */
+  cliente?: {
+    numDocumento?: string | null;
+    tipoDocumento?: string | null;
+    razonSocial?: string | null;
+    direccion?: string | null;
+    distrito?: string | null;
+  } | null;
+  /** Campos devueltos por /api/comprobantes (lista) — snake_case */
+  pedido_direccion?: string | null;
+  pedido_distrito?: string | null;
+  cliente_razon_social?: string | null;
+  cliente_doc_num?: string | null;
+  cliente_doc_tipo?: string | null;
+}
+
+interface EmitirGuiaModalProps {
+  pedido?: Pedido | null;
+  comprobante?: ComprobanteInfo | null;
+  onClose: () => void;
+  onExito?: (serieNumero: string) => void;
+}
+
+const DISTRITOS_LIMA = [
+  "Ate", "Ancón", "Barranco", "Breña", "Carabayllo", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
+  "El Agustino", "Independencia", "Jesús María", "La Molina", "La Victoria", "Lince", "Los Olivos",
+  "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Puente Piedra",
+  "Punta Hermosa", "Punta Negra", "Rímac", "San Bartolo", "San Borja", "San Isidro", "San Juan de Lurigancho",
+  "San Juan de Miraflores", "San Luis", "San Martín de Porres", "San Miguel", "Santa Anita", "Santa María del Mar",
+  "Santa Rosa", "Santiago de Surco", "Surquillo", "Villa El Salvador", "Villa María del Triunfo",
+  "Callao", "Bellavista", "Carmen de la Legua", "La Perla", "La Punta", "Ventanilla", "Mi Perú"
+].sort();
+
+// Heurística de separación de nombres para conductor
+const dividirNombreLocal = (fullName: string) => {
+  const limpio = (fullName || "").trim().replace(/\s+/g, " ");
+  if (!limpio) return { nombres: "", apellidos: "" };
+  const palabras = limpio.split(" ");
+  const n = palabras.length;
+  if (n <= 1) return { nombres: limpio, apellidos: "-" };
+  if (n === 2) return { nombres: palabras[0], apellidos: palabras[1] };
+  if (n === 3) return { nombres: palabras[0], apellidos: `${palabras[1]} ${palabras[2]}` };
+  return { nombres: `${palabras[0]} ${palabras[1]}`, apellidos: palabras.slice(2).join(" ") };
+};
+
+export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito }: EmitirGuiaModalProps) {
+  const [repartidores, setRepartidores] = useState<MotorizadoUser[]>([]);
+  const [repartidorId, setRepartidorId] = useState<string>("");
+  const [choferDni, setChoferDni] = useState<string>("");
+  const [choferLicencia, setChoferLicencia] = useState<string>("");
+  const [choferNombres, setChoferNombres] = useState<string>("");
+  const [choferApellidos, setChoferApellidos] = useState<string>("");
+  const [vehiculoPlaca, setVehiculoPlaca] = useState<string>("");
+  
+  const [direccionLlegada, setDireccionLlegada] = useState<string>("");
+  const [distritoLlegada, setDistritoLlegada] = useState<string>("");
+
+  const [docTipoOverride, setDocTipoOverride] = useState<string>("1"); // 1 = DNI, 6 = RUC
+  const [docNumOverride, setDocNumOverride] = useState<string>("");
+  const [razonSocialOverride, setRazonSocialOverride] = useState<string>("");
+
+  // Normalizar doc: puede venir de la API detalle (cliente.numDocumento) o de la lista (cliente_doc_num)
+  const originalDoc = pedido?.ruc_dni
+    || comprobante?.cliente?.numDocumento
+    || comprobante?.cliente_doc_num
+    || "";
+  const necesitaOverride = !esReceptorIdentificado(originalDoc);
+
+  // Modo de edición: por defecto iniciamos en true (detallado) hasta evaluar si cumple las condiciones de emisión rápida
+  const [modoEdicion, setModoEdicion] = useState<boolean>(true);
+
+  // Obtener fecha de hoy en huso horario de Lima (America/Lima) en formato YYYY-MM-DD
+  const getTodayLima = () => {
+    try {
+      return new Date().toLocaleDateString("en-CA", { timeZone: "America/Lima" });
+    } catch {
+      return new Date().toISOString().slice(0, 10);
+    }
+  };
+
+  const [fechaInicioTraslado, setFechaInicioTraslado] = useState<string>(getTodayLima());
+  const [motivoTraslado, setMotivoTraslado] = useState<string>("01"); // Venta
+  const [totalBultos, setTotalBultos] = useState<number>(1);
+  const [pesoBrutoTotal, setPesoBrutoTotal] = useState<string>("");
+  const [indicadorM1L, setIndicadorM1L] = useState<boolean>(true);
+  const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number; unidad: string }>>([]);
+  const [cargandoItems, setCargandoItems] = useState<boolean>(false);
+
+  // Cargar ítems del pedido o comprobante de origen para autocalcular peso y bultos
+  useEffect(() => {
+    let active = true;
+    const cargarItems = async () => {
+      let targetUrl = "";
+      if (pedido?.id) {
+        targetUrl = `/api/pedidos/${pedido.id}`;
+      } else if (comprobante?.id) {
+        targetUrl = `/api/comprobantes/${comprobante.id}`;
+      }
+
+      if (!targetUrl) return;
+
+      setCargandoItems(true);
+      try {
+        const res = await fetch(targetUrl);
+        if (!res.ok) throw new Error("Fallo al obtener ítems");
+        const data = await res.json();
+        if (active) {
+          const parsedItems = data.items || [];
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const mappedItems = parsedItems.map((it: any) => ({
+            producto_nombre: it.producto_nombre || it.descripcion || "Venta",
+            cantidad: Number(it.cantidad_real ?? it.cantidad ?? 0),
+            unidad: it.unidad || it.unidad_medida || it.unidadMedida || "NIU",
+          }));
+          setItems(mappedItems);
+
+          // Calcular bultos y peso estimado
+          let sumWeight = 0;
+          for (const it of mappedItems) {
+            if (aUnitCodeSunat(it.unidad) === "KGM") {
+              sumWeight += Number(it.cantidad) || 0;
+            } else {
+              sumWeight += estimarPesoPorUnidad(it.producto_nombre, Number(it.cantidad) || 0);
+            }
+          }
+
+          setTotalBultos(Math.max(1, mappedItems.length));
+          setPesoBrutoTotal(sumWeight > 0 ? sumWeight.toFixed(2) : "");
+        }
+      } catch (err) {
+        console.error("Error cargando ítems de origen:", err);
+      } finally {
+        if (active) setCargandoItems(false);
+      }
+    };
+
+    cargarItems();
+    return () => {
+      active = false;
+    };
+  }, [pedido?.id, comprobante?.id]);
+
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<{ serieNumero: string; mensaje?: string } | null>(null);
+
+  // Inicializar campos de dirección, repartidor y override de destinatario
+  useEffect(() => {
+    if (pedido) {
+      setRepartidorId(pedido.repartidor_id || "");
+      setDireccionLlegada(pedido.direccion || "");
+      setDistritoLlegada(pedido.distrito || "");
+    } else if (comprobante) {
+      // La API detalle devuelve cliente.direccion; la lista puede devolver pedido_direccion
+      setDireccionLlegada(
+        comprobante.cliente?.direccion || comprobante.pedido_direccion || ""
+      );
+      setDistritoLlegada(
+        comprobante.cliente?.distrito || comprobante.pedido_distrito || ""
+      );
+    }
+
+    const doc = pedido?.ruc_dni
+      || comprobante?.cliente?.numDocumento
+      || comprobante?.cliente_doc_num
+      || "";
+    if (!esReceptorIdentificado(doc)) {
+      const nombreDefault =
+        pedido?.cliente
+        || comprobante?.cliente?.razonSocial
+        || comprobante?.cliente_razon_social
+        || "";
+      setRazonSocialOverride(nombreDefault);
+      // Pre-rellenar tipo de doc si viene de la API detalle
+      const tipoDoc = comprobante?.cliente?.tipoDocumento
+        || comprobante?.cliente_doc_tipo
+        || "1";
+      setDocTipoOverride(tipoDoc);
+      // Pre-rellenar número de doc si está disponible
+      const numDoc = comprobante?.cliente?.numDocumento
+        || comprobante?.cliente_doc_num
+        || "";
+      if (numDoc) setDocNumOverride(numDoc);
+    }
+  }, [pedido, comprobante]);
+
+  // Cargar motorizados para rellenar datos
+  useEffect(() => {
+    let active = true;
+    const cargarMotorizados = async () => {
+      try {
+        const res = await fetch("/api/users?role=repartidor");
+        if (!res.ok) throw new Error("Error al consultar motorizados");
+        const data = await res.json();
+        if (active && Array.isArray(data)) {
+          setRepartidores(data);
+
+          const targetRepartidorId = pedido?.repartidor_id;
+          if (targetRepartidorId) {
+            const preselected = data.find((r) => r.id === targetRepartidorId);
+            if (preselected) {
+              setRepartidorId(preselected.id);
+              setChoferDni(preselected.chofer_dni || "");
+              setChoferLicencia(preselected.chofer_licencia || "");
+              setVehiculoPlaca(preselected.vehiculo_placa || "");
+              
+              const { nombres, apellidos } = dividirNombreLocal(preselected.name || "");
+              setChoferNombres(preselected.chofer_nombres || nombres);
+              setChoferApellidos(preselected.chofer_apellidos || apellidos);
+
+              // Evaluar si los datos del repartidor, dirección y cliente están 100% listos para emisión rápida
+              const tieneRepartidorListos = !!(preselected.chofer_dni && (indicadorM1L || preselected.chofer_licencia) && preselected.vehiculo_placa);
+              const tieneDireccionListos = !!((pedido?.direccion || comprobante?.cliente?.direccion || comprobante?.pedido_direccion) && (pedido?.distrito || comprobante?.cliente?.distrito || comprobante?.pedido_distrito));
+              
+              if (tieneRepartidorListos && tieneDireccionListos && !necesitaOverride) {
+                setModoEdicion(false); // Activamos Modo Simplificado automáticamente
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error cargando repartidores:", err);
+      }
+    };
+
+    cargarMotorizados();
+    return () => {
+      active = false;
+    };
+  }, [pedido?.repartidor_id, necesitaOverride, indicadorM1L]);
+
+  // Manejar cambio de motorizado
+  const handleRepartidorChange = (id: string) => {
+    setRepartidorId(id);
+    const rep = repartidores.find((r) => r.id === id);
+    if (rep) {
+      setChoferDni(rep.chofer_dni || "");
+      setChoferLicencia(rep.chofer_licencia || "");
+      setVehiculoPlaca(rep.vehiculo_placa || "");
+      const { nombres, apellidos } = dividirNombreLocal(rep.name || "");
+      setChoferNombres(rep.chofer_nombres || nombres);
+      setChoferApellidos(rep.chofer_apellidos || apellidos);
+    } else {
+      setChoferDni("");
+      setChoferLicencia("");
+      setVehiculoPlaca("");
+      setChoferNombres("");
+      setChoferApellidos("");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    const licenciaFalta = !indicadorM1L && !choferLicencia.trim();
+    if (!choferDni.trim() || licenciaFalta || !vehiculoPlaca.trim() || !choferNombres.trim() || !choferApellidos.trim()) {
+      setError(
+        !indicadorM1L
+          ? "DNI de chofer, Nombres, Apellidos, Licencia y Placa del vehículo son requeridos para la emisión de la Guía."
+          : "DNI de chofer, Nombres, Apellidos y Placa del vehículo son requeridos para la emisión de la Guía."
+      );
+      setLoading(false);
+      return;
+    }
+
+    if (!direccionLlegada.trim() || !distritoLlegada.trim()) {
+      setError("La dirección y el distrito de llegada son obligatorios.");
+      setLoading(false);
+      return;
+    }
+
+    if (necesitaOverride) {
+      if (docTipoOverride === "1" && !esDniValido(docNumOverride)) {
+        setError("El DNI ingresado no es válido (debe tener 8 dígitos).");
+        setLoading(false);
+        return;
+      }
+      if (docTipoOverride === "6" && !esRucValido(docNumOverride)) {
+        setError("El RUC ingresado no es válido (debe tener 11 dígitos).");
+        setLoading(false);
+        return;
+      }
+      if (!razonSocialOverride.trim()) {
+        setError("Los nombres o la razón social del destinatario son obligatorios.");
+        setLoading(false);
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch("/api/guias/emitir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pedido_id: pedido?.id || null,
+          comprobante_id: comprobante?.id || null,
+          repartidor_id: repartidorId || null,
+          fechaInicioTraslado,
+          motivoTraslado,
+          totalBultos: Number(totalBultos) || 1,
+          pesoBrutoTotal: pesoBrutoTotal ? Number(pesoBrutoTotal) : null,
+          vehiculo_placa: vehiculoPlaca.trim(),
+          chofer_dni: choferDni.trim(),
+          chofer_licencia: choferLicencia.trim(),
+          chofer_nombres: choferNombres.trim(),
+          chofer_apellidos: choferApellidos.trim(),
+          indicadorM1L,
+          direccion_llegada: direccionLlegada.trim(),
+          distrito_llegada: distritoLlegada.trim() || null,
+          cliente_doc_tipo: necesitaOverride ? docTipoOverride : null,
+          cliente_doc_num: necesitaOverride ? docNumOverride.trim() : null,
+          cliente_razon_social: necesitaOverride ? razonSocialOverride.trim() : null,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Ocurrió un error inesperado al emitir la guía.");
+      }
+
+      setSuccess({
+        serieNumero: data.serieNumero,
+        mensaje: data.mensaje || data.descripcion,
+      });
+
+      if (onExito) {
+        onExito(data.serieNumero);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al procesar la guía");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const nombreCliente = pedido?.cliente
+    || comprobante?.cliente?.razonSocial
+    || comprobante?.cliente_razon_social
+    || "Cliente";
+  const numDocumentoCliente = originalDoc || docNumOverride;
+
+  const licOk = indicadorM1L ? true : !!choferLicencia;
+  const datosCompletosParaEmisionRapida = 
+    !!(repartidorId && 
+    choferDni && 
+    licOk && 
+    vehiculoPlaca && 
+    choferNombres && 
+    choferApellidos && 
+    direccionLlegada && 
+    distritoLlegada && 
+    !necesitaOverride);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-auto overflow-hidden animate-fade-in border border-gray-100 font-sans">
+      {/* Cabecera */}
+      <div className="px-6 py-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-semibold">
+            <FiTruck size={20} />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-gray-800">Guía de Remisión Electrónica</h3>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Cliente: <span className="font-semibold text-gray-700">{nombreCliente}</span>
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+        >
+          <FiX size={18} />
+        </button>
+      </div>
+
+      {success ? (
+        <div className="p-8 text-center max-w-md mx-auto">
+          <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mx-auto mb-4 border border-green-200">
+            <FiCheck size={24} />
+          </div>
+          <h4 className="text-sm font-bold text-gray-800 font-sans">¡Guía de Remisión Emitida!</h4>
+          <p className="text-xs text-green-700 font-semibold mt-1.5 bg-green-50 border border-green-100 py-1 px-3 rounded-lg inline-block">
+            {success.serieNumero}
+          </p>
+          <p className="text-xs text-gray-500 mt-3.5 leading-relaxed">
+            {success.mensaje || "La guía ha sido aceptada por SUNAT exitosamente."}
+          </p>
+
+          <div className="mt-6 flex flex-col gap-2">
+            <a
+              href="/dashboard/guias"
+              className="inline-flex items-center justify-center gap-2 w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold text-xs shadow-sm active:scale-95 transition"
+            >
+              <FiFileText size={14} />
+              Ver Guías Emitidas
+            </a>
+            <button
+              onClick={onClose}
+              className="w-full py-2 text-xs font-semibold text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded-xl transition"
+            >
+              Cerrar Ventana
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-100 rounded-xl flex items-start gap-2.5 text-xs text-red-700">
+              <FiAlertCircle className="flex-shrink-0 mt-0.5" size={14} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Información de SUNAT Beta */}
+          <div className="p-3.5 bg-amber-50/70 border border-amber-100/70 rounded-xl flex items-start gap-2.5 text-xs text-amber-800">
+            <FiAlertCircle className="flex-shrink-0 mt-0.5" size={14} />
+            <div>
+              <span className="font-bold block text-amber-900">Entorno de Pruebas (SUNAT Beta)</span>
+              Este comprobante se emitirá en modo Beta. Las respuestas de error (como 401 Unauthorized) se interceptarán y simularán con éxito local para no interrumpir el flujo.
+            </div>
+          </div>
+
+          {/* MODO SIMPLIFICADO (CONFIRMACIÓN RÁPIDA EN 1 CLIC) */}
+          {!modoEdicion ? (
+            <div className="space-y-4 animate-fade-in max-w-lg mx-auto py-2">
+              <div className="p-4 bg-indigo-50/30 rounded-2xl border border-indigo-100/50 space-y-3.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <FiInfo className="text-indigo-600" />
+                    Resumen de Emisión Rápida
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setModoEdicion(true)}
+                    className="text-indigo-600 hover:text-indigo-800 text-xs font-bold flex items-center gap-1 transition"
+                  >
+                    <FiEdit2 size={12} />
+                    Editar Detalles
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 text-xs">
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Destinatario</span>
+                    <span className="font-semibold text-gray-800 truncate block">{nombreCliente}</span>
+                    <span className="text-[10px] text-gray-500 block">Doc: {numDocumentoCliente || "Identificado"}</span>
+                  </div>
+                  
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Punto de Llegada</span>
+                    <span className="font-semibold text-gray-800 block truncate">{direccionLlegada}</span>
+                    <span className="text-[10px] text-gray-500 block">{distritoLlegada}</span>
+                  </div>
+
+                  <div className="space-y-1 col-span-2 pt-2 border-t border-indigo-50/80">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Conductor y Vehículo</span>
+                    <span className="font-semibold text-gray-800 block">
+                      🚚 {choferNombres} {choferApellidos}
+                    </span>
+                    <span className="text-[10px] text-gray-500 block">
+                      DNI: {choferDni} | Licencia: {indicadorM1L && !choferLicencia ? "Omitida (M1/L)" : choferLicencia} | Placa: <span className="font-bold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.5 rounded text-[10px]">{vehiculoPlaca}</span>
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 pt-2 border-t border-indigo-50/80">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Fecha Traslado</span>
+                    <span className="font-semibold text-gray-800 flex items-center gap-1">
+                      <FiCalendar size={12} className="text-gray-400" />
+                      {fechaInicioTraslado}
+                    </span>
+                  </div>
+
+                  <div className="space-y-1 pt-2 border-t border-indigo-50/80">
+                    <span className="text-[10px] uppercase font-bold text-gray-400 block">Carga Estimada</span>
+                    <span className="font-semibold text-gray-800">
+                      {totalBultos} Bulto(s) | {pesoBrutoTotal ? `${pesoBrutoTotal} kg` : "Auto-calcular"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Botón de Emisión Rápida */}
+              <div className="flex items-center justify-end gap-2.5 pt-3">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={loading}
+                  className="px-4 py-2.5 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 text-xs font-semibold rounded-xl transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md active:scale-95 transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {loading ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Emitiendo Guía REST...
+                    </>
+                  ) : (
+                    <>
+                      <FiTruck size={14} />
+                      Confirmar y Emitir Guía
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* MODO EDICIÓN DETALLADA (DISTRIBUCIÓN EN 2 COLUMNAS COMPACTAS) */
+            <div className="space-y-4 animate-fade-in">
+              {datosCompletosParaEmisionRapida && (
+                <div className="flex items-center justify-between pb-1">
+                  <span className="text-[11px] text-gray-500 font-bold uppercase tracking-wider">Modo Edición Detallada</span>
+                  <button
+                    type="button"
+                    onClick={() => setModoEdicion(false)}
+                    className="text-indigo-600 hover:text-indigo-800 text-xs font-bold flex items-center gap-1 transition"
+                  >
+                    <FiEye size={13} />
+                    Ver Resumen Simplificado
+                  </button>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                
+                {/* COLUMNA IZQUIERDA: CLIENTE Y TRASLADO */}
+                <div className="space-y-4">
+                  {necesitaOverride && (
+                    <div className="p-4 bg-amber-50/50 border border-amber-100/50 rounded-xl space-y-3">
+                      <h4 className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 uppercase tracking-wider">
+                        <FiAlertCircle className="text-amber-600" size={13} />
+                        Destinatario Requerido (SUNAT)
+                      </h4>
+                      
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="col-span-1">
+                          <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                            Tipo Doc
+                          </label>
+                          <select
+                            value={docTipoOverride}
+                            onChange={(e) => {
+                              setDocTipoOverride(e.target.value);
+                              setDocNumOverride("");
+                            }}
+                            className="w-full text-xs border border-gray-200 rounded-xl px-2 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-amber-500"
+                          >
+                            <option value="1">DNI</option>
+                            <option value="6">RUC</option>
+                          </select>
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                            Documento
+                          </label>
+                          <input
+                            type="text"
+                            maxLength={docTipoOverride === "6" ? 11 : 8}
+                            value={docNumOverride}
+                            onChange={(e) => setDocNumOverride(e.target.value.replace(/\D/g, ""))}
+                            placeholder={docTipoOverride === "6" ? "RUC 11 dígitos" : "DNI 8 dígitos"}
+                            className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-amber-500"
+                            required
+                          />
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Nombres o Razón Social
+                        </label>
+                        <input
+                          type="text"
+                          value={razonSocialOverride}
+                          onChange={(e) => setRazonSocialOverride(e.target.value)}
+                          placeholder="Ej. Juan Pérez o Empresa SAC"
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-amber-500"
+                          required
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dirección y Distrito de Llegada */}
+                  <div className="p-4 bg-indigo-50/20 border border-indigo-100/30 rounded-xl space-y-3">
+                    <h4 className="text-[10px] font-bold text-indigo-950 flex items-center gap-1.5 uppercase tracking-wider">
+                      <FiMapPin className="text-indigo-600" size={13} />
+                      Punto de Llegada
+                    </h4>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                        Dirección
+                      </label>
+                      <input
+                        type="text"
+                        value={direccionLlegada}
+                        onChange={(e) => setDireccionLlegada(e.target.value)}
+                        placeholder="Dirección del receptor"
+                        className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                        Distrito
+                      </label>
+                      <select
+                        value={distritoLlegada}
+                        onChange={(e) => setDistritoLlegada(e.target.value)}
+                        className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                      >
+                        <option value="">-- Distrito --</option>
+                        {DISTRITOS_LIMA.map((dist) => (
+                          <option key={dist} value={dist}>
+                            {dist}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Detalles del Traslado (Carga, Motivo) */}
+                  <div className="p-4 bg-gray-50/40 border border-gray-100/50 rounded-xl space-y-3">
+                    <h4 className="text-[10px] font-bold text-gray-800 flex items-center gap-1.5 uppercase tracking-wider">
+                      <FiPackage className="text-gray-500" size={13} />
+                      Detalles del Envío
+                    </h4>
+                    
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Fecha Traslado
+                        </label>
+                        <input
+                          type="date"
+                          value={fechaInicioTraslado}
+                          onChange={(e) => setFechaInicioTraslado(e.target.value)}
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2 py-1.2 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Motivo Traslado
+                        </label>
+                        <select
+                          value={motivoTraslado}
+                          onChange={(e) => setMotivoTraslado(e.target.value)}
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                        >
+                          <option value="01">Venta</option>
+                          <option value="14">Sujeto a conf.</option>
+                          <option value="02">Compra</option>
+                          <option value="04">Mismo estab.</option>
+                          <option value="13">Otros</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Total Bultos
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={totalBultos}
+                          onChange={(e) => setTotalBultos(parseInt(e.target.value) || 1)}
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.2 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Peso Bruto (KGM)
+                        </label>
+                        <input
+                          type="number"
+                          min={0.01}
+                          step={0.01}
+                          value={pesoBrutoTotal}
+                          onChange={(e) => setPesoBrutoTotal(e.target.value)}
+                          placeholder="Auto-calcular"
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.2 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* COLUMNA DERECHA: REPARTIDOR Y VEHÍCULO */}
+                <div className="space-y-4">
+                  <div className="p-4 bg-indigo-50/20 border border-indigo-100/30 rounded-xl space-y-3.5">
+                    <h4 className="text-[10px] font-bold text-indigo-950 flex items-center gap-1.5 uppercase tracking-wider">
+                      <FiUser className="text-indigo-600" size={13} />
+                      Conductor y Transporte
+                    </h4>
+                    
+                    {/* Checkbox Indicador M1/L */}
+                    <label className="flex items-center gap-2 pb-2 border-b border-indigo-100/50 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={indicadorM1L}
+                        onChange={(e) => setIndicadorM1L(e.target.checked)}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 border-slate-300"
+                      />
+                      <span className="text-[10px] font-bold text-indigo-950 uppercase tracking-wide">
+                        Vehículo categoría M1 o L (Moto / Auto Ligero)
+                      </span>
+                    </label>
+                    
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1.5">
+                        Seleccionar Repartidor
+                      </label>
+                      <select
+                        value={repartidorId}
+                        onChange={(e) => handleRepartidorChange(e.target.value)}
+                        className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500 focus:border-indigo-500"
+                      >
+                        <option value="">-- Seleccionar Motorizado --</option>
+                        {repartidores.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Nombres
+                        </label>
+                        <input
+                          type="text"
+                          value={choferNombres}
+                          onChange={(e) => setChoferNombres(e.target.value)}
+                          placeholder="Nombres chofer"
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Apellidos
+                        </label>
+                        <input
+                          type="text"
+                          value={choferApellidos}
+                          onChange={(e) => setChoferApellidos(e.target.value)}
+                          placeholder="Apellidos chofer"
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          DNI Conductor
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={15}
+                          value={choferDni}
+                          onChange={(e) => setChoferDni(e.target.value)}
+                          placeholder="DNI del chofer"
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                          Licencia {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
+                        </label>
+                        <input
+                          type="text"
+                          maxLength={30}
+                          value={choferLicencia}
+                          onChange={(e) => setChoferLicencia(e.target.value)}
+                          placeholder={indicadorM1L ? "No requerida" : "Licencia del chofer"}
+                          className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                          required={!indicadorM1L}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 mb-1">
+                        Placa del Vehículo
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={15}
+                        value={vehiculoPlaca}
+                        onChange={(e) => setVehiculoPlaca(e.target.value)}
+                        placeholder="Ej. C1A-098"
+                        className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                        required
+                      />
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Botones */}
+              <div className="pt-4 border-t border-gray-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={loading}
+                  className="px-4 py-2 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 text-xs font-semibold rounded-xl transition disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-xl shadow-sm hover:shadow active:scale-95 transition flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {loading ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Emitiendo...
+                    </>
+                  ) : (
+                    <>
+                      <FiTruck size={13} />
+                      Emitir Guía
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+        </form>
+      )}
+    </div>
+  );
+}

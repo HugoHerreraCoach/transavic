@@ -141,7 +141,7 @@ export async function descomprimirCDR(zipBase64: string): Promise<string> {
 /**
  * Parsea la respuesta CDR de SUNAT para extraer código y descripción
  */
-function parsearRespuestaCDR(cdrXml: string): {
+export function parsearRespuestaCDR(cdrXml: string): {
   codigo: string;
   descripcion: string;
   observaciones: string[];
@@ -399,8 +399,9 @@ export async function enviarComprobante(
 
     const envelope = buildSendBillEnvelope(`${nombreArchivo}.zip`, zipBase64, config);
 
+    const endpointUrl = tipoDoc === "09" ? config.endpoints.guia : config.endpoints.factura;
     const responseXml = await soapRequest(
-      config.endpoints.factura,
+      endpointUrl,
       "urn:sendBill",
       envelope,
       config

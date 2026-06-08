@@ -4,7 +4,7 @@
 // cuándo, y qué campo cambió (antes → después).
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { FiX, FiClock, FiArrowRight } from 'react-icons/fi';
 
 interface CambioCampo {
@@ -54,6 +54,7 @@ export default function HistorialPedidoModal({ pedidoId, pedidoCliente, isOpen, 
   const [ediciones, setEdiciones] = useState<Edicion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
+  const isMouseDownInside = useRef(true);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -86,7 +87,19 @@ export default function HistorialPedidoModal({ pedidoId, pedidoCliente, isOpen, 
   return (
     <div
       className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 anim-fade"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto anim-modal"

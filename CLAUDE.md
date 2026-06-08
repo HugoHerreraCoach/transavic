@@ -2,7 +2,7 @@
 
 Contexto del proyecto para agentes de IA. Léeme **antes** de tocar código.
 
-> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (5 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y".
+> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (6 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y".
 
 ---
 
@@ -98,7 +98,7 @@ Definidas en `.env` (no comiteado). Las críticas:
 
 `ADMIN_USER`/`ADMIN_PASSWORD` están en `.env` pero **no se usan en código activo** (legacy del scaffolding inicial). La auth real lee de la tabla `users`.
 
-**`.env.local` (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Sigue en `SUNAT_ENVIRONMENT=beta` (con `MODDATOS`) para testing local.
+**`.env.local` (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Para pruebas en local contra SUNAT Beta usando firmas reales: fijar `SUNAT_ENVIRONMENT="beta"`, dejar `SUNAT_TRA_SOL_USER=""` y `SUNAT_AVI_SOL_USER=""` (para usar la credencial `"MODDATOS"/"moddatos"` de prueba de la SUNAT), y mantener los certificados y contraseñas reales en `SUNAT_*_CERT_B64` y `SUNAT_*_CERT_PASS`. Para regresar a producción, volver a configurar `SUNAT_ENVIRONMENT="production"` y restaurar los usuarios SOL reales (ej. `"APIFACTU"`).
 
 **Producción (Vercel) ya tiene TODAS estas vars configuradas (30 may 2026):** las 24 del lanzamiento — todas las `SUNAT_*` reales (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET` — además de las que ya existían (DB, Auth, Maps). Se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
 
@@ -706,13 +706,14 @@ Idempotente (`CREATE OR REPLACE VIEW`), sin riesgo para datos existentes.
 
 Antes de empezar cualquier tarea:
 
-0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 5 documentos temáticos tienen verificación contra código real.
+0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 6 documentos temáticos tienen verificación contra código real.
 1. **Si vas a modificar el flujo de estados del pedido**, lee `§8` de este archivo + `docs/arquitectura/04-flujos-de-negocio.md` § 3 (máquina de estados completa con diagrama Mermaid).
 2. **Si vas a agregar una nueva tabla o columna**, crea un nuevo `scripts/migrate-<feature>.mjs` siguiendo el patrón. NO modifiques migraciones existentes ni el `seed.mjs`.
 3. **Si vas a agregar una nueva API**, valida con zod, chequea sesión, scopea por rol, devuelve errores con status correcto. Usa `lib/data.ts:fetchFilteredPedidos` como referencia de cómo se filtra por rol.
 4. **Si vas a tocar la pantalla del repartidor (`mi-ruta-content.tsx`)**, recuerda que toda acción debe pasar por `offline-queue` para que funcione sin internet. No llames `fetch` directo desde un botón.
 5. **Si vas a integrar un servicio externo nuevo**, usa env vars (no hardcodes), y prefiere planes gratuitos para no generar costos a Antonio (ver propuesta: "se mantienen costos al mínimo").
 6. **Cuando completes algo**, ofrece actualizar este CLAUDE.md con cualquier decisión nueva o gotcha que haya surgido. Mantenerlo vivo es lo que lo hace útil.
+7. **Si vas a trabajar con la emisión de Guías de Remisión Electrónicas (GRE 2.0 REST)**, lee primero `docs/arquitectura/06-guias-remision-rest.md` para entender el flujo, los errores comunes de SUNAT ya resueltos y los pendientes de integración.
 
 **Idioma**: responde en español al usuario, escribe código y comentarios en español. El dueño Antonio NO es técnico — si necesitas explicarle algo, usa lenguaje sencillo y enfoque en beneficios (no detalles técnicos).
 

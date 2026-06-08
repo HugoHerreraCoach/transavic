@@ -1,7 +1,7 @@
 // src/app/dashboard/comprobantes/comprobantes-client.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -30,7 +30,14 @@ import {
   FiAlertCircle,
   FiDollarSign,
   FiInfo,
+  FiTruck,
+  FiExternalLink,
 } from "react-icons/fi";
+import ModalShell from "@/components/ModalShell";
+import EmitirGuiaModal, { ComprobanteInfo } from "../guias/emitir-guia-modal";
+import EmitirGuiaDirectaModal from "../guias/emitir-guia-directa-modal";
+import { Pedido } from "@/lib/types";
+
 
 interface Comprobante {
   id: string;
@@ -53,7 +60,13 @@ interface Comprobante {
   referencia_comprobante_id: string | null;
   referencia_serie_numero: string | null;
   referencia_tipo: string | null;
+  referencia_cliente_razon_social: string | null;
+  referencia_monto_total: string | number | null;
   tiene_nc: boolean;
+  // Campos extra para Guías de Remisión (tipo='09'). Null en CPEs.
+  peso_bruto_total: string | number | null;
+  total_bultos: number | null;
+  guia_serie_numero: string | null;
 }
 
 interface ComprobanteDetalle {
@@ -155,7 +168,9 @@ function tipoLabel(tipo: string): string {
       ? "Boleta"
       : tipo === "07"
         ? "Nota Crédito"
-        : tipo;
+        : tipo === "09"
+          ? "Guía Remisión"
+          : tipo;
 }
 
 // Chip de TIPO (hermano de estadoUI): color + ícono propios para distinguir de un
@@ -177,6 +192,8 @@ function tipoUI(tipo: string): {
       return { bg: "bg-slate-100", text: "text-slate-700", label: "Boleta", Icon: FiFile };
     case "07":
       return { bg: "bg-orange-50", text: "text-orange-700", label: "N. Crédito", Icon: FiCornerUpLeft };
+    case "09":
+      return { bg: "bg-amber-50", text: "text-amber-700", label: "Guía Rem.", Icon: FiTruck };
     default:
       return { bg: "bg-gray-100", text: "text-gray-700", label: tipoLabel(tipo), Icon: FiFileText };
   }
@@ -495,6 +512,7 @@ function ModalNotaCredito({
   const [tipoNC, setTipoNC] = useState("01");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
 
   const motivosNC = [
     { v: "01", label: "Anulación de la operación" },
@@ -536,7 +554,19 @@ function ModalNotaCredito({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -634,6 +664,7 @@ function ModalAsignarAsesora({
   );
   const [asesorId, setAsesorId] = useState<string>(actual?.id ?? "");
   const [guardando, setGuardando] = useState(false);
+  const isMouseDownInside = useRef(true);
   const [error, setError] = useState<string | null>(null);
 
   async function guardar() {
@@ -666,7 +697,19 @@ function ModalAsignarAsesora({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -761,6 +804,7 @@ function ModalVincularPedido({
   const [buscando, setBuscando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
 
   // Búsqueda de pedidos con debounce, reutilizando /api/buscar (scope por rol).
   useEffect(() => {
@@ -814,7 +858,19 @@ function ModalVincularPedido({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]"
@@ -921,6 +977,242 @@ function ModalVincularPedido({
 }
 
 // ──────────────────────────────────────────────────────────
+// Modal: Vincular Guía de Remisión a un comprobante (Factura/Boleta/NC)
+// ──────────────────────────────────────────────────────────
+interface ComprobanteBuscado {
+  id: string;
+  serie_numero: string;
+  tipo: string;
+  empresa: string;
+  estado: string;
+  monto_total: string | number;
+  cliente_razon_social: string;
+  cliente_doc_num: string;
+}
+
+function ModalVincularComprobante({
+  guia,
+  onClose,
+  onGuardado,
+}: {
+  guia: {
+    id: string;
+    serie_numero: string;
+    empresa: string;
+    referencia_comprobante_id: string | null;
+    referencia_serie_numero: string | null;
+    referencia_tipo: string | null;
+    referencia_cliente_razon_social: string | null;
+    referencia_monto_total: string | number | null;
+  };
+  onClose: () => void;
+  onGuardado: (
+    comprobanteId: string | null,
+    serieNumero: string | null,
+    tipo: string | null,
+    clienteRazonSocial: string | null,
+    montoTotal: string | number | null,
+    msg: string
+  ) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [resultados, setResultados] = useState<ComprobanteBuscado[]>([]);
+  const [buscando, setBuscando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) {
+      setResultados([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setBuscando(true);
+      try {
+        const res = await fetch(`/api/buscar?q=${encodeURIComponent(term)}`);
+        const j = await res.json().catch(() => ({}));
+        // Filtrar solo los comprobantes que sean de la misma empresa y no guías
+        const filtered = (Array.isArray(j.comprobantes) ? j.comprobantes : [])
+          .filter((c: ComprobanteBuscado) => c.empresa === guia.empresa && c.tipo !== "09");
+        setResultados(filtered);
+      } catch {
+        setResultados([]);
+      } finally {
+        setBuscando(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q, guia.empresa]);
+
+  async function vincular(
+    comprobanteId: string | null,
+    cpe: ComprobanteBuscado | null
+  ) {
+    setGuardando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/guias/${guia.id}/comprobante`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ comprobanteId }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(typeof j.error === "string" ? j.error : "No se pudo guardar.");
+      } else {
+        onGuardado(
+          comprobanteId,
+          cpe ? cpe.serie_numero : null,
+          cpe ? cpe.tipo : null,
+          cpe ? cpe.cliente_razon_social : null,
+          cpe ? cpe.monto_total : null,
+          comprobanteId
+            ? `Guía vinculada al comprobante ${cpe?.serie_numero}`
+            : "Guía desvinculada del comprobante"
+        );
+        onClose();
+      }
+    } catch {
+      setError("Error de conexión al guardar.");
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[85vh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <FiLink className="text-indigo-600" />
+            Vincular a comprobante
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+            <FiX className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <p className="text-sm text-gray-500">
+            Conecta la guía de remisión{" "}
+            <strong className="font-mono">{guia.serie_numero}</strong> con una factura, boleta o nota de crédito de{" "}
+            <strong className="text-indigo-700">{empresaLabel(guia.empresa)}</strong>.
+          </p>
+
+          {guia.referencia_comprobante_id && (
+            <div className="flex flex-col gap-1.5 p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-indigo-900 font-mono">
+                  {tipoLabel(guia.referencia_tipo ?? "01")} {guia.referencia_serie_numero}
+                </span>
+                <button
+                  onClick={() => vincular(null, null)}
+                  disabled={guardando}
+                  className="text-xs font-semibold text-red-600 hover:text-red-800 disabled:opacity-50 transition-colors"
+                >
+                  Desvincular
+                </button>
+              </div>
+              {(guia.referencia_cliente_razon_social || guia.referencia_monto_total != null) && (
+                <div className="text-xs text-indigo-950 space-y-0.5">
+                  {guia.referencia_cliente_razon_social && (
+                    <div className="font-medium truncate">{guia.referencia_cliente_razon_social}</div>
+                  )}
+                  {guia.referencia_monto_total != null && (
+                    <div className="font-mono text-indigo-700">Monto: S/ {Number(guia.referencia_monto_total).toFixed(2)}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+              Buscar comprobante (N° o cliente)
+            </label>
+            <div className="relative">
+              <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                autoFocus
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Ej. F001-0002 o Nombre del cliente…"
+                className="w-full pl-9 pr-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+
+          <div className="min-h-[3rem]">
+            {buscando && (
+              <p className="text-sm text-gray-400 flex items-center gap-2 py-2">
+                <FiRefreshCw className="h-4 w-4 animate-spin" /> Buscando…
+              </p>
+            )}
+            {!buscando && q.trim().length >= 2 && resultados.length === 0 && (
+              <p className="text-sm text-gray-400 py-2">No se encontraron comprobantes de esta empresa.</p>
+            )}
+            <div className="divide-y divide-gray-100">
+              {resultados.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => vincular(c.id, c)}
+                  disabled={guardando || c.id === guia.referencia_comprobante_id}
+                  className="w-full text-left py-2.5 px-1 hover:bg-gray-50 disabled:opacity-40 flex items-start gap-2"
+                >
+                  <FiFileText className="h-4 w-4 text-gray-400 mt-0.5 flex-shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-gray-800 truncate">
+                      {c.serie_numero} · {c.cliente_razon_social || "Sin nombre"}
+                      {c.id === guia.referencia_comprobante_id && (
+                        <span className="ml-2 text-[11px] text-indigo-600">(ya vinculada)</span>
+                      )}
+                    </span>
+                    <span className="block text-[11px] text-gray-400 truncate">
+                      {tipoLabel(c.tipo)} · {c.estado} · S/ {c.monto_total}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
 // Modal: Comunicación de Baja (RA-) — anula una factura aceptada (≤7 días)
 // ──────────────────────────────────────────────────────────
 
@@ -941,6 +1233,7 @@ function ModalComunicacionBaja({
   );
   const [consultando, setConsultando] = useState(false);
   const [consulta, setConsulta] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
 
   const empresa = empresaApiId(comprobante.empresa);
 
@@ -1000,7 +1293,19 @@ function ModalComunicacionBaja({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -1100,6 +1405,202 @@ function ModalComunicacionBaja({
 }
 
 // ──────────────────────────────────────────────────────────
+// Modal: Dar de Baja Guía de Remisión (GRE)
+// ──────────────────────────────────────────────────────────
+
+function ModalBajaGuia({
+  comprobante,
+  onClose,
+  onResuelto,
+}: {
+  comprobante: { id: string; serie_numero: string; empresa: string };
+  onClose: () => void;
+  onResuelto: (msg: string) => void;
+}) {
+  const [motivo, setMotivo] = useState("");
+  const [tipoBaja, setTipoBaja] = useState("1"); // 1: Antes del traslado, 2: Durante el traslado por cambio de destinatario
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
+
+  // Formatear la serie y número
+  const parts = comprobante.serie_numero.split("-");
+  const serie = parts[0] || "T001";
+  const numero = parts[1] ? parseInt(parts[1], 10).toString() : "0";
+
+  async function enviar() {
+    if (motivo.trim().length < 10) {
+      setError("El motivo debe tener al menos 10 caracteres.");
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    try {
+      const labelTipoBaja = tipoBaja === "1" ? "Antes de iniciar el traslado" : "Durante el traslado, por cambio de destinatario";
+      const res = await fetch(`/api/guias/${comprobante.id}/anular`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: motivo.trim(), tipo_baja: labelTipoBaja }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setError(typeof j.error === "string" ? j.error : "No se pudo anular la guía localmente.");
+      } else {
+        onResuelto(`Guía ${comprobante.serie_numero} anulada localmente con éxito.`);
+        onClose();
+      }
+    } catch {
+      setError("Error de conexión al anular la guía.");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 overflow-y-auto"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden my-8"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Cabecera */}
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-slate-50">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2">
+            <FiSlash className="text-red-600" />
+            Dar de Baja — Guía de Remisión
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+            <FiX className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          {/* Alerta Importante de SUNAT */}
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-2.5 text-amber-850 text-xs">
+            <FiInfo className="h-4 w-4 text-amber-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-bold">Acción manual requerida en SUNAT SOL</p>
+              <p className="mt-0.5 text-amber-750 leading-relaxed">
+                SUNAT no permite anular guías de remisión mediante API (sistema externo). 
+                Debes ingresar a tu portal SOL y realizar la baja manualmente.
+              </p>
+            </div>
+          </div>
+
+          {/* Pasos para dar de baja */}
+          <div className="space-y-2.5">
+            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Pasos para realizar la baja:</h4>
+            <ol className="text-xs text-gray-600 space-y-2 list-decimal list-inside pl-1">
+              <li className="leading-relaxed">
+                Ingresa al portal <a href="https://www.sunat.gob.pe/sol.html" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline inline-flex items-center gap-0.5 font-semibold">SUNAT SOL <FiExternalLink className="h-3 w-3" /></a> con tu RUC y Clave SOL.
+              </li>
+              <li className="leading-relaxed">
+                Navega a: <strong className="text-gray-700">Empresas &gt; Guías de Remisión Electrónica &gt; Guía de Remisión Electrónica &gt; Baja de GRE</strong>.
+              </li>
+              <li className="leading-relaxed">
+                Completa los datos de la guía que se muestran abajo y haz clic en <strong className="text-gray-700">Siguiente &gt; Dar de baja</strong>:
+              </li>
+            </ol>
+
+            {/* Datos precargados para SUNAT */}
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs grid grid-cols-2 gap-3 mt-2">
+              <div>
+                <span className="block text-gray-400 font-medium uppercase text-[10px]">Tipo de GRE</span>
+                <span className="font-bold text-gray-800">GRE - Remitente</span>
+              </div>
+              <div>
+                <span className="block text-gray-400 font-medium uppercase text-[10px]">Empresa (Emisor)</span>
+                <span className="font-bold text-gray-800">{comprobante.empresa}</span>
+              </div>
+              <div>
+                <span className="block text-gray-400 font-medium uppercase text-[10px]">Serie de la GRE</span>
+                <span className="font-mono font-bold text-gray-850 bg-white border border-gray-200 px-1.5 py-0.5 rounded shadow-sm inline-block">{serie}</span>
+              </div>
+              <div>
+                <span className="block text-gray-400 font-medium uppercase text-[10px]">Número de la GRE</span>
+                <span className="font-mono font-bold text-gray-850 bg-white border border-gray-200 px-1.5 py-0.5 rounded shadow-sm inline-block">{numero}</span>
+              </div>
+            </div>
+          </div>
+
+          <hr className="border-gray-100" />
+
+          {/* Formulario Local */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-gray-700 uppercase tracking-wider">Registrar baja en nuestro sistema:</h4>
+            
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+                Tipo de baja (SUNAT)
+              </label>
+              <select
+                value={tipoBaja}
+                onChange={(e) => setTipoBaja(e.target.value)}
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-800 focus:ring-2 focus:ring-red-500"
+              >
+                <option value="1">Antes de iniciar el traslado</option>
+                <option value="2">Durante el traslado, por cambio de destinatario</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
+                Motivo de la baja (Mín. 10 caracteres)
+              </label>
+              <textarea
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={3}
+                maxLength={250}
+                placeholder="Ej. Cambio en la fecha de despacho del pedido o error en los productos"
+                className="w-full p-2.5 border border-gray-300 rounded-lg text-sm text-gray-800 placeholder-gray-400 focus:ring-2 focus:ring-red-500"
+              />
+            </div>
+
+            {error && <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-2">{error}</p>}
+          </div>
+        </div>
+
+        <div className="px-5 py-4 border-t border-gray-100 flex gap-3 bg-slate-50">
+          <button
+            onClick={onClose}
+            className="flex-1 px-4 py-2.5 bg-white border border-gray-300 text-gray-755 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={enviar}
+            disabled={enviando || motivo.trim().length < 10}
+            className="flex-1 px-4 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors shadow-sm"
+          >
+            {enviando ? (
+              <FiRefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <FiSlash className="h-4 w-4" />
+            )}
+            Confirmar Baja Local
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────
 // Modal: Resumen Diario de Boletas (RC-)
 // ──────────────────────────────────────────────────────────
 
@@ -1125,6 +1626,7 @@ function ModalResumenDiario({
   } | null>(null);
   const [consultando, setConsultando] = useState(false);
   const [consulta, setConsulta] = useState<string | null>(null);
+  const isMouseDownInside = useRef(true);
   const [previos, setPrevios] = useState<
     Array<{
       id: string;
@@ -1263,7 +1765,19 @@ function ModalResumenDiario({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden"
@@ -1626,12 +2140,15 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   const [comprobantes, setComprobantes] = useState<Comprobante[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [filtroTipo, setFiltroTipo] = useState<string>("all");
   const [pagina, setPagina] = useState(1);
   // Si vinimos con ?pedido_id=… (link desde el badge "Facturado" de /dashboard),
   // filtramos los comprobantes de ese pedido y mostramos un banner para volver.
   const searchParams = useSearchParams();
   const pedidoIdFiltro = searchParams?.get("pedido_id") || null;
+  // Inicializar filtro de tipo desde query param ?tipo= (ej. cuando se viene
+  // desde /dashboard/guias redirect a /dashboard/comprobantes?tipo=09)
+  const tipoParam = searchParams?.get("tipo") || "all";
+  const [filtroTipo, setFiltroTipo] = useState<string>(tipoParam);
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("all");
   // Estado se filtra en cliente (tipo/empresa van al API); evita re-fetch.
   const [filtroEstado, setFiltroEstado] = useState<string>("all");
@@ -1642,8 +2159,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // Menú "⋯" de acciones por fila (posición fija para escapar del overflow de la tabla).
   const [menuAcciones, setMenuAcciones] = useState<{
     c: Comprobante;
-    top: number;
-    left: number;
+    triggerEl: HTMLElement;
   } | null>(null);
   const [modalEnviar, setModalEnviar] = useState<{
     id: string;
@@ -1651,6 +2167,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   } | null>(null);
   const [modalNC, setModalNC] = useState<{ id: string; serie_numero: string } | null>(null);
   const [modalBaja, setModalBaja] = useState<{
+    id: string;
+    serie_numero: string;
+    empresa: string;
+  } | null>(null);
+  const [modalBajaGuia, setModalBajaGuia] = useState<{
     id: string;
     serie_numero: string;
     empresa: string;
@@ -1671,6 +2192,17 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     pedidoId: string | null;
     pedidoCliente: string | null;
   } | null>(null);
+  // Vincular una guía de remisión a un comprobante (factura/boleta/NC).
+  const [modalVincularComprobante, setModalVincularComprobante] = useState<{
+    id: string;
+    serie_numero: string;
+    comprobanteId: string | null;
+    referenciaSerieNumero: string | null;
+    referenciaTipo: string | null;
+    referenciaClienteRazonSocial: string | null;
+    referenciaMontoTotal: string | number | null;
+  } | null>(null);
+  const [showEmitirGuiaDirecta, setShowEmitirGuiaDirecta] = useState(false);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
   const [modalExcel, setModalExcel] = useState(false);
@@ -1706,6 +2238,10 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     diasDesde(c.created_at) <= 7;
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; msg: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [modalEmitirGuiaCpe, setModalEmitirGuiaCpe] = useState<{ pedido?: Pedido | null; comprobante?: ComprobanteInfo | null } | null>(null);
+  const [cargandoPedidoId, setCargandoPedidoId] = useState<string | null>(null);
+  const [cargandoComprobanteId, setCargandoComprobanteId] = useState<string | null>(null);
+
 
   const fetchData = async () => {
     setRefreshing(true);
@@ -1748,6 +2284,36 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     return () => clearTimeout(t);
   }, [toast]);
 
+  // Recalcular posición del menú de acciones al hacer scroll o resize en lugar de cerrarlo
+  const [scrollTrigger, setScrollTrigger] = useState(0);
+  useEffect(() => {
+    if (!menuAcciones) return;
+    const handleUpdate = () => setScrollTrigger((prev) => prev + 1);
+    window.addEventListener("scroll", handleUpdate, true);
+    window.addEventListener("resize", handleUpdate, true);
+    return () => {
+      window.removeEventListener("scroll", handleUpdate, true);
+      window.removeEventListener("resize", handleUpdate, true);
+    };
+  }, [menuAcciones]);
+
+  // Cerrar el menú de acciones si el usuario hace clic afuera del menú
+  useEffect(() => {
+    if (!menuAcciones) return;
+    const clickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest(".menu-acciones-dropdown") ||
+        target.closest(".btn-trigger-acciones")
+      ) {
+        return;
+      }
+      setMenuAcciones(null);
+    };
+    document.addEventListener("mousedown", clickOutside);
+    return () => document.removeEventListener("mousedown", clickOutside);
+  }, [menuAcciones]);
+
   // Cargar la lista de asesoras una sola vez (solo admin) para el modal "Cambiar
   // asesora". /api/users?role=asesor devuelve un array plano [{id, name}].
   useEffect(() => {
@@ -1776,7 +2342,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   const descargarXML = async (c: Comprobante) => {
     setAccionEnProgreso(c.id + "-xml");
     try {
-      const res = await fetch(`/api/comprobantes/${c.id}/xml`);
+      // Guías usan endpoint distinto (/api/guias/:id/xml)
+      const endpoint = c.tipo === "09"
+        ? `/api/guias/${c.id}/xml`
+        : `/api/comprobantes/${c.id}/xml`;
+      const res = await fetch(endpoint);
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `HTTP ${res.status}`);
@@ -1795,7 +2365,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   const descargarCDR = async (c: Comprobante) => {
     setAccionEnProgreso(c.id + "-cdr");
     try {
-      const res = await fetch(`/api/comprobantes/${c.id}/cdr`);
+      // Guías usan endpoint distinto (/api/guias/:id/cdr)
+      const endpoint = c.tipo === "09"
+        ? `/api/guias/${c.id}/cdr`
+        : `/api/comprobantes/${c.id}/cdr`;
+      const res = await fetch(endpoint);
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `HTTP ${res.status}`);
@@ -1899,33 +2473,49 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // Abre el menú "⋯" anclado al botón (posición FIJA para que no lo recorte el
   // overflow-x de la tabla). Toggle: si ya estaba abierto en esa fila, lo cierra.
   const abrirMenuAcciones = (e: React.MouseEvent, c: Comprobante) => {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setMenuAcciones((m) =>
-      m?.c.id === c.id ? null : { c, top: r.bottom + 6, left: Math.max(8, r.right - 224) }
-    );
+    const triggerEl = e.currentTarget as HTMLElement;
+    setMenuAcciones((m) => {
+      if (m?.c.id === c.id) return null;
+      return { c, triggerEl };
+    });
   };
 
-  // Celda de acciones (desktop + móvil): acción primaria PDF visible + menú "⋯"
-  // con el resto. Evita la fila "abultada" de muchos botones.
+  // Celda de acciones (desktop + móvil): acción primaria PDF/Imprimir visible + menú "⋯"
+  // con el resto. Las guías (tipo='09') muestran "Imprimir" en lugar de "PDF".
   const celdaAcciones = (c: Comprobante) => {
     const isLoadingPdf = accionEnProgreso === c.id + "-pdf";
     const abierto = menuAcciones?.c.id === c.id;
+    const esGuia = c.tipo === "09";
+
     return (
       <div className="flex items-center justify-end gap-1">
-        <button
-          onClick={() => descargarPDF(c)}
-          disabled={isLoadingPdf}
-          title="Descargar PDF (representación impresa)"
-          className="px-2.5 py-1.5 text-xs font-medium bg-red-50 text-red-700 hover:bg-red-100 rounded-md flex items-center gap-1 disabled:opacity-50"
-        >
-          {isLoadingPdf ? <FiRefreshCw className="h-3.5 w-3.5 animate-spin" /> : <FiDownload className="h-3.5 w-3.5" />}
-          PDF
-        </button>
+        {esGuia ? (
+          <a
+            href={`/pedidos/${c.pedido_id ?? c.id}/gre?print=true`}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Descargar PDF de la Guía de Remisión"
+            className="px-2.5 py-1.5 text-xs font-medium bg-red-50 text-red-700 hover:bg-red-100 rounded-md flex items-center gap-1"
+          >
+            <FiDownload className="h-3.5 w-3.5" />
+            PDF
+          </a>
+        ) : (
+          <button
+            onClick={() => descargarPDF(c)}
+            disabled={isLoadingPdf}
+            title="Descargar PDF (representación impresa)"
+            className="px-2.5 py-1.5 text-xs font-medium bg-red-50 text-red-700 hover:bg-red-100 rounded-md flex items-center gap-1 disabled:opacity-50"
+          >
+            {isLoadingPdf ? <FiRefreshCw className="h-3.5 w-3.5 animate-spin" /> : <FiDownload className="h-3.5 w-3.5" />}
+            PDF
+          </button>
+        )}
         <button
           onClick={(e) => abrirMenuAcciones(e, c)}
-          title="Más acciones (XML, CDR, correo, nota de crédito, anular…)"
+          title={esGuia ? "Más acciones (XML, CDR)" : "Más acciones (XML, CDR, correo, nota de crédito, anular…)"}
           aria-label="Más acciones"
-          className={`p-1.5 rounded-md border ${
+          className={`p-1.5 rounded-md border btn-trigger-acciones ${
             abierto
               ? "bg-gray-100 border-gray-300 text-gray-700"
               : "border-gray-200 text-gray-500 hover:bg-gray-100"
@@ -1954,19 +2544,28 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         <div>
           <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
             <FiFileText className="text-red-600" />
-            Comprobantes
+            Comprobantes SUNAT
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Facturas, boletas y notas de crédito emitidas a SUNAT
+            Facturas, boletas, notas de crédito y guías de remisión emitidas a SUNAT
           </p>
         </div>
-        <Link
-          href="/dashboard/comprobantes/nuevo"
-          className="px-4 py-2.5 bg-red-600 text-white hover:bg-red-700 rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors"
-        >
-          <FiPlus />
-          Emitir comprobante
-        </Link>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            onClick={() => setShowEmitirGuiaDirecta(true)}
+            className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors cursor-pointer"
+          >
+            <FiTruck />
+            Emitir guía
+          </button>
+          <Link
+            href="/dashboard/comprobantes/nuevo"
+            className="px-4 py-2.5 bg-red-600 text-white hover:bg-red-700 rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors"
+          >
+            <FiPlus />
+            Emitir comprobante
+          </Link>
+        </div>
       </header>
 
       {/* ── KPIs: lo que la asesora necesita ver al abrir la pantalla.
@@ -2131,6 +2730,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             { v: "01", l: "Facturas", swatch: "bg-indigo-500" },
             { v: "03", l: "Boletas", swatch: "bg-slate-400" },
             { v: "07", l: "N. Crédito", swatch: "bg-orange-500" },
+            { v: "09", l: "Guías", swatch: "bg-amber-500" },
           ]}
         />
         <GrupoFiltro
@@ -2233,6 +2833,39 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     {c.cliente_doc_num}
                   </div>
                 )}
+                {c.tipo === "09" ? (
+                  c.referencia_serie_numero && (
+                    <div className="mt-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBusqueda(c.referencia_serie_numero ?? "");
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-dashed border-blue-300 hover:bg-blue-100 hover:border-blue-400 transition-colors cursor-pointer active:scale-95"
+                        title={`Buscar y ver comprobante ${c.referencia_serie_numero}`}
+                      >
+                        <FiLink size={10} className="flex-shrink-0" />
+                        Ver {tipoLabel(c.referencia_tipo ?? "")} {c.referencia_serie_numero}
+                      </button>
+                    </div>
+                  )
+                ) : (
+                  c.guia_serie_numero && (
+                    <div className="mt-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setBusqueda(c.guia_serie_numero ?? "");
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-dashed border-amber-300 hover:bg-amber-100 hover:border-amber-400 transition-colors cursor-pointer active:scale-95"
+                        title={`Buscar y ver guía ${c.guia_serie_numero}`}
+                      >
+                        <FiLink size={10} className="flex-shrink-0" />
+                        Ver Guía {c.guia_serie_numero}
+                      </button>
+                    </div>
+                  )
+                )}
                 {c.emitido_por && (
                   <div className="mt-1 inline-flex items-center gap-1 text-[11px] text-gray-500">
                     <FiUser size={11} className="text-gray-400 flex-shrink-0" />
@@ -2251,8 +2884,15 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     ⚠ {c.mensaje_sunat}
                   </div>
                 )}
-              <div className="text-right text-lg font-bold text-red-600 mb-3">
-                S/ {Number(c.monto_total).toFixed(2)}
+              <div className="text-right text-lg font-bold mb-3">
+                {c.tipo === "09" ? (
+                  <span className="text-amber-700 text-sm font-semibold">
+                    {c.peso_bruto_total != null ? `${Number(c.peso_bruto_total).toFixed(2)} kg` : "—"}
+                    {c.total_bultos != null ? ` / ${c.total_bultos} bulto${c.total_bultos === 1 ? "" : "s"}` : ""}
+                  </span>
+                ) : (
+                  <span className="text-red-600">S/ {Number(c.monto_total).toFixed(2)}</span>
+                )}
               </div>
               <div className="border-t pt-2">{celdaAcciones(c)}</div>
             </div>
@@ -2326,9 +2966,49 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                         {c.cliente_doc_num}
                       </div>
                     )}
+                    {c.tipo === "09" ? (
+                      c.referencia_serie_numero && (
+                        <div className="mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBusqueda(c.referencia_serie_numero ?? "");
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-dashed border-blue-300 hover:bg-blue-100 hover:border-blue-400 transition-colors cursor-pointer active:scale-95"
+                            title={`Buscar y ver comprobante ${c.referencia_serie_numero}`}
+                          >
+                            <FiLink size={10} className="flex-shrink-0" />
+                            Ver {tipoLabel(c.referencia_tipo ?? "")} {c.referencia_serie_numero}
+                          </button>
+                        </div>
+                      )
+                    ) : (
+                      c.guia_serie_numero && (
+                        <div className="mt-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setBusqueda(c.guia_serie_numero ?? "");
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-dashed border-amber-300 hover:bg-amber-100 hover:border-amber-400 transition-colors cursor-pointer active:scale-95"
+                            title={`Buscar y ver guía ${c.guia_serie_numero}`}
+                          >
+                            <FiLink size={10} className="flex-shrink-0" />
+                            Ver Guía {c.guia_serie_numero}
+                          </button>
+                        </div>
+                      )
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right font-mono font-semibold">
-                    S/ {Number(c.monto_total).toFixed(2)}
+                    {c.tipo === "09" ? (
+                      <span className="text-amber-700 text-xs font-semibold">
+                        {c.peso_bruto_total != null ? `${Number(c.peso_bruto_total).toFixed(2)} kg` : "—"}
+                        {c.total_bultos != null ? (<><br />{c.total_bultos} bulto{c.total_bultos === 1 ? "" : "s"}</>) : ""}
+                      </span>
+                    ) : (
+                      <>S/ {Number(c.monto_total).toFixed(2)}</>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-center">
                     {(() => {
@@ -2435,82 +3115,206 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
 
       {/* Menú "⋯" de acciones (posición FIJA, escapa del overflow-x de la tabla) */}
       {menuAcciones && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setMenuAcciones(null)} />
-          <div
-            className="fixed z-50 w-56 bg-white rounded-lg shadow-xl border border-gray-200 py-1"
-            style={{ top: menuAcciones.top, left: menuAcciones.left }}
-          >
+        <div
+          className="fixed z-50 w-60 bg-white rounded-xl shadow-xl border border-gray-200 py-1.5 flex flex-col text-left divide-y divide-gray-100 max-h-[80vh] overflow-y-auto menu-acciones-dropdown animate-fade-in"
+          style={(() => {
+            const r = menuAcciones.triggerEl.getBoundingClientRect();
+            const showAbove = r.bottom > window.innerHeight * 0.6;
+            const left = Math.max(8, r.right - 240);
+            if (showAbove) {
+              return {
+                bottom: `${window.innerHeight - r.top + 6}px`,
+                left: `${left}px`,
+              };
+            } else {
+              return {
+                top: `${r.bottom + 6}px`,
+                left: `${left}px`,
+              };
+            }
+          })()}
+        >
             {(() => {
               const c = menuAcciones.c;
+              const esGuia = c.tipo === "09";
               const tieneCdr = c.estado === "aceptado" || c.estado === "observado";
               const itemCls =
-                "w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left";
+                "w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left text-gray-700 transition-colors";
+              
+              const MenuHeader = ({ children }: { children: React.ReactNode }) => (
+                <div className="px-3 py-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider bg-gray-50/50 select-none">
+                  {children}
+                </div>
+              );
+
               return (
                 <>
-                  <button onClick={() => { setMenuAcciones(null); descargarXML(c); }} className={`${itemCls} text-gray-700`}>
-                    <FiCode className="h-4 w-4 text-blue-600 flex-shrink-0" /> Descargar XML
-                  </button>
-                  {tieneCdr && (
-                    <button onClick={() => { setMenuAcciones(null); descargarCDR(c); }} className={`${itemCls} text-gray-700`}>
-                      <FiCheckCircle className="h-4 w-4 text-teal-600 flex-shrink-0" /> Descargar CDR
+                  {/* SECCIÓN 1: DOCUMENTOS SUNAT */}
+                  <div className="py-1">
+                    <MenuHeader>Documentos SUNAT</MenuHeader>
+                    <button onClick={() => { setMenuAcciones(null); descargarXML(c); }} className={itemCls}>
+                      <FiCode className="h-4 w-4 text-blue-600 flex-shrink-0" /> Descargar XML
                     </button>
+                    {tieneCdr && (
+                      <button onClick={() => { setMenuAcciones(null); descargarCDR(c); }} className={itemCls}>
+                        <FiCheckCircle className="h-4 w-4 text-teal-600 flex-shrink-0" /> Descargar CDR
+                      </button>
+                    )}
+                  </div>
+
+                  {/* SECCIÓN 2: COMUNICACIÓN */}
+                  {!esGuia && (
+                    <div className="py-1">
+                      <MenuHeader>Comunicación</MenuHeader>
+                      <button onClick={() => { setMenuAcciones(null); setModalEnviar({ id: c.id, defaultEmail: "" }); }} className={itemCls}>
+                        <FiMail className="h-4 w-4 text-emerald-600 flex-shrink-0" /> Enviar por correo
+                      </button>
+                    </div>
                   )}
-                  <button onClick={() => { setMenuAcciones(null); setModalEnviar({ id: c.id, defaultEmail: "" }); }} className={`${itemCls} text-gray-700`}>
-                    <FiMail className="h-4 w-4 text-emerald-600 flex-shrink-0" /> Enviar por correo
-                  </button>
-                  {userRole === "admin" && (
-                    <button
-                      onClick={() => { setMenuAcciones(null); setModalAsesora({ id: c.id, serie_numero: c.serie_numero, emitidoPor: c.emitido_por }); }}
-                      className={`${itemCls} text-gray-700`}
-                    >
-                      <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
-                    </button>
+
+                  {/* SECCIÓN 3: EMISIONES RELACIONADAS */}
+                  {(!esGuia || puedeNotaCredito(c) || puedeAnular(c) || (esGuia && c.estado !== "anulado")) && (
+                    <div className="py-1">
+                      <MenuHeader>Emisiones Relacionadas</MenuHeader>
+                      {!esGuia && (
+                        <button
+                          onClick={async () => {
+                            setMenuAcciones(null);
+                            if (c.pedido_id) {
+                              setCargandoPedidoId(c.pedido_id);
+                              try {
+                                const res = await fetch(`/api/pedidos/${c.pedido_id}`);
+                                if (!res.ok) throw new Error("Error al obtener el pedido");
+                                const data = await res.json();
+                                if (data?.pedido) {
+                                  setModalEmitirGuiaCpe({ pedido: data.pedido });
+                                } else {
+                                  setToast({ tipo: "error", msg: "No se pudo cargar el pedido asociado." });
+                                }
+                              } catch (err) {
+                                setToast({ tipo: "error", msg: err instanceof Error ? err.message : "Error al cargar el pedido." });
+                              } finally {
+                                setCargandoPedidoId(null);
+                              }
+                            } else {
+                              setCargandoComprobanteId(c.id);
+                              try {
+                                const res = await fetch(`/api/comprobantes/${c.id}`);
+                                if (!res.ok) throw new Error("Error al obtener el comprobante");
+                                const data = await res.json();
+                                if (data) {
+                                  setModalEmitirGuiaCpe({ comprobante: data });
+                                } else {
+                                  setToast({ tipo: "error", msg: "No se pudo cargar el comprobante asociado." });
+                                }
+                              } catch (err) {
+                                setToast({ tipo: "error", msg: err instanceof Error ? err.message : "Error al cargar el comprobante." });
+                              } finally {
+                                setCargandoComprobanteId(null);
+                              }
+                            }
+                          }}
+                          disabled={!!(c.pedido_id && cargandoPedidoId === c.pedido_id) || cargandoComprobanteId === c.id}
+                          className={itemCls}
+                        >
+                          <FiTruck className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                          {(c.pedido_id && cargandoPedidoId === c.pedido_id) || cargandoComprobanteId === c.id
+                            ? "Cargando..."
+                            : "Emitir guía de remisión"}
+                        </button>
+                      )}
+                      {!esGuia && puedeNotaCredito(c) && (
+                        <button
+                          onClick={() => { setMenuAcciones(null); setModalNC({ id: c.id, serie_numero: c.serie_numero }); }}
+                          className="w-full px-3 py-2 text-sm flex items-start gap-2.5 hover:bg-orange-50 text-left text-gray-700 transition-colors"
+                        >
+                          <FiFileMinus className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <span className="block text-sm font-medium text-orange-700">Emitir nota de crédito</span>
+                            <span className="block text-[11px] text-gray-500 leading-tight">Devolución, descuento o corrección</span>
+                          </span>
+                        </button>
+                      )}
+                      {!esGuia && puedeAnular(c) && (
+                        <button
+                          onClick={() => { setMenuAcciones(null); setModalBaja({ id: c.id, serie_numero: c.serie_numero, empresa: c.empresa }); }}
+                          className="w-full px-3 py-2 text-sm flex items-start gap-2.5 hover:bg-red-50 text-left text-gray-700 transition-colors"
+                        >
+                          <FiSlash className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <span className="block text-sm font-medium text-red-700">Anular (baja SUNAT)</span>
+                            <span className="block text-[11px] text-gray-500 leading-tight">Solo dentro de 7 días</span>
+                          </span>
+                        </button>
+                      )}
+                      {esGuia && c.estado !== "anulado" && (
+                        <button
+                          onClick={() => {
+                            setMenuAcciones(null);
+                            setModalBajaGuia({ id: c.id, serie_numero: c.serie_numero, empresa: c.empresa });
+                          }}
+                          className="w-full px-3 py-2 text-sm flex items-start gap-2.5 hover:bg-red-50 text-left text-gray-700 transition-colors"
+                        >
+                          <FiSlash className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <span className="block text-sm font-medium text-red-700">Dar de Baja</span>
+                            <span className="block text-[11px] text-gray-500 leading-tight">Anular guía en portal SUNAT</span>
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   )}
-                  <button
-                    onClick={() => { setMenuAcciones(null); setModalVincular({ id: c.id, serie_numero: c.serie_numero, pedidoId: c.pedido_id, pedidoCliente: c.pedido_cliente }); }}
-                    className={`${itemCls} text-gray-700`}
-                  >
-                    <FiLink className="h-4 w-4 text-indigo-600 flex-shrink-0" />
-                    {c.pedido_id ? "Cambiar pedido vinculado" : "Vincular a pedido"}
-                  </button>
-                  {(puedeReintentar(c) || puedeNotaCredito(c) || puedeAnular(c)) && (
-                    <div className="my-1 border-t border-gray-100" />
-                  )}
-                  {puedeReintentar(c) && (
-                    <button onClick={() => { setMenuAcciones(null); reintentarEnvio(c); }} className={`${itemCls} text-indigo-700`}>
-                      <FiSend className="h-4 w-4 flex-shrink-0" /> Reintentar envío
-                    </button>
-                  )}
-                  {puedeNotaCredito(c) && (
-                    <button
-                      onClick={() => { setMenuAcciones(null); setModalNC({ id: c.id, serie_numero: c.serie_numero }); }}
-                      className="w-full px-3 py-2 flex items-start gap-2.5 hover:bg-orange-50 text-left"
-                    >
-                      <FiFileMinus className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
-                      <span>
-                        <span className="block text-sm font-medium text-orange-700">Emitir nota de crédito</span>
-                        <span className="block text-[11px] text-gray-500">Devolución, descuento o corrección · factura o boleta</span>
-                      </span>
-                    </button>
-                  )}
-                  {puedeAnular(c) && (
-                    <button
-                      onClick={() => { setMenuAcciones(null); setModalBaja({ id: c.id, serie_numero: c.serie_numero, empresa: c.empresa }); }}
-                      className="w-full px-3 py-2 flex items-start gap-2.5 hover:bg-red-50 text-left"
-                    >
-                      <FiSlash className="h-4 w-4 text-red-600 flex-shrink-0 mt-0.5" />
-                      <span>
-                        <span className="block text-sm font-medium text-red-700">Anular (comunicación de baja)</span>
-                        <span className="block text-[11px] text-gray-500">Elimina la factura ante SUNAT · solo dentro de 7 días</span>
-                      </span>
-                    </button>
-                  )}
+
+                  {/* SECCIÓN 4: GESTIÓN */}
+                  <div className="py-1">
+                    <MenuHeader>Gestión</MenuHeader>
+                    {!esGuia && (
+                      <button
+                        onClick={() => { setMenuAcciones(null); setModalVincular({ id: c.id, serie_numero: c.serie_numero, pedidoId: c.pedido_id, pedidoCliente: c.pedido_cliente }); }}
+                        className={itemCls}
+                      >
+                        <FiLink className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                        {c.pedido_id ? "Cambiar pedido vinculado" : "Vincular a pedido"}
+                      </button>
+                    )}
+                    {esGuia && (
+                      <button
+                        onClick={() => {
+                          setMenuAcciones(null);
+                          setModalVincularComprobante({
+                            id: c.id,
+                            serie_numero: c.serie_numero,
+                            comprobanteId: c.referencia_comprobante_id,
+                            referenciaSerieNumero: c.referencia_serie_numero,
+                            referenciaTipo: c.referencia_tipo,
+                            referenciaClienteRazonSocial: c.referencia_cliente_razon_social,
+                            referenciaMontoTotal: c.referencia_monto_total,
+                          });
+                        }}
+                        className={itemCls}
+                      >
+                        <FiLink className="h-4 w-4 text-indigo-600 flex-shrink-0" />
+                        {c.referencia_comprobante_id ? "Cambiar factura/boleta vinculada" : "Vincular a factura/boleta"}
+                      </button>
+                    )}
+                    {!esGuia && userRole === "admin" && (
+                      <button
+                        onClick={() => { setMenuAcciones(null); setModalAsesora({ id: c.id, serie_numero: c.serie_numero, emitidoPor: c.emitido_por }); }}
+                        className={itemCls}
+                      >
+                        <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
+                      </button>
+                    )}
+                    {!esGuia && puedeReintentar(c) && (
+                      <button onClick={() => { setMenuAcciones(null); reintentarEnvio(c); }} className={`${itemCls} text-indigo-700 font-medium`}>
+                        <FiSend className="h-4 w-4 flex-shrink-0" /> Reintentar envío
+                      </button>
+                    )}
+                  </div>
                 </>
               );
             })()}
-          </div>
-        </>
+        </div>
       )}
 
       {/* Modal de envío email */}
@@ -2567,10 +3371,67 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         />
       )}
 
+      {modalVincularComprobante && (
+        <ModalVincularComprobante
+          guia={{
+            id: modalVincularComprobante.id,
+            serie_numero: modalVincularComprobante.serie_numero,
+            empresa: comprobantes.find(x => x.id === modalVincularComprobante.id)?.empresa || "transavic",
+            referencia_comprobante_id: modalVincularComprobante.comprobanteId,
+            referencia_serie_numero: modalVincularComprobante.referenciaSerieNumero,
+            referencia_tipo: modalVincularComprobante.referenciaTipo,
+            referencia_cliente_razon_social: modalVincularComprobante.referenciaClienteRazonSocial,
+            referencia_monto_total: modalVincularComprobante.referenciaMontoTotal,
+          }}
+          onClose={() => setModalVincularComprobante(null)}
+          onGuardado={(comprobanteId, serieNumero, tipo, clienteRazonSocial, montoTotal, msg) => {
+            const gid = modalVincularComprobante.id;
+            setComprobantes((prev) =>
+              prev.map((c) =>
+                c.id === gid
+                  ? {
+                      ...c,
+                      referencia_comprobante_id: comprobanteId,
+                      referencia_serie_numero: serieNumero,
+                      referencia_tipo: tipo,
+                      referencia_cliente_razon_social: clienteRazonSocial,
+                      referencia_monto_total: montoTotal,
+                    }
+                  : c
+              )
+            );
+            setToast({ tipo: "ok", msg });
+            fetchData();
+          }}
+        />
+      )}
+
+      {showEmitirGuiaDirecta && (
+        <EmitirGuiaDirectaModal
+          onClose={() => setShowEmitirGuiaDirecta(false)}
+          onExito={(serieNumero) => {
+            setShowEmitirGuiaDirecta(false);
+            setToast({ tipo: "ok", msg: `Guía ${serieNumero} emitida con éxito.` });
+            fetchData();
+          }}
+        />
+      )}
+
       {modalBaja && (
         <ModalComunicacionBaja
           comprobante={modalBaja}
           onClose={() => setModalBaja(null)}
+          onResuelto={(msg) => {
+            setToast({ tipo: "ok", msg });
+            fetchData();
+          }}
+        />
+      )}
+
+      {modalBajaGuia && (
+        <ModalBajaGuia
+          comprobante={modalBajaGuia}
+          onClose={() => setModalBajaGuia(null)}
           onResuelto={(msg) => {
             setToast({ tipo: "ok", msg });
             fetchData();
@@ -2593,6 +3454,22 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
           onClose={() => setModalExcel(false)}
         />
       )}
+
+      {/* Modal de Emisión de Guía de Remisión */}
+      {modalEmitirGuiaCpe && (
+        <ModalShell onClose={() => setModalEmitirGuiaCpe(null)}>
+          <EmitirGuiaModal
+            pedido={modalEmitirGuiaCpe.pedido}
+            comprobante={modalEmitirGuiaCpe.comprobante}
+            onClose={() => setModalEmitirGuiaCpe(null)}
+            onExito={(serieNumero) => {
+              setToast({ tipo: "ok", msg: `Guía ${serieNumero} emitida exitosamente` });
+              fetchData();
+            }}
+          />
+        </ModalShell>
+      )}
+
 
       {/* Toast */}
       {toast && (

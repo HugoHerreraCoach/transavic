@@ -19,7 +19,7 @@ const SUNAT_ENDPOINTS = {
   },
   production: {
     factura: "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl",
-    guia: "https://e-factura.sunat.gob.pe/ol-ti-itemision-guia-gem/billService?wsdl",
+    guia: "https://e-guiaremision.sunat.gob.pe/ol-ti-itemision-guia-gem/billService?wsdl",
     consultaCdr: "https://e-factura.sunat.gob.pe/ol-it-wsconscpegem/billConsultService?wsdl",
   },
 } as const;
@@ -52,8 +52,8 @@ export const DATOS_EMISOR_MAP: Record<EmpresaId, DatosEmisor> = {
     codigoPais: "PE",
   },
   avicola: {
-    ruc: "20YYYYYYYYY",
-    razonSocial: "AVICOLA DE TONY SAC",
+    ruc: "10XXXXXXXXX",
+    razonSocial: "RESURRECCION GAMARRA TONIO",
     nombreComercial: "Avícola de Tony",
     direccion: "",
     ubigeo: "150115",
@@ -113,6 +113,8 @@ export interface SunatConfig {
   codigoPais: string;
   solUser: string;
   solPassword: string;
+  clientId: string;
+  clientSecret: string;
   certificatePath: string;
   certificatePassword: string;
   certificateBase64: string;
@@ -163,6 +165,9 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
   const solUser = process.env[`${prefix}_SOL_USER`] || (isBeta ? "MODDATOS" : "");
   const solPassword = process.env[`${prefix}_SOL_PASSWORD`] || (isBeta ? "moddatos" : "");
 
+  const clientId = process.env[`${prefix}_CLIENT_ID`] || "";
+  const clientSecret = process.env[`${prefix}_CLIENT_SECRET`] || "";
+
   if (!isBeta && (!solUser || !solPassword)) {
     throw new Error(
       `${prefix}_SOL_USER y ${prefix}_SOL_PASSWORD son obligatorios en producción para ${razonSocial}`
@@ -184,6 +189,8 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
     codigoPais: emisor.codigoPais,
     solUser,
     solPassword,
+    clientId,
+    clientSecret,
     certificatePath: "",
     certificatePassword: process.env[`${prefix}_CERT_PASS`] || "",
     certificateBase64: process.env[`${prefix}_CERT_B64`] || "",

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { User } from '@/lib/types';
 import { FiX, FiRefreshCw } from 'react-icons/fi';
 
@@ -19,16 +19,32 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
     const [name, setName] = useState('');
     const [password, setPassword] = useState('');
     const [role, setRole] = useState<'admin' | 'asesor' | 'repartidor' | 'produccion'>('asesor');
+    const [choferDni, setChoferDni] = useState('');
+    const [choferLicencia, setChoferLicencia] = useState('');
+    const [vehiculoPlaca, setVehiculoPlaca] = useState('');
+    const [choferNombres, setChoferNombres] = useState('');
+    const [choferApellidos, setChoferApellidos] = useState('');
+    const isMouseDownInside = useRef(true);
 
     useEffect(() => {
         if (userToEdit) {
             setName(userToEdit.name);
             setRole(userToEdit.role as 'asesor' | 'repartidor' | 'admin' | 'produccion');
             setPassword(''); // La contraseña siempre se limpia al editar
+            setChoferDni(userToEdit.chofer_dni || '');
+            setChoferLicencia(userToEdit.chofer_licencia || '');
+            setVehiculoPlaca(userToEdit.vehiculo_placa || '');
+            setChoferNombres(userToEdit.chofer_nombres || '');
+            setChoferApellidos(userToEdit.chofer_apellidos || '');
         } else {
             setName('');
             setPassword('');
             setRole('asesor');
+            setChoferDni('');
+            setChoferLicencia('');
+            setVehiculoPlaca('');
+            setChoferNombres('');
+            setChoferApellidos('');
         }
     }, [userToEdit, isOpen]);
 
@@ -38,6 +54,11 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             id: userToEdit?.id,
             name: name.trim(),
             role,
+            chofer_dni: role === 'repartidor' ? choferDni.trim() || null : null,
+            chofer_licencia: role === 'repartidor' ? choferLicencia.trim() || null : null,
+            vehiculo_placa: role === 'repartidor' ? vehiculoPlaca.trim() || null : null,
+            chofer_nombres: role === 'repartidor' ? choferNombres.trim() || null : null,
+            chofer_apellidos: role === 'repartidor' ? choferApellidos.trim() || null : null,
         };
         if (password) {
             userData.password = password;
@@ -50,13 +71,25 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
     return (
         <div
             className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 anim-fade"
-            onClick={onClose}
+            onMouseDown={(e) => {
+                if (e.target === e.currentTarget) {
+                    isMouseDownInside.current = false;
+                } else {
+                    isMouseDownInside.current = true;
+                }
+            }}
+            onClick={(e) => {
+                if (e.target === e.currentTarget && !isMouseDownInside.current) {
+                    onClose();
+                }
+                isMouseDownInside.current = true;
+            }}
         >
             <div
-                className="bg-white rounded-2xl shadow-xl w-full max-w-md anim-modal"
+                className="bg-white rounded-2xl shadow-xl w-full max-w-md anim-modal max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
+                <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 flex-shrink-0">
                     <h2 className="text-lg font-bold text-gray-800">
                         {userToEdit ? 'Editar usuario' : 'Nuevo usuario'}
                     </h2>
@@ -68,8 +101,8 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                         <FiX size={20} />
                     </button>
                 </div>
-                <form onSubmit={handleSubmit}>
-                    <div className="px-6 py-5 space-y-4">
+                <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+                    <div className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
                         <div>
                             <label htmlFor="name" className="block text-sm font-medium text-gray-700">
                                 Nombre
@@ -122,8 +155,86 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                 <option value="admin">Administrador (acceso total)</option>
                             </select>
                         </div>
+
+                        {role === 'repartidor' && (
+                            <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl space-y-3 mt-4">
+                                <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
+                                    Datos de Conductor (SUNAT)
+                                </h3>
+                                <div>
+                                    <label htmlFor="choferNombres" className="block text-xs font-medium text-gray-600">
+                                        Nombres del Conductor
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="choferNombres"
+                                        value={choferNombres}
+                                        onChange={(e) => setChoferNombres(e.target.value)}
+                                        placeholder="Ej. Juan Carlos"
+                                        className={INPUT_CLS}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="choferApellidos" className="block text-xs font-medium text-gray-600">
+                                        Apellidos del Conductor
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="choferApellidos"
+                                        value={choferApellidos}
+                                        onChange={(e) => setChoferApellidos(e.target.value)}
+                                        placeholder="Ej. Pérez Gómez"
+                                        className={INPUT_CLS}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="choferDni" className="block text-xs font-medium text-gray-600">
+                                        DNI del Conductor
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="choferDni"
+                                        value={choferDni}
+                                        onChange={(e) => setChoferDni(e.target.value)}
+                                        placeholder="Ej. 70443212"
+                                        className={INPUT_CLS}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="choferLicencia" className="block text-xs font-medium text-gray-600">
+                                        Licencia de Conducir
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="choferLicencia"
+                                        value={choferLicencia}
+                                        onChange={(e) => setChoferLicencia(e.target.value)}
+                                        placeholder="Ej. Q20384812"
+                                        className={INPUT_CLS}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="vehiculoPlaca" className="block text-xs font-medium text-gray-600">
+                                        Placa del Vehículo
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="vehiculoPlaca"
+                                        value={vehiculoPlaca}
+                                        onChange={(e) => setVehiculoPlaca(e.target.value)}
+                                        placeholder="Ej. C1A-098"
+                                        className={INPUT_CLS}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2">
+                    <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-2 flex-shrink-0">
                         <button
                             type="button"
                             onClick={onClose}

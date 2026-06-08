@@ -2,7 +2,7 @@
 
 Contexto del proyecto para agentes de IA. Léeme **antes** de tocar código.
 
-> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (5 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y".
+> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (6 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y".
 
 ---
 
@@ -646,13 +646,14 @@ Plan: `docs/superpowers/plans/2026-05-22-sistema-incentivos.md`. Motiva a las as
 
 Antes de empezar cualquier tarea:
 
-0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 5 documentos temáticos tienen verificación contra código real.
+0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 6 documentos temáticos tienen verificación contra código real.
 1. **Si vas a modificar el flujo de estados del pedido**, lee `§8` de este archivo + `docs/arquitectura/04-flujos-de-negocio.md` § 3 (máquina de estados completa con diagrama Mermaid).
 2. **Si vas a agregar una nueva tabla o columna**, crea un nuevo `scripts/migrate-<feature>.mjs` siguiendo el patrón. NO modifiques migraciones existentes ni el `seed.mjs`.
 3. **Si vas a agregar una nueva API**, valida con zod, chequea sesión, scopea por rol, devuelve errores con status correcto. Usa `lib/data.ts:fetchFilteredPedidos` como referencia de cómo se filtra por rol.
 4. **Si vas a tocar la pantalla del repartidor (`mi-ruta-content.tsx`)**, recuerda que toda acción debe pasar por `offline-queue` para que funcione sin internet. No llames `fetch` directo desde un botón.
 5. **Si vas a integrar un servicio externo nuevo**, usa env vars (no hardcodes), y prefiere planes gratuitos para no generar costos a Antonio (ver propuesta: "se mantienen costos al mínimo").
 6. **Cuando completes algo**, ofrece actualizar este AGENTS.md con cualquier decisión nueva o gotcha que haya surgido. Mantenerlo vivo es lo que lo hace útil.
+7. **Si vas a trabajar con la emisión de Guías de Remisión Electrónicas (GRE 2.0 REST)**, lee primero `docs/arquitectura/06-guias-remision-rest.md` para entender el flujo, los errores comunes de SUNAT ya resueltos y los pendientes de integración.
 
 **Idioma**: responde en español al usuario, escribe código y comentarios en español. El dueño Antonio NO es técnico — si necesitas explicarle algo, usa lenguaje sencillo y enfoque en beneficios (no detalles técnicos).
 

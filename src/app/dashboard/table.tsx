@@ -10,6 +10,8 @@ import ModalShell from "@/components/ModalShell";
 import EmitirComprobanteClient from "./comprobantes/nuevo/emitir-client";
 import HistorialPedidoModal from "./historial-pedido-modal";
 import { descargarPdfComprobante, descargarXmlComprobante, descargarCdrComprobante } from "@/lib/descargar-comprobante";
+import EmitirGuiaModal from "./guias/emitir-guia-modal";
+import { descargarXmlGuia, descargarCdrGuia } from "@/lib/descargar-guia";
 
 // Comprobante (forma reducida) que la lista de pedidos necesita para el menú
 // "Facturado": id para descargar, serie/estado para mostrar.
@@ -17,6 +19,12 @@ type ComprobanteLite = {
     id: string;
     serie_numero: string;
     tipo: string;
+    estado: string;
+};
+
+type GuiaLite = {
+    id: string;
+    serie_numero: string;
     estado: string;
 };
 
@@ -90,6 +98,12 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const isAvicola = (pedido.empresa || "").trim().toLowerCase().startsWith("av");
     const yaTieneComprobante = (comprobantes?.length ?? 0) > 0;
 
+    // Guías de Remisión
+    const [showEmitirGuiaModal, setShowEmitirGuiaModal] = useState(false);
+    const [guias, setGuias] = useState<GuiaLite[] | null>(null);
+    const [showGuiasDropdown, setShowGuiasDropdown] = useState(false);
+    const yaTieneGuia = (guias?.length ?? 0) > 0;
+
     // Trae los comprobantes VÁLIDOS del pedido. Lazy (hover/click) y se refresca
     // al cerrar el modal de emisión (así "Facturado" aparece solo si SUNAT aceptó).
     const cargarComprobantes = useCallback(async () => {
@@ -110,8 +124,31 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             /* silent */
         }
     }, [pedido.id]);
+
+    const cargarGuias = useCallback(async () => {
+        try {
+            const res = await fetch(`/api/guias?pedido_id=${pedido.id}`);
+            if (!res.ok) return;
+            const j = await res.json();
+            const validas: GuiaLite[] = (j.data ?? [])
+                .filter((g: { estado?: string }) => g.estado === "aceptado" || g.estado === "observado" || g.estado === "pendiente")
+                .map((g: GuiaLite) => ({
+                    id: g.id,
+                    serie_numero: g.serie_numero,
+                    estado: g.estado,
+                }));
+            setGuias(validas);
+        } catch {
+            /* silent */
+        }
+    }, [pedido.id]);
+
     const verificarComprobante = () => {
         if (comprobantes === null) void cargarComprobantes();
+    };
+
+    const verificarGuia = () => {
+        if (guias === null) void cargarGuias();
     };
 
     // Al montar, chequear el estado SOLO para pedidos facturables → "Facturado"
@@ -121,7 +158,27 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
             userRole !== "repartidor" &&
             ["Entregado", "Listo_Para_Despacho", "Asignado", "En_Produccion"].includes(pedido.estado);
         if (facturable) void cargarComprobantes();
-    }, [cargarComprobantes, pedido.estado, userRole]);
+
+        const tieneEnvioGuia =
+            userRole !== "repartidor" &&
+            ["Listo_Para_Despacho", "Asignado", "En_Camino", "Entregado"].includes(pedido.estado);
+        if (tieneEnvioGuia) void cargarGuias();
+    }, [cargarComprobantes, cargarGuias, pedido.estado, userRole]);
+
+    const handleDescargarGuia = async (g: GuiaLite, fmt: "xml" | "cdr") => {
+        setDescargando(g.id + fmt);
+        try {
+            if (fmt === "xml") {
+                await descargarXmlGuia(g.id, g.serie_numero);
+            } else {
+                await descargarCdrGuia(g.id, g.serie_numero);
+            }
+        } catch (e) {
+            alert(e instanceof Error ? e.message : "No se pudo descargar la guía");
+        } finally {
+            setDescargando(null);
+        }
+    };
 
     // Descarga PDF / XML / CDR de un comprobante (reusa el helper compartido).
     const descargarComprobante = async (c: ComprobanteLite, fmt: "pdf" | "xml" | "cdr") => {
@@ -354,6 +411,59 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                     )
                 )}
 
+                {/* 3. Botón Principal: Guía de Remisión (GRE) */}
+                {['Listo_Para_Despacho', 'Asignado', 'En_Camino', 'Entregado'].includes(pedido.estado) && userRole !== 'repartidor' && (
+                    yaTieneGuia ? (
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowGuiasDropdown((v) => !v)}
+                                className="px-2.5 py-2 flex items-center justify-center gap-1 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors whitespace-nowrap cursor-pointer"
+                                title="Guía(s) de remisión de este pedido — descargar / imprimir"
+                            >
+                                <FiTruck /> Guía Emitida
+                                <FiChevronDown size={12} className={`transition-transform ${showGuiasDropdown ? 'rotate-180' : ''}`} />
+                            </button>
+                            {showGuiasDropdown && (
+                                <>
+                                    <div className="fixed inset-0 z-10" onClick={() => setShowGuiasDropdown(false)} />
+                                    <div className="absolute right-0 mt-1.5 w-64 rounded-xl border border-gray-100 bg-white p-2 shadow-xl z-20 animate-fade-in origin-top-right">
+                                        <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">Guías del pedido</p>
+                                        {(guias ?? []).map((g) => (
+                                            <div key={g.id} className="px-2 py-2 rounded-lg hover:bg-gray-50">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <span className="text-xs font-bold text-gray-800">{g.serie_numero}</span>
+                                                    <span className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${
+                                                        g.estado === 'aceptado' ? 'text-emerald-600' : g.estado === 'pendiente' ? 'text-amber-500' : 'text-indigo-600'
+                                                    }`}>
+                                                        <FiCheckCircle size={11} /> {g.estado === 'aceptado' ? 'Aceptado' : g.estado === 'pendiente' ? 'Pendiente' : 'Observado'}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-1 mt-1.5">
+                                                    <a href={`/pedidos/${pedido.id}/gre?print=true`} target="_blank" rel="noopener noreferrer" className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:scale-95 transition text-center">Imprimir</a>
+                                                    <button onClick={() => handleDescargarGuia(g, 'xml')} disabled={descargando === g.id + 'xml'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-95 transition disabled:opacity-50">XML</button>
+                                                    {g.estado !== 'pendiente' && (
+                                                        <button onClick={() => handleDescargarGuia(g, 'cdr')} disabled={descargando === g.id + 'cdr'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 active:scale-95 transition disabled:opacity-50">CDR</button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        <Link href={`/dashboard/guias?pedido_id=${pedido.id}`} className="block mt-1 px-2 py-2 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-50 rounded-lg">Ver en guías →</Link>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    ) : (
+                        <button
+                            onMouseEnter={verificarGuia}
+                            onClick={() => { verificarGuia(); setShowEmitirGuiaModal(true); }}
+                            disabled={isProcessing}
+                            className="px-3 py-2 flex items-center justify-center gap-1.5 text-white rounded-lg transition-all text-xs font-bold shadow-sm active:scale-95 cursor-pointer whitespace-nowrap bg-indigo-600 hover:bg-indigo-700"
+                        >
+                            <FiTruck /><span>Guía</span>
+                        </button>
+                    )
+                )}
+
                 {/* Cámara — dropdown con opciones de foto */}
                 {userRole !== 'repartidor' && (
                     <div className="relative">
@@ -536,6 +646,17 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                         <EmitirComprobanteClient
                             pedidoIdProp={pedido.id}
                             onClose={() => { setShowEmitirModal(false); void cargarComprobantes(); }}
+                        />
+                    </Suspense>
+                </ModalShell>
+            )}
+
+            {showEmitirGuiaModal && (
+                <ModalShell onClose={() => { setShowEmitirGuiaModal(false); void cargarGuias(); }}>
+                    <Suspense fallback={null}>
+                        <EmitirGuiaModal
+                            pedido={pedido}
+                            onClose={() => { setShowEmitirGuiaModal(false); void cargarGuias(); }}
                         />
                     </Suspense>
                 </ModalShell>

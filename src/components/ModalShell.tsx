@@ -5,7 +5,7 @@
 // (ej. el form de emisión), sin duplicar su contenido.
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { FiX } from "react-icons/fi";
 
 export default function ModalShell({
@@ -15,6 +15,8 @@ export default function ModalShell({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const isMouseDownInside = useRef(true);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -31,7 +33,19 @@ export default function ModalShell({
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-3 sm:p-6 anim-fade"
-      onClick={onClose}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
     >
       <div
         className="relative my-2 w-full max-w-3xl overflow-x-hidden rounded-2xl bg-gray-50 pt-5 shadow-2xl anim-modal"

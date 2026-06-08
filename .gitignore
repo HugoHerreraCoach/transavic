@@ -50,3 +50,7 @@ certificados/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local test/ref directories
+/recursos/
+/scratch/

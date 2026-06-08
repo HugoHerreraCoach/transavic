@@ -884,9 +884,26 @@ function ConfirmModal({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const isMouseDownInside = useRef(true);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={onCancel}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onCancel();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-none" />
       <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-xl font-bold text-gray-900">{title}</h3>
         <p className="text-sm text-gray-600 mt-2">{message}</p>
@@ -922,6 +939,7 @@ function FailureReasonModal({
 }) {
   const [reason, setReason] = useState("");
   const [customReason, setCustomReason] = useState("");
+  const isMouseDownInside = useRef(true);
 
   const predefinedReasons = [
     "Cliente no se encontraba",
@@ -937,8 +955,23 @@ function FailureReasonModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" onClick={onCancel}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onCancel();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-none" />
       <div className="relative bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <h3 className="text-xl font-bold text-gray-900">❌ No se entregó</h3>
         <p className="text-sm text-gray-600 mt-1">
@@ -1055,9 +1088,26 @@ function ModalPuntoPartida({
     onCerrar();
   };
 
+  const isMouseDownInside = useRef(true);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" onClick={onCerrar}>
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onCerrar();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-none" />
       <div
         className="relative bg-white w-full max-w-sm rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden"
         onClick={(e) => e.stopPropagation()}

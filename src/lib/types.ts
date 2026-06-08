@@ -55,6 +55,11 @@ export type User = {
   id: string;
   name: string;
   role: string;
+  chofer_dni?: string | null;
+  chofer_licencia?: string | null;
+  vehiculo_placa?: string | null;
+  chofer_nombres?: string | null;
+  chofer_apellidos?: string | null;
 };
 
 export type Producto = {

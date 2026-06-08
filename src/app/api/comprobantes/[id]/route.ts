@@ -55,6 +55,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           c.forma_pago, c.fecha_vencimiento, c.emitido_por,
           p.asesor_id AS pedido_asesor_id,
           p.cliente AS pedido_cliente, p.direccion AS pedido_direccion,
+          p.distrito AS pedido_distrito,
           p.whatsapp AS pedido_whatsapp
         FROM comprobantes c
         LEFT JOIN pedidos p ON p.id = c.pedido_id
@@ -89,6 +90,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     pedido_asesor_id: string | null;
     pedido_cliente: string | null;
     pedido_direccion: string | null;
+    pedido_distrito: string | null;
     pedido_whatsapp: string | null;
   }>;
 
@@ -245,6 +247,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       numDocumento: c.cliente_doc_num,
       razonSocial: c.cliente_razon_social || c.pedido_cliente,
       direccion: clienteDireccionXml || c.pedido_direccion,
+      distrito: c.pedido_distrito || null,
       whatsapp: c.pedido_whatsapp,
     },
     items,

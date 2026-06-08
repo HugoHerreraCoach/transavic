@@ -1,6 +1,6 @@
 # 05 — APIs e Integraciones Externas
 
-> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-04** (endpoint de ubicación del repartidor + Capacitor ya en producción; IA con caché persistente + respaldo Groq §4.8; DELETE de usuario con pre-check de historial completo)
+> **Última verificación contra código:** 2026-06-02 · **actualizado 2026-06-07** (configuración de pruebas SUNAT local/beta con certificados reales + MODDATOS; endpoint de ubicación del repartidor + Capacitor ya en producción; IA con caché persistente + respaldo Groq §4.8; DELETE de usuario con pre-check de historial completo)
 > **Archivos clave:** todos los `src/app/api/**/route.ts`, `src/lib/data.ts`, `src/lib/offline-queue.ts`, `src/lib/sunat/*`, `src/lib/{apisperu,brevo,email,gemini,insights,notificaciones,cobranzas,metas,incentivos,comprobante-scope}.ts`
 
 > **Nota de alcance (jun 2026):** este doc creció mucho desde mayo. El sistema pasó de ~23 endpoints (solo pedidos/despacho/clientes/productos/users) a **~70 route handlers** repartidos en: comprobantes SUNAT, cobranzas/facturas, incentivos/metas, reportes, producción, notificaciones, búsqueda global, paneles agregados (mi-día, perfil 360°) y **4 cron jobs**. Todo lo de abajo está verificado contra el código de `main`. **El GPS en vivo del repartidor YA está en `main`** (4 jun 2026): tabla `rider_locations` + `POST /api/repartidor/ubicacion` (rol repartidor, scoping por sesión, UPSERT idempotente) + `GET /api/despacho` que adjunta la última ubicación de cada moto. El tracking se resolvió con **polling** (no Pusher).
@@ -763,16 +763,18 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 
 ### 4.5 SUNAT — facturación electrónica (módulo real, 2 RUCs)
 
-**Implementado y en producción** (Mejora 7, desde 30 may 2026). NO se usó un PSE de terceros: se portó el módulo real desde `conexipema-eventos` y se emite directo contra el webservice SOAP de SUNAT con el certificado `.p12` de cada empresa. Validado en BETA (factura 01, boleta 03, NC 07 → ACEPTADA con CDR).
+**Implementado y en producción** (Mejora 7, desde 30 may 2026). NO se usó un OSE o PSE de terceros: se emite directo contra el webservice SOAP de SUNAT para Boletas, Facturas y Notas de Crédito, y contra la **API REST de SUNAT (GRE 2.0)** para las **Guías de Remisión Electrónica (CPE "09")** (migradas de SOAP a REST en junio de 2026 de acuerdo con la obligatoriedad de la SUNAT).
 
 **Archivos** (todos en `src/lib/sunat/`):
 
 | Archivo | Rol |
 |---|---|
-| `index.ts` | `emitirComprobante()` — orquesta correlativo → XML → firma → SOAP → guarda en `comprobantes`. Series por empresa/tipo (Transavic F001/B001, Avícola F002/B002; NC FC0x/BC0x) |
+| `index.ts` | `emitirComprobante()` — orquesta correlativo → XML → firma → SOAP/REST → guarda en `comprobantes`. Series por empresa/tipo (Transavic F001/B001, Avícola F002/B002; NC FC0x/BC0x) |
 | `config-transavic.ts` | `getSunatConfig(empresa)` — lee RUC/razón social/dirección/ubigeo/cert/clave SOL de env vars. Endpoints BETA vs producción |
+| `rest-client.ts` | Canal REST para GRE 2.0: OAuth2 token, envío ZIP de la guía y polling de ticket (CDR). |
 | `contador.ts` | Correlativo atómico (`UPDATE … +1 RETURNING`) en `comprobantes_contador`, PK `(ruc, serie)` |
 | `xml-builder.ts` | Genera XML UBL 2.1 (factura/boleta/NC + comunicación de baja) |
+| `xml-builder-guia.ts` | Genera XML UBL 2.1 para Guías de Remisión Electrónica |
 | `xml-signer.ts` | Firma XML-DSig con el `.p12` (`node-forge` + `xml-crypto`) |
 | `soap-client.ts` | POST SOAP a SUNAT + parsea CDR; distingue "SUNAT caído" (`sunatCaido`) de rechazo de datos |
 | `resumen-diario.ts` | Helper compartido del Resumen Diario (RC-) con idempotencia (lo usan el cron y el endpoint manual) |
@@ -781,9 +783,22 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 | `duplicado.ts` | Detecta comprobante duplicado reciente (mismo cliente + tipo + monto) |
 | `pdf-comprobante.ts` | PDF formato SUNAT (jsPDF, generado en cliente, sin QR) |
 
-**Endpoints SOAP** (`config-transavic.ts`):
-- **BETA**: `https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl`
-- **Producción**: `https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl`
+**Endpoints SOAP & REST** (`config-transavic.ts` y `rest-client.ts`):
+- **SOAP (Factura/Boleta/NC)**: BETA `https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl`, PROD `https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl`
+- **REST (Guías de Remisión 2.0)**: OAuth2 Token `https://api-seguridad.sunat.gob.pe/v1/clientessol/<client_id>/oauth2/token`, Envío/Ticket `https://api-cpe.sunat.gob.pe/v1/contribuyente/gem/comprobantes` (BETA usa `api-cpe-test.sunat.gob.pe`).
+
+**Configuración para Pruebas en Local (SUNAT Beta)**:
+Para realizar pruebas de emisión de comprobantes y guías en local contra el entorno Beta de SUNAT utilizando los certificados reales (necesarios para que la firma digital sea válida y se reciba respuesta CDR), se debe configurar `.env.local` de la siguiente manera:
+1. `SUNAT_ENVIRONMENT="beta"`
+2. Para probar Boletas/Facturas/NC (canal SOAP): dejar `SUNAT_TRA_SOL_USER=""` y `SUNAT_AVI_SOL_USER=""` (así como sus respectivos SOL passwords vacíos). Al estar vacías estas variables, el sistema automáticamente caerá en la credencial genérica de pruebas `"MODDATOS"` / `"moddatos"` que requiere SUNAT Beta, sin rechazar por mismatch de credenciales reales.
+3. Para probar Guías (canal REST): se requiere tener el Client ID y Client Secret configurados en `.env.local` (`SUNAT_TRA_CLIENT_ID`, `SUNAT_TRA_CLIENT_SECRET`) y las credenciales del usuario secundario SOL real (`APIFACTU`) autorizadas para consumir APIs.
+4. Mantener los certificados reales `SUNAT_TRA_CERT_B64` y `SUNAT_AVI_CERT_B64` con sus respectivas contraseñas para permitir el firmado del XML en local.
+*Nota:* Evitar que `vercel env pull` o `vercel dev` sobreescriban `.env.local` con configuraciones que invaliden estas variables de prueba.
+
+**Retorno a Producción**:
+Para volver a emitir de forma real en producción:
+1. Setea `SUNAT_ENVIRONMENT="production"`.
+2. Restaura las credenciales reales de usuario SOL `SUNAT_TRA_SOL_USER` (ej. `APIFACTU`) y `SUNAT_AVI_SOL_USER` (que están en el Vercel dashboard de producción y en backups locales como `.env.produccion.local`).
 
 **Convención crítica de precios:** `pedido_items.precio_unitario` y `productos.precio_venta` se guardan **CON IGV**. Antes de mandar a SUNAT se divide entre 1.18 (en `comprobantes/emitir` y `emitir-manual`). Ver gotcha #10.
 

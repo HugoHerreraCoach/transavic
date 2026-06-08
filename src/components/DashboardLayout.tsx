@@ -33,6 +33,7 @@ import FloatingAssistant from "./FloatingAssistant";
 import CmdKModal from "./CmdKModal";
 
 const ComunicadoPopup = dynamic(() => import("./ComunicadoPopup"), { ssr: false });
+const ArriboPopup = dynamic(() => import("./ArriboPopup"), { ssr: false });
 
 interface NavItem {
   href: string;
@@ -114,6 +115,7 @@ const navItems: NavItem[] = [
     icon: <FiFileText className="h-5 w-5 flex-shrink-0" />,
     roles: ["admin", "asesor"],
   },
+
   {
     href: "/dashboard/cobranzas",
     label: "Cobranzas",
@@ -429,6 +431,8 @@ export default function DashboardLayout({
 
       {/* Popup de comunicados pendientes para los destinatarios */}
       <ComunicadoPopup />
+      {/* Popup de arribo de motorizados */}
+      {(userRole === "admin" || userRole === "asesor") && <ArriboPopup />}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 # Documentación de Arquitectura — Transavic
 
-> **Última actualización:** 2026-06-02 (los 5 documentos verificados contra el código en esta fecha) · **2026-06-04:** app del repartidor / GPS en vivo pasó a producción + IA con caché persistente (`ia_insights_cache`) y respaldo Groq (429 resuelto) + traductor de Chrome desactivado + DELETE de usuario con pre-check de historial completo (docs 01, 02, 03, 05 actualizados)
+> **Última actualización:** 2026-06-07: Integración de Guías de Remisión Electrónicas (GRE 2.0 REST) aceptada en Beta y documentada (doc 06 agregado, docs README, CLAUDE y AGENTS actualizados).
 > **Commit base:** `d2a49cd` + cambios hasta el 2 jun 2026 (PRs #6–#11)
 > **Estado:** proyecto **EN PRODUCCIÓN** desde el 30 may 2026 (`transavic.vercel.app`)
 
@@ -10,7 +10,7 @@ Para overview rápido y gotchas del día a día, ver **[`/CLAUDE.md`](../../CLAU
 
 ---
 
-## 📚 Los 5 documentos
+## 📚 Los 6 documentos
 
 | # | Documento | Cuándo leerlo | Líneas |
 |---|---|---|---|
@@ -19,6 +19,7 @@ Para overview rápido y gotchas del día a día, ver **[`/CLAUDE.md`](../../CLAU
 | 3 | **[03-autenticacion-y-roles.md](./03-autenticacion-y-roles.md)** | Vas a crear un endpoint nuevo, agregar un rol, o entender cómo se aplica el scoping (empieza por §0: dónde viven los permisos). | ~675 |
 | 4 | **[04-flujos-de-negocio.md](./04-flujos-de-negocio.md)** | Vas a modificar la máquina de estados del pedido, agregar transiciones, o entender cómo se conectan las áreas (el "lazo del dinero"). | ~1260 |
 | 5 | **[05-apis-e-integraciones.md](./05-apis-e-integraciones.md)** | Referencia de endpoints (~70 handlers), integraciones (SUNAT, Maps, Brevo, apisperu, Gemini), offline queue. | ~1010 |
+| 6 | **[06-guias-remision-rest.md](./06-guias-remision-rest.md)** | Vas a emitir o modificar la emisión de Guías de Remisión Electrónicas (GRE 2.0 REST). | ~130 |
 
 ---
 
@@ -39,7 +40,8 @@ Para overview rápido y gotchas del día a día, ver **[`/CLAUDE.md`](../../CLAU
 | Optimizar queries lentas | 02 (índices existentes) → 05 (cuáles endpoints hacen JOINs pesados) |
 | Cambiar deployment o env vars | 01 (sección 5 y 6) |
 | Debuggear un bug de auth | 03 (flujo completo de login) → 05 (qué endpoints hacen check) |
-| Implementar las **8 mejoras 2026** | Los 5 documentos + propuesta comercial (`/propuesta-mejoras-transavic.pdf`) |
+| Trabajar con Guías de Remisión (GRE) | 06 → 05 |
+| Implementar las **8 mejoras 2026** | Los 6 documentos + propuesta comercial (`/propuesta-mejoras-transavic.pdf`) |
 
 ---
 

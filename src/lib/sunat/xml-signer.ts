@@ -130,7 +130,7 @@ export function firmarXML(xmlSinFirma: string, config: SunatConfig): {
 
   // Detectar el tipo de documento raíz del XML para el XPath correcto
   // Invoice (01/03), CreditNote (07), DebitNote (08), VoidedDocuments, SummaryDocuments
-  const rootElements = ["CreditNote", "DebitNote", "VoidedDocuments", "SummaryDocuments", "Invoice"];
+  const rootElements = ["CreditNote", "DebitNote", "VoidedDocuments", "SummaryDocuments", "Invoice", "DespatchAdvice"];
   let rootElementName = "Invoice"; // default
   for (const el of rootElements) {
     if (xmlSinFirma.includes(`<${el}`) || xmlSinFirma.includes(`:${el}`)) {

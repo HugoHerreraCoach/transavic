@@ -64,6 +64,7 @@ interface PedidoDespacho {
   delivery_externo_nombre?: string | null;
   distancia_km: number | null;
   duracion_estimada_min: number | null;
+  numero_guia?: number | null;
 }
 
 interface Repartidor {
@@ -141,6 +142,11 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
       >
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="text-xs text-gray-400 line-through truncate flex-1">{pedido.cliente}</span>
+        {pedido.numero_guia && (
+          <span className="text-[8px] font-bold text-indigo-500 bg-indigo-50/50 border border-indigo-100 px-0.5 rounded flex-shrink-0" title="Guía de Remisión emitida">
+            GRE
+          </span>
+        )}
         {pedido.distancia_km && (
           <span className="text-[9px] text-gray-400">{pedido.distancia_km} km</span>
         )}
@@ -168,6 +174,11 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
         )}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="font-semibold text-sm text-gray-900 truncate flex-1">{pedido.cliente}</span>
+        {pedido.numero_guia && (
+          <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 rounded flex-shrink-0" title="Guía de Remisión emitida">
+            GRE
+          </span>
+        )}
         {pedido.hora_entrega && (
           <span className="text-[10px] text-gray-400 flex-shrink-0">{pedido.hora_entrega}</span>
         )}
@@ -608,9 +619,26 @@ function BaseLocationModal({
     }
   };
 
+  const isMouseDownInside = useRef(true);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          isMouseDownInside.current = false;
+        } else {
+          isMouseDownInside.current = true;
+        }
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isMouseDownInside.current) {
+          onClose();
+        }
+        isMouseDownInside.current = true;
+      }}
+    >
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-none" />
       <div
         className="relative bg-white rounded-3xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-6"
         onClick={(e) => e.stopPropagation()}
