@@ -675,7 +675,7 @@ function generarPDFBoleta(doc: jsPDF, data: PDFComprobanteData): void {
   doc.text("BOLETA DE VENTA ELECTRONICA", boxCx, boxY + 3.5, { align: "center" });
   doc.setFontSize(8);
   doc.text(`RUC: ${EMISOR.ruc}`, boxCx, boxY + 7, { align: "center" });
-  doc.text(`E${data.serie}-${data.numero}`, boxCx, boxY + 10.5, { align: "center" });
+  doc.text(`${data.serieNumero}`, boxCx, boxY + 10.5, { align: "center" });
 
   // Left: Company info (bottom-aligned with the box) — mismo formato que la
   // factura: [nombre comercial si difiere] · razón social (negrita) · dirección ·
