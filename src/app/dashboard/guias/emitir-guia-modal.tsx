@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Pedido } from "@/lib/types";
 import { FiX, FiTruck, FiAlertCircle, FiCheck, FiCalendar, FiFileText, FiMapPin, FiEdit2, FiInfo, FiEye, FiUser, FiPackage } from "react-icons/fi";
 import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
@@ -79,6 +79,14 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [docTipoOverride, setDocTipoOverride] = useState<string>("1"); // 1 = DNI, 6 = RUC
   const [docNumOverride, setDocNumOverride] = useState<string>("");
   const [razonSocialOverride, setRazonSocialOverride] = useState<string>("");
+
+  // Auto-búsqueda RENIEC/SUNAT del destinatario (apisperu) — espeja el form de comprobantes
+  const [consultandoDest, setConsultandoDest] = useState(false);
+  const [consultaDestMsg, setConsultaDestMsg] = useState<string | null>(null);
+  const ultimoDocConsultado = useRef("");
+
+  // Entorno SUNAT real, para el banner (Beta vs Producción). null = aún cargando.
+  const [esProduccion, setEsProduccion] = useState<boolean | null>(null);
 
   // Normalizar doc: puede venir de la API detalle (cliente.numDocumento) o de la lista (cliente_doc_num)
   const originalDoc = pedido?.ruc_dni
@@ -230,7 +238,7 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
               setChoferApellidos(preselected.chofer_apellidos || apellidos);
 
               // Evaluar si los datos del repartidor, dirección y cliente están 100% listos para emisión rápida
-              const tieneRepartidorListos = !!(preselected.chofer_dni && (indicadorM1L || preselected.chofer_licencia) && preselected.vehiculo_placa);
+              const tieneRepartidorListos = indicadorM1L || !!(preselected.chofer_dni && preselected.chofer_licencia && preselected.vehiculo_placa);
               const tieneDireccionListos = !!((pedido?.direccion || comprobante?.cliente?.direccion || comprobante?.pedido_direccion) && (pedido?.distrito || comprobante?.cliente?.distrito || comprobante?.pedido_distrito));
               
               if (tieneRepartidorListos && tieneDireccionListos && !necesitaOverride) {
@@ -249,6 +257,56 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       active = false;
     };
   }, [pedido?.repartidor_id, necesitaOverride, indicadorM1L]);
+
+  // Cargar el entorno SUNAT real (para mostrar el banner correcto)
+  useEffect(() => {
+    let active = true;
+    fetch("/api/sunat/entorno")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (active && j) setEsProduccion(!!j.esProduccion); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
+  // autocompleta los Nombres o Razón Social (mismo patrón que el form de comprobantes).
+  async function consultarDestinatario(numero: string) {
+    if (!/^\d{8}$|^\d{11}$/.test(numero)) return;
+    ultimoDocConsultado.current = numero;
+    setConsultandoDest(true);
+    setConsultaDestMsg(null);
+    try {
+      const res = await fetch("/api/consulta-documento", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tipo: numero.length === 11 ? "ruc" : "dni", numero }),
+      });
+      const j = await res.json();
+      if (res.ok && j.ok) {
+        const nombre = j.razonSocial || j.nombreCompleto || "";
+        if (nombre) setRazonSocialOverride(nombre);
+        if (numero.length === 11 && j.direccion && !direccionLlegada.trim()) {
+          setDireccionLlegada(j.direccion);
+        }
+        setConsultaDestMsg(nombre ? `✓ ${nombre}` : null);
+      } else {
+        setConsultaDestMsg(j.mensaje || j.error || "No se encontró el documento. Escríbelo a mano.");
+      }
+    } catch {
+      setConsultaDestMsg("No se pudo consultar. Escribe el nombre a mano.");
+    } finally {
+      setConsultandoDest(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!necesitaOverride) return;
+    const numero = docNumOverride.trim();
+    if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
+    const t = setTimeout(() => { void consultarDestinatario(numero); }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docNumOverride, necesitaOverride]);
 
   // Manejar cambio de motorizado
   const handleRepartidorChange = (id: string) => {
@@ -275,15 +333,14 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     setLoading(true);
     setError(null);
 
-    const licenciaFalta = !indicadorM1L && !choferLicencia.trim();
-    if (!choferDni.trim() || licenciaFalta || !vehiculoPlaca.trim() || !choferNombres.trim() || !choferApellidos.trim()) {
-      setError(
-        !indicadorM1L
-          ? "DNI de chofer, Nombres, Apellidos, Licencia y Placa del vehículo son requeridos para la emisión de la Guía."
-          : "DNI de chofer, Nombres, Apellidos y Placa del vehículo son requeridos para la emisión de la Guía."
-      );
-      setLoading(false);
-      return;
+    // Con vehículo categoría M1/L (moto/auto ligero) SUNAT permite OMITIR la placa y todos
+    // los datos del conductor. Sin M1/L (transporte privado normal) sí son obligatorios.
+    if (!indicadorM1L) {
+      if (!choferDni.trim() || !choferLicencia.trim() || !vehiculoPlaca.trim() || !choferNombres.trim() || !choferApellidos.trim()) {
+        setError("DNI de chofer, Nombres, Apellidos, Licencia y Placa del vehículo son requeridos cuando el vehículo no es categoría M1 o L.");
+        setLoading(false);
+        return;
+      }
     }
 
     if (!direccionLlegada.trim() || !distritoLlegada.trim()) {
@@ -362,17 +419,10 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     || "Cliente";
   const numDocumentoCliente = originalDoc || docNumOverride;
 
-  const licOk = indicadorM1L ? true : !!choferLicencia;
-  const datosCompletosParaEmisionRapida = 
-    !!(repartidorId && 
-    choferDni && 
-    licOk && 
-    vehiculoPlaca && 
-    choferNombres && 
-    choferApellidos && 
-    direccionLlegada && 
-    distritoLlegada && 
-    !necesitaOverride);
+  // Con M1/L los datos del chofer son opcionales (SUNAT los permite omitir).
+  const choferOk = indicadorM1L || !!(repartidorId && choferDni && choferLicencia && vehiculoPlaca && choferNombres && choferApellidos);
+  const datosCompletosParaEmisionRapida =
+    !!(choferOk && direccionLlegada && distritoLlegada && !necesitaOverride);
 
   return (
     <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-auto overflow-hidden animate-fade-in border border-gray-100 font-sans">
@@ -435,14 +485,24 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
             </div>
           )}
 
-          {/* Información de SUNAT Beta */}
-          <div className="p-3.5 bg-amber-50/70 border border-amber-100/70 rounded-xl flex items-start gap-2.5 text-xs text-amber-800">
-            <FiAlertCircle className="flex-shrink-0 mt-0.5" size={14} />
-            <div>
-              <span className="font-bold block text-amber-900">Entorno de Pruebas (SUNAT Beta)</span>
-              Este comprobante se emitirá en modo Beta. Las respuestas de error (como 401 Unauthorized) se interceptarán y simularán con éxito local para no interrumpir el flujo.
+          {/* Entorno SUNAT — refleja el entorno real (Producción vs Beta), no es texto fijo */}
+          {esProduccion === true ? (
+            <div className="p-3.5 bg-green-50/70 border border-green-100 rounded-xl flex items-start gap-2.5 text-xs text-green-800">
+              <FiCheck className="flex-shrink-0 mt-0.5" size={14} />
+              <div>
+                <span className="font-bold block text-green-900">Producción (SUNAT real)</span>
+                Esta guía se enviará a SUNAT como documento oficial. Revisa que los datos sean correctos antes de emitir.
+              </div>
             </div>
-          </div>
+          ) : esProduccion === false ? (
+            <div className="p-3.5 bg-amber-50/70 border border-amber-100/70 rounded-xl flex items-start gap-2.5 text-xs text-amber-800">
+              <FiAlertCircle className="flex-shrink-0 mt-0.5" size={14} />
+              <div>
+                <span className="font-bold block text-amber-900">Entorno de Pruebas (SUNAT Beta)</span>
+                Esta guía se emitirá en modo Beta (no es un documento oficial). Los errores de SUNAT se simulan con éxito local para no interrumpir las pruebas.
+              </div>
+            </div>
+          ) : null}
 
           {/* MODO SIMPLIFICADO (CONFIRMACIÓN RÁPIDA EN 1 CLIC) */}
           {!modoEdicion ? (
@@ -590,6 +650,10 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                             className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-amber-500"
                             required
                           />
+                          {consultandoDest && <p className="text-[10px] text-gray-400 mt-1">Buscando…</p>}
+                          {!consultandoDest && consultaDestMsg && (
+                            <p className={`text-[10px] mt-1 ${consultaDestMsg.startsWith("✓") ? "text-green-600" : "text-amber-600"}`}>{consultaDestMsg}</p>
+                          )}
                         </div>
                       </div>
                       
@@ -738,6 +802,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         Vehículo categoría M1 o L (Moto / Auto Ligero)
                       </span>
                     </label>
+                    {indicadorM1L && (
+                      <p className="text-[10px] text-indigo-600/90 -mt-1.5 leading-snug">
+                        Con moto o auto ligero no necesitas placa ni datos del chofer (ideal para delivery externo).
+                      </p>
+                    )}
                     
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 mb-1.5">
@@ -760,28 +829,28 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                     <div className="grid grid-cols-2 gap-2.5">
                       <div>
                         <label className="block text-[10px] font-bold text-gray-500 mb-1">
-                          Nombres
+                          Nombres {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                         </label>
                         <input
                           type="text"
                           value={choferNombres}
                           onChange={(e) => setChoferNombres(e.target.value)}
-                          placeholder="Nombres chofer"
+                          placeholder={indicadorM1L ? "No requerido" : "Nombres chofer"}
                           className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                          required
+                          required={!indicadorM1L}
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-gray-500 mb-1">
-                          Apellidos
+                          Apellidos {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                         </label>
                         <input
                           type="text"
                           value={choferApellidos}
                           onChange={(e) => setChoferApellidos(e.target.value)}
-                          placeholder="Apellidos chofer"
+                          placeholder={indicadorM1L ? "No requerido" : "Apellidos chofer"}
                           className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                          required
+                          required={!indicadorM1L}
                         />
                       </div>
                     </div>
@@ -789,16 +858,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                     <div className="grid grid-cols-2 gap-2.5">
                       <div>
                         <label className="block text-[10px] font-bold text-gray-500 mb-1">
-                          DNI Conductor
+                          DNI Conductor {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                         </label>
                         <input
                           type="text"
                           maxLength={15}
                           value={choferDni}
                           onChange={(e) => setChoferDni(e.target.value)}
-                          placeholder="DNI del chofer"
+                          placeholder={indicadorM1L ? "No requerido" : "DNI del chofer"}
                           className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                          required
+                          required={!indicadorM1L}
                         />
                       </div>
                       <div>
@@ -819,16 +888,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 mb-1">
-                        Placa del Vehículo
+                        Placa del Vehículo {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                       </label>
                       <input
                         type="text"
                         maxLength={15}
                         value={vehiculoPlaca}
                         onChange={(e) => setVehiculoPlaca(e.target.value)}
-                        placeholder="Ej. C1A-098"
+                        placeholder={indicadorM1L ? "No requerida" : "Ej. C1A-098"}
                         className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                        required
+                        required={!indicadorM1L}
                       />
                     </div>
                   </div>
