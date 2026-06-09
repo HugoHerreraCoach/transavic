@@ -1,12 +1,13 @@
 # 06 — Integración de Guías de Remisión Electrónicas (GRE 2.0 REST)
 
-> **Última verificación contra código:** 2026-06-07
-> **Commit del proyecto:** n/a (cambios de integración local)
+> **Última verificación contra código:** 2026-06-08
+> **Commit del proyecto:** desplegado en `main` (GRE en producción; ver gotcha #28 del CLAUDE.md)
 > **Archivos clave:** 
 > - [src/lib/sunat/xml-builder-guia.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/xml-builder-guia.ts)
 > - [src/lib/sunat/rest-client.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/rest-client.ts)
-> - [scratch/test_gre_produccion.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/scratch/test_gre_produccion.ts)
 > - [src/app/api/guias/emitir/route.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/api/guias/emitir/route.ts)
+> - [src/app/dashboard/guias/emitir-guia-modal.tsx](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/dashboard/guias/emitir-guia-modal.tsx)
+> - [src/app/api/sunat/entorno/route.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/api/sunat/entorno/route.ts)
 
 ---
 
@@ -50,27 +51,39 @@ Durante la fase de integración y depuración en local, chocamos con varias regl
 | Error SUNAT | Mensaje de Error | Diagnóstico / Causa Raíz | Solución Implementada |
 |---|---|---|---|
 | **3418** | El tag cbc:Information no es permitido para el motivo de traslado "01" (Venta). | Se intentaba enviar el nodo `<cbc:Information>` con detalles adicionales cuando el motivo era "Venta". SUNAT solo lo permite para los motivos 08, 09 y 19. | Se condicionó la generación del elemento `<cbc:Information>` en `xml-builder-guia.ts` para que solo se agregue si el código de traslado es 08, 09 o 19. |
-| **2566** | El XML no contiene el tag de Placa del vehículo de transporte privado. | Se omitía el número de placa cuando la guía se configuraba para transporte privado o repartidor interno. | Se añadió la validación para asegurar la presencia de la placa del vehículo (`cac:LicensePlateID` en `cac:RoadTransport`) en el XML. |
+| **2566** | El XML no contiene el tag de Placa del vehículo de transporte privado. | Se omitía el número de placa cuando la guía se configuraba para transporte privado o repartidor interno. | Se añadió la placa del vehículo (`cac:LicensePlateID` en `cac:RoadTransport`). **Matiz (jun 2026):** la placa es obligatoria **solo cuando NO se usa el indicador M1/L**; con M1/L se OMITE legítimamente (ver sección C). |
 | **3360** | El XML no contiene el tag cbc:FirstName o cbc:FamilyName en DriverPerson. | El validador espera que el nombre del conductor esté estructurado formalmente en campos separados de nombres y apellidos, en lugar de un campo de nombre completo (`cbc:Name`). | Se modificó la interfaz `DatosGuia` para reemplazar el campo `repartidor.nombre: string` por `repartidor.nombres: string` y `repartidor.apellidos: string`, mapeándolos al XML en `<cbc:FirstName>` y `<cbc:FamilyName>`. |
 | **2574** | El XML no contiene el tag o no existe información de dirección detallada de punto de llegada. | Se utilizaba `<cbc:StreetName>` para definir la dirección del cliente en el punto de llegada, pero el esquema estricto de la GRE exige estructurarla con `<cac:AddressLine><cbc:Line>` (igual que el punto de partida). | Se reemplazó el uso de `<cbc:StreetName>` por `<cac:AddressLine><cbc:Line>` en el bloque del punto de llegada de `xml-builder-guia.ts`. |
 
+### C. Vehículos categoría M1/L — placa y conductor OPCIONALES (jun 2026)
+
+Regla **central** para el caso de Transavic (muchas entregas las hace un **delivery externo en moto** y no se tiene DNI/placa/licencia del chofer).
+
+- En la **GRE-Remitente con transporte privado** (modalidad `02`), si se marca el **indicador de traslado en vehículo de categoría M1 o L** (autos ligeros / **motos = categoría L**), SUNAT permite **OMITIR la placa del vehículo y TODOS los datos del conductor** (tipo/número de documento, nombres, apellidos y licencia). Confirmado en fuentes oficiales y tutoriales de proveedores ("GRE Remitente con vehículo M1 o L sin especificar placa o licencia"). Sin el indicador, esos datos son obligatorios (errores 2566 y 3360).
+- En el XML, el indicador se emite como `<cbc:SpecialInstructions>SUNAT_Envio_IndicadorTrasladoVehiculoM1L</cbc:SpecialInstructions>` dentro de `cac:Shipment` (`xml-builder-guia.ts:166-168`).
+- El **builder ya estaba bien**: emite la placa (`cac:RoadTransport/cbc:LicensePlateID`) solo si `repartidor?.placa` no está vacío, y el bloque `cac:DriverPerson` solo si `repartidor.docNum` no está vacío. Es decir, **omite ambos automáticamente** cuando llegan vacíos. Lo que bloqueaba el caso era únicamente la **validación demasiado estricta** del modal y de la API.
+- **Fix (jun 2026):** la validación del modal (`emitir-guia-modal.tsx`, `handleSubmit`) y de la API (`api/guias/emitir/route.ts`) exige DNI/placa/licencia **solo cuando NO es M1/L**. Con M1/L (checkbox activo por defecto), esos campos quedan opcionales en el form (`required={!indicadorM1L}`) y la API pasa `docNum`/`placa` como `""` (vacío = omitir). El flujo con datos completos del chofer (cuando NO es M1/L) sigue igual.
+- **Transporte público** (modalidad `01`, un courier tercero con RUC) **no está implementado** — no se necesita: el delivery externo de Transavic es moto informal, cubierto por M1/L. Si en el futuro usan un courier con RUC, habría que agregar la modalidad pública (declarar el RUC del transportista, sin datos del conductor).
+
 ---
 
-## 4. Estado Actual y Pendientes de Integración
+## 4. Estado Actual
 
 > [!IMPORTANT]
-> El motor de firma y envío de la GRE ya funciona al 100% contra el validador de SUNAT. La guía de prueba es aceptada. Sin embargo, no se ha completado la integración del cambio de los campos del conductor en la UI y la base de datos de producción.
+> La GRE está **desplegada en producción** (`main` → Vercel). El motor de firma + envío REST está validado contra SUNAT beta (guía `T001-00814091`, CDR código 0). La integración de UI/API del conductor (`nombres`/`apellidos` separados) y la regla M1/L (sección C) **ya están hechas**. **Pendiente: la 1ª emisión REAL en producción** (la valida Hugo; al 8 jun 2026 la tabla `comprobantes_guias` está vacía — 0 GRE emitidas).
 
-### Tareas Pendientes para Continuar:
+### Entorno (Beta vs Producción)
 
-1. **Actualizar API de Emisión de Guías (`/api/guias/emitir/route.ts`)**:
-   - Actualmente, el route handler lee la información del repartidor e intenta llamar a `generarXMLGuia` con la firma anterior (la cual requería `nombre: string`).
-   - Se debe adaptar el handler para que extraiga o divida el nombre del motorizado asignado (por ejemplo, dividiendo `repartidor.nombre` por espacios en blanco, o usando campos específicos si se añaden a la base de datos).
-   - Validar el payload de entrada contra el nuevo esquema adaptado.
+- El entorno lo controla `SUNAT_ENVIRONMENT` (compartido con boletas/facturas SOAP). En Vercel = `production`; en `.env.local` = `beta`.
+- **Endpoints REST** (`rest-client.ts`): envío a `api-cpe-test.sunat.gob.pe` (beta) o `api-cpe.sunat.gob.pe` (producción); OAuth2 en `api-seguridad.sunat.gob.pe` (fijo).
+- **Credenciales OAuth2** en Vercel producción: `SUNAT_TRA_CLIENT_ID/SECRET` y `SUNAT_AVI_CLIENT_ID/SECRET` (cargadas; una por empresa).
+- ⚠️ **Mock de beta (cuidado al validar):** en `api/guias/emitir/route.ts`, **solo cuando `environment === "beta"`**, un fallo de SUNAT (401, red, etc.) se **simula como éxito** (`descripcion` con `[SIMULADO BETA]`, CDR `<MockCDR>`). En producción NO simula: el error se propaga. Por eso una prueba en beta **no es concluyente** si la respuesta trae `[SIMULADO BETA]` — para validar de verdad hace falta una aceptación real (sin ese marcador) o emitir en producción.
 
-2. **Adaptar Formulario de UI (`emitir-guia-modal.tsx` u otros)**:
-   - Asegurarse de que el frontend pase los datos correctos del repartidor (`nombres` y `apellidos` por separado) al endpoint `/api/guias/emitir`.
+### Banner del modal (jun 2026)
+El banner del modal **ya no está hardcodeado a "Beta"**. Lo alimenta `GET /api/sunat/entorno` (`{environment, esProduccion}`, dato no sensible): en producción muestra una nota **verde "Producción (SUNAT real)"**, en beta el aviso ámbar. El modal se abre desde `table.tsx` y `comprobantes-client.tsx` (client components), por eso el entorno se expone por endpoint y no por props.
 
-3. **Verificación en Producción**:
-   - Una vez integrados los cambios en la ruta y la interfaz, y validados localmente en Beta, el sistema estará listo para emitir guías reales.
-   - Para producción, Vercel requiere tener configurados `SUNAT_TRA_CLIENT_ID` y `SUNAT_TRA_CLIENT_SECRET` (y sus contrapartes `SUNAT_AVI_*`) correspondientes a las credenciales reales del portal SOL del RUC de producción.
+### Auto-búsqueda del destinatario (jun 2026)
+En el modal, al tipear un DNI(8)/RUC(11) en el destinatario se consulta apisperu (`POST /api/consulta-documento`) y se autocompletan los "Nombres o Razón Social" (mismo patrón que el form de comprobantes).
+
+### Pendiente
+- **Emitir la 1ª GRE real en producción** (Hugo), idealmente con **M1/L y sin datos del chofer** (caso delivery externo en moto). Si SUNAT la acepta (serie + CDR), queda validado end-to-end; si la rechaza, revisar el código de error y ajustar el XML.
