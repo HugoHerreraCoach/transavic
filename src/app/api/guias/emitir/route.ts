@@ -135,7 +135,7 @@ export async function POST(request: Request) {
     } = parsed.data;
 
     let finalPedidoId: string | null = pedido_id || null;
-    const finalComprobanteId: string | null = comprobante_id || null;
+    let finalComprobanteId: string | null = comprobante_id || null;
 
     let clienteRazonSocial = "";
     let clienteDocNum = "";
@@ -326,6 +326,20 @@ export async function POST(request: Request) {
           unidad: String(itemObj.unidadMedida || itemObj.unidad || "NIU"),
         };
       });
+    }
+
+    // Si la guía se emite desde un PEDIDO sin comprobante explícito, vincular su factura/boleta
+    // aceptada para que la guía SIEMPRE muestre su "Documento Relacionado" (como el modelo SUNAT).
+    if (!finalComprobanteId && finalPedidoId) {
+      const compRows = await sql`
+        SELECT id FROM comprobantes
+        WHERE pedido_id = ${finalPedidoId}::uuid
+          AND estado IN ('aceptado', 'observado')
+          AND tipo IN ('01', '03')
+        ORDER BY created_at DESC
+        LIMIT 1
+      `;
+      if (compRows.length > 0) finalComprobanteId = compRows[0].id as string;
     }
 
     // --- PREVENIR DOBLE EMISIÓN ---

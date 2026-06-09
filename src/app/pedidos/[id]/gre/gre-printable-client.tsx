@@ -17,6 +17,7 @@ interface GrePrintableClientProps {
     totalBultos: number;
     modalidadTraslado: string;
     motivoTraslado: string;
+    indicadorM1L: boolean;
     fechaInicioTraslado: string;
     vehiculoPlaca: string | null;
     choferDocNum: string | null;
@@ -244,11 +245,8 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
           </div>
         </div>
 
-        {/* ── Línea divisoria ── */}
-        <div style={{ borderTop: "2px solid #000", marginTop: "12px", marginBottom: "10px" }} />
-
         {/* ═══ DATOS DEL TRASLADO (2 columnas) ═══ */}
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "10px", marginTop: "16px" }}>
           <tbody>
             <tr>
               <td style={{ paddingBottom: "4px", width: "50%", verticalAlign: "top" }}>
@@ -273,11 +271,8 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
           </tbody>
         </table>
 
-        {/* ── Línea divisoria delgada ── */}
-        <div style={{ borderTop: "1px solid #999", marginTop: "6px", marginBottom: "6px" }} />
-
         {/* ═══ DESTINATARIO ═══ */}
-        <div style={{ fontSize: "10px", marginBottom: "4px" }}>
+        <div style={{ fontSize: "10px", marginBottom: "4px", marginTop: "12px" }}>
           <span style={{ fontWeight: "bold" }}>Datos del Destinatario: </span>
           <span style={{ textTransform: "uppercase" }}>
             {guia.clienteRazonSocial?.toUpperCase() || "—"}
@@ -300,11 +295,8 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
           </div>
         )}
 
-        {/* ── Línea divisoria ── */}
-        <div style={{ borderTop: "1px solid #999", marginTop: "8px", marginBottom: "8px" }} />
-
         {/* ═══ BIENES POR TRANSPORTAR ═══ */}
-        <div style={{ fontWeight: "bold", fontSize: "10.5px", marginBottom: "5px" }}>
+        <div style={{ fontWeight: "bold", fontSize: "10.5px", marginBottom: "5px", marginTop: "12px" }}>
           Bienes por transportar:
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "9.5px" }}>
@@ -323,13 +315,7 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
           </thead>
           <tbody>
             {items.map((it, idx) => (
-              <tr
-                key={idx}
-                style={{
-                  borderBottom: "1px solid #bbb",
-                  backgroundColor: idx % 2 === 1 ? "#fafafa" : "#fff",
-                }}
-              >
+              <tr key={idx} style={{ borderBottom: "1px solid #bbb" }}>
                 <td style={{ padding: "4px 5px", textAlign: "center", borderRight: "1px solid #bbb" }}>{idx + 1}</td>
                 <td style={{ padding: "4px 5px", textAlign: "center", borderRight: "1px solid #bbb" }}>NO</td>
                 <td style={{ padding: "4px 5px", textAlign: "center", borderRight: "1px solid #bbb" }}>-</td>
@@ -342,21 +328,17 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
               </tr>
             ))}
           </tbody>
-          <tfoot>
-            <tr style={{ borderTop: "1.5px solid #000" }}>
-              <td colSpan={9} style={{ padding: "4px 5px", textAlign: "right", fontSize: "9px", color: "#555" }}>
-                Total bultos: <strong>{guia.totalBultos}</strong>&nbsp;&nbsp;|&nbsp;&nbsp;
-                Peso bruto total: <strong>{guia.pesoBrutoTotal.toFixed(1)} KGM</strong>
-              </td>
-            </tr>
-          </tfoot>
         </table>
 
-        {/* ── Línea divisoria ── */}
-        <div style={{ borderTop: "1px solid #999", marginTop: "10px", marginBottom: "8px" }} />
+        {/* ── Peso y bultos (texto plano, como el modelo oficial SUNAT) ── */}
+        <div style={{ fontSize: "10px", marginTop: "8px" }}>
+          <div><span style={{ fontWeight: "bold" }}>Unidad de Medida del Peso Bruto:</span> KGM</div>
+          <div style={{ marginTop: "2px" }}><span style={{ fontWeight: "bold" }}>Peso Bruto total de la carga:</span> {guia.pesoBrutoTotal.toFixed(2)}</div>
+          <div style={{ marginTop: "2px" }}><span style={{ fontWeight: "bold" }}>Total de bultos:</span> {guia.totalBultos}</div>
+        </div>
 
         {/* ═══ DATOS DEL TRASLADO (detalles) ═══ */}
-        <div style={{ fontSize: "10px" }}>
+        <div style={{ fontSize: "10px", marginTop: "12px" }}>
           <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Datos del traslado:</div>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <tbody>
@@ -366,21 +348,21 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
                   {modalidadLabel(guia.modalidadTraslado)}
                 </td>
                 <td style={{ paddingBottom: "2px", width: "50%", verticalAlign: "top", paddingLeft: "12px" }}>
-                  <span style={{ fontWeight: "bold" }}>Ind. transbordo programado: </span>NO
+                  <span style={{ fontWeight: "bold" }}>Indicador de transbordo programado: </span>NO
                 </td>
               </tr>
               <tr>
-                <td style={{ paddingBottom: "2px", verticalAlign: "top" }}>
-                  <span style={{ fontWeight: "bold" }}>Ind. traslado en M1 o L: </span>NO
+                <td colSpan={2} style={{ paddingBottom: "2px", verticalAlign: "top" }}>
+                  <span style={{ fontWeight: "bold" }}>Indicador de traslado en vehículos de categoría M1 o L: </span>
+                  {guia.indicadorM1L ? "SI" : "NO"}
                 </td>
-                <td style={{ paddingBottom: "2px", verticalAlign: "top", paddingLeft: "12px" }} />
               </tr>
             </tbody>
           </table>
 
           {/* Datos del vehículo y conductor */}
           {(guia.vehiculoPlaca || guia.choferDocNum) && (
-            <div style={{ marginTop: "8px", padding: "7px 10px", backgroundColor: "#f7f7f7", border: "1px solid #ddd", borderRadius: "2px" }}>
+            <div style={{ marginTop: "6px" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   <tr>
@@ -410,8 +392,8 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
         </div>
 
         {/* ═══ PIE DE PÁGINA ═══ */}
-        <div style={{ borderTop: "2px solid #000", marginTop: "16px", paddingTop: "6px" }}>
-          <p style={{ fontSize: "8px", textAlign: "center", color: "#333", textTransform: "uppercase", letterSpacing: "0.2px", margin: 0, fontWeight: "bold" }}>
+        <div style={{ marginTop: "48px" }}>
+          <p style={{ fontSize: "8.5px", textAlign: "center", color: "#222", margin: 0, fontWeight: "bold" }}>
             Esta es una representación impresa sin valor tributario de la Guía de Remisión Electrónica generada en el sistema de la SUNAT. Puede verificarla utilizando su clave SOL.
           </p>
         </div>

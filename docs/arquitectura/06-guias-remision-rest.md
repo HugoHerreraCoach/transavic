@@ -85,5 +85,20 @@ El banner del modal **ya no está hardcodeado a "Beta"**. Lo alimenta `GET /api/
 ### Auto-búsqueda del destinatario (jun 2026)
 En el modal, al tipear un DNI(8)/RUC(11) en el destinatario se consulta apisperu (`POST /api/consulta-documento`) y se autocompletan los "Nombres o Razón Social" (mismo patrón que el form de comprobantes).
 
+### Representación impresa (`gre-printable-client.tsx`) — jun 2026
+La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-client.tsx` (con
+`window.print()`, no jsPDF), modelada sobre el formato oficial SUNAT (`recursos/10710548841-09-EG07-432.pdf`).
+- **Limpieza visual (jun 2026):** se quitaron las líneas divisorias de sección, la cebra de la tabla
+  y la caja del vehículo; las secciones se separan con espacio (como el modelo). El peso/bultos van
+  como texto plano bajo la tabla.
+- **Indicador M1/L:** el imprimible lo muestra leyéndolo del **XML firmado** en `page.tsx`
+  (`xml_firmado_base64.includes("SUNAT_Envio_IndicadorTrasladoVehiculoM1L")`) — antes estaba
+  hardcodeado a "NO".
+- **Documento relacionado (factura):** `api/guias/emitir/route.ts` ahora **resuelve el `comprobante_id`
+  desde el pedido** cuando no viene explícito (factura/boleta `aceptado`/`observado` del pedido) → la
+  guía SIEMPRE muestra "Documentos Relacionados: Factura …". ⚠️ Esto es solo para la representación
+  PROPIA; el XML que va a SUNAT **aún no** declara `cac:AdditionalDocumentReference` (pendiente, ver abajo).
+
 ### Pendiente
 - **Emitir la 1ª GRE real en producción** (Hugo), idealmente con **M1/L y sin datos del chofer** (caso delivery externo en moto). Si SUNAT la acepta (serie + CDR), queda validado end-to-end; si la rechaza, revisar el código de error y ajustar el XML.
+- **Declarar la factura relacionada en el XML SUNAT** (`cac:AdditionalDocumentReference`) para que la representación PROPIA de SUNAT también muestre "Documentos Relacionados". Toca el XML legal → validar contra SUNAT antes.
