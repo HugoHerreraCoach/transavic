@@ -98,6 +98,13 @@ La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-
   desde el pedido** cuando no viene explícito (factura/boleta `aceptado`/`observado` del pedido) → la
   guía SIEMPRE muestra "Documentos Relacionados: Factura …". ⚠️ Esto es solo para la representación
   PROPIA; el XML que va a SUNAT **aún no** declara `cac:AdditionalDocumentReference` (pendiente, ver abajo).
+- **Destinatario = el de la factura (9 jun 2026):** al emitir desde un pedido, el destinatario
+  (razón social + tipo/num doc) se toma de la **factura asociada**, NO del nombre informal del
+  pedido — así la guía y su factura **coinciden** (ej. "CONEXIPEMA S.A.C.", no "Victor Hugo").
+  Solo se sobrescribe si el usuario no mandó override explícito y la factura tiene receptor
+  identificado (`esReceptorIdentificado`); una boleta sin DNI mantiene el flujo de override. La
+  **dirección (punto de llegada)** NO se fuerza a la fiscal: queda la de **entrega** del pedido
+  (editable en el modal), porque el punto de llegada es el lugar físico real de entrega.
 
 ### Pendiente
 - **Emitir la 1ª GRE real en producción** (Hugo), idealmente con **M1/L y sin datos del chofer** (caso delivery externo en moto). Si SUNAT la acepta (serie + CDR), queda validado end-to-end; si la rechaza, revisar el código de error y ajustar el XML.
