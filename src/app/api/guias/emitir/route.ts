@@ -393,7 +393,10 @@ export async function POST(request: Request) {
     }
 
     // 3. Determinar repartidor y sus datos (DNI, licencia, placa, nombres, apellidos)
-    const finalRepartidorId = repartidor_id || repartidorAsignadoId;
+    // Con M1/L NO auto-resolvemos desde el repartidor del pedido salvo que el cliente lo haya
+    // elegido explícitamente (repartidor_id). Así "sin datos del chofer" se respeta y no se
+    // rellena solo. Sin M1/L se mantiene el fallback al repartidor asignado del pedido.
+    const finalRepartidorId = repartidor_id || (indicadorM1L ? null : repartidorAsignadoId);
     let finalChoferDni = chofer_dni?.trim();
     let finalChoferLicencia = chofer_licencia?.trim();
     let finalPlaca = vehiculo_placa?.trim();
