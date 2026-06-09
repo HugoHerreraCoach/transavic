@@ -3,11 +3,16 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle } from 'react-icons/fi';
+import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle, FiTag } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import TimeRangePicker from '@/components/TimeRangePicker';
 
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
+
+// Rubro / giro del negocio del cliente. Lista FIJA (decisión de negocio). Independiente de
+// `tipo_cliente` (Frecuente/Nuevo). El backfill (scripts/backfill-rubro.sql) escribe estos
+// mismos strings. Vacío en el form = "Sin clasificar" (rubro NULL en DB).
+const RUBROS = ['Restaurante', 'Cafetería', 'Avícola', 'Chifa', 'Fast food', 'Market / Minimarket', 'Tienda / Bodega', 'Casa / Hogar', 'Otro'];
 
 // Link directo a WhatsApp (la asesora vive ahí). Limpia el número y antepone 51
 // (Perú) si no lo trae. Devuelve null si no hay número usable.
@@ -47,6 +52,7 @@ interface Cliente {
   direccion_mapa: string | null;
   distrito: string | null;
   tipo_cliente: string | null;
+  rubro: string | null;
   hora_entrega: string | null;
   notas: string | null;
   empresa: string | null;
@@ -155,6 +161,13 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
           </select>
         </div>
         <div>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Rubro</label>
+          <select value={form.rubro ?? ''} onChange={e => updateField('rubro', e.target.value || null)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-red-500 focus:border-red-500">
+            <option value="">Sin clasificar</option>
+            {RUBROS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1">Empresa</label>
           <select value={form.empresa ?? 'Transavic'} onChange={e => updateField('empresa', e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:ring-2 focus:ring-red-500 focus:border-red-500">
             <option value="Transavic">Transavic</option>
@@ -226,10 +239,14 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [filtroDistrito, setFiltroDistrito] = useState('');
   const [expandirDistritos, setExpandirDistritos] = useState(false);
   const TOP_DISTRITOS = 8;
+  const [filtroRubro, setFiltroRubro] = useState('');
+  const [expandirRubros, setExpandirRubros] = useState(false);
+  const TOP_RUBROS = 8;
   const [resumen, setResumen] = useState<{
     porAsesora: { nombre: string; total: number }[];
     porDistrito: { distrito: string; total: number }[];
-  }>({ porAsesora: [], porDistrito: [] });
+    porRubro: { rubro: string; total: number }[];
+  }>({ porAsesora: [], porDistrito: [], porRubro: [] });
   // Dropdown "⋯" de acciones por tarjeta (Editar · Transferir · Eliminar · Pedidos).
   const [menuAbiertoId, setMenuAbiertoId] = useState<string | null>(null);
   // Transfer modal
@@ -255,6 +272,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       if (isAdmin && filtroSinAsesora) params.set('sin_asesora', 'true');
       else if (isAdmin && filterAsesorId) params.set('asesor_id', filterAsesorId);
       if (filtroDistrito) params.set('distrito', filtroDistrito);
+      if (filtroRubro) params.set('rubro', filtroRubro);
       const res = await fetch(`/api/clientes?${params}`);
       if (res.ok) {
         const json = await res.json();
@@ -270,7 +288,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     } finally {
       setLoading(false);
     }
-  }, [isAdmin, filterAsesorId, filtroSinAsesora, filtroDistrito]);
+  }, [isAdmin, filterAsesorId, filtroSinAsesora, filtroDistrito, filtroRubro]);
 
   useEffect(() => { fetchClientes(currentPage, debouncedSearch); }, [currentPage, debouncedSearch, fetchClientes]);
 
@@ -477,7 +495,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       </div>
 
       {/* Distribución: mini-KPI cards (asesoras) + chips de distrito */}
-      {(resumen.porDistrito.length > 0 || (isAdmin && resumen.porAsesora.length > 0)) && (
+      {(resumen.porDistrito.length > 0 || resumen.porRubro.length > 0 || (isAdmin && resumen.porAsesora.length > 0)) && (
         <div className="mb-5 space-y-4">
           {/* Por asesora — admin: tarjetas con número grande */}
           {isAdmin && resumen.porAsesora.length > 0 && (
@@ -566,11 +584,43 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               </div>
             </div>
           )}
+
+          {/* Por rubro — chips compactos (igual que distrito); "Sin clasificar" para los pendientes */}
+          {resumen.porRubro.length > 0 && (
+            <div>
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest mb-2">Por rubro</p>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  onClick={() => { setFiltroRubro(''); setCurrentPage(1); }}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors focus:outline-none ${!filtroRubro ? 'bg-red-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                >
+                  Todos
+                </button>
+                {(expandirRubros ? resumen.porRubro : resumen.porRubro.slice(0, TOP_RUBROS)).map(r => (
+                  <button
+                    key={r.rubro}
+                    onClick={() => { setFiltroRubro(filtroRubro === r.rubro ? '' : r.rubro); setCurrentPage(1); }}
+                    className={`px-2.5 py-1 rounded-full text-xs font-semibold transition-colors focus:outline-none ${filtroRubro === r.rubro ? 'bg-red-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    {r.rubro} · {r.total}
+                  </button>
+                ))}
+                {resumen.porRubro.length > TOP_RUBROS && (
+                  <button
+                    onClick={() => setExpandirRubros(v => !v)}
+                    className="px-2.5 py-1 rounded-full text-xs font-medium text-gray-400 border border-dashed border-gray-300 hover:bg-gray-50 transition-colors"
+                  >
+                    {expandirRubros ? 'ver menos' : `+ ${resumen.porRubro.length - TOP_RUBROS} más`}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Resumen de filtros activos — sin este strip el usuario no sabe que hay dos filtros simultáneos */}
-      {(filterAsesorId || filtroSinAsesora || filtroDistrito) && (
+      {/* Resumen de filtros activos — sin este strip el usuario no sabe que hay filtros simultáneos */}
+      {(filterAsesorId || filtroSinAsesora || filtroDistrito || filtroRubro) && (
         <div className="flex items-center gap-2 flex-wrap bg-gray-50 border-l-2 border-red-400 rounded-r-xl pl-3 pr-3 py-2 mb-4">
           <span className="text-xs text-gray-500 font-medium shrink-0">
             Mostrando <span className="font-bold text-gray-700 tabular-nums">{totalClientes}</span> {totalClientes === 1 ? 'cliente' : 'clientes'}:
@@ -605,9 +655,19 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               >×</button>
             </span>
           )}
-          {(filterAsesorId || filtroSinAsesora) && filtroDistrito && (
+          {filtroRubro && (
+            <span className="inline-flex items-center gap-1 bg-red-50 border border-red-200 text-red-700 text-xs font-semibold rounded-full px-2.5 py-0.5">
+              <FiTag size={10} />
+              {filtroRubro}
+              <button
+                onClick={() => { setFiltroRubro(''); setCurrentPage(1); }}
+                className="focus:outline-none hover:text-red-900 text-red-400 ml-0.5 leading-none"
+              >×</button>
+            </span>
+          )}
+          {[(filterAsesorId || filtroSinAsesora), filtroDistrito, filtroRubro].filter(Boolean).length >= 2 && (
             <button
-              onClick={() => { setFilterAsesorId(''); setFiltroSinAsesora(false); setFiltroDistrito(''); setCurrentPage(1); }}
+              onClick={() => { setFilterAsesorId(''); setFiltroSinAsesora(false); setFiltroDistrito(''); setFiltroRubro(''); setCurrentPage(1); }}
               className="text-xs text-gray-400 hover:text-gray-600 focus:outline-none"
             >· Limpiar todo</button>
           )}
@@ -648,6 +708,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                         {c.nombre}
                       </Link>
                       <span className="px-2.5 py-0.5 bg-gray-100 text-gray-500 rounded-full text-[11px] font-medium">{c.tipo_cliente || 'Frecuente'}</span>
+                      {c.rubro && <span className="px-2.5 py-0.5 bg-teal-50 text-teal-700 rounded-full text-[11px] font-medium inline-flex items-center gap-1"><FiTag size={10} />{c.rubro}</span>}
                       {/* Badge de asesora — visible para admin */}
                       {isAdmin && c.asesor_name && (
                         <span className="px-2.5 py-0.5 bg-blue-50 text-blue-600 rounded-full text-[11px] font-semibold flex items-center gap-1">
