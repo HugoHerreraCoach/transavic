@@ -132,6 +132,18 @@ export default async function GrePage({ params }: PageProps) {
     }
   }
 
+  // Indicador M1/L: se lee del XML firmado (fuente de verdad), donde viaja como
+  // SpecialInstructions. Sin migración; si no hay XML (guía pendiente) queda false.
+  let indicadorM1L = false;
+  if (g.xml_firmado_base64) {
+    try {
+      const xmlStr = Buffer.from(g.xml_firmado_base64, "base64").toString("utf-8");
+      indicadorM1L = xmlStr.includes("SUNAT_Envio_IndicadorTrasladoVehiculoM1L");
+    } catch {
+      // Si falla el parseo, dejar indicadorM1L en false
+    }
+  }
+
   return (
     <GrePrintableClient
       guia={{
@@ -146,6 +158,7 @@ export default async function GrePage({ params }: PageProps) {
         totalBultos: g.total_bultos,
         modalidadTraslado: g.modalidad_traslado,
         motivoTraslado: g.motivo_traslado,
+        indicadorM1L,
         fechaInicioTraslado: new Date(g.fecha_inicio_traslado).toLocaleDateString("es-PE", {
           day: "2-digit",
           month: "2-digit",
