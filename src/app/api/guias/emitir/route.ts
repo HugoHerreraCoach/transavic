@@ -408,19 +408,16 @@ export async function POST(request: Request) {
       if (!finalChoferApellidos) finalChoferApellidos = div.apellidos;
     }
 
-    // Validación obligatoria para transporte privado (la licencia es opcional si es moto/vehículo M1/L)
-    const necesitaLicencia = !indicadorM1L;
-    const licenciaFalta = necesitaLicencia && !finalChoferLicencia;
-
-    if (!finalChoferDni || licenciaFalta || !finalPlaca) {
+    // Con vehículo categoría M1/L (moto/auto ligero) SUNAT permite OMITIR la placa y los datos
+    // del conductor (el xml-builder-guia los omite cuando vienen vacíos). Sin M1/L (transporte
+    // privado normal): DNI de conductor + Licencia + Placa son obligatorios.
+    if (!indicadorM1L && (!finalChoferDni || !finalChoferLicencia || !finalPlaca)) {
       return NextResponse.json(
         {
-          error: necesitaLicencia
-            ? "Se requieren DNI de conductor, Licencia de conducir y Placa del vehículo para emitir la Guía de Remisión."
-            : "Se requieren DNI de conductor y Placa del vehículo para emitir la Guía de Remisión.",
+          error: "Se requieren DNI de conductor, Licencia de conducir y Placa del vehículo (salvo que el vehículo sea categoría M1 o L).",
           missingFields: {
             chofer_dni: !finalChoferDni,
-            chofer_licencia: licenciaFalta,
+            chofer_licencia: !finalChoferLicencia,
             vehiculo_placa: !finalPlaca,
           },
         },
@@ -487,11 +484,11 @@ export async function POST(request: Request) {
       indicadorM1L: !!indicadorM1L,
       repartidor: {
         docTipo: "1", // DNI
-        docNum: finalChoferDni,
+        docNum: finalChoferDni || "", // vacío = omitir DriverPerson (permitido con M1/L)
         licencia: finalChoferLicencia || "", // enviar vacía si se omitió por M1L
         nombres: finalChoferNombres,
         apellidos: finalChoferApellidos,
-        placa: finalPlaca,
+        placa: finalPlaca || "", // vacío = omitir placa (permitido con M1/L)
       },
       cliente: {
         tipoDocumento: clienteDocTipo,
