@@ -15,6 +15,7 @@ const UpdateSchema = z.object({
   direccion_mapa: z.string().optional().nullable(),
   distrito: z.string().optional().nullable(),
   tipo_cliente: z.string().optional().nullable(),
+  rubro: z.string().optional().nullable(),
   hora_entrega: z.string().optional().nullable(),
   notas: z.string().optional().nullable(),
   empresa: z.string().optional().nullable(),

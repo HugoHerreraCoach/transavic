@@ -15,6 +15,7 @@ const CreateSchema = z.object({
   direccion_mapa: z.string().optional().nullable(),
   distrito: z.string().optional().nullable(),
   tipo_cliente: z.string().optional().nullable(),
+  rubro: z.string().optional().nullable(),
   hora_entrega: z.string().optional().nullable(),
   notas: z.string().optional().nullable(),
   empresa: z.string().optional().nullable(),
@@ -76,6 +77,14 @@ export async function GET(request: Request) {
     const filterAsesor = searchParams.get("asesor_id")?.trim();
     const sinAsesora = userRole === "admin" && searchParams.get("sin_asesora") === "true";
     const distrito = searchParams.get("distrito")?.trim() || "";
+    const rubro = searchParams.get("rubro")?.trim() || "";
+    const RUBRO_SIN = "Sin clasificar";
+    // Aplica el filtro de rubro a un par (condiciones, params). 'Sin clasificar' = rubro NULL.
+    const aplicarRubro = (C: string[], P: unknown[]) => {
+      if (!rubro) return;
+      if (rubro === RUBRO_SIN) { C.push(`c.rubro IS NULL`); }
+      else { C.push(`c.rubro = $${P.length + 1}`); P.push(rubro); }
+    };
     const offset = (page - 1) * limit;
 
     // Condiciones base: scoping por rol + búsqueda de texto
@@ -99,6 +108,7 @@ export async function GET(request: Request) {
       allC.push(`c.asesor_id = $${allP.length + 1}`); allP.push(filterAsesor);
     }
     if (distrito) { allC.push(`c.distrito = $${allP.length + 1}`); allP.push(distrito); }
+    aplicarRubro(allC, allP);
     const whereClause = allC.length > 0 ? `WHERE ${allC.join(' AND ')}` : '';
 
     // Query principal con JOIN para asesor_name
@@ -128,21 +138,31 @@ export async function GET(request: Request) {
     }
 
     // ── Resumen de distribución ──
-    // porAsesora: base + distrito (sin filterAsesor → distribución entre asesoras para ese distrito)
+    // Cada resumen refleja los OTROS filtros activos para que los conteos sean coherentes
+    // (ej. al elegir un distrito, "por asesora" muestra cuántos tiene cada una EN ese distrito).
+    // porAsesora: base + distrito + rubro
     const asesorC = [...baseC]; const asesorP = [...baseP];
     if (distrito) { asesorC.push(`c.distrito = $${asesorP.length + 1}`); asesorP.push(distrito); }
+    aplicarRubro(asesorC, asesorP);
     const condAsesor = asesorC.length > 0
       ? `${asesorC.join(' AND ')} AND u.role = 'asesor'`
       : `u.role = 'asesor'`;
 
-    // porDistrito: base + filterAsesor (sin distrito → distribución entre distritos para esa asesora)
+    // porDistrito: base + filterAsesor + rubro
     const distC = [...baseC]; const distP = [...baseP];
     if (userRole === "admin" && filterAsesor) { distC.push(`c.asesor_id = $${distP.length + 1}`); distP.push(filterAsesor); }
+    aplicarRubro(distC, distP);
     const condDist = distC.length > 0
       ? `${distC.join(' AND ')} AND c.distrito IS NOT NULL`
       : `c.distrito IS NOT NULL`;
 
-    const [resumenAsesoraRows, resumenDistritoRows] = await Promise.all([
+    // porRubro: base + filterAsesor + distrito (sin el propio rubro → distribución entre rubros)
+    const rubroC = [...baseC]; const rubroP = [...baseP];
+    if (userRole === "admin" && filterAsesor) { rubroC.push(`c.asesor_id = $${rubroP.length + 1}`); rubroP.push(filterAsesor); }
+    if (distrito) { rubroC.push(`c.distrito = $${rubroP.length + 1}`); rubroP.push(distrito); }
+    const condRubro = rubroC.length > 0 ? `WHERE ${rubroC.join(' AND ')}` : '';
+
+    const [resumenAsesoraRows, resumenDistritoRows, resumenRubroRows] = await Promise.all([
       userRole === "admin"
         ? sql.query(
             `SELECT u.name AS nombre, COUNT(*)::int AS total
@@ -162,6 +182,14 @@ export async function GET(request: Request) {
          ORDER BY total DESC`,
         distP
       ),
+      sql.query(
+        `SELECT COALESCE(c.rubro, '${RUBRO_SIN}') AS rubro, COUNT(*)::int AS total
+         FROM clientes c
+         ${condRubro}
+         GROUP BY 1
+         ORDER BY total DESC`,
+        rubroP
+      ),
     ]);
 
     return NextResponse.json({
@@ -175,6 +203,7 @@ export async function GET(request: Request) {
       resumen: {
         porAsesora: resumenAsesoraRows as { nombre: string; total: number }[],
         porDistrito: resumenDistritoRows as { distrito: string; total: number }[],
+        porRubro: resumenRubroRows as { rubro: string; total: number }[],
       },
     });
   } catch (error) {
@@ -205,7 +234,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Datos inválidos", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const { nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias } = parsed.data;
+    const { nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, rubro, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias } = parsed.data;
 
     // Determinar asesor_id:
     // - Admin puede asignar a quien quiera; si no envía, se asigna a sí mismo
@@ -215,8 +244,8 @@ export async function POST(request: Request) {
       : session.user.id;
 
     const result = await sql`
-      INSERT INTO clientes (nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias)
-      VALUES (${nombre}, ${razon_social ?? null}, ${ruc_dni ?? null}, ${whatsapp ?? null}, ${direccion ?? null}, ${direccion_mapa ?? null}, ${distrito ?? 'La Victoria'}, ${tipo_cliente ?? 'Frecuente'}, ${hora_entrega ?? null}, ${notas ?? null}, ${empresa ?? 'Transavic'}, ${latitude ?? null}, ${longitude ?? null}, ${finalAsesorId}, ${plazo_pago_dias ?? 0})
+      INSERT INTO clientes (nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, rubro, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias)
+      VALUES (${nombre}, ${razon_social ?? null}, ${ruc_dni ?? null}, ${whatsapp ?? null}, ${direccion ?? null}, ${direccion_mapa ?? null}, ${distrito ?? 'La Victoria'}, ${tipo_cliente ?? 'Frecuente'}, ${rubro ?? null}, ${hora_entrega ?? null}, ${notas ?? null}, ${empresa ?? 'Transavic'}, ${latitude ?? null}, ${longitude ?? null}, ${finalAsesorId}, ${plazo_pago_dias ?? 0})
       RETURNING *, (SELECT name FROM users WHERE id = ${finalAsesorId}) as asesor_name
     `;
 

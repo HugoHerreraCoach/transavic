@@ -37,6 +37,7 @@ interface Cliente {
   direccion?: string | null;
   distrito?: string | null;
   tipo_cliente?: string | null;
+  rubro?: string | null;
   empresa?: string | null;
   notas?: string | null;
   asesor_name?: string | null;
@@ -226,6 +227,11 @@ export default function PerfilClienteClient({
                 {cliente.tipo_cliente && (
                   <span className="inline-flex items-center gap-1">
                     <FiTag className="h-3 w-3" /> {cliente.tipo_cliente}
+                  </span>
+                )}
+                {cliente.rubro && (
+                  <span className="inline-flex items-center gap-1 text-teal-700">
+                    <FiTag className="h-3 w-3" /> {cliente.rubro}
                   </span>
                 )}
                 {cliente.distrito && (
