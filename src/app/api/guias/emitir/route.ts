@@ -329,17 +329,31 @@ export async function POST(request: Request) {
     }
 
     // Si la guía se emite desde un PEDIDO sin comprobante explícito, vincular su factura/boleta
-    // aceptada para que la guía SIEMPRE muestre su "Documento Relacionado" (como el modelo SUNAT).
+    // aceptada para que la guía muestre su "Documento Relacionado" Y para que el DESTINATARIO
+    // COINCIDA con la factura (no con el nombre informal del pedido).
     if (!finalComprobanteId && finalPedidoId) {
       const compRows = await sql`
-        SELECT id FROM comprobantes
+        SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo
+        FROM comprobantes
         WHERE pedido_id = ${finalPedidoId}::uuid
           AND estado IN ('aceptado', 'observado')
           AND tipo IN ('01', '03')
         ORDER BY created_at DESC
         LIMIT 1
       `;
-      if (compRows.length > 0) finalComprobanteId = compRows[0].id as string;
+      if (compRows.length > 0) {
+        finalComprobanteId = compRows[0].id as string;
+        // El destinatario de la guía debe COINCIDIR con la factura. Solo se sobrescribe si el
+        // usuario NO mandó override explícito y la factura tiene receptor identificado (RUC/DNI);
+        // una boleta sin documento mantiene el flujo de override (no se pisa con datos inválidos).
+        const facturaDocNum = String(compRows[0].cliente_doc_num || "").trim();
+        if (!cliente_doc_num && !cliente_razon_social && esReceptorIdentificado(facturaDocNum)) {
+          clienteDocNum = facturaDocNum;
+          clienteDocTipo = String(compRows[0].cliente_doc_tipo || clienteDocTipo);
+          const facturaRazon = String(compRows[0].cliente_razon_social || "").trim();
+          if (facturaRazon) clienteRazonSocial = facturaRazon;
+        }
+      }
     }
 
     // --- PREVENIR DOBLE EMISIÓN ---
