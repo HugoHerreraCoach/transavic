@@ -112,6 +112,9 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [totalBultos, setTotalBultos] = useState<number>(1);
   const [pesoBrutoTotal, setPesoBrutoTotal] = useState<string>("");
   const [indicadorM1L, setIndicadorM1L] = useState<boolean>(true);
+  // Con M1/L los datos del chofer son opcionales → se ocultan y solo se piden si el usuario quiere
+  // (o si el pedido ya trae un repartidor con datos). Sin M1/L, siempre visibles (obligatorios).
+  const [mostrarChofer, setMostrarChofer] = useState<boolean>(false);
   const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number; unidad: string }>>([]);
   const [cargandoItems, setCargandoItems] = useState<boolean>(false);
 
@@ -236,6 +239,8 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
               const { nombres, apellidos } = dividirNombreLocal(preselected.name || "");
               setChoferNombres(preselected.chofer_nombres || nombres);
               setChoferApellidos(preselected.chofer_apellidos || apellidos);
+              // Si el repartidor asignado trae DNI o placa, mostramos sus datos (no los ocultamos)
+              if (preselected.chofer_dni || preselected.vehiculo_placa) setMostrarChofer(true);
 
               // Evaluar si los datos del repartidor, dirección y cliente están 100% listos para emisión rápida
               const tieneRepartidorListos = indicadorM1L || !!(preselected.chofer_dni && preselected.chofer_licencia && preselected.vehiculo_placa);
@@ -374,16 +379,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
         body: JSON.stringify({
           pedido_id: pedido?.id || null,
           comprobante_id: comprobante?.id || null,
-          repartidor_id: repartidorId || null,
+          repartidor_id: incluirChofer ? (repartidorId || null) : null,
           fechaInicioTraslado,
           motivoTraslado,
           totalBultos: Number(totalBultos) || 1,
           pesoBrutoTotal: pesoBrutoTotal ? Number(pesoBrutoTotal) : null,
-          vehiculo_placa: vehiculoPlaca.trim(),
-          chofer_dni: choferDni.trim(),
-          chofer_licencia: choferLicencia.trim(),
-          chofer_nombres: choferNombres.trim(),
-          chofer_apellidos: choferApellidos.trim(),
+          vehiculo_placa: incluirChofer ? vehiculoPlaca.trim() : "",
+          chofer_dni: incluirChofer ? choferDni.trim() : "",
+          chofer_licencia: incluirChofer ? choferLicencia.trim() : "",
+          chofer_nombres: incluirChofer ? choferNombres.trim() : "",
+          chofer_apellidos: incluirChofer ? choferApellidos.trim() : "",
           indicadorM1L,
           direccion_llegada: direccionLlegada.trim(),
           distrito_llegada: distritoLlegada.trim() || null,
@@ -421,6 +426,8 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
   // Con M1/L los datos del chofer son opcionales (SUNAT los permite omitir).
   const choferOk = indicadorM1L || !!(repartidorId && choferDni && choferLicencia && vehiculoPlaca && choferNombres && choferApellidos);
+  // Se incluyen datos del chofer si NO es M1/L (obligatorios) o si el usuario los desplegó.
+  const incluirChofer = !indicadorM1L || mostrarChofer;
   const datosCompletosParaEmisionRapida =
     !!(choferOk && direccionLlegada && distritoLlegada && !necesitaOverride);
 
@@ -538,12 +545,20 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
                   <div className="space-y-1 col-span-2 pt-2 border-t border-indigo-50/80">
                     <span className="text-[10px] uppercase font-bold text-gray-400 block">Conductor y Vehículo</span>
-                    <span className="font-semibold text-gray-800 block">
-                      🚚 {choferNombres} {choferApellidos}
-                    </span>
-                    <span className="text-[10px] text-gray-500 block">
-                      DNI: {choferDni} | Licencia: {indicadorM1L && !choferLicencia ? "Omitida (M1/L)" : choferLicencia} | Placa: <span className="font-bold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.5 rounded text-[10px]">{vehiculoPlaca}</span>
-                    </span>
+                    {incluirChofer ? (
+                      <>
+                        <span className="font-semibold text-gray-800 block">
+                          🚚 {choferNombres} {choferApellidos}
+                        </span>
+                        <span className="text-[10px] text-gray-500 block">
+                          DNI: {choferDni || "—"} | Licencia: {indicadorM1L && !choferLicencia ? "Omitida (M1/L)" : (choferLicencia || "—")} | Placa: <span className="font-bold text-indigo-700 bg-indigo-50/80 px-1.5 py-0.5 rounded text-[10px]">{vehiculoPlaca || "—"}</span>
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-gray-500 block">
+                        Sin datos del chofer — vehículo M1/L (moto / auto ligero), exento por SUNAT.
+                      </span>
+                    )}
                   </div>
 
                   <div className="space-y-1 pt-2 border-t border-indigo-50/80">
@@ -807,7 +822,31 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         Con moto o auto ligero no necesitas placa ni datos del chofer (ideal para delivery externo).
                       </p>
                     )}
-                    
+
+                    {/* Con M1/L los datos del chofer son opcionales: ocultos hasta que el usuario los pida */}
+                    {!incluirChofer && (
+                      <button
+                        type="button"
+                        onClick={() => setMostrarChofer(true)}
+                        className="w-full text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 border border-dashed border-indigo-200 rounded-xl py-2 hover:bg-indigo-50/40 transition"
+                      >
+                        + Agregar datos del chofer (opcional)
+                      </button>
+                    )}
+
+                    {incluirChofer && (
+                    <>
+                    {indicadorM1L && (
+                      <div className="flex justify-end -mb-1">
+                        <button
+                          type="button"
+                          onClick={() => setMostrarChofer(false)}
+                          className="text-[10px] font-medium text-gray-400 hover:text-gray-600"
+                        >
+                          − Quitar datos del chofer (no requeridos con M1/L)
+                        </button>
+                      </div>
+                    )}
                     <div>
                       <label className="block text-[10px] font-bold text-gray-500 mb-1.5">
                         Seleccionar Repartidor
@@ -900,6 +939,8 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         required={!indicadorM1L}
                       />
                     </div>
+                    </>
+                    )}
                   </div>
                 </div>
 
