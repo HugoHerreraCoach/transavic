@@ -299,7 +299,7 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
         <div style={{ fontWeight: "bold", fontSize: "10.5px", marginBottom: "5px", marginTop: "12px" }}>
           Bienes por transportar:
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "9.5px" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "9.5px", border: "1px solid #999" }}>
           <thead>
             <tr style={{ backgroundColor: "#f0f0f0", borderTop: "1.5px solid #000", borderBottom: "1.5px solid #000" }}>
               <th style={{ padding: "4px 5px", textAlign: "center", borderRight: "1px solid #999", width: "32px", fontWeight: "bold" }}>N°</th>
