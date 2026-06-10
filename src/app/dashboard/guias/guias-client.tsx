@@ -49,6 +49,20 @@ export default function GuiasClient({ userRole: _userRole }: GuiasClientProps) {
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("todos");
   const [filtroEstado, setFiltroEstado] = useState<string>("todos");
   const [busqueda, setBusqueda] = useState<string>("");
+  // id de la guía cuyo PDF se está generando (descarga jsPDF, como boletas/facturas)
+  const [descargandoPdfId, setDescargandoPdfId] = useState<string | null>(null);
+
+  const descargarPdf = async (g: Guia) => {
+    setDescargandoPdfId(g.id);
+    try {
+      const { descargarPdfGuia } = await import("@/lib/descargar-guia");
+      await descargarPdfGuia(g.id);
+    } catch (err) {
+      setError(`No se pudo generar el PDF de ${g.serie_numero}: ${(err as Error).message}`);
+    } finally {
+      setDescargandoPdfId(null);
+    }
+  };
 
   const cargarGuias = useCallback(async () => {
     setLoading(true);
@@ -278,9 +292,22 @@ export default function GuiasClient({ userRole: _userRole }: GuiasClientProps) {
                     </td>
                     <td className="px-6 py-4.5 text-right">
                       <div className="flex justify-end items-center gap-1.5">
+                        {/* Descargar PDF (jsPDF, como boletas/facturas) */}
+                        <button
+                          onClick={() => descargarPdf(g)}
+                          disabled={descargandoPdfId === g.id}
+                          title="Descargar PDF de la Guía de Remisión"
+                          className="px-2.5 py-1.5 text-xs font-medium bg-red-50 text-red-700 hover:bg-red-100 rounded-md flex items-center gap-1 transition-colors active:scale-95 disabled:opacity-50"
+                        >
+                          {descargandoPdfId === g.id
+                            ? <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            : <FiDownload className="w-3.5 h-3.5" />}
+                          PDF
+                        </button>
+
                         {/* Imprimir representación gráfica */}
                         <Link
-                          href={`/pedidos/${g.pedido_id}/gre?print=true`}
+                          href={`/pedidos/${g.pedido_id || g.id}/gre?print=true`}
                           target="_blank"
                           className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-650 dark:text-slate-350 rounded-lg transition-colors active:scale-95"
                           title="Imprimir Guía de Remisión"
