@@ -82,6 +82,19 @@ Regla **central** para el caso de Transavic (muchas entregas las hace un **deliv
 ### Banner del modal (jun 2026)
 El banner del modal **ya no está hardcodeado a "Beta"**. Lo alimenta `GET /api/sunat/entorno` (`{environment, esProduccion}`, dato no sensible): en producción muestra una nota **verde "Producción (SUNAT real)"**, en beta el aviso ámbar. El modal se abre desde `table.tsx` y `comprobantes-client.tsx` (client components), por eso el entorno se expone por endpoint y no por props.
 
+### DOS modales de emisión + módulo compartido `guia-form-shared.ts` (9 jun 2026)
+Hay **dos modales** de emisión de GRE: `emitir-guia-modal.tsx` (desde un pedido/comprobante) y
+`emitir-guia-directa-modal.tsx` (GRE directa/standalone, botón "Emitir GRE" en Comprobantes). Se
+**desincronizaron** (el directo siguió exigiendo chofer con M1/L y tenía el banner "Beta"
+hardcodeado), así que las reglas/constantes compartidas se extrajeron a
+**`src/lib/guia-form-shared.ts`**: `DISTRITOS_LIMA`, `dividirNombreLocal`, `MotorizadoUser`,
+`datosChoferDesdeMotorizado`, **`validarChofer`** (LA regla del chofer: con M1/L todo opcional; sin
+M1/L exige DNI+licencia+nombres+apellidos+placa — espejo del backend), `consultarDocumento`
+(apisperu) y `fetchEntornoSunat`. **Regla de mantenimiento: cambios a reglas del chofer/M1L,
+distritos o consultas compartidas se hacen en ese módulo, NUNCA en un solo modal.** Ambos modales
+hoy tienen paridad: banner dinámico, auto-búsqueda del destinatario, M1/L exime y oculta el bloque
+del chofer ("+ Agregar datos del chofer (opcional)").
+
 ### Auto-búsqueda del destinatario (jun 2026)
 En el modal, al tipear un DNI(8)/RUC(11) en el destinatario se consulta apisperu (`POST /api/consulta-documento`) y se autocompletan los "Nombres o Razón Social" (mismo patrón que el form de comprobantes).
 
