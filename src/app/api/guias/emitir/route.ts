@@ -392,7 +392,7 @@ export async function POST(request: Request) {
         SELECT id, serie_numero, estado
         FROM comprobantes_guias
         WHERE comprobante_id = ${finalComprobanteId}::uuid
-          AND estado NOT IN ('anulado', 'RECHAZADA', 'ERROR')
+          AND estado NOT IN ('anulado', 'rechazado', 'error')
         LIMIT 1
       `;
       if (activeGuia.length > 0) {
@@ -408,7 +408,7 @@ export async function POST(request: Request) {
         SELECT id, serie_numero, estado
         FROM comprobantes_guias
         WHERE pedido_id = ${finalPedidoId}::uuid
-          AND estado NOT IN ('anulado', 'RECHAZADA', 'ERROR')
+          AND estado NOT IN ('anulado', 'rechazado', 'error')
         LIMIT 1
       `;
       if (activeGuia.length > 0) {
