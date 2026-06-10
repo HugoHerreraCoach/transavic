@@ -65,6 +65,9 @@ interface PedidoDespacho {
   distancia_km: number | null;
   duracion_estimada_min: number | null;
   numero_guia?: number | null;
+  /** true si el pedido tiene una Guía de Remisión LEGAL aceptada/observada por
+   *  SUNAT. NO confundir con numero_guia (que es la orden de pedido interna). */
+  tiene_gre?: boolean;
 }
 
 interface Repartidor {
@@ -142,7 +145,7 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
       >
         <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="text-xs text-gray-400 line-through truncate flex-1">{pedido.cliente}</span>
-        {pedido.numero_guia && (
+        {pedido.tiene_gre && (
           <span className="text-[8px] font-bold text-indigo-500 bg-indigo-50/50 border border-indigo-100 px-0.5 rounded flex-shrink-0" title="Guía de Remisión emitida">
             GRE
           </span>
@@ -174,7 +177,7 @@ function PedidoMiniCard({ pedido, isDragging }: { pedido: PedidoDespacho; isDrag
         )}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${config.dot}`} />
         <span className="font-semibold text-sm text-gray-900 truncate flex-1">{pedido.cliente}</span>
-        {pedido.numero_guia && (
+        {pedido.tiene_gre && (
           <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 rounded flex-shrink-0" title="Guía de Remisión emitida">
             GRE
           </span>

@@ -3,7 +3,12 @@
 // Usa UPDATE ... RETURNING para garantizar atomicidad (no race conditions).
 import { neon } from "@neondatabase/serverless";
 
-export type TipoCorrelativo = "guia_remision";
+// `guia_remision` — DEPRECATED como número compartido. Quedó congelado el
+// 2026-06-10: la GRE legal pasó a un contador POR SERIE en
+// `comprobantes_contador` (T001/T002) y la orden de pedido interna usa
+// `orden_pedido`. Ya nada consume `guia_remision`; se conserva el tipo por si
+// hay datos históricos. Ver scripts/migrate-guias-numeracion-2026-06-10.sql.
+export type TipoCorrelativo = "guia_remision" | "orden_pedido";
 
 /**
  * Reserva atómicamente el siguiente número correlativo del tipo dado.

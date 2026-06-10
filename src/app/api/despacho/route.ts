@@ -36,7 +36,11 @@ export async function GET() {
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
-        p.distancia_km, p.duracion_estimada_min, p.numero_guia
+        p.distancia_km, p.duracion_estimada_min, p.numero_guia,
+        EXISTS (
+          SELECT 1 FROM comprobantes_guias g
+          WHERE g.pedido_id = p.id AND g.estado IN ('aceptado', 'observado')
+        ) AS tiene_gre
       FROM pedidos p
       WHERE p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
         AND p.estado IN ('Pendiente', 'Listo_Para_Despacho')
@@ -52,7 +56,11 @@ export async function GET() {
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
-        p.distancia_km, p.duracion_estimada_min, p.numero_guia
+        p.distancia_km, p.duracion_estimada_min, p.numero_guia,
+        EXISTS (
+          SELECT 1 FROM comprobantes_guias g
+          WHERE g.pedido_id = p.id AND g.estado IN ('aceptado', 'observado')
+        ) AS tiene_gre
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.fecha_pedido < (NOW() AT TIME ZONE 'America/Lima')::date
@@ -70,7 +78,11 @@ export async function GET() {
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
         p.es_delivery_externo, p.delivery_externo_nombre,
-        p.distancia_km, p.duracion_estimada_min, p.numero_guia
+        p.distancia_km, p.duracion_estimada_min, p.numero_guia,
+        EXISTS (
+          SELECT 1 FROM comprobantes_guias g
+          WHERE g.pedido_id = p.id AND g.estado IN ('aceptado', 'observado')
+        ) AS tiene_gre
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.es_delivery_externo = true
@@ -117,7 +129,11 @@ export async function GET() {
         p.latitude, p.longitude, p.estado, p.orden_ruta,
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas, p.empresa, p.fecha_pedido,
-        p.repartidor_id, p.distancia_km, p.duracion_estimada_min, p.numero_guia
+        p.repartidor_id, p.distancia_km, p.duracion_estimada_min, p.numero_guia,
+        EXISTS (
+          SELECT 1 FROM comprobantes_guias g
+          WHERE g.pedido_id = p.id AND g.estado IN ('aceptado', 'observado')
+        ) AS tiene_gre
       FROM pedidos p
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.repartidor_id IS NOT NULL

@@ -56,10 +56,13 @@ export default async function GuiaPage({ params }: PageProps) {
     ORDER BY producto_nombre ASC
   `) as ItemRow[];
 
-  // Si el pedido no tiene número de guía aún, reservarlo ahora
+  // Si el pedido no tiene número de orden aún, reservarlo ahora.
+  // Usa el correlativo `orden_pedido` (interno), SEPARADO de la numeración legal
+  // de las guías de remisión SUNAT (T001/T002). Antes compartían `guia_remision`
+  // y abrir esta página gastaba un número de la guía legal (fix 2026-06-10).
   let numero = pedido.numero_guia as number | null;
   if (!numero) {
-    numero = await siguienteCorrelativo("guia_remision");
+    numero = await siguienteCorrelativo("orden_pedido");
     await sql`UPDATE pedidos SET numero_guia = ${numero} WHERE id = ${id}`;
   }
 

@@ -6,7 +6,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { resolveDevBypassSession } from "@/lib/dev-bypass";
 import { z } from "zod";
-import { siguienteCorrelativo, formatNumeroGuia } from "@/lib/correlativos";
+// La GRE legal NO usa `siguienteCorrelativo` (correlativo compartido); reserva
+// su número en un contador POR SERIE en `comprobantes_contador` (ver paso 5).
 import { getSunatConfig, empresaFromPedidoString } from "@/lib/sunat/config-transavic";
 import { generarXMLGuia, DatosGuia } from "@/lib/sunat/xml-builder-guia";
 import { firmarXML } from "@/lib/sunat/xml-signer";
@@ -85,6 +86,10 @@ function dividirNombreCompleto(nombreCompleto: string): { nombres: string; apell
 }
 
 export async function POST(request: Request) {
+  // ID de la fila reservada (estado 'emitiendo'). Declarado fuera del try para
+  // que el catch pueda marcarla 'error' si algo falla tras reservar el número
+  // → así ningún correlativo de guía queda consumido sin rastro ("fantasma").
+  let guiaReservadaId: string | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let session: any = await auth();
@@ -392,6 +397,7 @@ export async function POST(request: Request) {
         FROM comprobantes_guias
         WHERE comprobante_id = ${finalComprobanteId}::uuid
           AND estado NOT IN ('anulado', 'rechazado', 'error')
+          AND NOT (estado = 'emitiendo' AND created_at < NOW() - INTERVAL '15 minutes')
         LIMIT 1
       `;
       if (activeGuia.length > 0) {
@@ -408,6 +414,7 @@ export async function POST(request: Request) {
         FROM comprobantes_guias
         WHERE pedido_id = ${finalPedidoId}::uuid
           AND estado NOT IN ('anulado', 'rechazado', 'error')
+          AND NOT (estado = 'emitiendo' AND created_at < NOW() - INTERVAL '15 minutes')
         LIMIT 1
       `;
       if (activeGuia.length > 0) {
@@ -520,10 +527,44 @@ export async function POST(request: Request) {
       );
     }
 
-    // 5. Asignar correlativo atómico para la guía (Serie T001 o T002)
+    // 5. RESERVA ATÓMICA del correlativo de la GRE legal.
+    //    Contador POR SERIE en `comprobantes_contador` (T001 Transavic / T002
+    //    Avícola), SEPARADO de la orden de pedido interna (`orden_pedido`). El
+    //    bump del contador y la fila 'emitiendo' van en UN solo statement → si
+    //    algo falla después (XML, firma, SUNAT), el número NO queda quemado sin
+    //    fila: el catch la pasa a 'error'. (Antes compartía `guia_remision` con
+    //    la orden interna y abrir una orden gastaba un número legal — fix 2026-06-10.)
     const serie = empresa === "avicola" ? "T002" : "T001";
-    const numero = await siguienteCorrelativo("guia_remision");
-    const serieNumero = `${serie}-${formatNumeroGuia(numero)}`;
+    const reserva = (await sql`
+      WITH bump AS (
+        INSERT INTO comprobantes_contador (ruc, serie, ultimo_numero)
+        VALUES (${sunatConfig.ruc}, ${serie}, 1)
+        ON CONFLICT (ruc, serie) DO UPDATE
+          SET ultimo_numero = comprobantes_contador.ultimo_numero + 1, updated_at = NOW()
+        RETURNING ultimo_numero
+      )
+      INSERT INTO comprobantes_guias (
+        pedido_id, comprobante_id, ruc_emisor, empresa, serie, numero, serie_numero,
+        cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
+        peso_bruto_total, total_bultos, modalidad_traslado, motivo_traslado,
+        fecha_inicio_traslado, repartidor_id, vehiculo_placa,
+        chofer_doc_tipo, chofer_doc_num, chofer_licencia,
+        estado, mensaje_sunat, emitido_por
+      )
+      SELECT
+        ${finalPedidoId}, ${finalComprobanteId}, ${sunatConfig.ruc}, ${empresa}, ${serie},
+        bump.ultimo_numero, ${serie} || '-' || LPAD(bump.ultimo_numero::text, 8, '0'),
+        ${clienteDocTipo}, ${clienteDocNum || '0'}, ${clienteRazonSocial},
+        ${finalPesoBruto}, ${totalBultos}, '02', ${motivoTraslado},
+        ${fechaInicioTraslado}, ${finalRepartidorId}, ${finalPlaca},
+        '1', ${finalChoferDni}, ${finalChoferLicencia},
+        'emitiendo', 'Reserva — emisión en curso', ${session.user.name || null}
+      FROM bump
+      RETURNING id, numero, serie_numero
+    `) as Array<{ id: string; numero: number; serie_numero: string }>;
+    const numero = reserva[0].numero;
+    const serieNumero = reserva[0].serie_numero;
+    guiaReservadaId = reserva[0].id;
 
     // 6. Preparar datos para el generador XML
     const fechaEmision = new Date().toISOString().slice(0, 10);
@@ -565,30 +606,16 @@ export async function POST(request: Request) {
     const hayCertificado = !!sunatConfig.certificateBase64 && !!sunatConfig.certificatePassword;
 
     if (!hayCertificado) {
-      // Registrar guía localmente como pendiente (modo desarrollo/testing)
+      // La fila ya existe ('emitiendo' de la reserva) → solo se actualiza a
+      // 'pendiente'. NO se escribe pedidos.numero_guia: ese campo es de la orden
+      // interna; el número de la guía legal vive en comprobantes_guias.
       await sql`
-        INSERT INTO comprobantes_guias (
-          pedido_id, comprobante_id, ruc_emisor, empresa, serie, numero, serie_numero,
-          cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
-          peso_bruto_total, total_bultos, modalidad_traslado, motivo_traslado,
-          fecha_inicio_traslado, repartidor_id, vehiculo_placa,
-          chofer_doc_tipo, chofer_doc_num, chofer_licencia,
-          estado, mensaje_sunat, emitido_por
-        ) VALUES (
-          ${finalPedidoId}, ${finalComprobanteId}, ${sunatConfig.ruc}, ${empresa}, ${serie}, ${numero}, ${serieNumero},
-          ${clienteDocTipo}, ${clienteDocNum || '0'}, ${clienteRazonSocial},
-          ${finalPesoBruto}, ${totalBultos}, '02', ${motivoTraslado},
-          ${fechaInicioTraslado}, ${finalRepartidorId}, ${finalPlaca},
-          '1', ${finalChoferDni}, ${finalChoferLicencia},
-          'pendiente', 'Guía registrada localmente. Certificado .p12 no configurado — no se envió a SUNAT.',
-          ${session.user.name || null}
-        )
+        UPDATE comprobantes_guias
+        SET estado = 'pendiente',
+            mensaje_sunat = 'Guía registrada localmente. Certificado .p12 no configurado — no se envió a SUNAT.',
+            updated_at = NOW()
+        WHERE id = ${guiaReservadaId}::uuid
       `;
-
-      // Vincular el número de guía al pedido si existe
-      if (finalPedidoId) {
-        await sql`UPDATE pedidos SET numero_guia = ${numero} WHERE id = ${finalPedidoId}`;
-      }
 
       return NextResponse.json({
         exito: true,
@@ -602,6 +629,14 @@ export async function POST(request: Request) {
     const { xmlFirmado, hashCpe } = firmarXML(xmlSinFirma, sunatConfig);
 
     // 8. Enviar a SUNAT vía REST (nuevo canal de guías obligatorio)
+    // ⚠️ El "mock de beta" (convertir un fallo real en éxito simulado) está
+    //    APAGADO por defecto y solo se activa con SUNAT_GRE_MOCK_BETA="1" en
+    //    entorno beta. Antes estaba SIEMPRE activo en beta y enmascaró el
+    //    rechazo XSD real de las T002-8/9 en todas las pruebas (d507b01,
+    //    2026-06-09). Para demos sin SUNAT, exportar SUNAT_GRE_MOCK_BETA=1.
+    const mockBetaActivo =
+      sunatConfig.environment === "beta" &&
+      process.env.SUNAT_GRE_MOCK_BETA === "1";
     let resultadoEnvio;
     try {
       resultadoEnvio = await enviarGuiaRest(
@@ -610,9 +645,8 @@ export async function POST(request: Request) {
         numero,
         sunatConfig
       );
-      
-      // Si en Beta da error de credenciales, token o de red, simulamos éxito local para pruebas locales
-      if (!resultadoEnvio.exito && sunatConfig.environment === "beta") {
+
+      if (!resultadoEnvio.exito && mockBetaActivo) {
         console.warn(`[SUNAT BETA MOCK] Fallo real de SUNAT Beta: ${resultadoEnvio.error || resultadoEnvio.descripcion}. Simulando éxito local.`);
         resultadoEnvio = {
           exito: true,
@@ -624,7 +658,7 @@ export async function POST(request: Request) {
         };
       }
     } catch (err) {
-      if (sunatConfig.environment === "beta") {
+      if (mockBetaActivo) {
         console.warn("[SUNAT BETA MOCK] Excepción de conexión a SUNAT Beta. Simulando éxito local.", err);
         resultadoEnvio = {
           exito: true,
@@ -650,38 +684,21 @@ export async function POST(request: Request) {
 
     const observacionesStr = resultadoEnvio.observaciones?.join(" | ") ?? null;
 
-    // 9. Guardar la guía en base de datos
+    // 9. Actualizar la fila reservada ('emitiendo') con el resultado de SUNAT.
+    //    NO se escribe pedidos.numero_guia (ese campo es de la orden interna; el
+    //    número legal vive en comprobantes_guias). El badge de despacho ahora
+    //    consulta si existe una guía aceptada/observada (api/despacho).
     await sql`
-      INSERT INTO comprobantes_guias (
-        pedido_id, comprobante_id, ruc_emisor, empresa, serie, numero, serie_numero,
-        cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
-        peso_bruto_total, total_bultos, modalidad_traslado, motivo_traslado,
-        fecha_inicio_traslado, repartidor_id, vehiculo_placa,
-        chofer_doc_tipo, chofer_doc_num, chofer_licencia,
-        estado, hash_cpe, xml_firmado_base64, cdr_base64,
-        observaciones, mensaje_sunat, emitido_por
-      ) VALUES (
-        ${finalPedidoId}, ${finalComprobanteId}, ${sunatConfig.ruc}, ${empresa}, ${serie}, ${numero}, ${serieNumero},
-        ${clienteDocTipo}, ${clienteDocNum || '0'}, ${clienteRazonSocial},
-        ${finalPesoBruto}, ${totalBultos}, '02', ${motivoTraslado},
-        ${fechaInicioTraslado}, ${finalRepartidorId}, ${finalPlaca},
-        '1', ${finalChoferDni}, ${finalChoferLicencia},
-        ${estadoDB}, ${hashCpe ?? null},
-        ${Buffer.from(xmlFirmado).toString("base64")},
-        ${resultadoEnvio.cdrBase64 ?? null},
-        ${observacionesStr}, ${resultadoEnvio.descripcion || resultadoEnvio.error || null},
-        ${session.user.name || null}
-      )
+      UPDATE comprobantes_guias
+      SET estado = ${estadoDB},
+          hash_cpe = ${hashCpe ?? null},
+          xml_firmado_base64 = ${Buffer.from(xmlFirmado).toString("base64")},
+          cdr_base64 = ${resultadoEnvio.cdrBase64 ?? null},
+          observaciones = ${observacionesStr},
+          mensaje_sunat = ${resultadoEnvio.descripcion || resultadoEnvio.error || null},
+          updated_at = NOW()
+      WHERE id = ${guiaReservadaId}::uuid
     `;
-
-    // Si SUNAT lo aceptó u observó, vinculamos el correlativo numérico al pedido
-    const sunatAcepto =
-      resultadoEnvio.estado === EstadoSunat.ACEPTADA ||
-      resultadoEnvio.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
-
-    if (sunatAcepto && finalPedidoId) {
-      await sql`UPDATE pedidos SET numero_guia = ${numero} WHERE id = ${finalPedidoId}`;
-    }
 
     return NextResponse.json({
       ...resultadoEnvio,
@@ -692,6 +709,22 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error("Error POST /api/guias/emitir:", error);
     const msg = error instanceof Error ? error.message : "Error desconocido";
+    // Anti-fantasma: si ya se había reservado el número (fila 'emitiendo'),
+    // marcarla 'error' para que el correlativo NO quede consumido sin rastro.
+    if (guiaReservadaId) {
+      try {
+        const sqlCatch = neon(process.env.DATABASE_URL!);
+        await sqlCatch`
+          UPDATE comprobantes_guias
+          SET estado = 'error',
+              mensaje_sunat = ${`Error de emisión: ${msg.slice(0, 500)}`},
+              updated_at = NOW()
+          WHERE id = ${guiaReservadaId}::uuid AND estado = 'emitiendo'
+        `;
+      } catch (e) {
+        console.error("No se pudo marcar la guía reservada como error:", e);
+      }
+    }
     return NextResponse.json({ error: `Error al emitir guía: ${msg}` }, { status: 500 });
   }
 }
