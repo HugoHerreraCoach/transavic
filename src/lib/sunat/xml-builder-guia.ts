@@ -162,11 +162,6 @@ export function generarXMLGuia(datos: DatosGuia, config: SunatConfig): string {
     shipment.ele(NS.cbc, "cbc:Information").txt(datos.descripcionMotivo);
   }
 
-  // Indicador de traslado en vehículos de categoría M1 o L
-  if (datos.indicadorM1L) {
-    shipment.ele(NS.cbc, "cbc:SpecialInstructions").txt("SUNAT_Envio_IndicadorTrasladoVehiculoM1L");
-  }
-
   // Peso bruto total
   shipment
     .ele(NS.cbc, "cbc:GrossWeightMeasure")
@@ -175,6 +170,15 @@ export function generarXMLGuia(datos: DatosGuia, config: SunatConfig): string {
 
   // Cantidad de bultos
   shipment.ele(NS.cbc, "cbc:TotalTransportHandlingUnitQuantity").txt(datos.totalBultos.toString());
+
+  // Indicador de traslado en vehículos de categoría M1 o L.
+  // ⚠️ ORDEN XSD: en UBL 2.1 cac:Shipment es una SECUENCIA estricta — cbc:SpecialInstructions
+  // (pos. 18) va DESPUÉS de GrossWeightMeasure (6) y TotalTransportHandlingUnitQuantity (12), y
+  // ANTES de cac:ShipmentStage. Emitirlo antes del peso hizo que SUNAT rechazara la guía con
+  // "Error al ValidarEsquema… Invalid content … 'cbc:GrossWeightMeasure'" (T002-8/9, 9 jun 2026).
+  if (datos.indicadorM1L) {
+    shipment.ele(NS.cbc, "cbc:SpecialInstructions").txt("SUNAT_Envio_IndicadorTrasladoVehiculoM1L");
+  }
 
   // Etapa del transporte (ShipmentStage)
   const shipmentStage = shipment.ele(NS.cac, "cac:ShipmentStage");

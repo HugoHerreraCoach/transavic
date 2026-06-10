@@ -117,6 +117,27 @@ La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-
   `/dashboard/guias`, en la lista de comprobantes (tipo 09) y en el dropdown de guías del dashboard;
   la página imprimible `/pedidos/[id]/gre` sigue disponible ("Imprimir guía").
 
+### 🔴 Rechazo real por ORDEN XSD del indicador M1/L (9 jun 2026 — RESUELTO)
+Las 2 primeras GRE reales (`T002-00000008/9`) fueron **RECHAZADAS** por SUNAT con
+`Error al ValidarEsquema … Invalid content was found starting with element 'cbc:GrossWeightMeasure'`.
+- **Causa raíz:** en UBL 2.1 `cac:Shipment` es una **secuencia XSD estricta** (`ID → HandlingCode →
+  Information → GrossWeightMeasure → TotalTransportHandlingUnitQuantity → SpecialInstructions →
+  ShipmentStage → Delivery → TransportHandlingUnit`). El indicador M1/L (`cbc:SpecialInstructions`,
+  pos. 18) se emitía ANTES de `GrossWeightMeasure` (pos. 6) → el validador rechaza al retroceder.
+- **Fix** (`xml-builder-guia.ts`): el indicador M1/L se emite después de
+  `TotalTransportHandlingUnitQuantity`. **Verificado con el XSD oficial OASIS UBL 2.1 + xmllint**
+  (`xmllint --schema UBL-DespatchAdvice-2.1.xsd`): el XML rechazado reproduce el error exacto; los 3
+  casos generados con el fix (M1/L sin chofer · sin M1/L · M1/L con chofer) → "validates".
+- **Por qué llegó a producción:** la única aceptación real de beta fue SIN M1/L; todas las pruebas
+  M1/L pasaron por el **mock de beta** (401 → éxito simulado), que enmascaró el rechazo de esquema.
+  **Regla:** cualquier cambio al orden/estructura del XML de la guía se valida contra el XSD oficial
+  con xmllint (es la misma `ValidarEsquema` de SUNAT), NUNCA solo contra beta.
+- **De paso:** los guards anti doble-emisión usaban `NOT IN ('anulado','RECHAZADA','ERROR')` pero los
+  estados se guardan en minúscula → una guía `rechazado` bloqueaba reemitir. Corregido a
+  `('anulado','rechazado','error')`. Las T002-8/9 quedan como registro y ya no bloquean.
+
 ### Pendiente
-- **Emitir la 1ª GRE real en producción** (Hugo), idealmente con **M1/L y sin datos del chofer** (caso delivery externo en moto). Si SUNAT la acepta (serie + CDR), queda validado end-to-end; si la rechaza, revisar el código de error y ajustar el XML.
+- **Re-emitir las guías de los 2 pedidos rechazados** (saldrán con numeración nueva, p. ej. T002-10/11;
+  un número rechazado no existe fiscalmente). Esa re-emisión es la validación end-to-end real.
 - **Declarar la factura relacionada en el XML SUNAT** (`cac:AdditionalDocumentReference`) para que la representación PROPIA de SUNAT también muestre "Documentos Relacionados". Toca el XML legal → validar contra SUNAT antes.
+- **Credenciales SUNAT beta dan 401** → la validación local de guías contra beta se simula (mock). Para validar de verdad en local: arreglar esas credenciales o validar por XSD (xmllint), que es lo que ahora se hace.
