@@ -19,17 +19,14 @@ import {
 } from "react-icons/fi";
 import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
 import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
-
-interface MotorizadoUser {
-  id: string;
-  name: string;
-  role: string;
-  chofer_dni?: string | null;
-  chofer_licencia?: string | null;
-  vehiculo_placa?: string | null;
-  chofer_nombres?: string | null;
-  chofer_apellidos?: string | null;
-}
+import {
+  DISTRITOS_LIMA,
+  type MotorizadoUser,
+  datosChoferDesdeMotorizado,
+  validarChofer,
+  consultarDocumento,
+  fetchEntornoSunat,
+} from "@/lib/guia-form-shared";
 
 interface ClienteData {
   id?: string;
@@ -68,15 +65,8 @@ interface EmpresaInfo {
   razonSocial: string;
 }
 
-const DISTRITOS_LIMA = [
-  "Ate", "Ancón", "Barranco", "Breña", "Carabayllo", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
-  "El Agustino", "Independencia", "Jesús María", "La Molina", "La Victoria", "Lince", "Los Olivos",
-  "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Puente Piedra",
-  "Punta Hermosa", "Punta Negra", "Rímac", "San Bartolo", "San Borja", "San Isidro", "San Juan de Lurigancho",
-  "San Juan de Miraflores", "San Luis", "San Martín de Porres", "San Miguel", "Santa Anita", "Santa María del Mar",
-  "Santa Rosa", "Santiago de Surco", "Surquillo", "Villa El Salvador", "Villa María del Triunfo",
-  "Callao", "Bellavista", "Carmen de la Legua", "La Perla", "La Punta", "Ventanilla", "Mi Perú"
-].sort();
+// DISTRITOS_LIMA, MotorizadoUser, dividirNombreLocal, validarChofer, etc. viven en
+// src/lib/guia-form-shared.ts — fuente única compartida con emitir-guia-modal.tsx.
 
 const EMPRESA_UI: Record<Empresa, { logo: string; nombre: string; ring: string; bg: string; texto: string }> = {
   transavic: {
@@ -93,17 +83,6 @@ const EMPRESA_UI: Record<Empresa, { logo: string; nombre: string; ring: string; 
     bg: "bg-amber-50/50 border-amber-200",
     texto: "text-amber-700",
   },
-};
-
-const dividirNombreLocal = (fullName: string) => {
-  const limpio = (fullName || "").trim().replace(/\s+/g, " ");
-  if (!limpio) return { nombres: "", apellidos: "" };
-  const palabras = limpio.split(" ");
-  const n = palabras.length;
-  if (n <= 1) return { nombres: limpio, apellidos: "-" };
-  if (n === 2) return { nombres: palabras[0], apellidos: palabras[1] };
-  if (n === 3) return { nombres: palabras[0], apellidos: `${palabras[1]} ${palabras[2]}` };
-  return { nombres: `${palabras[0]} ${palabras[1]}`, apellidos: palabras.slice(2).join(" ") };
 };
 
 export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaDirectaModalProps) {
@@ -139,6 +118,17 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   const [choferNombres, setChoferNombres] = useState("");
   const [choferApellidos, setChoferApellidos] = useState("");
   const [vehiculoPlaca, setVehiculoPlaca] = useState("");
+  // Con M1/L el chofer es opcional → sus campos se ocultan hasta que el usuario los pida
+  // (mismo patrón que emitir-guia-modal.tsx).
+  const [mostrarChofer, setMostrarChofer] = useState(false);
+
+  // Entorno SUNAT real para el banner (null = cargando)
+  const [esProduccion, setEsProduccion] = useState<boolean | null>(null);
+
+  // Auto-búsqueda RENIEC/SUNAT del destinatario (apisperu)
+  const [consultandoDest, setConsultandoDest] = useState(false);
+  const [consultaDestMsg, setConsultaDestMsg] = useState<string | null>(null);
+  const ultimoDocConsultado = useRef("");
 
   // Detalles de envío
   const getTodayLima = () => {
@@ -239,6 +229,9 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
       })
       .catch((err) => console.error("Error al cargar RUCs de empresas:", err));
 
+    // Entorno SUNAT real (banner Producción/Beta)
+    fetchEntornoSunat().then((prod) => { if (active && prod !== null) setEsProduccion(prod); });
+
     if (active) {
       cargarMotorizados();
     }
@@ -247,6 +240,29 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
       active = false;
     };
   }, []);
+
+  // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
+  // autocompleta la razón social (helper compartido con emitir-guia-modal.tsx).
+  useEffect(() => {
+    const numero = clienteDocNum.trim();
+    if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
+    const t = setTimeout(async () => {
+      ultimoDocConsultado.current = numero;
+      setConsultandoDest(true);
+      setConsultaDestMsg(null);
+      const r = await consultarDocumento(numero);
+      if (r.ok) {
+        if (r.nombre && !clienteRazonSocial.trim()) setClienteRazonSocial(r.nombre);
+        if (numero.length === 11 && r.direccion && !direccionLlegada.trim()) setDireccionLlegada(r.direccion);
+        setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
+      } else {
+        setConsultaDestMsg(r.mensaje || "No se encontró el documento. Escríbelo a mano.");
+      }
+      setConsultandoDest(false);
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clienteDocNum]);
 
   // Búsqueda inteligente de clientes (Debounce 300ms)
   useEffect(() => {
@@ -330,12 +346,17 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     const distritoValido = distritoLlegada.trim().length > 0;
     const puntoLlegadaValido = direccionValida && distritoValido;
 
-    const choferDniValido = choferDni.trim().length === 8;
-    const choferLicValida = indicadorM1L ? true : (choferLicencia.trim().length >= 5);
-    const choferNombresValido = choferNombres.trim().length > 0;
-    const choferApellidosValido = choferApellidos.trim().length > 0;
-    const vehiculoPlacaValida = vehiculoPlaca.trim().length >= 6;
-    const transportistaValido = choferDniValido && choferLicValida && choferNombresValido && choferApellidosValido && vehiculoPlacaValida;
+    // Regla única compartida (guia-form-shared): con M1/L el chofer/placa son opcionales.
+    const choferCheck = validarChofer({
+      indicadorM1L,
+      dni: choferDni,
+      licencia: choferLicencia,
+      nombres: choferNombres,
+      apellidos: choferApellidos,
+      placa: vehiculoPlaca,
+    });
+    const transportistaValido = choferCheck.ok;
+    const transportistaExento = indicadorM1L && !mostrarChofer;
 
     const itemsValidos = items.some((it) => it.producto_nombre.trim().length > 0 && it.cantidad > 0);
     
@@ -349,13 +370,14 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
       puntoLlegada: puntoLlegadaValido,
       puntoLlegadaDetalles: { direccionValida, distritoValido },
       transportista: transportistaValido,
-      transportistaDetalles: { choferDniValido, choferLicValida, choferNombresValido, choferApellidosValido, vehiculoPlacaValida },
+      transportistaExento,
+      transportistaFaltantes: choferCheck.faltantes,
       mercaderia: itemsValidos,
       carga: cargaValida,
       cargaDetalles: { bultosValido, pesoValido },
       todoValido: clienteIdentificado && clienteNombreValido && puntoLlegadaValido && transportistaValido && itemsValidos && cargaValida,
     };
-  }, [clienteDocNum, clienteDocTipo, clienteRazonSocial, direccionLlegada, distritoLlegada, choferDni, choferLicencia, choferNombres, choferApellidos, vehiculoPlaca, items, totalBultos, pesoBrutoTotal, indicadorM1L]);
+  }, [clienteDocNum, clienteDocTipo, clienteRazonSocial, direccionLlegada, distritoLlegada, choferDni, choferLicencia, choferNombres, choferApellidos, vehiculoPlaca, items, totalBultos, pesoBrutoTotal, indicadorM1L, mostrarChofer]);
 
   // Selección de cliente
   const handleSelectCliente = (cli: ClienteData) => {
@@ -377,25 +399,21 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     setShowClientes(false);
   };
 
-  // Cambio de repartidor
+  // Cambio de repartidor (datos pre-llenados desde el helper compartido)
   const handleRepartidorChange = (id: string) => {
     setRepartidorId(id);
-    const rep = repartidores.find((r) => r.id === id);
-    if (rep) {
-      setChoferDni(rep.chofer_dni || "");
-      setChoferLicencia(rep.chofer_licencia || "");
-      setVehiculoPlaca(rep.vehiculo_placa || "");
-      const { nombres, apellidos } = dividirNombreLocal(rep.name || "");
-      setChoferNombres(rep.chofer_nombres || nombres);
-      setChoferApellidos(rep.chofer_apellidos || apellidos);
-    } else {
-      setChoferDni("");
-      setChoferLicencia("");
-      setVehiculoPlaca("");
-      setChoferNombres("");
-      setChoferApellidos("");
-    }
+    const ch = datosChoferDesdeMotorizado(repartidores.find((r) => r.id === id));
+    setChoferDni(ch.dni);
+    setChoferLicencia(ch.licencia);
+    setVehiculoPlaca(ch.placa);
+    setChoferNombres(ch.nombres);
+    setChoferApellidos(ch.apellidos);
+    // Si eligió un motorizado a propósito, mostramos sus datos (aunque sea M1/L)
+    if (id) setMostrarChofer(true);
   };
+
+  // Se incluyen datos del chofer si NO es M1/L (obligatorios) o si el usuario los desplegó.
+  const incluirChofer = !indicadorM1L || mostrarChofer;
 
   // Modificar ítems
   const updateItem = (i: number, patch: Partial<ItemFila>) => {
@@ -453,16 +471,16 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
 
     try {
       const payload = {
-        repartidor_id: repartidorId || null,
+        repartidor_id: incluirChofer ? (repartidorId || null) : null,
         fechaInicioTraslado,
         motivoTraslado,
         totalBultos: Number(totalBultos) || 1,
         pesoBrutoTotal: pesoBrutoTotal ? Number(pesoBrutoTotal) : null,
-        vehiculo_placa: vehiculoPlaca.trim(),
-        chofer_dni: choferDni.trim(),
-        chofer_licencia: choferLicencia.trim(),
-        chofer_nombres: choferNombres.trim(),
-        chofer_apellidos: choferApellidos.trim(),
+        vehiculo_placa: incluirChofer ? vehiculoPlaca.trim() : "",
+        chofer_dni: incluirChofer ? choferDni.trim() : "",
+        chofer_licencia: incluirChofer ? choferLicencia.trim() : "",
+        chofer_nombres: incluirChofer ? choferNombres.trim() : "",
+        chofer_apellidos: incluirChofer ? choferApellidos.trim() : "",
         indicadorM1L,
         direccion_llegada: direccionLlegada.trim(),
         distrito_llegada: distritoLlegada.trim(),
@@ -701,6 +719,10 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500 font-mono font-bold"
                             required
                           />
+                          {consultandoDest && <p className="text-[10px] text-slate-400 mt-1">Buscando…</p>}
+                          {!consultandoDest && consultaDestMsg && (
+                            <p className={`text-[10px] mt-1 ${consultaDestMsg.startsWith("✓") ? "text-green-600" : "text-amber-600"}`}>{consultaDestMsg}</p>
+                          )}
                         </div>
                       </div>
 
@@ -826,32 +848,61 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                           Vehículo categoría M1 o L (Moto / Auto Ligero)
                         </span>
                       </label>
+                      {indicadorM1L && (
+                        <p className="text-[10px] text-indigo-600/90 leading-snug">
+                          Con moto o auto ligero no necesitas placa ni datos del chofer (ideal para delivery externo).
+                        </p>
+                      )}
 
+                      {/* Con M1/L los datos del chofer son opcionales: ocultos hasta que el usuario los pida */}
+                      {!incluirChofer && (
+                        <button
+                          type="button"
+                          onClick={() => setMostrarChofer(true)}
+                          className="w-full text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 border border-dashed border-indigo-200 rounded-xl py-2 hover:bg-indigo-50/40 transition"
+                        >
+                          + Agregar datos del chofer (opcional)
+                        </button>
+                      )}
+
+                      {incluirChofer && (
+                      <>
+                      {indicadorM1L && (
+                        <div className="flex justify-end -mb-1">
+                          <button
+                            type="button"
+                            onClick={() => setMostrarChofer(false)}
+                            className="text-[10px] font-medium text-slate-400 hover:text-slate-600"
+                          >
+                            − Quitar datos del chofer (no requeridos con M1/L)
+                          </button>
+                        </div>
+                      )}
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                            Nombres Chofer
+                            Nombres Chofer {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                           </label>
                           <input
                             type="text"
                             value={choferNombres}
                             onChange={(e) => setChoferNombres(e.target.value)}
-                            placeholder="Nombres"
+                            placeholder={indicadorM1L ? "No requerido" : "Nombres"}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                            required
+                            required={!indicadorM1L}
                           />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                            Apellidos Chofer
+                            Apellidos Chofer {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                           </label>
                           <input
                             type="text"
                             value={choferApellidos}
                             onChange={(e) => setChoferApellidos(e.target.value)}
-                            placeholder="Apellidos"
+                            placeholder={indicadorM1L ? "No requerido" : "Apellidos"}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
-                            required
+                            required={!indicadorM1L}
                           />
                         </div>
                       </div>
@@ -859,16 +910,16 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                            DNI Chofer
+                            DNI Chofer {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                           </label>
                           <input
                             type="text"
                             maxLength={8}
                             value={choferDni}
                             onChange={(e) => setChoferDni(e.target.value.replace(/\D/g, ""))}
-                            placeholder="8 dígitos"
+                            placeholder={indicadorM1L ? "No requerido" : "8 dígitos"}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500 font-mono font-bold"
-                            required
+                            required={!indicadorM1L}
                           />
                         </div>
                         <div>
@@ -889,18 +940,20 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
 
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
-                          Placa del Vehículo
+                          Placa del Vehículo {indicadorM1L && <span className="text-[9px] text-indigo-500 font-normal">(Opcional)</span>}
                         </label>
                         <input
                           type="text"
                           maxLength={10}
                           value={vehiculoPlaca}
                           onChange={(e) => setVehiculoPlaca(e.target.value.toUpperCase())}
-                          placeholder="Ej. A1B-234"
+                          placeholder={indicadorM1L ? "No requerida" : "Ej. A1B-234"}
                           className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500 font-bold"
-                          required
+                          required={!indicadorM1L}
                         />
                       </div>
+                      </>
+                      )}
                     </div>
 
                     {/* Datos de envío (Carga) */}
@@ -1185,12 +1238,14 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                           <span className={`font-bold block ${validezSunat.transportista ? 'text-green-800' : 'text-slate-500'}`}>
                             3. Chofer y Vehículo
                           </span>
+                          {validezSunat.transportistaExento && (
+                            <span className="text-[10px] text-green-600 mt-0.5 block leading-normal">
+                              Exento — vehículo M1/L (moto/auto ligero), SUNAT no exige chofer ni placa.
+                            </span>
+                          )}
                           {!validezSunat.transportista && (
                             <span className="text-[10px] text-slate-400 mt-0.5 block leading-normal">
-                              {!validezSunat.transportistaDetalles.choferDniValido && "• DNI de chofer debe tener 8 dígitos"}
-                              {validezSunat.transportistaDetalles.choferDniValido && !validezSunat.transportistaDetalles.choferLicValida && !indicadorM1L && "• Licencia debe tener al menos 5 caracteres"}
-                              {validezSunat.transportistaDetalles.choferDniValido && validezSunat.transportistaDetalles.choferLicValida && (!validezSunat.transportistaDetalles.choferNombresValido || !validezSunat.transportistaDetalles.choferApellidosValido) && "• Falta nombre/apellido de conductor"}
-                              {validezSunat.transportistaDetalles.choferDniValido && validezSunat.transportistaDetalles.choferLicValida && validezSunat.transportistaDetalles.choferNombresValido && validezSunat.transportistaDetalles.choferApellidosValido && !validezSunat.transportistaDetalles.vehiculoPlacaValida && "• Placa inválida (mínimo 6 caracteres)"}
+                              {validezSunat.transportistaFaltantes.map((f) => `• ${f}`).join("  ")}
                             </span>
                           )}
                         </div>
@@ -1253,16 +1308,28 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                     )}
                   </div>
 
-                  {/* Entorno de Pruebas Alerta */}
-                  <div className="p-4 bg-blue-50/50 border border-blue-100 rounded-2xl text-[11px] text-blue-800 space-y-1.5 shadow-sm">
-                    <span className="font-bold flex items-center gap-1 text-blue-900">
-                      <FiInfo className="text-blue-600" size={14} />
-                      SUNAT Entorno Beta
-                    </span>
-                    <p className="leading-relaxed text-slate-600 text-[10px]">
-                      Esta guía de remisión se emitirá en la serie de pruebas correspondiente (T001 o T002) y se validará en los servidores demo de SUNAT.
-                    </p>
-                  </div>
+                  {/* Entorno SUNAT — refleja el entorno real (Producción vs Beta), no es texto fijo */}
+                  {esProduccion === true ? (
+                    <div className="p-4 bg-green-50/60 border border-green-100 rounded-2xl text-[11px] text-green-800 space-y-1.5 shadow-sm">
+                      <span className="font-bold flex items-center gap-1 text-green-900">
+                        <FiCheckCircle className="text-green-600" size={14} />
+                        Producción (SUNAT real)
+                      </span>
+                      <p className="leading-relaxed text-slate-600 text-[10px]">
+                        Esta guía se enviará a SUNAT como documento oficial. Revisa que los datos sean correctos antes de emitir.
+                      </p>
+                    </div>
+                  ) : esProduccion === false ? (
+                    <div className="p-4 bg-amber-50/60 border border-amber-100 rounded-2xl text-[11px] text-amber-800 space-y-1.5 shadow-sm">
+                      <span className="font-bold flex items-center gap-1 text-amber-900">
+                        <FiInfo className="text-amber-600" size={14} />
+                        Entorno de Pruebas (SUNAT Beta)
+                      </span>
+                      <p className="leading-relaxed text-slate-600 text-[10px]">
+                        Esta guía se emitirá en modo Beta (no es un documento oficial).
+                      </p>
+                    </div>
+                  ) : null}
 
                 </div>
 

@@ -5,17 +5,14 @@ import { Pedido } from "@/lib/types";
 import { FiX, FiTruck, FiAlertCircle, FiCheck, FiCalendar, FiFileText, FiMapPin, FiEdit2, FiInfo, FiEye, FiUser, FiPackage } from "react-icons/fi";
 import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
 import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
-
-interface MotorizadoUser {
-  id: string;
-  name: string;
-  role: string;
-  chofer_dni?: string | null;
-  chofer_licencia?: string | null;
-  vehiculo_placa?: string | null;
-  chofer_nombres?: string | null;
-  chofer_apellidos?: string | null;
-}
+import {
+  DISTRITOS_LIMA,
+  type MotorizadoUser,
+  datosChoferDesdeMotorizado,
+  validarChofer,
+  consultarDocumento,
+  fetchEntornoSunat,
+} from "@/lib/guia-form-shared";
 
 export interface ComprobanteInfo {
   id: string;
@@ -42,27 +39,8 @@ interface EmitirGuiaModalProps {
   onExito?: (serieNumero: string) => void;
 }
 
-const DISTRITOS_LIMA = [
-  "Ate", "Ancón", "Barranco", "Breña", "Carabayllo", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
-  "El Agustino", "Independencia", "Jesús María", "La Molina", "La Victoria", "Lince", "Los Olivos",
-  "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Puente Piedra",
-  "Punta Hermosa", "Punta Negra", "Rímac", "San Bartolo", "San Borja", "San Isidro", "San Juan de Lurigancho",
-  "San Juan de Miraflores", "San Luis", "San Martín de Porres", "San Miguel", "Santa Anita", "Santa María del Mar",
-  "Santa Rosa", "Santiago de Surco", "Surquillo", "Villa El Salvador", "Villa María del Triunfo",
-  "Callao", "Bellavista", "Carmen de la Legua", "La Perla", "La Punta", "Ventanilla", "Mi Perú"
-].sort();
-
-// Heurística de separación de nombres para conductor
-const dividirNombreLocal = (fullName: string) => {
-  const limpio = (fullName || "").trim().replace(/\s+/g, " ");
-  if (!limpio) return { nombres: "", apellidos: "" };
-  const palabras = limpio.split(" ");
-  const n = palabras.length;
-  if (n <= 1) return { nombres: limpio, apellidos: "-" };
-  if (n === 2) return { nombres: palabras[0], apellidos: palabras[1] };
-  if (n === 3) return { nombres: palabras[0], apellidos: `${palabras[1]} ${palabras[2]}` };
-  return { nombres: `${palabras[0]} ${palabras[1]}`, apellidos: palabras.slice(2).join(" ") };
-};
+// DISTRITOS_LIMA, MotorizadoUser, dividirNombreLocal, validarChofer, etc. viven en
+// src/lib/guia-form-shared.ts — fuente única compartida con emitir-guia-directa-modal.tsx.
 
 export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito }: EmitirGuiaModalProps) {
   const [repartidores, setRepartidores] = useState<MotorizadoUser[]>([]);
@@ -232,13 +210,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
             const preselected = data.find((r) => r.id === targetRepartidorId);
             if (preselected) {
               setRepartidorId(preselected.id);
-              setChoferDni(preselected.chofer_dni || "");
-              setChoferLicencia(preselected.chofer_licencia || "");
-              setVehiculoPlaca(preselected.vehiculo_placa || "");
-              
-              const { nombres, apellidos } = dividirNombreLocal(preselected.name || "");
-              setChoferNombres(preselected.chofer_nombres || nombres);
-              setChoferApellidos(preselected.chofer_apellidos || apellidos);
+              const ch = datosChoferDesdeMotorizado(preselected);
+              setChoferDni(ch.dni);
+              setChoferLicencia(ch.licencia);
+              setVehiculoPlaca(ch.placa);
+              setChoferNombres(ch.nombres);
+              setChoferApellidos(ch.apellidos);
               // Si el repartidor asignado trae DNI o placa, mostramos sus datos (no los ocultamos)
               if (preselected.chofer_dni || preselected.vehiculo_placa) setMostrarChofer(true);
 
@@ -266,42 +243,28 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   // Cargar el entorno SUNAT real (para mostrar el banner correcto)
   useEffect(() => {
     let active = true;
-    fetch("/api/sunat/entorno")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (active && j) setEsProduccion(!!j.esProduccion); })
-      .catch(() => {});
+    fetchEntornoSunat().then((prod) => { if (active && prod !== null) setEsProduccion(prod); });
     return () => { active = false; };
   }, []);
 
   // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
-  // autocompleta los Nombres o Razón Social (mismo patrón que el form de comprobantes).
+  // autocompleta los Nombres o Razón Social (helper compartido con el modal de GRE directa).
   async function consultarDestinatario(numero: string) {
     if (!/^\d{8}$|^\d{11}$/.test(numero)) return;
     ultimoDocConsultado.current = numero;
     setConsultandoDest(true);
     setConsultaDestMsg(null);
-    try {
-      const res = await fetch("/api/consulta-documento", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tipo: numero.length === 11 ? "ruc" : "dni", numero }),
-      });
-      const j = await res.json();
-      if (res.ok && j.ok) {
-        const nombre = j.razonSocial || j.nombreCompleto || "";
-        if (nombre) setRazonSocialOverride(nombre);
-        if (numero.length === 11 && j.direccion && !direccionLlegada.trim()) {
-          setDireccionLlegada(j.direccion);
-        }
-        setConsultaDestMsg(nombre ? `✓ ${nombre}` : null);
-      } else {
-        setConsultaDestMsg(j.mensaje || j.error || "No se encontró el documento. Escríbelo a mano.");
+    const r = await consultarDocumento(numero);
+    if (r.ok) {
+      if (r.nombre) setRazonSocialOverride(r.nombre);
+      if (numero.length === 11 && r.direccion && !direccionLlegada.trim()) {
+        setDireccionLlegada(r.direccion);
       }
-    } catch {
-      setConsultaDestMsg("No se pudo consultar. Escribe el nombre a mano.");
-    } finally {
-      setConsultandoDest(false);
+      setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
+    } else {
+      setConsultaDestMsg(r.mensaje || "No se encontró el documento. Escríbelo a mano.");
     }
+    setConsultandoDest(false);
   }
 
   useEffect(() => {
@@ -313,24 +276,15 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docNumOverride, necesitaOverride]);
 
-  // Manejar cambio de motorizado
+  // Manejar cambio de motorizado (datos pre-llenados desde el helper compartido)
   const handleRepartidorChange = (id: string) => {
     setRepartidorId(id);
-    const rep = repartidores.find((r) => r.id === id);
-    if (rep) {
-      setChoferDni(rep.chofer_dni || "");
-      setChoferLicencia(rep.chofer_licencia || "");
-      setVehiculoPlaca(rep.vehiculo_placa || "");
-      const { nombres, apellidos } = dividirNombreLocal(rep.name || "");
-      setChoferNombres(rep.chofer_nombres || nombres);
-      setChoferApellidos(rep.chofer_apellidos || apellidos);
-    } else {
-      setChoferDni("");
-      setChoferLicencia("");
-      setVehiculoPlaca("");
-      setChoferNombres("");
-      setChoferApellidos("");
-    }
+    const ch = datosChoferDesdeMotorizado(repartidores.find((r) => r.id === id));
+    setChoferDni(ch.dni);
+    setChoferLicencia(ch.licencia);
+    setVehiculoPlaca(ch.placa);
+    setChoferNombres(ch.nombres);
+    setChoferApellidos(ch.apellidos);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -338,14 +292,20 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     setLoading(true);
     setError(null);
 
-    // Con vehículo categoría M1/L (moto/auto ligero) SUNAT permite OMITIR la placa y todos
-    // los datos del conductor. Sin M1/L (transporte privado normal) sí son obligatorios.
-    if (!indicadorM1L) {
-      if (!choferDni.trim() || !choferLicencia.trim() || !vehiculoPlaca.trim() || !choferNombres.trim() || !choferApellidos.trim()) {
-        setError("DNI de chofer, Nombres, Apellidos, Licencia y Placa del vehículo son requeridos cuando el vehículo no es categoría M1 o L.");
-        setLoading(false);
-        return;
-      }
+    // Regla única compartida (guia-form-shared): con M1/L el chofer/placa son opcionales;
+    // sin M1/L son obligatorios.
+    const chofer = validarChofer({
+      indicadorM1L,
+      dni: choferDni,
+      licencia: choferLicencia,
+      nombres: choferNombres,
+      apellidos: choferApellidos,
+      placa: vehiculoPlaca,
+    });
+    if (!chofer.ok) {
+      setError(`Faltan datos del transporte: ${chofer.faltantes.join(", ")}.`);
+      setLoading(false);
+      return;
     }
 
     if (!direccionLlegada.trim() || !distritoLlegada.trim()) {
