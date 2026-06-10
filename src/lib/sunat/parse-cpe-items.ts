@@ -213,12 +213,15 @@ export function parseGuiaPuntoLlegada(xml: string): GuiaPuntoLlegada | null {
 
     const inner = addrBlock[1];
 
-    const ubigeoMatch = inner.match(/<cbc:ID>([\s\S]*?)<\/cbc:ID>/);
+    // El <cbc:ID> del ubigeo lleva atributos (schemeAgencyName/schemeName); hay que permitirlos.
+    const ubigeoMatch = inner.match(/<cbc:ID[^>]*>([\s\S]*?)<\/cbc:ID>/);
     const ubigeo = ubigeoMatch ? ubigeoMatch[1].trim() : "";
 
-    const streetMatch = inner.match(/<cbc:StreetName>([\s\S]*?)<\/cbc:StreetName>/);
-    const direccion = streetMatch
-      ? decodeEntities(stripCdata(streetMatch[1])).trim()
+    // La dirección se emite en <cac:AddressLine><cbc:Line>…, NO en <cbc:StreetName>
+    // (igual que parseCpeClienteDireccion en este mismo archivo).
+    const lineMatch = inner.match(/<cbc:Line>([\s\S]*?)<\/cbc:Line>/);
+    const direccion = lineMatch
+      ? decodeEntities(stripCdata(lineMatch[1])).trim()
       : "";
 
     if (ubigeo || direccion) {
