@@ -1,4 +1,5 @@
 import { auth } from "@/auth";
+import { resolveDevBypassSession } from "@/lib/dev-bypass";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -18,12 +19,10 @@ interface RouteParams {
 }
 
 export async function POST(req: NextRequest, { params }: RouteParams) {
-  let session = await auth();
-  const bypassHeader = req.headers.get("x-bypass-auth");
-  if (bypassHeader && bypassHeader === process.env.AUTH_SECRET) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    session = { user: { name: "Antonio", role: "admin", id: "admin-bypass" } } as any;
-  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let session: any = await auth();
+  const bypass = resolveDevBypassSession(req);
+  if (bypass) session = bypass;
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }

@@ -4,6 +4,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { resolveDevBypassSession } from "@/lib/dev-bypass";
 import { z } from "zod";
 import { siguienteCorrelativo, formatNumeroGuia } from "@/lib/correlativos";
 import { getSunatConfig, empresaFromPedidoString } from "@/lib/sunat/config-transavic";
@@ -85,12 +86,10 @@ function dividirNombreCompleto(nombreCompleto: string): { nombres: string; apell
 
 export async function POST(request: Request) {
   try {
-    let session = await auth();
-    const bypassHeader = request.headers.get("x-bypass-auth");
-    if (bypassHeader && bypassHeader === process.env.AUTH_SECRET) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      session = { user: { name: "Antonio", role: "admin", id: "admin-bypass" } } as any;
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let session: any = await auth();
+    const bypass = resolveDevBypassSession(request);
+    if (bypass) session = bypass;
     if (!session?.user) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }

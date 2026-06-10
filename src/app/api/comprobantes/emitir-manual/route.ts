@@ -7,6 +7,7 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { resolveDevBypassSession } from "@/lib/dev-bypass";
 import { z } from "zod";
 import { neon } from "@neondatabase/serverless";
 import { emitirComprobante } from "@/lib/sunat";
@@ -60,12 +61,10 @@ function mapUnidad(u: string): string {
 
 export async function POST(request: Request) {
   try {
-    let session = await auth();
-    const bypassHeader = request.headers.get("x-bypass-auth");
-    if (bypassHeader && bypassHeader === process.env.AUTH_SECRET) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      session = { user: { name: "Antonio", role: "admin", id: "admin-bypass" } } as any;
-    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let session: any = await auth();
+    const bypass = resolveDevBypassSession(request);
+    if (bypass) session = bypass;
     if (!session?.user) {
       return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
