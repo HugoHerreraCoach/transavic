@@ -664,7 +664,7 @@ CREATE TABLE comprobantes_contador (
 );
 ```
 
-**Patrón:** `UPDATE … SET ultimo_numero = ultimo_numero + 1 RETURNING ultimo_numero` (atómico) — `src/lib/sunat/contador.ts`. Una serie por (RUC, tipo): `F001`/`B001` para Transavic, `F002`/`B002` para Avícola de Tony; las NC usan serie propia (`FC01`/`BC01`). Nunca se reusa un número ya aceptado. `migrations-fase-ab.sql:256-261` siembra las 4 filas iniciales (con RUCs placeholder, cambiados luego por los reales).
+**Patrón:** `UPDATE … SET ultimo_numero = ultimo_numero + 1 RETURNING ultimo_numero` (atómico) — `src/lib/sunat/contador.ts`. Una serie por (RUC, tipo): `F001`/`B001` para Transavic, `F002`/`B002` para Avícola de Tony; las NC usan serie propia (`FC01`/`BC01`); y desde el 10 jun 2026 (gotcha #29) las **guías de remisión legales** usan **`T001`** (Transavic) / **`T002`** (Avícola) acá mismo (antes compartían el correlativo `correlativos.guia_remision` con la orden interna). Nunca se reusa un número ya aceptado. `migrations-fase-ab.sql:256-261` siembra las 4 filas F/B iniciales; `migrate-guias-numeracion-2026-06-10.sql` siembra T001/T002.
 
 ---
 
@@ -674,13 +674,19 @@ CREATE TABLE comprobantes_contador (
 
 ```sql
 CREATE TABLE correlativos (
-    tipo          VARCHAR(50) PRIMARY KEY,        -- ej. 'guia_remision'
+    tipo          VARCHAR(50) PRIMARY KEY,        -- ej. 'orden_pedido'
     ultimo_numero INTEGER NOT NULL DEFAULT 0,
     updated_at    TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 ```
 
-**Hoy solo tiene `tipo='guia_remision'`** (correlativo de la "orden de pedido"). `src/lib/correlativos.ts:siguienteCorrelativo` usa **UPSERT** (`INSERT … ON CONFLICT (tipo) DO UPDATE SET ultimo_numero = correlativos.ultimo_numero + 1`) → nunca falla aunque la fila no esté sembrada (fix del crash en producción, gotcha #20).
+**Tipos (desde 10 jun 2026, gotcha #29):**
+- **`orden_pedido`** — correlativo de la **"orden de pedido" interna** (`/pedidos/[id]/guia`, NO fiscal). Es el tipo ACTIVO.
+- **`guia_remision`** — DEPRECATED / **congelado**. Era el correlativo compartido entre la orden interna y la guía legal; se separó porque abrir una orden gastaba un número de la numeración LEGAL de las guías. Ya nada lo consume.
+
+`src/lib/correlativos.ts:siguienteCorrelativo` usa **UPSERT** (`INSERT … ON CONFLICT (tipo) DO UPDATE SET ultimo_numero = correlativos.ultimo_numero + 1`) → nunca falla aunque la fila no esté sembrada (fix del crash en producción, gotcha #20).
+
+> **La GRE legal (T001/T002) NO usa esta tabla.** Reserva su número en `comprobantes_contador` (contador POR SERIE, igual que boletas/facturas) vía un CTE atómico en `api/guias/emitir/route.ts`. Ver gotcha #29 y `docs/arquitectura/06-guias-remision-rest.md`.
 
 ---
 

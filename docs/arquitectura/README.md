@@ -142,7 +142,7 @@ Durante la creación de esta documentación se detectaron **12 deudas técnicas*
 
 **Tablas nuevas:**
 - `precios_productos` (Fase A.1) — histórico de precios
-- `correlativos` (Fase A.4) — numeración de guías
+- `correlativos` (Fase A.4) — numeración de órdenes de pedido internas (`orden_pedido`); las guías legales usan `comprobantes_contador` (gotcha #29)
 - `metas_asesoras` (Fase B.1) — overrides manuales de meta mensual
 - `notificaciones` (Fase B.2) — notificaciones in-app
 - `facturas` (Fase B.3) — gestión de cobranzas

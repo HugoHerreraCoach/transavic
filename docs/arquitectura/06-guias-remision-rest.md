@@ -1,7 +1,7 @@
 # 06 — Integración de Guías de Remisión Electrónicas (GRE 2.0 REST)
 
-> **Última verificación contra código:** 2026-06-08
-> **Commit del proyecto:** desplegado en `main` (GRE en producción; ver gotcha #28 del CLAUDE.md)
+> **Última verificación contra código:** 2026-06-10
+> **Commit del proyecto:** desplegado en `main` (GRE en producción; ver gotchas #28 y #29 del CLAUDE.md)
 > **Archivos clave:** 
 > - [src/lib/sunat/xml-builder-guia.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/xml-builder-guia.ts)
 > - [src/lib/sunat/rest-client.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/rest-client.ts)
@@ -149,8 +149,31 @@ Las 2 primeras GRE reales (`T002-00000008/9`) fueron **RECHAZADAS** por SUNAT co
   estados se guardan en minúscula → una guía `rechazado` bloqueaba reemitir. Corregido a
   `('anulado','rechazado','error')`. Las T002-8/9 quedan como registro y ya no bloquean.
 
+### 🔢 Numeración SEPARADA de la orden de pedido interna (10 jun 2026)
+Hasta el 10 jun, la **orden de pedido interna** (`/pedidos/[id]/guia`, NO fiscal) y la **GRE legal**
+(T001/T002) compartían el correlativo `correlativos.guia_remision`. Como la orden reserva un número con
+**solo ABRIR la página**, cada orden impresa **gastaba un número de la numeración LEGAL** → las guías
+SUNAT saltaban de número (prod: `guia_remision=9`, de los cuales 1..7 eran órdenes internas y 8..9 las
+T002 rechazadas). **El contador SUNAT no debe saltar.**
+- **Orden interna** → correlativo propio `correlativos.orden_pedido` (`page.tsx`; `TipoCorrelativo` en
+  `correlativos.ts`).
+- **GRE legal** → contador **POR SERIE** en `comprobantes_contador` (T001/T002, la misma tabla que
+  boletas/facturas), reservado con un **CTE atómico** en `api/guias/emitir/route.ts` (bump del contador
+  + fila `'emitiendo'` en un solo statement → si algo falla después, el catch la pasa a `'error'` y el
+  número NO queda "fantasma"). Una `'emitiendo'` con >15 min ya no bloquea re-emitir.
+- La GRE **ya NO escribe `pedidos.numero_guia`** (ese campo es solo de la orden interna; el número legal
+  vive en `comprobantes_guias`). Evita chocar con el `UNIQUE idx_pedidos_numero_guia` al separar.
+- El **badge "GRE" de despacho** pasó a `EXISTS(comprobantes_guias aceptado/observado) AS tiene_gre`
+  (`api/despacho/route.ts` + `despacho-content.tsx`), no `numero_guia`.
+- El **mock de beta** (que enmascaró el rechazo XSD) ahora está **APAGADO por defecto**; solo se activa
+  con `SUNAT_GRE_MOCK_BETA=1`.
+- **Migración** `scripts/migrate-guias-numeracion-2026-06-10.sql` (dev-hugo + prod, ANTES del deploy):
+  `orden_pedido` sembrado desde `guia_remision`; `comprobantes_contador` T001=0 (próx=1), T002=9
+  (próx=10, sin reusar las rechazadas). `guia_remision` queda **congelado** (DEPRECATED). Ver CLAUDE.md #29.
+
 ### Pendiente
-- **Re-emitir las guías de los 2 pedidos rechazados** (saldrán con numeración nueva, p. ej. T002-10/11;
-  un número rechazado no existe fiscalmente). Esa re-emisión es la validación end-to-end real.
+- **Emitir la 1.ª GRE real con éxito** = la validación end-to-end (las únicas 2 guías son las T002-8/9
+  rechazadas PRE-fix XSD; T001 nunca se emitió). Con el XML ya arreglado + la numeración separada,
+  T001 arranca en `T001-00000001` y T002 en `T002-00000010` (un número rechazado no se reusa).
 - **Declarar la factura relacionada en el XML SUNAT** (`cac:AdditionalDocumentReference`) para que la representación PROPIA de SUNAT también muestre "Documentos Relacionados". Toca el XML legal → validar contra SUNAT antes.
 - **Credenciales SUNAT beta dan 401** → la validación local de guías contra beta se simula (mock). Para validar de verdad en local: arreglar esas credenciales o validar por XSD (xmllint), que es lo que ahora se hace.
