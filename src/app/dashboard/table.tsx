@@ -11,7 +11,7 @@ import EmitirComprobanteClient from "./comprobantes/nuevo/emitir-client";
 import HistorialPedidoModal from "./historial-pedido-modal";
 import { descargarPdfComprobante, descargarXmlComprobante, descargarCdrComprobante } from "@/lib/descargar-comprobante";
 import EmitirGuiaModal from "./guias/emitir-guia-modal";
-import { descargarXmlGuia, descargarCdrGuia } from "@/lib/descargar-guia";
+import { descargarXmlGuia, descargarCdrGuia, descargarPdfGuia } from "@/lib/descargar-guia";
 
 // Comprobante (forma reducida) que la lista de pedidos necesita para el menú
 // "Facturado": id para descargar, serie/estado para mostrar.
@@ -165,10 +165,12 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
         if (tieneEnvioGuia) void cargarGuias();
     }, [cargarComprobantes, cargarGuias, pedido.estado, userRole]);
 
-    const handleDescargarGuia = async (g: GuiaLite, fmt: "xml" | "cdr") => {
+    const handleDescargarGuia = async (g: GuiaLite, fmt: "xml" | "cdr" | "pdf") => {
         setDescargando(g.id + fmt);
         try {
-            if (fmt === "xml") {
+            if (fmt === "pdf") {
+                await descargarPdfGuia(g.id);
+            } else if (fmt === "xml") {
                 await descargarXmlGuia(g.id, g.serie_numero);
             } else {
                 await descargarCdrGuia(g.id, g.serie_numero);
@@ -439,6 +441,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center gap-1 mt-1.5">
+                                                    <button onClick={() => handleDescargarGuia(g, 'pdf')} disabled={descargando === g.id + 'pdf'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-red-50 text-red-700 hover:bg-red-100 active:scale-95 transition disabled:opacity-50">PDF</button>
                                                     <a href={`/pedidos/${pedido.id}/gre?print=true`} target="_blank" rel="noopener noreferrer" className="flex-1 inline-flex items-center justify-center gap-1 text-[11px] font-bold px-2 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 active:scale-95 transition text-center">Imprimir</a>
                                                     <button onClick={() => handleDescargarGuia(g, 'xml')} disabled={descargando === g.id + 'xml'} className="flex-1 text-[11px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 active:scale-95 transition disabled:opacity-50">XML</button>
                                                     {g.estado !== 'pendiente' && (

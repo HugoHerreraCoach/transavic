@@ -105,6 +105,17 @@ La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-
   identificado (`esReceptorIdentificado`); una boleta sin DNI mantiene el flujo de override. La
   **dirección (punto de llegada)** NO se fuerza a la fiscal: queda la de **entrega** del pedido
   (editable en el modal), porque el punto de llegada es el lugar físico real de entrega.
+- **Ítems = los de la factura (9 jun 2026):** en el mismo bloque, los **bienes por transportar**
+  (descripción, cantidad y **unidad kg/unidad**) se toman del **XML firmado de la factura vinculada**
+  (fallback `items_json`; si nada parsea, quedan los `pedido_items`) — como en las guías reales de
+  SUNAT, donde guía y factura listan lo mismo. La línea de servicio **"ENVIO" se excluye** (es flete
+  facturable, no un bien transportable).
+- **PDF descargable (9 jun 2026):** la guía ahora se **descarga como archivo PDF** (jsPDF, igual que
+  boletas/facturas) con `src/lib/sunat/pdf-guia.ts` + `descargarPdfGuia()` en `lib/descargar-guia.ts`,
+  alimentado por `GET /api/guias/[id]` (que ahora acepta id de guía **o** pedido_id y devuelve
+  `impresion`: ítems, punto de llegada, M1/L y comprobante relacionado). Botón "PDF" rojo en
+  `/dashboard/guias`, en la lista de comprobantes (tipo 09) y en el dropdown de guías del dashboard;
+  la página imprimible `/pedidos/[id]/gre` sigue disponible ("Imprimir guía").
 
 ### Pendiente
 - **Emitir la 1ª GRE real en producción** (Hugo), idealmente con **M1/L y sin datos del chofer** (caso delivery externo en moto). Si SUNAT la acepta (serie + CDR), queda validado end-to-end; si la rechaza, revisar el código de error y ajustar el XML.

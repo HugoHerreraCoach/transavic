@@ -330,10 +330,10 @@ export async function POST(request: Request) {
 
     // Si la guía se emite desde un PEDIDO sin comprobante explícito, vincular su factura/boleta
     // aceptada para que la guía muestre su "Documento Relacionado" Y para que el DESTINATARIO
-    // COINCIDA con la factura (no con el nombre informal del pedido).
+    // y los ÍTEMS (descripción, cantidad y UNIDAD de medida) COINCIDAN con la factura.
     if (!finalComprobanteId && finalPedidoId) {
       const compRows = await sql`
-        SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo
+        SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
         FROM comprobantes
         WHERE pedido_id = ${finalPedidoId}::uuid
           AND estado IN ('aceptado', 'observado')
@@ -352,6 +352,36 @@ export async function POST(request: Request) {
           clienteDocTipo = String(compRows[0].cliente_doc_tipo || clienteDocTipo);
           const facturaRazon = String(compRows[0].cliente_razon_social || "").trim();
           if (facturaRazon) clienteRazonSocial = facturaRazon;
+        }
+
+        // Los bienes de la guía = las líneas de la factura (mismo nombre, cantidad y unidad
+        // kg/unidad), como en las guías reales de SUNAT. Fuente fiel: el XML firmado de la
+        // factura (fallback items_json). Si nada parsea, se mantienen los pedido_items.
+        let itemsFactura: CpeItem[] = [];
+        if (compRows[0].xml_firmado_base64) {
+          try {
+            const xmlFactura = Buffer.from(compRows[0].xml_firmado_base64 as string, "base64").toString("utf-8");
+            itemsFactura = parseCpeItems(xmlFactura);
+          } catch (err) {
+            console.error("No se pudieron parsear los ítems de la factura vinculada:", err);
+          }
+        }
+        if (itemsFactura.length === 0 && Array.isArray(compRows[0].items_json)) {
+          itemsFactura = compRows[0].items_json as CpeItem[];
+        }
+        if (itemsFactura.length > 0) {
+          const bienes = itemsFactura
+            .map((it) => {
+              const itemObj = it as unknown as Record<string, unknown>;
+              return {
+                producto_nombre: String(itemObj.descripcion || itemObj.producto_nombre || "Venta"),
+                cantidad: Number(itemObj.cantidad),
+                unidad: String(itemObj.unidadMedida || itemObj.unidad || "NIU"),
+              };
+            })
+            // El flete ("ENVIO") es un servicio facturable, no un bien transportable.
+            .filter((it) => !/^env[ií]o$/i.test(it.producto_nombre.trim()));
+          if (bienes.length > 0) itemsRows = bienes;
         }
       }
     }
