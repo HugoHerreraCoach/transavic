@@ -70,7 +70,12 @@ Regla **central** para el caso de Transavic (muchas entregas las hace un **deliv
 ## 4. Estado Actual
 
 > [!IMPORTANT]
-> La GRE está **desplegada en producción** (`main` → Vercel). El motor de firma + envío REST está validado contra SUNAT beta (guía `T001-00814091`, CDR código 0). La integración de UI/API del conductor (`nombres`/`apellidos` separados) y la regla M1/L (sección C) **ya están hechas**. **Pendiente: la 1ª emisión REAL en producción** (la valida Hugo; al 8 jun 2026 la tabla `comprobantes_guias` está vacía — 0 GRE emitidas).
+> La GRE está **desplegada en producción y VALIDADA END-TO-END contra SUNAT real**: la
+> **`T002-00000010` fue ACEPTADA (código 0, sin observaciones, CDR guardado) el 10 jun 2026 22:35**
+> — primera GRE real aceptada (Avícola de Tony), con los 5 ítems en KGM y peso 280.75 exactos a su
+> factura. Nota operativa: esa factura (F002-62) se anuló con NC esa misma mañana, así que la guía
+> se dio de baja después en el portal SOL — pero la aceptación demostró el flujo completo
+> (token OAuth2 + envío + polling + CDR + persistencia), de día y de noche.
 
 ### Entorno (Beta vs Producción)
 
@@ -95,8 +100,19 @@ distritos o consultas compartidas se hacen en ese módulo, NUNCA en un solo moda
 hoy tienen paridad: banner dinámico, auto-búsqueda del destinatario, M1/L exime y oculta el bloque
 del chofer ("+ Agregar datos del chofer (opcional)").
 
-### Auto-búsqueda del destinatario (jun 2026)
-En el modal, al tipear un DNI(8)/RUC(11) en el destinatario se consulta apisperu (`POST /api/consulta-documento`) y se autocompletan los "Nombres o Razón Social" (mismo patrón que el form de comprobantes).
+### Auto-búsqueda del destinatario + dirección + distrito (jun 2026)
+En ambos modales, al tipear un DNI(8)/RUC(11) se consulta apisperu (`POST /api/consulta-documento`).
+Con **RUC** se autocompletan razón social, **dirección** y **distrito** (con DNI solo el nombre —
+RENIEC no da dirección). La regla de qué pisar vive en `decidirAutollenadoDestino`
+(`guia-form-shared.ts`): si el **usuario tipeó** el doc, la dirección fiscal REEMPLAZA lo precargado
+(tipear un RUC = redefinir destinatario); las consultas **automáticas** (al abrir, o al elegir
+cliente frecuente) solo llenan vacíos. El distrito se resuelve con `matchDistritoLima` (alias:
+lima→Cercado, surco→Santiago de Surco, sjl, smp) + `detectarDistritoEnDireccion` (solo coincidencia
+inequívoca en el texto). Todo distrito entrante (pedido/ficha) se NORMALIZA contra el `<select>` —
+un valor coloquial que no matchea dejaba el select mudo. El bloque destinatario del modal por
+pedido/factura está **SIEMPRE visible** y prellenado (cascada FACTURA → pedido, editable); el peso
+bruto se autocompleta con la **suma exacta solo si TODOS los ítems están en KGM** (ítems desde la
+factura vinculada), y con unidades mixtas queda en blanco con un mensaje que pide pesar la carga.
 
 ### Representación impresa (`gre-printable-client.tsx`) — jun 2026
 La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-client.tsx` (con
@@ -171,9 +187,46 @@ T002 rechazadas). **El contador SUNAT no debe saltar.**
   `orden_pedido` sembrado desde `guia_remision`; `comprobantes_contador` T001=0 (próx=1), T002=9
   (próx=10, sin reusar las rechazadas). `guia_remision` queda **congelado** (DEPRECATED). Ver CLAUDE.md #29.
 
+### 🔴 Incidente del 10 jun 2026 — guía atascada en "emitiendo" → 3 causas raíz (TODAS RESUELTAS)
+La primera guía real (T002-10, 09:14) quedó horas en `'emitiendo'`. La autopsia destapó **tres** bugs
+encadenados (detalle completo en CLAUDE.md gotcha #30):
+1. **`comprobantes_guias` no tenía columna `updated_at`** pero el flujo de reserva hacía
+   `UPDATE … SET updated_at = NOW()` → el UPDATE post-SUNAT **y el catch** fallaban → la fila quedaba
+   `'emitiendo'` para siempre y el resultado de SUNAT se perdía. Fix: migración
+   `scripts/migrate-guias-reintento-2026-06-10.sql` (agrega `updated_at` + persiste
+   `direccion_llegada`, `distrito_llegada`, `indicador_m1l`, `chofer_nombres/apellidos`, `items_json`
+   en la reserva).
+2. **Timeout de Vercel**: el flujo REST (token + envío + polling 6×2s) supera los ~15s default →
+   `export const maxDuration = 60` en `emitir` y `reintentar`.
+3. **Fecha de emisión en UTC** (`new Date().toISOString()`): desde las **~19:00 hora Lima** la fecha
+   UTC ya es "mañana" → SUNAT rechaza **2329 "fecha de emisión fuera del límite permitido"**. Fix:
+   `src/lib/sunat/fechas.ts` (`fechaHoyLima`/`horaActualLima`) — **NUNCA `toISOString()` para fechas
+   de documentos SUNAT**. (Las facturas/boletas no sufrían esto: `lib/sunat/index.ts` ya usaba Lima.)
+   Bonus: el driver Neon devuelve `DATE` como objeto `Date` — `String(date)` produce "Wed Jun 10" →
+   SUNAT 0306; formatear con `toISOString().slice(0,10)` si es `instanceof Date`.
+
+### Reintentar emisión (mismo número) — `POST /api/guias/[id]/reintentar`
+Para guías en `error`, `pendiente`, `rechazado` o atascadas en `emitiendo` >15 min. Reconstruye el
+XML (ítems: `items_json` propio → XML de la factura vinculada → pedido_items), **reusa el MISMO
+serie-número**, firma y reenvía. Si SUNAT responde "ya registrada" (1032/1033) la marca `aceptado`.
+**Las rechazadas SÍ se reintentan**: un rechazo NO registra el documento en SUNAT (verificado: la
+T002-10 fue rechazada 2 veces y aceptada a la 3.ª con el mismo número). La fecha de inicio de
+traslado se ajusta para no quedar anterior a la emisión. UI: menú "⋯" → "Reintentar emisión (mismo
+número)" (admin + asesora dueña). El GET `/api/comprobantes` sanea filas `'emitiendo'` >15 min →
+`'error'` con instrucciones.
+
+### Baja (anulación) de una GRE aceptada
+- SUNAT **no expone baja de GRE por API**: se hace en el **portal SOL** (clave SOL → Comprobantes de
+  pago → GRE → dar de baja). Después, en el sistema, menú "⋯" → "Dar de Baja" (registra la baja local).
+- **Plazos SUNAT**: por **error en la emisión** → la baja procede mientras **no se haya iniciado el
+  traslado** (sin plazo en días). Si el traslado **ya inició** y cambia el destinatario antes de llegar
+  → baja dentro de **10 días calendario** desde el día siguiente al inicio del traslado. Fuente:
+  cpe.sunat.gob.pe/node/118 ("No conformidad y baja de una GRE").
+
 ### Pendiente
-- **Emitir la 1.ª GRE real con éxito** = la validación end-to-end (las únicas 2 guías son las T002-8/9
-  rechazadas PRE-fix XSD; T001 nunca se emitió). Con el XML ya arreglado + la numeración separada,
-  T001 arranca en `T001-00000001` y T002 en `T002-00000010` (un número rechazado no se reusa).
+- ~~Emitir la 1.ª GRE real con éxito~~ ✅ **HECHO 10 jun 2026** (T002-00000010 ACEPTADA; luego dada
+  de baja en SOL porque su factura se anuló con NC — la validación end-to-end quedó completa igual).
 - **Declarar la factura relacionada en el XML SUNAT** (`cac:AdditionalDocumentReference`) para que la representación PROPIA de SUNAT también muestre "Documentos Relacionados". Toca el XML legal → validar contra SUNAT antes.
+- **Ubigeos fuera de Lima/Callao**: el `<select>` de distrito solo cubre Lima/Callao; un traslado a
+  provincia (ej. cliente con domicilio en Cajamarca) hoy no puede expresar su ubigeo real.
 - **Credenciales SUNAT beta dan 401** → la validación local de guías contra beta se simula (mock). Para validar de verdad en local: arreglar esas credenciales o validar por XSD (xmllint), que es lo que ahora se hace.
