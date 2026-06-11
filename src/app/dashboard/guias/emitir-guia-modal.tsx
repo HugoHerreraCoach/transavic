@@ -11,8 +11,8 @@ import {
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
-  matchDistritoLima,
   detectarDistritoEnDireccion,
+  decidirAutollenadoDestino,
   fetchEntornoSunat,
 } from "@/lib/guia-form-shared";
 
@@ -307,10 +307,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
   // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
   // autocompleta los Nombres o Razón Social; con RUC, además la dirección y el distrito
-  // de llegada (helper compartido con el modal de GRE directa). Regla del autollenado:
-  // solo si el campo está vacío o si lo que hay es lo que nosotros mismos autollenamos
-  // antes (corregir el RUC actualiza), nunca pisa lo escrito a mano ni lo del pedido.
-  async function consultarDestinatario(numero: string) {
+  // de llegada (regla compartida `decidirAutollenadoDestino`). Cuando el USUARIO tipea
+  // el documento (suave=false) la dirección fiscal REEMPLAZA lo precargado — tipear un
+  // RUC es redefinir el destinatario. La consulta automática al abrir (suave=true)
+  // solo llena campos vacíos.
+  async function consultarDestinatario(numero: string, opts?: { suave?: boolean }) {
     if (!/^\d{8}$|^\d{11}$/.test(numero)) return;
     ultimoDocConsultado.current = numero;
     setConsultandoDest(true);
@@ -319,21 +320,24 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     if (r.ok) {
       if (r.nombre) setRazonSocialOverride(r.nombre);
       if (numero.length === 11) {
-        const nuevaDir = r.direccion;
-        const actualDir = direccionLlegadaRef.current;
-        if (nuevaDir && (!actualDir.trim() || actualDir === dirAutollenada.current)) {
-          dirAutollenada.current = nuevaDir;
-          direccionLlegadaRef.current = nuevaDir;
-          setDireccionLlegada(nuevaDir);
+        const dec = decidirAutollenadoDestino({
+          forzar: !opts?.suave,
+          direccionApi: r.direccion,
+          distritoApi: r.distrito,
+          direccionActual: direccionLlegadaRef.current,
+          distritoActual: distritoLlegadaRef.current,
+          dirAutollenada: dirAutollenada.current,
+          distAutollenado: distAutollenado.current,
+        });
+        if (dec.direccion !== undefined) {
+          dirAutollenada.current = dec.direccion;
+          direccionLlegadaRef.current = dec.direccion;
+          setDireccionLlegada(dec.direccion);
         }
-        // Distrito: primero el campo `distrito` de apisperu; si no matchea,
-        // intentar detectarlo dentro del texto de la dirección fiscal.
-        const nuevoDist = matchDistritoLima(r.distrito) ?? detectarDistritoEnDireccion(r.direccion);
-        const actualDist = distritoLlegadaRef.current;
-        if (nuevoDist && (!actualDist.trim() || actualDist === distAutollenado.current)) {
-          distAutollenado.current = nuevoDist;
-          distritoLlegadaRef.current = nuevoDist;
-          setDistritoLlegada(nuevoDist);
+        if (dec.distrito !== undefined) {
+          distAutollenado.current = dec.distrito || null;
+          distritoLlegadaRef.current = dec.distrito;
+          setDistritoLlegada(dec.distrito);
         }
       }
       setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
@@ -364,7 +368,7 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       || "";
     if (direccionInicial.trim()) return;
     if (doc === ultimoDocConsultado.current) return;
-    void consultarDestinatario(doc);
+    void consultarDestinatario(doc, { suave: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedido, comprobante]);
 

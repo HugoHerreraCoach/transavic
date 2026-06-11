@@ -163,6 +163,44 @@ export function detectarDistritoEnDireccion(direccion: string | null | undefined
   return hallados.length === 1 ? hallados[0] : null;
 }
 
+/**
+ * Decide qué autollenar en el punto de llegada tras una consulta RUC exitosa.
+ * Dos modos:
+ *  - forzar=true  → el USUARIO tipeó el documento (acción explícita de redefinir
+ *    el destinatario): la dirección fiscal REEMPLAZA lo que haya, y el distrito
+ *    se actualiza (o se LIMPIA si el RUC nuevo no trae distrito reconocible y lo
+ *    visible era un autollenado del RUC anterior — nunca dejar un distrito ajeno).
+ *  - forzar=false → consulta automática (al abrir el modal, o al elegir un cliente
+ *    frecuente): solo llena campos VACÍOS o que puso el propio autollenado; nunca
+ *    pisa lo escrito a mano ni la dirección de ENTREGA del pedido/ficha.
+ * `distrito: ""` significa "limpiar el select"; `undefined` = no tocar.
+ */
+export function decidirAutollenadoDestino(p: {
+  forzar: boolean;
+  direccionApi: string | null;
+  distritoApi: string | null;
+  direccionActual: string;
+  distritoActual: string;
+  dirAutollenada: string | null;
+  distAutollenado: string | null;
+}): { direccion?: string; distrito?: string } {
+  const out: { direccion?: string; distrito?: string } = {};
+  if (p.direccionApi) {
+    if (p.forzar || !p.direccionActual.trim() || p.direccionActual === p.dirAutollenada) {
+      out.direccion = p.direccionApi;
+    }
+  }
+  const nuevoDist = matchDistritoLima(p.distritoApi) ?? detectarDistritoEnDireccion(p.direccionApi);
+  if (nuevoDist) {
+    if (p.forzar || !p.distritoActual.trim() || p.distritoActual === p.distAutollenado) {
+      out.distrito = nuevoDist;
+    }
+  } else if (p.forzar && p.distritoActual.trim() && p.distritoActual === p.distAutollenado) {
+    out.distrito = "";
+  }
+  return out;
+}
+
 /** Entorno SUNAT real (beta | production) para el banner del modal. null = no se pudo cargar. */
 export async function fetchEntornoSunat(): Promise<boolean | null> {
   try {

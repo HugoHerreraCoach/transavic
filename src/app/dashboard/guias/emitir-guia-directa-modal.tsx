@@ -25,8 +25,8 @@ import {
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
-  matchDistritoLima,
   detectarDistritoEnDireccion,
+  decidirAutollenadoDestino,
   fetchEntornoSunat,
 } from "@/lib/guia-form-shared";
 
@@ -140,6 +140,9 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   // (un updater funcional que mute refs es impuro y Strict Mode lo doble-invoca).
   const direccionLlegadaRef = useRef("");
   const distritoLlegadaRef = useRef("");
+  // true = el doc lo seteó handleSelectCliente (consulta "suave": solo llena vacíos);
+  // false = lo tipeó el usuario (consulta "forzada": reemplaza dirección/distrito).
+  const consultaSuaveRef = useRef(false);
   useEffect(() => { direccionLlegadaRef.current = direccionLlegada; }, [direccionLlegada]);
   useEffect(() => { distritoLlegadaRef.current = distritoLlegada; }, [distritoLlegada]);
 
@@ -256,35 +259,40 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
 
   // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
   // autocompleta la razón social; con RUC, además la dirección y el distrito de llegada
-  // (helper compartido con emitir-guia-modal.tsx). Regla del autollenado: solo si el campo
-  // está vacío o si lo que hay es lo que nosotros mismos autollenamos antes (corregir el
-  // RUC actualiza), nunca pisa lo escrito a mano ni lo de la ficha del cliente.
+  // (regla compartida `decidirAutollenadoDestino`). Si el documento lo TIPEÓ el usuario
+  // (consultaSuaveRef=false) la dirección fiscal REEMPLAZA lo que haya — tipear un RUC
+  // es redefinir el destinatario. Si el doc vino de elegir un cliente frecuente
+  // (consultaSuaveRef=true), solo se llenan los campos vacíos (su ficha manda).
   useEffect(() => {
     const numero = clienteDocNum.trim();
     if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
+    const suave = consultaSuaveRef.current;
     const t = setTimeout(async () => {
       ultimoDocConsultado.current = numero;
       setConsultandoDest(true);
       setConsultaDestMsg(null);
       const r = await consultarDocumento(numero);
       if (r.ok) {
-        if (r.nombre && !clienteRazonSocial.trim()) setClienteRazonSocial(r.nombre);
+        if (r.nombre && (!suave || !clienteRazonSocial.trim())) setClienteRazonSocial(r.nombre);
         if (numero.length === 11) {
-          const nuevaDir = r.direccion;
-          const actualDir = direccionLlegadaRef.current;
-          if (nuevaDir && (!actualDir.trim() || actualDir === dirAutollenada.current)) {
-            dirAutollenada.current = nuevaDir;
-            direccionLlegadaRef.current = nuevaDir;
-            setDireccionLlegada(nuevaDir);
+          const dec = decidirAutollenadoDestino({
+            forzar: !suave,
+            direccionApi: r.direccion,
+            distritoApi: r.distrito,
+            direccionActual: direccionLlegadaRef.current,
+            distritoActual: distritoLlegadaRef.current,
+            dirAutollenada: dirAutollenada.current,
+            distAutollenado: distAutollenado.current,
+          });
+          if (dec.direccion !== undefined) {
+            dirAutollenada.current = dec.direccion;
+            direccionLlegadaRef.current = dec.direccion;
+            setDireccionLlegada(dec.direccion);
           }
-          // Distrito: primero el campo `distrito` de apisperu; si no matchea,
-          // intentar detectarlo dentro del texto de la dirección fiscal.
-          const nuevoDist = matchDistritoLima(r.distrito) ?? detectarDistritoEnDireccion(r.direccion);
-          const actualDist = distritoLlegadaRef.current;
-          if (nuevoDist && (!actualDist.trim() || actualDist === distAutollenado.current)) {
-            distAutollenado.current = nuevoDist;
-            distritoLlegadaRef.current = nuevoDist;
-            setDistritoLlegada(nuevoDist);
+          if (dec.distrito !== undefined) {
+            distAutollenado.current = dec.distrito || null;
+            distritoLlegadaRef.current = dec.distrito;
+            setDistritoLlegada(dec.distrito);
           }
         }
         setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
@@ -414,6 +422,9 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   const handleSelectCliente = (cli: ClienteData) => {
     setClienteId(cli.id || null);
     const doc = (cli.ruc_dni || "").trim();
+    // La ficha del cliente manda: la consulta que dispare este doc será "suave"
+    // (solo llena vacíos, no pisa la dirección de entrega guardada).
+    consultaSuaveRef.current = true;
     setClienteDocNum(doc);
     setClienteDocTipo(doc.length === 11 ? "6" : "1");
     setClienteRazonSocial(cli.razon_social || cli.nombre || "");
@@ -753,7 +764,12 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                             type="text"
                             maxLength={clienteDocTipo === "6" ? 11 : 8}
                             value={clienteDocNum}
-                            onChange={(e) => setClienteDocNum(e.target.value.replace(/\D/g, ""))}
+                            onChange={(e) => {
+                              // El usuario tipea el doc → la consulta será "forzada"
+                              // (la dirección fiscal reemplaza lo precargado).
+                              consultaSuaveRef.current = false;
+                              setClienteDocNum(e.target.value.replace(/\D/g, ""));
+                            }}
                             placeholder={clienteDocTipo === "6" ? "RUC 11 dígitos" : "DNI 8 dígitos"}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500 font-mono font-bold"
                             required
