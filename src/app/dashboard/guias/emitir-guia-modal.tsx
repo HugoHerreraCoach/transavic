@@ -19,6 +19,8 @@ import {
 
 export interface ComprobanteInfo {
   id: string;
+  /** Empresa emisora ('transavic' | 'avicola') — para el banner del emisor */
+  empresa?: string | null;
   /** Campos devueltos por /api/comprobantes/[id] */
   cliente?: {
     numDocumento?: string | null;
@@ -112,6 +114,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   // true cuando los bienes mezclan kg con otras unidades → el peso NO se autocalcula
   // y se le explica al usuario que debe pesar la carga e ingresarlo a mano.
   const [unidadesMixtas, setUnidadesMixtas] = useState<boolean>(false);
+  // true cuando el comprobante/pedido traía un ítem "ENVIO" (flete): se excluye del
+  // peso, los bultos y los bienes — la nota bajo el campo Peso lo hace transparente.
+  const [envioExcluido, setEnvioExcluido] = useState<boolean>(false);
+  // Datos públicos del emisor (RUC + razón social) para el banner de empresa.
+  const [empresasMap, setEmpresasMap] = useState<Record<string, { ruc: string; razonSocial: string }> | null>(null);
 
   // Cargar ítems del origen para autocalcular peso y bultos. Si la guía sale de un
   // PEDIDO que ya tiene factura/boleta aceptada vinculada, los bienes y el peso se
@@ -156,15 +163,17 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
         if (active && data) {
           const parsedItems = data.items || [];
-          const mappedItems = parsedItems
+          const mappedSinFiltrar = parsedItems
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             .map((it: any) => ({
               producto_nombre: it.producto_nombre || it.descripcion || "Venta",
               cantidad: Number(it.cantidad_real ?? it.cantidad ?? 0),
               unidad: it.unidad || it.unidad_medida || it.unidadMedida || "NIU",
-            }))
-            // El flete ("ENVIO") es un servicio facturable, no un bien transportable
+            }));
+          // El flete ("ENVIO") es un servicio facturable, no un bien transportable
+          const mappedItems = mappedSinFiltrar
             .filter((it: { producto_nombre: string }) => !/^env[ií]o$/i.test(it.producto_nombre.trim()));
+          setEnvioExcluido(mappedSinFiltrar.length !== mappedItems.length);
           setItems(mappedItems);
 
           // Peso bruto: suma EXACTA solo si TODOS los ítems están en kilogramos
@@ -302,10 +311,15 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     };
   }, [pedido?.repartidor_id, necesitaOverride, indicadorM1L]);
 
-  // Cargar el entorno SUNAT real (para mostrar el banner correcto)
+  // Cargar el entorno SUNAT real (para mostrar el banner correcto) y los datos
+  // públicos del emisor (RUC + razón social) para el banner de empresa.
   useEffect(() => {
     let active = true;
     fetchEntornoSunat().then((prod) => { if (active && prod !== null) setEsProduccion(prod); });
+    fetch("/api/sunat/empresas")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (active && d && !d.error) setEmpresasMap(d); })
+      .catch(() => { /* el banner cae al nombre sin RUC */ });
     return () => { active = false; };
   }, []);
 
@@ -500,6 +514,21 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     ? esRucValido(docNumOverride)
     : esDniValido(docNumOverride);
 
+  // Empresa emisora (espejo de empresaFromPedidoString del backend: la misma
+  // heurística que usará la emisión, así el banner nunca miente). Define el RUC
+  // (20 Transavic / 10 Avícola) y la serie (T001 / T002) de la guía.
+  const empresaKey = (pedido?.empresa || comprobante?.empresa || "")
+    .toLowerCase()
+    .startsWith("av")
+    ? "avicola"
+    : "transavic";
+  const EMPRESA_BANNER = {
+    transavic: { logo: "/transavic.jpg", nombre: "Transavic", serie: "T001", chip: "bg-red-50 border-red-200 text-red-800" },
+    avicola: { logo: "/avicola.jpg", nombre: "Avícola de Tony", serie: "T002", chip: "bg-amber-50 border-amber-200 text-amber-800" },
+  } as const;
+  const emisorUI = EMPRESA_BANNER[empresaKey];
+  const emisorRuc = empresasMap?.[empresaKey]?.ruc;
+
   // Con M1/L los datos del chofer son opcionales (SUNAT los permite omitir).
   const choferOk = indicadorM1L || !!(repartidorId && choferDni && choferLicencia && vehiculoPlaca && choferNombres && choferApellidos);
   // Se incluyen datos del chofer si NO es M1/L (obligatorios) o si el usuario los desplegó.
@@ -522,12 +551,26 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
             </p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-        >
-          <FiX size={18} />
-        </button>
+        <div className="flex items-center gap-2.5">
+          {/* Banner del EMISOR: de qué empresa/RUC saldrá la guía (T001 vs T002) */}
+          <div
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border ${emisorUI.chip}`}
+            title={`La guía se emitirá con el RUC de ${emisorUI.nombre} (serie ${emisorUI.serie})`}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={emisorUI.logo} alt={emisorUI.nombre} className="w-6 h-6 rounded-md object-cover border border-white/60" />
+            <div className="leading-tight">
+              <span className="block text-[10px] font-bold">{emisorUI.nombre} · {emisorUI.serie}</span>
+              <span className="block text-[9px] opacity-80 font-mono">{emisorRuc ? `RUC ${emisorRuc}` : "Emisor de la guía"}</span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <FiX size={18} />
+          </button>
+        </div>
       </div>
 
       {success ? (
@@ -879,6 +922,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         Los productos tienen distintas unidades (kg y unidades), así que no
                         podemos calcular el peso por ti. Pesa la carga e ingresa el total en
                         kilogramos.
+                      </p>
+                    )}
+                    {envioExcluido && (
+                      <p className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 leading-snug">
+                        El ítem <span className="font-semibold">ENVIO</span> (flete) no se
+                        cuenta en el peso ni en los bultos — es un servicio, no mercadería.
                       </p>
                     )}
                   </div>

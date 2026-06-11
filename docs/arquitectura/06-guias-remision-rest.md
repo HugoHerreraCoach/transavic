@@ -113,6 +113,11 @@ un valor coloquial que no matchea dejaba el select mudo. El bloque destinatario 
 pedido/factura está **SIEMPRE visible** y prellenado (cascada FACTURA → pedido, editable); el peso
 bruto se autocompleta con la **suma exacta solo si TODOS los ítems están en KGM** (ítems desde la
 factura vinculada), y con unidades mixtas queda en blanco con un mensaje que pide pesar la carga.
+El ítem **"ENVIO" (flete) se excluye** del peso, los bultos y los bienes (es un servicio); cuando se
+excluyó, el modal lo dice con una nota bajo el campo Peso (caso real: boleta B001-39 → 6.45 kg
+exactos de 4 ítems KGM, sin contar el ENVIO). El header del modal muestra un **banner del EMISOR**
+(logo + "Transavic · T001 · RUC 20612806901" en rojo, o "Avícola de Tony · T002 · RUC 10710548841"
+en ámbar — datos de `GET /api/sunat/empresas`) para que se vea de un vistazo con qué RUC saldrá la guía.
 
 ### Representación impresa (`gre-printable-client.tsx`) — jun 2026
 La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-client.tsx` (con
