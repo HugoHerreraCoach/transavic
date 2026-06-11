@@ -236,7 +236,12 @@ export async function POST(_req: Request, { params }: RouteParams) {
     // El inicio de traslado no puede ser anterior a la emisión: si el reintento
     // ocurre días después, el documento original nunca existió legalmente y la
     // guía reemitida ampara el traslado desde HOY.
-    const inicioOriginal = String(g.fecha_inicio_traslado ?? "").slice(0, 10);
+    // El driver de Neon puede devolver DATE como objeto Date (String() daría
+    // "Wed Jun 10" → SUNAT 0306 "is not a valid value for 'date'").
+    const rawInicio = g.fecha_inicio_traslado as unknown;
+    const inicioOriginal = rawInicio instanceof Date
+      ? rawInicio.toISOString().slice(0, 10)
+      : String(rawInicio ?? "").slice(0, 10);
     const fechaInicioTraslado = inicioOriginal && inicioOriginal >= fechaEmision
       ? inicioOriginal
       : fechaEmision;
