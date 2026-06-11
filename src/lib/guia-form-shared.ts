@@ -19,9 +19,9 @@ export interface MotorizadoUser {
 }
 
 export const DISTRITOS_LIMA = [
-  "Ate", "Ancón", "Barranco", "Breña", "Carabayllo", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
+  "Ate", "Ancón", "Barranco", "Breña", "Carabayllo", "Cercado de Lima", "Chaclacayo", "Chorrillos", "Cieneguilla", "Comas",
   "El Agustino", "Independencia", "Jesús María", "La Molina", "La Victoria", "Lince", "Los Olivos",
-  "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Puente Piedra",
+  "Lurigancho", "Lurín", "Magdalena del Mar", "Miraflores", "Pachacámac", "Pucusana", "Pueblo Libre", "Puente Piedra",
   "Punta Hermosa", "Punta Negra", "Rímac", "San Bartolo", "San Borja", "San Isidro", "San Juan de Lurigancho",
   "San Juan de Miraflores", "San Luis", "San Martín de Porres", "San Miguel", "Santa Anita", "Santa María del Mar",
   "Santa Rosa", "Santiago de Surco", "Surquillo", "Villa El Salvador", "Villa María del Triunfo",
@@ -84,13 +84,14 @@ export interface ResultadoConsultaDoc {
   ok: boolean;
   nombre: string;      // razón social (RUC) o nombre completo (DNI)
   direccion: string | null;
+  distrito: string | null; // solo RUC (el DNI no trae dirección); viene en MAYÚSCULAS de apisperu
   mensaje: string | null; // mensaje de error amigable si !ok
 }
 
 /** Consulta un DNI(8)/RUC(11) en apisperu vía /api/consulta-documento. */
 export async function consultarDocumento(numero: string): Promise<ResultadoConsultaDoc> {
   if (!/^\d{8}$|^\d{11}$/.test(numero)) {
-    return { ok: false, nombre: "", direccion: null, mensaje: "Documento inválido" };
+    return { ok: false, nombre: "", direccion: null, distrito: null, mensaje: "Documento inválido" };
   }
   try {
     const res = await fetch("/api/consulta-documento", {
@@ -100,12 +101,66 @@ export async function consultarDocumento(numero: string): Promise<ResultadoConsu
     });
     const j = await res.json();
     if (res.ok && j.ok) {
-      return { ok: true, nombre: j.razonSocial || j.nombreCompleto || "", direccion: j.direccion || null, mensaje: null };
+      return {
+        ok: true,
+        nombre: j.razonSocial || j.nombreCompleto || "",
+        direccion: j.direccion || null,
+        distrito: j.distrito || null,
+        mensaje: null,
+      };
     }
-    return { ok: false, nombre: "", direccion: null, mensaje: j.mensaje || j.error || "No se encontró el documento." };
+    return { ok: false, nombre: "", direccion: null, distrito: null, mensaje: j.mensaje || j.error || "No se encontró el documento." };
   } catch {
-    return { ok: false, nombre: "", direccion: null, mensaje: "No se pudo consultar. Escribe los datos a mano." };
+    return { ok: false, nombre: "", direccion: null, distrito: null, mensaje: "No se pudo consultar. Escribe los datos a mano." };
   }
+}
+
+function normalizarTexto(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+}
+
+/**
+ * Empareja el distrito que devuelve apisperu (MAYÚSCULAS y a veces sin tildes,
+ * ej. "SAN MARTIN DE PORRES") con el valor EXACTO del <select> de DISTRITOS_LIMA
+ * ("San Martín de Porres"). Devuelve null si no es de Lima/Callao o no matchea —
+ * en ese caso el select se deja como está y el usuario elige a mano.
+ */
+export function matchDistritoLima(distritoApi: string | null | undefined): string | null {
+  if (!distritoApi) return null;
+  const buscado = normalizarTexto(distritoApi);
+  if (!buscado) return null;
+  // apisperu/SUNAT llaman "LIMA" al Cercado (ubigeo 150101)
+  if (buscado === "lima") return "Cercado de Lima";
+  return DISTRITOS_LIMA.find((d) => normalizarTexto(d) === buscado) ?? null;
+}
+
+/**
+ * Detecta el distrito DENTRO del texto de una dirección (ej. "Av. X 123 - San Borja",
+ * "... URB. MELGAREJO LA MOLINA"). Solo devuelve un distrito si la coincidencia es
+ * INEQUÍVOCA: exactamente un distrito de DISTRITOS_LIMA aparece como palabra completa.
+ * Si hay cero o varias coincidencias (o solo zonas como "Salamanca" que no son
+ * distrito), devuelve null y el usuario elige a mano.
+ * Nota: si un nombre contiene a otro ("San Juan de Lurigancho" ⊃ "Lurigancho"),
+ * cuenta solo el MÁS LARGO presente.
+ */
+export function detectarDistritoEnDireccion(direccion: string | null | undefined): string | null {
+  if (!direccion) return null;
+  // normalizarTexto (NFD) también convierte ñ→n, así que el texto queda en [a-z0-9 + signos]
+  let texto = ` ${normalizarTexto(direccion)} `;
+  if (texto.trim().length < 3) return null;
+  // Más largos primero para que "San Juan de Lurigancho" gane sobre "Lurigancho"
+  const ordenados = [...DISTRITOS_LIMA].sort((a, b) => b.length - a.length);
+  const hallados: string[] = [];
+  for (const d of ordenados) {
+    const dNorm = normalizarTexto(d);
+    const re = new RegExp(`(^|[^a-z0-9])${dNorm}($|[^a-z0-9])`, "g");
+    if (re.test(texto)) {
+      hallados.push(d);
+      // Borrar la ocurrencia para que un nombre contenido no se cuente dos veces
+      texto = texto.replace(re, "$1·$2");
+    }
+  }
+  return hallados.length === 1 ? hallados[0] : null;
 }
 
 /** Entorno SUNAT real (beta | production) para el banner del modal. null = no se pudo cargar. */

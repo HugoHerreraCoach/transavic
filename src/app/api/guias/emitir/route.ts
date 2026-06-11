@@ -13,12 +13,16 @@ import { generarXMLGuia, DatosGuia } from "@/lib/sunat/xml-builder-guia";
 import { firmarXML } from "@/lib/sunat/xml-signer";
 import { enviarGuiaRest } from "@/lib/sunat/rest-client";
 import { obtenerUbigeoDistrito } from "@/lib/sunat/ubigeos";
-import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import { EstadoSunat } from "@/lib/sunat/types";
 import { parseCpeItems, parseCpeClienteDireccion, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 import { esReceptorIdentificado } from "@/lib/sunat/validacion-cliente";
 
 export const dynamic = "force-dynamic";
+// La emisión REST hace token + envío + polling del ticket (hasta 6×2s) → puede
+// superar los ~15s default de Vercel. Sin esto la función muere a mitad del
+// polling y la guía queda atascada en 'emitiendo' (caso T002-00000010, 10 jun).
+export const maxDuration = 60;
 
 const Schema = z.object({
   pedido_id: z.string().uuid().optional().nullable(),
@@ -500,19 +504,24 @@ export async function POST(request: Request) {
       cantidad: Number(it.cantidad),
     }));
 
-    // Calcular peso bruto total si no fue enviado
+    // Peso bruto: si no fue enviado, suma EXACTA solo cuando TODOS los ítems están
+    // en kilogramos (= peso de la factura). Con unidades mixtas NO se estima nada:
+    // se exige que el usuario ingrese el peso real (pedido de Antonio, 10 jun 2026).
     let finalPesoBruto = pesoBrutoTotal;
     if (!finalPesoBruto) {
-      let sumWeight = 0;
-      for (const it of itemsRows) {
-        const qty = Number(it.cantidad);
-        if (aUnitCodeSunat(it.unidad) === "KGM") {
-          sumWeight += qty;
-        } else {
-          sumWeight += estimarPesoPorUnidad(it.producto_nombre, qty);
-        }
+      const todosKg =
+        itemsRows.length > 0 &&
+        itemsRows.every((it) => aUnitCodeSunat(it.unidad) === "KGM");
+      if (todosKg) {
+        const suma = itemsRows.reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0);
+        if (suma > 0) finalPesoBruto = Number(suma.toFixed(2));
       }
-      finalPesoBruto = sumWeight > 0 ? Number(sumWeight.toFixed(2)) : 1.0;
+      if (!finalPesoBruto) {
+        return NextResponse.json(
+          { error: "Ingresa el Peso Bruto total (KGM): los productos tienen unidades distintas a kilogramos y no se puede calcular automáticamente." },
+          { status: 400 }
+        );
+      }
     }
 
     // 4. Configurar datos de emisor
@@ -549,6 +558,8 @@ export async function POST(request: Request) {
         peso_bruto_total, total_bultos, modalidad_traslado, motivo_traslado,
         fecha_inicio_traslado, repartidor_id, vehiculo_placa,
         chofer_doc_tipo, chofer_doc_num, chofer_licencia,
+        direccion_llegada, distrito_llegada, indicador_m1l,
+        chofer_nombres, chofer_apellidos, items_json,
         estado, mensaje_sunat, emitido_por
       )
       SELECT
@@ -558,6 +569,8 @@ export async function POST(request: Request) {
         ${finalPesoBruto}, ${totalBultos}, '02', ${motivoTraslado},
         ${fechaInicioTraslado}, ${finalRepartidorId}, ${finalPlaca},
         '1', ${finalChoferDni}, ${finalChoferLicencia},
+        ${direccionLlegadaFinal}, ${distritoLlegadaFinal || null}, ${!!indicadorM1L},
+        ${finalChoferNombres || null}, ${finalChoferApellidos || null}, ${JSON.stringify(itemsRows)}::jsonb,
         'emitiendo', 'Reserva — emisión en curso', ${session.user.name || null}
       FROM bump
       RETURNING id, numero, serie_numero

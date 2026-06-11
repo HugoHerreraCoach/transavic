@@ -4,13 +4,15 @@ import { useEffect, useState, useRef } from "react";
 import { Pedido } from "@/lib/types";
 import { FiX, FiTruck, FiAlertCircle, FiCheck, FiCalendar, FiFileText, FiMapPin, FiEdit2, FiInfo, FiEye, FiUser, FiPackage } from "react-icons/fi";
 import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
-import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import {
   DISTRITOS_LIMA,
   type MotorizadoUser,
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
+  matchDistritoLima,
+  detectarDistritoEnDireccion,
   fetchEntornoSunat,
 } from "@/lib/guia-form-shared";
 
@@ -62,6 +64,17 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [consultandoDest, setConsultandoDest] = useState(false);
   const [consultaDestMsg, setConsultaDestMsg] = useState<string | null>(null);
   const ultimoDocConsultado = useRef("");
+  // Última dirección/distrito que NOSOTROS autollenamos desde la consulta RUC: permite
+  // actualizar si el usuario corrige el RUC, sin pisar lo que escribió a mano ni lo
+  // que vino del pedido (la dirección de ENTREGA manda sobre la fiscal).
+  const dirAutollenada = useRef<string | null>(null);
+  const distAutollenado = useRef<string | null>(null);
+  // Espejo del estado para leer el valor MÁS RECIENTE dentro de la consulta async
+  // (un updater funcional que mute refs es impuro y Strict Mode lo doble-invoca).
+  const direccionLlegadaRef = useRef("");
+  const distritoLlegadaRef = useRef("");
+  useEffect(() => { direccionLlegadaRef.current = direccionLlegada; }, [direccionLlegada]);
+  useEffect(() => { distritoLlegadaRef.current = distritoLlegada; }, [distritoLlegada]);
 
   // Entorno SUNAT real, para el banner (Beta vs Producción). null = aún cargando.
   const [esProduccion, setEsProduccion] = useState<boolean | null>(null);
@@ -96,46 +109,72 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number; unidad: string }>>([]);
   const [cargandoItems, setCargandoItems] = useState<boolean>(false);
 
-  // Cargar ítems del pedido o comprobante de origen para autocalcular peso y bultos
+  // Cargar ítems del origen para autocalcular peso y bultos. Si la guía sale de un
+  // PEDIDO que ya tiene factura/boleta aceptada vinculada, los bienes y el peso se
+  // toman de la FACTURA (misma fuente que usa el backend al emitir) — así el peso
+  // del modal coincide EXACTO con el comprobante y no con las unidades del pedido.
   useEffect(() => {
     let active = true;
     const cargarItems = async () => {
-      let targetUrl = "";
-      if (pedido?.id) {
-        targetUrl = `/api/pedidos/${pedido.id}`;
-      } else if (comprobante?.id) {
-        targetUrl = `/api/comprobantes/${comprobante.id}`;
-      }
-
-      if (!targetUrl) return;
+      if (!pedido?.id && !comprobante?.id) return;
 
       setCargandoItems(true);
       try {
-        const res = await fetch(targetUrl);
-        if (!res.ok) throw new Error("Fallo al obtener ítems");
-        const data = await res.json();
-        if (active) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let data: any = null;
+        if (pedido?.id) {
+          try {
+            const resLista = await fetch(`/api/comprobantes?pedido_id=${pedido.id}`);
+            if (resLista.ok) {
+              const lista = await resLista.json();
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const factura = (Array.isArray(lista?.data) ? lista.data : []).find((c: any) =>
+                ["01", "03"].includes(c.tipo) && ["aceptado", "observado"].includes(c.estado)
+              );
+              if (factura?.id) {
+                const resDet = await fetch(`/api/comprobantes/${factura.id}`);
+                if (resDet.ok) data = await resDet.json();
+              }
+            }
+          } catch {
+            // sin factura vinculada → caemos a los ítems del pedido
+          }
+          if (!data) {
+            const res = await fetch(`/api/pedidos/${pedido.id}`);
+            if (!res.ok) throw new Error("Fallo al obtener ítems");
+            data = await res.json();
+          }
+        } else if (comprobante?.id) {
+          const res = await fetch(`/api/comprobantes/${comprobante.id}`);
+          if (!res.ok) throw new Error("Fallo al obtener ítems");
+          data = await res.json();
+        }
+
+        if (active && data) {
           const parsedItems = data.items || [];
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const mappedItems = parsedItems.map((it: any) => ({
-            producto_nombre: it.producto_nombre || it.descripcion || "Venta",
-            cantidad: Number(it.cantidad_real ?? it.cantidad ?? 0),
-            unidad: it.unidad || it.unidad_medida || it.unidadMedida || "NIU",
-          }));
+          const mappedItems = parsedItems
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .map((it: any) => ({
+              producto_nombre: it.producto_nombre || it.descripcion || "Venta",
+              cantidad: Number(it.cantidad_real ?? it.cantidad ?? 0),
+              unidad: it.unidad || it.unidad_medida || it.unidadMedida || "NIU",
+            }))
+            // El flete ("ENVIO") es un servicio facturable, no un bien transportable
+            .filter((it: { producto_nombre: string }) => !/^env[ií]o$/i.test(it.producto_nombre.trim()));
           setItems(mappedItems);
 
-          // Calcular bultos y peso estimado
-          let sumWeight = 0;
-          for (const it of mappedItems) {
-            if (aUnitCodeSunat(it.unidad) === "KGM") {
-              sumWeight += Number(it.cantidad) || 0;
-            } else {
-              sumWeight += estimarPesoPorUnidad(it.producto_nombre, Number(it.cantidad) || 0);
-            }
-          }
+          // Peso bruto: suma EXACTA solo si TODOS los ítems están en kilogramos
+          // (= el peso de la factura). Con unidades mixtas se deja EN BLANCO para
+          // que la asesora ingrese el peso real — nada de estimaciones.
+          const todosKg =
+            mappedItems.length > 0 &&
+            mappedItems.every((it: { unidad: string }) => aUnitCodeSunat(it.unidad) === "KGM");
+          const sumWeight = todosKg
+            ? mappedItems.reduce((acc: number, it: { cantidad: number }) => acc + (Number(it.cantidad) || 0), 0)
+            : 0;
 
           setTotalBultos(Math.max(1, mappedItems.length));
-          setPesoBrutoTotal(sumWeight > 0 ? sumWeight.toFixed(2) : "");
+          setPesoBrutoTotal(todosKg && sumWeight > 0 ? sumWeight.toFixed(2) : "");
         }
       } catch (err) {
         console.error("Error cargando ítems de origen:", err);
@@ -168,6 +207,25 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       setDistritoLlegada(
         comprobante.cliente?.distrito || comprobante.pedido_distrito || ""
       );
+    }
+
+    // Si el origen trae dirección pero NO distrito, intentar detectarlo en el texto
+    // de la dirección (solo si la coincidencia es inequívoca; si no, queda libre).
+    const direccionInicial = pedido?.direccion
+      || comprobante?.cliente?.direccion
+      || comprobante?.pedido_direccion
+      || "";
+    const distritoInicial = pedido?.distrito
+      || comprobante?.cliente?.distrito
+      || comprobante?.pedido_distrito
+      || "";
+    if (direccionInicial && !distritoInicial) {
+      const detectado = detectarDistritoEnDireccion(direccionInicial);
+      if (detectado) {
+        distAutollenado.current = detectado;
+        distritoLlegadaRef.current = detectado;
+        setDistritoLlegada(detectado);
+      }
     }
 
     const doc = pedido?.ruc_dni
@@ -248,7 +306,10 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   }, []);
 
   // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
-  // autocompleta los Nombres o Razón Social (helper compartido con el modal de GRE directa).
+  // autocompleta los Nombres o Razón Social; con RUC, además la dirección y el distrito
+  // de llegada (helper compartido con el modal de GRE directa). Regla del autollenado:
+  // solo si el campo está vacío o si lo que hay es lo que nosotros mismos autollenamos
+  // antes (corregir el RUC actualiza), nunca pisa lo escrito a mano ni lo del pedido.
   async function consultarDestinatario(numero: string) {
     if (!/^\d{8}$|^\d{11}$/.test(numero)) return;
     ultimoDocConsultado.current = numero;
@@ -257,8 +318,23 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     const r = await consultarDocumento(numero);
     if (r.ok) {
       if (r.nombre) setRazonSocialOverride(r.nombre);
-      if (numero.length === 11 && r.direccion && !direccionLlegada.trim()) {
-        setDireccionLlegada(r.direccion);
+      if (numero.length === 11) {
+        const nuevaDir = r.direccion;
+        const actualDir = direccionLlegadaRef.current;
+        if (nuevaDir && (!actualDir.trim() || actualDir === dirAutollenada.current)) {
+          dirAutollenada.current = nuevaDir;
+          direccionLlegadaRef.current = nuevaDir;
+          setDireccionLlegada(nuevaDir);
+        }
+        // Distrito: primero el campo `distrito` de apisperu; si no matchea,
+        // intentar detectarlo dentro del texto de la dirección fiscal.
+        const nuevoDist = matchDistritoLima(r.distrito) ?? detectarDistritoEnDireccion(r.direccion);
+        const actualDist = distritoLlegadaRef.current;
+        if (nuevoDist && (!actualDist.trim() || actualDist === distAutollenado.current)) {
+          distAutollenado.current = nuevoDist;
+          distritoLlegadaRef.current = nuevoDist;
+          setDistritoLlegada(nuevoDist);
+        }
       }
       setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
     } else {
@@ -273,8 +349,24 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
     const t = setTimeout(() => { void consultarDestinatario(numero); }, 600);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docNumOverride, necesitaOverride]);
+
+  // Caso "factura/pedido CON RUC pero SIN dirección de llegada": el bloque de destinatario
+  // está oculto (el doc ya es válido), así que la auto-búsqueda de arriba nunca corre.
+  // Consultamos el RUC original una vez al abrir para traer dirección + distrito fiscales.
+  // (Con DNI no aplica: apisperu no devuelve dirección para DNI.)
+  useEffect(() => {
+    const doc = originalDoc.trim();
+    if (necesitaOverride || doc.length !== 11) return;
+    const direccionInicial = pedido?.direccion
+      || comprobante?.cliente?.direccion
+      || comprobante?.pedido_direccion
+      || "";
+    if (direccionInicial.trim()) return;
+    if (doc === ultimoDocConsultado.current) return;
+    void consultarDestinatario(doc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedido, comprobante]);
 
   // Manejar cambio de motorizado (datos pre-llenados desde el helper compartido)
   const handleRepartidorChange = (id: string) => {

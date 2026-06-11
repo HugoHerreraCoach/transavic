@@ -2218,9 +2218,17 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     (userRole === "admin" || userRole === "asesor") &&
     (c.estado === "aceptado" || c.estado === "observado") &&
     (c.tipo === "01" || c.tipo === "03");
-  // Reintentar: solo admin, sobre comprobantes que SUNAT rechazó o que erraron al enviar.
+  // Reintentar:
+  //  - Comprobantes: solo admin, sobre rechazado/error (reusa el correlativo).
+  //  - Guías (09): admin o la asesora dueña, sobre error/pendiente o una guía
+  //    ATASCADA en "emitiendo" (la emisión se interrumpió — reusa el MISMO número;
+  //    si SUNAT ya la tenía, el reintento lo detecta y la marca aceptada).
+  //    Las guías RECHAZADAS no se reintentan: se emite una nueva con otro número.
   const puedeReintentar = (c: Comprobante) =>
-    userRole === "admin" && (c.estado === "error" || c.estado === "rechazado");
+    c.tipo === "09"
+      ? (userRole === "admin" || userRole === "asesor") &&
+        ["error", "pendiente", "emitiendo"].includes(c.estado)
+      : userRole === "admin" && (c.estado === "error" || c.estado === "rechazado");
   // Comunicación de baja: solo admin, sobre FACTURAS aceptadas/observadas (boletas → resumen).
   // Días transcurridos desde la emisión (para la regla de la Comunicación de Baja).
   const diasDesde = (iso: string) =>
@@ -2400,16 +2408,20 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     }
   };
 
-  // Reintenta enviar a SUNAT un comprobante en error/rechazado (reusa el mismo correlativo).
+  // Reintenta enviar a SUNAT un comprobante en error/rechazado (reusa el mismo
+  // correlativo). Las guías (09) tienen su propio endpoint que reusa el MISMO número.
   const reintentarEnvio = async (c: Comprobante) => {
     setAccionEnProgreso(c.id + "-retry");
     try {
-      const res = await fetch(`/api/comprobantes/${c.id}/reintentar`, { method: "POST" });
+      const endpoint = c.tipo === "09"
+        ? `/api/guias/${c.id}/reintentar`
+        : `/api/comprobantes/${c.id}/reintentar`;
+      const res = await fetch(endpoint, { method: "POST" });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || j.detalle || `HTTP ${res.status}`);
       setToast({
         tipo: j.exito ? "ok" : "error",
-        msg: j.mensaje || (j.exito ? "Reintento enviado" : "SUNAT volvió a rechazar"),
+        msg: j.mensaje || j.descripcion || (j.exito ? "Reintento enviado" : "SUNAT volvió a rechazar"),
       });
       fetchData();
     } catch (err) {
@@ -3331,9 +3343,10 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                         <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
                       </button>
                     )}
-                    {!esGuia && puedeReintentar(c) && (
+                    {puedeReintentar(c) && (
                       <button onClick={() => { setMenuAcciones(null); reintentarEnvio(c); }} className={`${itemCls} text-indigo-700 font-medium`}>
-                        <FiSend className="h-4 w-4 flex-shrink-0" /> Reintentar envío
+                        <FiSend className="h-4 w-4 flex-shrink-0" />
+                        {esGuia ? "Reintentar emisión (mismo número)" : "Reintentar envío"}
                       </button>
                     )}
                   </div>

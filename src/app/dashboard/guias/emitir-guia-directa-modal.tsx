@@ -18,13 +18,15 @@ import {
   FiAlertTriangle,
 } from "react-icons/fi";
 import { esReceptorIdentificado, esDniValido, esRucValido } from "@/lib/sunat/validacion-cliente";
-import { aUnitCodeSunat, estimarPesoPorUnidad } from "@/lib/sunat/unidades";
+import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import {
   DISTRITOS_LIMA,
   type MotorizadoUser,
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
+  matchDistritoLima,
+  detectarDistritoEnDireccion,
   fetchEntornoSunat,
 } from "@/lib/guia-form-shared";
 
@@ -129,6 +131,17 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   const [consultandoDest, setConsultandoDest] = useState(false);
   const [consultaDestMsg, setConsultaDestMsg] = useState<string | null>(null);
   const ultimoDocConsultado = useRef("");
+  // Última dirección/distrito que NOSOTROS autollenamos desde la consulta RUC: permite
+  // actualizar si el usuario corrige el RUC, sin pisar lo que escribió a mano ni lo
+  // que vino de la ficha del cliente frecuente.
+  const dirAutollenada = useRef<string | null>(null);
+  const distAutollenado = useRef<string | null>(null);
+  // Espejo del estado para leer el valor MÁS RECIENTE dentro de la consulta async
+  // (un updater funcional que mute refs es impuro y Strict Mode lo doble-invoca).
+  const direccionLlegadaRef = useRef("");
+  const distritoLlegadaRef = useRef("");
+  useEffect(() => { direccionLlegadaRef.current = direccionLlegada; }, [direccionLlegada]);
+  useEffect(() => { distritoLlegadaRef.current = distritoLlegada; }, [distritoLlegada]);
 
   // Detalles de envío
   const getTodayLima = () => {
@@ -242,7 +255,10 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   }, []);
 
   // Auto-búsqueda del destinatario: al digitar un DNI(8)/RUC(11) consulta apisperu y
-  // autocompleta la razón social (helper compartido con emitir-guia-modal.tsx).
+  // autocompleta la razón social; con RUC, además la dirección y el distrito de llegada
+  // (helper compartido con emitir-guia-modal.tsx). Regla del autollenado: solo si el campo
+  // está vacío o si lo que hay es lo que nosotros mismos autollenamos antes (corregir el
+  // RUC actualiza), nunca pisa lo escrito a mano ni lo de la ficha del cliente.
   useEffect(() => {
     const numero = clienteDocNum.trim();
     if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
@@ -253,7 +269,24 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
       const r = await consultarDocumento(numero);
       if (r.ok) {
         if (r.nombre && !clienteRazonSocial.trim()) setClienteRazonSocial(r.nombre);
-        if (numero.length === 11 && r.direccion && !direccionLlegada.trim()) setDireccionLlegada(r.direccion);
+        if (numero.length === 11) {
+          const nuevaDir = r.direccion;
+          const actualDir = direccionLlegadaRef.current;
+          if (nuevaDir && (!actualDir.trim() || actualDir === dirAutollenada.current)) {
+            dirAutollenada.current = nuevaDir;
+            direccionLlegadaRef.current = nuevaDir;
+            setDireccionLlegada(nuevaDir);
+          }
+          // Distrito: primero el campo `distrito` de apisperu; si no matchea,
+          // intentar detectarlo dentro del texto de la dirección fiscal.
+          const nuevoDist = matchDistritoLima(r.distrito) ?? detectarDistritoEnDireccion(r.direccion);
+          const actualDist = distritoLlegadaRef.current;
+          if (nuevoDist && (!actualDist.trim() || actualDist === distAutollenado.current)) {
+            distAutollenado.current = nuevoDist;
+            distritoLlegadaRef.current = nuevoDist;
+            setDistritoLlegada(nuevoDist);
+          }
+        }
         setConsultaDestMsg(r.nombre ? `✓ ${r.nombre}` : null);
       } else {
         setConsultaDestMsg(r.mensaje || "No se encontró el documento. Escríbelo a mano.");
@@ -313,18 +346,16 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Calcular peso bruto dinámicamente si no ha sido modificado manualmente
+  // Calcular peso bruto dinámicamente si no ha sido modificado manualmente.
+  // Suma EXACTA solo si TODOS los ítems están en kilogramos; con unidades mixtas
+  // devuelve 0 (campo en blanco) para que el usuario ingrese el peso real —
+  // nada de estimaciones (el peso debe coincidir con la factura).
   const pesoBrutoCalculado = useMemo(() => {
-    let sumWeight = 0;
-    for (const it of items) {
-      if (!it.producto_nombre.trim()) continue; // Evitar que sume items vacíos
-      const qty = Number(it.cantidad) || 0;
-      if (it.unidad === "KGM") {
-        sumWeight += qty;
-      } else {
-        sumWeight += estimarPesoPorUnidad(it.producto_nombre, qty);
-      }
-    }
+    const conNombre = items.filter((it) => it.producto_nombre.trim());
+    if (conNombre.length === 0) return 0;
+    const todosKg = conNombre.every((it) => it.unidad === "KGM");
+    if (!todosKg) return 0;
+    const sumWeight = conNombre.reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0);
     return sumWeight > 0 ? Number(sumWeight.toFixed(2)) : 0;
   }, [items]);
 
@@ -387,7 +418,15 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     setClienteDocTipo(doc.length === 11 ? "6" : "1");
     setClienteRazonSocial(cli.razon_social || cli.nombre || "");
     setDireccionLlegada(cli.direccion || "");
-    setDistritoLlegada(cli.distrito || "");
+    direccionLlegadaRef.current = cli.direccion || "";
+    // Si la ficha trae dirección pero no distrito, intentar detectarlo en el texto
+    // (solo con coincidencia inequívoca; si no, queda libre para elegir a mano).
+    const distritoFicha = cli.distrito || detectarDistritoEnDireccion(cli.direccion) || "";
+    if (!cli.distrito && distritoFicha) {
+      distAutollenado.current = distritoFicha;
+    }
+    setDistritoLlegada(distritoFicha);
+    distritoLlegadaRef.current = distritoFicha;
     setBusquedaCliente(cli.nombre);
     
     // Auto-empresa si el cliente tiene una asignada

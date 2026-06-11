@@ -22,6 +22,22 @@ export async function GET(request: Request) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
+    // ── Saneo lazy: una guía en 'emitiendo' por más de 15 min es una emisión
+    // INTERRUMPIDA (la función murió a mitad del polling SUNAT — caso T002-10,
+    // 10 jun 2026). Se marca 'error' con instrucción de usar "Reintentar emisión"
+    // (mismo número) para que la fila no quede "emitiendo" para siempre en la UI.
+    try {
+      await sql`
+        UPDATE comprobantes_guias
+        SET estado = 'error',
+            mensaje_sunat = 'La emisión se interrumpió y no se sabe si SUNAT la recibió. Usa "Reintentar emisión" (conserva el mismo número) — NO emitas otra guía para este documento.',
+            updated_at = NOW()
+        WHERE estado = 'emitiendo' AND created_at < NOW() - INTERVAL '15 minutes'
+      `;
+    } catch (e) {
+      console.error("No se pudo sanear guías atascadas en 'emitiendo':", e);
+    }
+
     // ── Helper: cláusula WHERE desde filtros comunes aplicados a una subconsulta ──
     // Los parámetros se acumulan en `params`; el índice `i` arranca en el valor
     // que se pasa (mutable por referencia via objeto).
