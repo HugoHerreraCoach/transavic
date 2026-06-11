@@ -576,9 +576,9 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                     </button>
 
                                     <button
-                                        onClick={() => {
+                                        onClick={async () => {
                                             setShowMenu(false);
-                                            const payload = {
+                                            const payload: Record<string, unknown> = {
                                                 cliente: pedido.cliente,
                                                 whatsapp: pedido.whatsapp,
                                                 direccion: pedido.direccion,
@@ -593,6 +593,26 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                                 latitude: pedido.latitude,
                                                 longitude: pedido.longitude,
                                             };
+                                            // Copiar TAMBIÉN los ítems estructurados: sin esto el
+                                            // duplicado nacía sin pedido_items y Producción no podía
+                                            // registrar pesos (caso Manuel lince/Nikuya, 11 jun 2026).
+                                            try {
+                                                const res = await fetch(`/api/pedidos/${pedido.id}`);
+                                                if (res.ok) {
+                                                    const j = await res.json();
+                                                    const items = (Array.isArray(j.items) ? j.items : [])
+                                                        .filter((it: { producto_id?: string | null }) => it.producto_id)
+                                                        .map((it: { producto_id: string; producto_nombre: string; cantidad: number | string; unidad: string }) => ({
+                                                            productoId: it.producto_id,
+                                                            nombre: it.producto_nombre,
+                                                            cantidad: Number(it.cantidad),
+                                                            unidad: it.unidad,
+                                                        }));
+                                                    if (items.length > 0) payload.items = items;
+                                                }
+                                            } catch {
+                                                /* sin ítems copiados: el backend los deriva del texto del detalle */
+                                            }
                                             try {
                                                 sessionStorage.setItem('transavic.duplicar', JSON.stringify(payload));
                                             } catch {}

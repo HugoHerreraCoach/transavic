@@ -4,6 +4,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { derivarEInsertarItemsDesdeDetalle } from "@/lib/parse-detalle-pedido";
 
 export const dynamic = "force-dynamic";
 
@@ -88,6 +89,36 @@ export async function GET(request: Request) {
       const pid = it.pedido_id as string;
       if (!itemsPorPedido[pid]) itemsPorPedido[pid] = [];
       itemsPorPedido[pid].push(it);
+    }
+
+    // ── Backfill lazy: un pedido SIN pedido_items no se puede pesar (modal vacío,
+    // S/ 0.00 — caso Manuel lince/Nikuya 11 jun 2026, creados por "Duplicar pedido"
+    // que solo copiaba el texto). Derivamos los ítems del texto del detalle, los
+    // persistimos y los servimos en esta misma respuesta. Idempotente: solo corre
+    // para pedidos con 0 ítems y detalle no vacío.
+    const sinItems = pedidos.filter(
+      (p) => !itemsPorPedido[p.id as string] && String(p.detalle || "").trim()
+    );
+    for (const p of sinItems) {
+      try {
+        const n = await derivarEInsertarItemsDesdeDetalle(
+          sql,
+          p.id as string,
+          p.detalle as string
+        );
+        if (n > 0) {
+          const nuevos = (await sql`
+            SELECT id, pedido_id, producto_id, producto_nombre, cantidad, unidad,
+              precio_unitario, subtotal, cantidad_real, subtotal_real, notas
+            FROM pedido_items
+            WHERE pedido_id = ${p.id}::uuid
+            ORDER BY producto_nombre ASC
+          `) as Array<Record<string, unknown>>;
+          itemsPorPedido[p.id as string] = nuevos;
+        }
+      } catch (e) {
+        console.error(`Backfill de ítems falló para pedido ${p.id}:`, e);
+      }
     }
 
     const data = pedidos.map((p) => ({

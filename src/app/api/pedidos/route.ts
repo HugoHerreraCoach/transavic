@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { crearNotificacionParaRol } from "@/lib/notificaciones";
+import { derivarEInsertarItemsDesdeDetalle } from "@/lib/parse-detalle-pedido";
 
 // Definimos un esquema de validación con Zod para asegurar los datos
 const PedidoSchema = z.object({
@@ -140,6 +141,17 @@ export async function POST(request: Request) {
           INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
           VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${precio_unitario}, ${subtotal})
         `;
+      }
+    } else if (insertedPedido[0]?.id && detalle) {
+      // Sin ítems estructurados (detalle escrito a mano, o "Duplicar pedido" de
+      // versiones viejas): derivarlos del TEXTO para que el pedido NUNCA nazca
+      // sin pedido_items — sin ellos Producción no puede registrar pesos (modal
+      // vacío, caso Manuel lince/Nikuya 11 jun 2026) y el pedido no cuenta en el
+      // Resumen del día. No bloqueante: si el texto no parsea, el pedido igual se crea.
+      try {
+        await derivarEInsertarItemsDesdeDetalle(sql, insertedPedido[0].id as string, detalle);
+      } catch (e) {
+        console.error("No se pudieron derivar los ítems del detalle:", e);
       }
     }
 

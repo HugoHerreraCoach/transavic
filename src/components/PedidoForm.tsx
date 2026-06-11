@@ -69,6 +69,10 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [pendienteGeneracion, setPendienteGeneracion] = useState(false);
   const [triggerFocus, setTriggerFocus] = useState<boolean>(false);
   const [selectedItems, setSelectedItems] = useState<SelectedItem[]>([]);
+  // Ítems precargados al DUPLICAR un pedido (siembran el ProductSelector vía
+  // initialItems + remount). Sin esto, el duplicado nacía sin pedido_items y
+  // Producción no podía registrar pesos (caso Manuel lince/Nikuya, 11 jun 2026).
+  const [dupItems, setDupItems] = useState<SelectedItem[] | undefined>(undefined);
   const [clienteGuardadoId, setClienteGuardadoId] = useState<string | null>(null);
   const [showGuardarCliente, setShowGuardarCliente] = useState(false);
   const [guardandoCliente, setGuardandoCliente] = useState(false);
@@ -83,7 +87,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       const raw = sessionStorage.getItem('transavic.duplicar');
       if (!raw) return;
       sessionStorage.removeItem('transavic.duplicar');
-      const dup = JSON.parse(raw) as Partial<TicketData>;
+      const dup = JSON.parse(raw) as Partial<TicketData> & { items?: SelectedItem[] };
       setFormDatos((prev) => ({
         ...prev,
         cliente: dup.cliente ?? prev.cliente,
@@ -100,6 +104,13 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
         latitude: dup.latitude ?? prev.latitude,
         longitude: dup.longitude ?? prev.longitude,
       }));
+      // Copiar TAMBIÉN los ítems estructurados: siembran selectedItems (lo que
+      // viaja en el POST) y el ProductSelector (initialItems + remount con key).
+      if (Array.isArray(dup.items) && dup.items.length > 0) {
+        setSelectedItems(dup.items);
+        setDupItems(dup.items);
+        setFormResetKey((k) => k + 1);
+      }
       setSuccessToast('📋 Cliente copiado del pedido anterior — revisa y ajusta lo que necesite.');
       setTimeout(() => setSuccessToast(null), 4000);
     } catch {
@@ -434,6 +445,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     setErrors({});
     // ✅ FIX: Reset ALL state that was previously missed
     setSelectedItems([]);
+    setDupItems(undefined); // que el reset NO resucite los ítems del duplicado
     setClienteGuardadoId(null);
     setShowGuardarCliente(false);
     setGuardandoCliente(false);
@@ -608,6 +620,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 <ProductSelector
                   key={formResetKey}
                   empresa={formDatos.empresa}
+                  initialItems={dupItems}
                   onChange={(items: SelectedItem[], detalleText: string) => {
                     setSelectedItems(items);
                     setFormDatos(prev => ({ ...prev, detalle: detalleText || prev.detalle }));

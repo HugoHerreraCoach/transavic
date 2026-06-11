@@ -289,7 +289,11 @@ export async function PATCH(request: Request) {
     // con snapshot del precio vigente (igual que al crear). Así editar SÍ cuenta en el
     // "Resumen del día" y los reportes (antes, editar solo el texto libre no se
     // contabilizaba porque no actualizaba pedido_items).
-    if (itemsToSync !== undefined) {
+    // ⚠️ Blindaje: `items: []` (definido pero VACÍO) NO vacía los productos — ningún
+    // flujo legítimo deja un pedido sin ítems (sin ellos Producción no puede pesar,
+    // caso Manuel lince/Nikuya 11 jun 2026); un form que no cargó el selector manda
+    // `undefined`, no `[]`.
+    if (itemsToSync !== undefined && itemsToSync.length > 0) {
       await sql`DELETE FROM pedido_items WHERE pedido_id = ${id}`;
       for (const item of itemsToSync) {
         const productoRow = await sql`
