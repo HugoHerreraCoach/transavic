@@ -75,14 +75,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       WHERE id = ${id}::uuid
     `;
 
-    // 3. Desvincular del pedido si aplica
-    if (g.pedido_id) {
-      await sql`
-        UPDATE pedidos
-        SET guia_remision = NULL
-        WHERE id = ${g.pedido_id}::uuid AND guia_remision = ${g.serie_numero}
-      `;
-    }
+    // (No hay nada que desvincular en `pedidos`: la GRE legal nunca escribe ahí —
+    // gotcha #29. Antes había un UPDATE a una columna `guia_remision` INEXISTENTE
+    // que reventaba con 500 DESPUÉS de registrar la baja — fix 11 jun 2026. El
+    // badge "GRE" de despacho se apaga solo: consulta EXISTS(aceptado/observado).)
 
     return NextResponse.json({
       exito: true,
