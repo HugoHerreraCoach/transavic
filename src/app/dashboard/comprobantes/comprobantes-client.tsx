@@ -2220,14 +2220,14 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     (c.tipo === "01" || c.tipo === "03");
   // Reintentar:
   //  - Comprobantes: solo admin, sobre rechazado/error (reusa el correlativo).
-  //  - Guías (09): admin o la asesora dueña, sobre error/pendiente o una guía
-  //    ATASCADA en "emitiendo" (la emisión se interrumpió — reusa el MISMO número;
-  //    si SUNAT ya la tenía, el reintento lo detecta y la marca aceptada).
-  //    Las guías RECHAZADAS no se reintentan: se emite una nueva con otro número.
+  //  - Guías (09): admin o la asesora dueña, sobre error/pendiente/rechazado o una
+  //    guía ATASCADA en "emitiendo" (reusa el MISMO número; si SUNAT ya la tenía,
+  //    el reintento lo detecta y la marca aceptada). Las rechazadas SÍ se
+  //    reintentan: un rechazo no registra el documento, el número sigue libre.
   const puedeReintentar = (c: Comprobante) =>
     c.tipo === "09"
       ? (userRole === "admin" || userRole === "asesor") &&
-        ["error", "pendiente", "emitiendo"].includes(c.estado)
+        ["error", "pendiente", "emitiendo", "rechazado"].includes(c.estado)
       : userRole === "admin" && (c.estado === "error" || c.estado === "rechazado");
   // Comunicación de baja: solo admin, sobre FACTURAS aceptadas/observadas (boletas → resumen).
   // Días transcurridos desde la emisión (para la regla de la Comunicación de Baja).

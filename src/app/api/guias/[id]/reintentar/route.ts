@@ -26,6 +26,7 @@ import { obtenerUbigeoDistrito } from "@/lib/sunat/ubigeos";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import { EstadoSunat } from "@/lib/sunat/types";
 import { parseCpeItems, parseCpeClienteDireccion, type CpeItem } from "@/lib/sunat/parse-cpe-items";
+import { fechaHoyLima, horaActualLima } from "@/lib/sunat/fechas";
 
 export const dynamic = "force-dynamic";
 // Igual que /api/guias/emitir: el polling REST supera los ~15s default de Vercel.
@@ -91,19 +92,22 @@ export async function POST(_req: Request, { params }: RouteParams) {
 
     // Tomar la fila de forma ATÓMICA: solo si está en un estado reintenable.
     // (Evita dos reintentos concurrentes y deja la fila 'emitiendo' fresca.)
+    // 'rechazado' SÍ es reintenable en GRE REST: un envío rechazado NO registra
+    // el documento en SUNAT, así que el mismo serie-número puede re-presentarse
+    // con el XML corregido (caso real: rechazo 2329 por fecha UTC, 10 jun 2026).
     const tomada = await sql`
       UPDATE comprobantes_guias
       SET estado = 'emitiendo', mensaje_sunat = 'Reintento de emisión en curso', updated_at = NOW()
       WHERE id = ${id}::uuid
         AND (
-          estado IN ('error', 'pendiente')
+          estado IN ('error', 'pendiente', 'rechazado')
           OR (estado = 'emitiendo' AND created_at < NOW() - INTERVAL '15 minutes')
         )
       RETURNING id
     `;
     if (tomada.length === 0) {
       return NextResponse.json(
-        { error: `Esta guía está en estado "${g.estado}" y no se puede reintentar. Solo se reintentan guías en error, pendientes o atascadas en "emitiendo" (las rechazadas se emiten de nuevo con otro número).` },
+        { error: `Esta guía está en estado "${g.estado}" y no se puede reintentar (solo error, rechazado, pendiente o atascada en "emitiendo").` },
         { status: 409 }
       );
     }
@@ -227,12 +231,22 @@ export async function POST(_req: Request, { params }: RouteParams) {
       return NextResponse.json({ error: "Certificado digital no configurado." }, { status: 500 });
     }
 
+    // Fecha/hora SIEMPRE en Lima (UTC tras las ~19:00 Lima = "mañana" → SUNAT 2329).
+    const fechaEmision = fechaHoyLima();
+    // El inicio de traslado no puede ser anterior a la emisión: si el reintento
+    // ocurre días después, el documento original nunca existió legalmente y la
+    // guía reemitida ampara el traslado desde HOY.
+    const inicioOriginal = String(g.fecha_inicio_traslado ?? "").slice(0, 10);
+    const fechaInicioTraslado = inicioOriginal && inicioOriginal >= fechaEmision
+      ? inicioOriginal
+      : fechaEmision;
+
     const datosGuia: DatosGuia = {
       serie: String(g.serie),
       numero: Number(g.numero),
-      fechaEmision: new Date().toISOString().slice(0, 10),
-      horaEmision: new Date().toLocaleTimeString("en-US", { hour12: false }),
-      fechaInicioTraslado: new Date(g.fecha_inicio_traslado as string).toISOString().slice(0, 10),
+      fechaEmision,
+      horaEmision: horaActualLima(),
+      fechaInicioTraslado,
       motivoTraslado: String(g.motivo_traslado || "01"),
       descripcionMotivo: String(g.motivo_traslado || "01") === "01" ? "VENTA" : undefined,
       pesoBrutoTotal: Number(g.peso_bruto_total),

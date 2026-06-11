@@ -14,6 +14,7 @@ import { firmarXML } from "@/lib/sunat/xml-signer";
 import { enviarGuiaRest } from "@/lib/sunat/rest-client";
 import { obtenerUbigeoDistrito } from "@/lib/sunat/ubigeos";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
+import { fechaHoyLima, horaActualLima } from "@/lib/sunat/fechas";
 import { EstadoSunat } from "@/lib/sunat/types";
 import { parseCpeItems, parseCpeClienteDireccion, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 import { esReceptorIdentificado } from "@/lib/sunat/validacion-cliente";
@@ -581,9 +582,11 @@ export async function POST(request: Request) {
     const serieNumero = reserva[0].serie_numero;
     guiaReservadaId = reserva[0].id;
 
-    // 6. Preparar datos para el generador XML
-    const fechaEmision = new Date().toISOString().slice(0, 10);
-    const horaEmision = new Date().toLocaleTimeString("en-US", { hour12: false });
+    // 6. Preparar datos para el generador XML — fecha/hora en LIMA, nunca UTC
+    // (en Vercel, desde las ~19:00 Lima la fecha UTC ya es "mañana" → SUNAT
+    // rechaza con 2329 "fecha de emisión fuera del límite permitido").
+    const fechaEmision = fechaHoyLima();
+    const horaEmision = horaActualLima();
     const clienteUbigeo = obtenerUbigeoDistrito(distritoLlegadaFinal);
 
     const datosGuia: DatosGuia = {
