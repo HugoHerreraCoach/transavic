@@ -11,6 +11,7 @@ import {
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
+  matchDistritoLima,
   detectarDistritoEnDireccion,
   decidirAutollenadoDestino,
   fetchEntornoSunat,
@@ -108,6 +109,9 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [mostrarChofer, setMostrarChofer] = useState<boolean>(false);
   const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number; unidad: string }>>([]);
   const [cargandoItems, setCargandoItems] = useState<boolean>(false);
+  // true cuando los bienes mezclan kg con otras unidades → el peso NO se autocalcula
+  // y se le explica al usuario que debe pesar la carga e ingresarlo a mano.
+  const [unidadesMixtas, setUnidadesMixtas] = useState<boolean>(false);
 
   // Cargar ítems del origen para autocalcular peso y bultos. Si la guía sale de un
   // PEDIDO que ya tiene factura/boleta aceptada vinculada, los bienes y el peso se
@@ -175,6 +179,7 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
           setTotalBultos(Math.max(1, mappedItems.length));
           setPesoBrutoTotal(todosKg && sumWeight > 0 ? sumWeight.toFixed(2) : "");
+          setUnidadesMixtas(mappedItems.length > 0 && !todosKg);
         }
       } catch (err) {
         console.error("Error cargando ítems de origen:", err);
@@ -198,58 +203,57 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     if (pedido) {
       setRepartidorId(pedido.repartidor_id || "");
       setDireccionLlegada(pedido.direccion || "");
-      setDistritoLlegada(pedido.distrito || "");
     } else if (comprobante) {
       // La API detalle devuelve cliente.direccion; la lista puede devolver pedido_direccion
       setDireccionLlegada(
         comprobante.cliente?.direccion || comprobante.pedido_direccion || ""
       );
-      setDistritoLlegada(
-        comprobante.cliente?.distrito || comprobante.pedido_distrito || ""
-      );
     }
 
-    // Si el origen trae dirección pero NO distrito, intentar detectarlo en el texto
-    // de la dirección (solo si la coincidencia es inequívoca; si no, queda libre).
+    // Distrito inicial NORMALIZADO contra el <select>: el dato guardado puede venir
+    // coloquial ("Surco") y un valor que no coincide con ninguna opción deja el
+    // select mudo en "-- Distrito --". Cascada: valor guardado normalizado →
+    // detección inequívoca dentro del texto de la dirección → vacío (elige el usuario).
     const direccionInicial = pedido?.direccion
       || comprobante?.cliente?.direccion
       || comprobante?.pedido_direccion
       || "";
-    const distritoInicial = pedido?.distrito
+    const distritoCrudo = pedido?.distrito
       || comprobante?.cliente?.distrito
       || comprobante?.pedido_distrito
       || "";
-    if (direccionInicial && !distritoInicial) {
-      const detectado = detectarDistritoEnDireccion(direccionInicial);
-      if (detectado) {
-        distAutollenado.current = detectado;
-        distritoLlegadaRef.current = detectado;
-        setDistritoLlegada(detectado);
-      }
+    const distritoNormalizado = matchDistritoLima(distritoCrudo)
+      ?? detectarDistritoEnDireccion(direccionInicial)
+      ?? "";
+    if (distritoNormalizado && distritoNormalizado !== distritoCrudo) {
+      // Lo marcamos como autollenado nuestro (una consulta RUC posterior puede actualizarlo)
+      distAutollenado.current = distritoNormalizado;
     }
+    distritoLlegadaRef.current = distritoNormalizado;
+    setDistritoLlegada(distritoNormalizado);
 
-    const doc = pedido?.ruc_dni
-      || comprobante?.cliente?.numDocumento
+    // Prellenar SIEMPRE el destinatario (visible y editable): la fuente más fiel
+    // es la FACTURA (datos fiscales aceptados por SUNAT); el pedido es fallback —
+    // muchos pedidos no tienen RUC registrado (caso GRUPO CULINARIA, 10 jun 2026).
+    const docInicial = (comprobante?.cliente?.numDocumento
       || comprobante?.cliente_doc_num
+      || pedido?.ruc_dni
+      || "").trim();
+    const razonInicial = comprobante?.cliente?.razonSocial
+      || comprobante?.cliente_razon_social
+      || pedido?.razon_social
+      || pedido?.cliente
       || "";
-    if (!esReceptorIdentificado(doc)) {
-      const nombreDefault =
-        pedido?.cliente
-        || comprobante?.cliente?.razonSocial
-        || comprobante?.cliente_razon_social
-        || "";
-      setRazonSocialOverride(nombreDefault);
-      // Pre-rellenar tipo de doc si viene de la API detalle
-      const tipoDoc = comprobante?.cliente?.tipoDocumento
-        || comprobante?.cliente_doc_tipo
-        || "1";
-      setDocTipoOverride(tipoDoc);
-      // Pre-rellenar número de doc si está disponible
-      const numDoc = comprobante?.cliente?.numDocumento
-        || comprobante?.cliente_doc_num
-        || "";
-      if (numDoc) setDocNumOverride(numDoc);
-    }
+    setRazonSocialOverride(razonInicial);
+    setDocNumOverride(docInicial);
+    setDocTipoOverride(
+      docInicial.length === 11 ? "6"
+        : docInicial.length === 8 ? "1"
+          : (comprobante?.cliente?.tipoDocumento || comprobante?.cliente_doc_tipo || "1")
+    );
+    // Lo precargado NO dispara la consulta "forzada" del debounce (pisaría la
+    // dirección de entrega con la fiscal); la consulta suave de abajo cubre los vacíos.
+    ultimoDocConsultado.current = docInicial;
   }, [pedido, comprobante]);
 
   // Cargar motorizados para rellenar datos
@@ -348,28 +352,35 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   }
 
   useEffect(() => {
-    if (!necesitaOverride) return;
     const numero = docNumOverride.trim();
     if ((numero.length !== 8 && numero.length !== 11) || numero === ultimoDocConsultado.current) return;
     const t = setTimeout(() => { void consultarDestinatario(numero); }, 600);
     return () => clearTimeout(t);
-  }, [docNumOverride, necesitaOverride]);
+  }, [docNumOverride]);
 
-  // Caso "factura/pedido CON RUC pero SIN dirección de llegada": el bloque de destinatario
-  // está oculto (el doc ya es válido), así que la auto-búsqueda de arriba nunca corre.
-  // Consultamos el RUC original una vez al abrir para traer dirección + distrito fiscales.
-  // (Con DNI no aplica: apisperu no devuelve dirección para DNI.)
+  // Consulta SUAVE al abrir: si el origen trae un RUC pero le falta la dirección
+  // de llegada O el distrito, se consulta apisperu para completar SOLO los vacíos
+  // (la dirección de ENTREGA del pedido nunca se pisa; el distrito fiscal queda
+  // como sugerencia editable). Con DNI no aplica: apisperu no devuelve dirección.
   useEffect(() => {
-    const doc = originalDoc.trim();
-    if (necesitaOverride || doc.length !== 11) return;
+    const doc = (comprobante?.cliente?.numDocumento
+      || comprobante?.cliente_doc_num
+      || pedido?.ruc_dni
+      || "").trim();
+    if (doc.length !== 11) return;
     const direccionInicial = pedido?.direccion
       || comprobante?.cliente?.direccion
       || comprobante?.pedido_direccion
       || "";
-    if (direccionInicial.trim()) return;
-    if (doc === ultimoDocConsultado.current) return;
+    const distritoInicial = matchDistritoLima(
+      pedido?.distrito
+      || comprobante?.cliente?.distrito
+      || comprobante?.pedido_distrito
+    )
+      ?? detectarDistritoEnDireccion(direccionInicial)
+      ?? "";
+    if (direccionInicial.trim() && distritoInicial.trim()) return;
     void consultarDestinatario(doc, { suave: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedido, comprobante]);
 
   // Manejar cambio de motorizado (datos pre-llenados desde el helper compartido)
@@ -410,22 +421,21 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       return;
     }
 
-    if (necesitaOverride) {
-      if (docTipoOverride === "1" && !esDniValido(docNumOverride)) {
-        setError("El DNI ingresado no es válido (debe tener 8 dígitos).");
-        setLoading(false);
-        return;
-      }
-      if (docTipoOverride === "6" && !esRucValido(docNumOverride)) {
-        setError("El RUC ingresado no es válido (debe tener 11 dígitos).");
-        setLoading(false);
-        return;
-      }
-      if (!razonSocialOverride.trim()) {
-        setError("Los nombres o la razón social del destinatario son obligatorios.");
-        setLoading(false);
-        return;
-      }
+    // El destinatario siempre es visible/editable → siempre se valida lo que se ve.
+    if (docTipoOverride === "1" && !esDniValido(docNumOverride)) {
+      setError("El DNI ingresado no es válido (debe tener 8 dígitos).");
+      setLoading(false);
+      return;
+    }
+    if (docTipoOverride === "6" && !esRucValido(docNumOverride)) {
+      setError("El RUC ingresado no es válido (debe tener 11 dígitos).");
+      setLoading(false);
+      return;
+    }
+    if (!razonSocialOverride.trim()) {
+      setError("Los nombres o la razón social del destinatario son obligatorios.");
+      setLoading(false);
+      return;
     }
 
     try {
@@ -448,9 +458,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           indicadorM1L,
           direccion_llegada: direccionLlegada.trim(),
           distrito_llegada: distritoLlegada.trim() || null,
-          cliente_doc_tipo: necesitaOverride ? docTipoOverride : null,
-          cliente_doc_num: necesitaOverride ? docNumOverride.trim() : null,
-          cliente_razon_social: necesitaOverride ? razonSocialOverride.trim() : null,
+          // Siempre se envía lo que el usuario VE en el bloque destinatario
+          // (prellenado de la factura/pedido, editable).
+          cliente_doc_tipo: docTipoOverride,
+          cliente_doc_num: docNumOverride.trim(),
+          cliente_razon_social: razonSocialOverride.trim(),
         }),
       });
 
@@ -474,18 +486,26 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     }
   };
 
-  const nombreCliente = pedido?.cliente
+  // El resumen (modo simplificado) muestra LO QUE SE VA A EMITIR: los campos
+  // editables del bloque destinatario, no los datos originales del prop.
+  const nombreCliente = razonSocialOverride
+    || pedido?.cliente
     || comprobante?.cliente?.razonSocial
     || comprobante?.cliente_razon_social
     || "Cliente";
-  const numDocumentoCliente = originalDoc || docNumOverride;
+  const numDocumentoCliente = docNumOverride;
+  // Validez del documento VISIBLE (el que se enviará) — gobierna el estilo del
+  // bloque destinatario y la emisión rápida.
+  const docDestinoValido = docTipoOverride === "6"
+    ? esRucValido(docNumOverride)
+    : esDniValido(docNumOverride);
 
   // Con M1/L los datos del chofer son opcionales (SUNAT los permite omitir).
   const choferOk = indicadorM1L || !!(repartidorId && choferDni && choferLicencia && vehiculoPlaca && choferNombres && choferApellidos);
   // Se incluyen datos del chofer si NO es M1/L (obligatorios) o si el usuario los desplegó.
   const incluirChofer = !indicadorM1L || mostrarChofer;
   const datosCompletosParaEmisionRapida =
-    !!(choferOk && direccionLlegada && distritoLlegada && !necesitaOverride);
+    !!(choferOk && direccionLlegada && distritoLlegada && docDestinoValido && razonSocialOverride.trim());
 
   return (
     <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl mx-auto overflow-hidden animate-fade-in border border-gray-100 font-sans">
@@ -684,13 +704,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                 
                 {/* COLUMNA IZQUIERDA: CLIENTE Y TRASLADO */}
                 <div className="space-y-4">
-                  {necesitaOverride && (
-                    <div className="p-4 bg-amber-50/50 border border-amber-100/50 rounded-xl space-y-3">
-                      <h4 className="text-[10px] font-bold text-amber-950 flex items-center gap-1.5 uppercase tracking-wider">
-                        <FiAlertCircle className="text-amber-600" size={13} />
-                        Destinatario Requerido (SUNAT)
+                  {(() => {
+                    return (
+                    <div className={`p-4 rounded-xl space-y-3 border ${docDestinoValido ? "bg-gray-50/60 border-gray-200" : "bg-amber-50/50 border-amber-100/50"}`}>
+                      <h4 className={`text-[10px] font-bold flex items-center gap-1.5 uppercase tracking-wider ${docDestinoValido ? "text-gray-700" : "text-amber-950"}`}>
+                        {docDestinoValido
+                          ? <FiUser className="text-indigo-600" size={13} />
+                          : <FiAlertCircle className="text-amber-600" size={13} />}
+                        {docDestinoValido ? "Destinatario (SUNAT)" : "Destinatario Requerido (SUNAT)"}
                       </h4>
-                      
+
                       <div className="grid grid-cols-3 gap-2">
                         <div className="col-span-1">
                           <label className="block text-[10px] font-bold text-gray-500 mb-1">
@@ -742,7 +765,8 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         />
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Dirección y Distrito de Llegada */}
                   <div className="p-4 bg-indigo-50/20 border border-indigo-100/30 rounded-xl space-y-3">
@@ -845,11 +869,18 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                           step={0.01}
                           value={pesoBrutoTotal}
                           onChange={(e) => setPesoBrutoTotal(e.target.value)}
-                          placeholder="Auto-calcular"
+                          placeholder={unidadesMixtas ? "Ingresa el peso en kg" : "Auto-calcular"}
                           className="w-full text-xs border border-gray-200 rounded-xl px-2.5 py-1.2 focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
                         />
                       </div>
                     </div>
+                    {unidadesMixtas && !pesoBrutoTotal && (
+                      <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 leading-snug">
+                        Los productos tienen distintas unidades (kg y unidades), así que no
+                        podemos calcular el peso por ti. Pesa la carga e ingresa el total en
+                        kilogramos.
+                      </p>
+                    )}
                   </div>
                 </div>
 

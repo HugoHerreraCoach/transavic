@@ -8,7 +8,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
-import { parseDespatchItems, parseGuiaPuntoLlegada } from "@/lib/sunat/parse-cpe-items";
+import { parseDespatchItems, parseGuiaPuntoLlegada, parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 import { obtenerDistritoPorUbigeo } from "@/lib/sunat/ubigeos";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +41,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
              p.distrito AS pedido_distrito,
              ref_c.serie_numero AS ref_serie_numero,
              ref_c.tipo AS ref_tipo,
-             ref_c.ruc_emisor AS ref_ruc
+             ref_c.ruc_emisor AS ref_ruc,
+             ref_c.xml_firmado_base64 AS ref_xml,
+             ref_c.items_json AS ref_items_json
       FROM comprobantes_guias c
       LEFT JOIN pedidos p ON c.pedido_id = p.id
       LEFT JOIN comprobantes ref_c ON c.comprobante_id = ref_c.id
@@ -69,7 +71,11 @@ export async function GET(_req: Request, { params }: RouteParams) {
       ? Buffer.from(g.xml_firmado_base64 as string, "base64").toString("utf-8")
       : "";
 
-    // Ítems: del XML firmado (fiel a lo emitido) con fallback a pedido_items.
+    // Ítems para imprimir, en orden de FIDELIDAD a lo enviado a SUNAT:
+    // (1) XML propio de la guía → (2) items_json persistido en la reserva →
+    // (3) XML de la factura vinculada (la emisión copia sus líneas/unidades) →
+    // (4) pedido_items (último recurso: sus unidades pueden diferir de la factura
+    //     — una guía atascada mostraba "UNIDAD" donde la factura decía KILOGRAMO).
     let items: Array<{ descripcion: string; cantidad: number; unidad: string }> = [];
     if (xmlStr) {
       try {
@@ -80,16 +86,47 @@ export async function GET(_req: Request, { params }: RouteParams) {
         }));
       } catch { /* sigue al fallback */ }
     }
+    if (items.length === 0 && Array.isArray(g.items_json) && g.items_json.length > 0) {
+      items = (g.items_json as Array<{ producto_nombre?: string; descripcion?: string; cantidad: number; unidad?: string }>).map((it) => ({
+        descripcion: String(it.producto_nombre || it.descripcion || "Venta"),
+        cantidad: Number(it.cantidad),
+        unidad: String(it.unidad || "NIU"),
+      }));
+    }
+    if (items.length === 0 && (g.ref_xml || g.ref_items_json)) {
+      let facturaItems: CpeItem[] = [];
+      if (g.ref_xml) {
+        try {
+          facturaItems = parseCpeItems(Buffer.from(g.ref_xml as string, "base64").toString("utf-8"));
+        } catch { /* sigue al fallback */ }
+      }
+      if (facturaItems.length === 0 && Array.isArray(g.ref_items_json)) {
+        facturaItems = g.ref_items_json as CpeItem[];
+      }
+      items = facturaItems
+        .map((it) => {
+          const o = it as unknown as Record<string, unknown>;
+          return {
+            descripcion: String(o.descripcion || o.producto_nombre || "Venta"),
+            cantidad: Number(o.cantidad),
+            unidad: String(o.unidadMedida || o.unidad || "NIU"),
+          };
+        })
+        // El flete ("ENVIO") es un servicio, no un bien transportable
+        .filter((it) => !/^env[ií]o$/i.test(it.descripcion.trim()));
+    }
     if (items.length === 0 && g.pedido_id) {
       const pedidoItems = await sql`
         SELECT producto_nombre, COALESCE(cantidad_real, cantidad)::numeric AS cantidad, unidad
         FROM pedido_items WHERE pedido_id = ${g.pedido_id} ORDER BY producto_nombre ASC
       `;
-      items = pedidoItems.map((it) => ({
-        descripcion: it.producto_nombre as string,
-        cantidad: Number(it.cantidad),
-        unidad: it.unidad as string,
-      }));
+      items = pedidoItems
+        .map((it) => ({
+          descripcion: it.producto_nombre as string,
+          cantidad: Number(it.cantidad),
+          unidad: it.unidad as string,
+        }))
+        .filter((it) => !/^env[ií]o$/i.test(it.descripcion.trim()));
     }
 
     // Dirección de llegada: pedido → XML firmado.
@@ -107,8 +144,13 @@ export async function GET(_req: Request, { params }: RouteParams) {
 
     const indicadorM1L = xmlStr.includes("SUNAT_Envio_IndicadorTrasladoVehiculoM1L");
 
+    // No mandar al cliente el XML/items de la factura vinculada (solo se usan
+    // server-side para reconstruir los ítems de impresión).
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { ref_xml, ref_items_json, ...gOut } = g as Record<string, unknown>;
+
     return NextResponse.json({
-      ...g,
+      ...gOut,
       impresion: {
         items,
         direccionLlegada,

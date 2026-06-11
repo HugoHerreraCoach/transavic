@@ -352,8 +352,10 @@ export async function POST(request: Request) {
       if (compRows.length > 0) {
         finalComprobanteId = compRows[0].id as string;
         // El destinatario de la guía debe COINCIDIR con la factura. Solo se sobrescribe si el
-        // usuario NO mandó override explícito y la factura tiene receptor identificado (RUC/DNI);
+        // llamador NO mandó override explícito y la factura tiene receptor identificado (RUC/DNI);
         // una boleta sin documento mantiene el flujo de override (no se pisa con datos inválidos).
+        // NOTA: los modales actuales SIEMPRE mandan el override (prellenado de la factura,
+        // editable) → esta rama es un fallback para llamadas API sin override. No borrar.
         const facturaDocNum = String(compRows[0].cliente_doc_num || "").trim();
         if (!cliente_doc_num && !cliente_razon_social && esReceptorIdentificado(facturaDocNum)) {
           clienteDocNum = facturaDocNum;

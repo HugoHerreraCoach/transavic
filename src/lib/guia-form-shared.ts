@@ -131,6 +131,10 @@ export function matchDistritoLima(distritoApi: string | null | undefined): strin
   if (!buscado) return null;
   // apisperu/SUNAT llaman "LIMA" al Cercado (ubigeo 150101)
   if (buscado === "lima") return "Cercado de Lima";
+  // Coloquialismos comunes en pedidos/fichas ("Surco" = Santiago de Surco)
+  if (buscado === "surco") return "Santiago de Surco";
+  if (buscado === "sjl") return "San Juan de Lurigancho";
+  if (buscado === "smp") return "San Martín de Porres";
   return DISTRITOS_LIMA.find((d) => normalizarTexto(d) === buscado) ?? null;
 }
 

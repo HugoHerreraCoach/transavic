@@ -3225,7 +3225,10 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                                 if (!res.ok) throw new Error("Error al obtener el pedido");
                                 const data = await res.json();
                                 if (data?.pedido) {
-                                  setModalEmitirGuiaCpe({ pedido: data.pedido });
+                                  // Pasar TAMBIÉN la factura: el pedido puede no tener RUC/razón
+                                  // social registrados (caso GRUPO CULINARIA) y el modal debe
+                                  // prellenar el destinatario con los datos fiscales de la factura.
+                                  setModalEmitirGuiaCpe({ pedido: data.pedido, comprobante: c });
                                 } else {
                                   setToast({ tipo: "error", msg: "No se pudo cargar el pedido asociado." });
                                 }

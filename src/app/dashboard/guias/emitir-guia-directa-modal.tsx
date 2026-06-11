@@ -25,6 +25,7 @@ import {
   datosChoferDesdeMotorizado,
   validarChofer,
   consultarDocumento,
+  matchDistritoLima,
   detectarDistritoEnDireccion,
   decidirAutollenadoDestino,
   fetchEntornoSunat,
@@ -373,6 +374,13 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     }
   }, [pesoBrutoCalculado, pesoModificado]);
 
+  // Hay bienes en kg Y en otras unidades → no se autocalcula el peso; se le pide
+  // al usuario pesarlo e ingresarlo (mensaje bajo el campo Peso Bruto).
+  const unidadesMixtas = useMemo(() => {
+    const conNombre = items.filter((it) => it.producto_nombre.trim());
+    return conNombre.length > 0 && !conNombre.every((it) => it.unidad === "KGM");
+  }, [items]);
+
   // Validación de campos en tiempo real (SUNAT Checklist)
   const validezSunat = useMemo(() => {
     const doc = clienteDocNum.trim();
@@ -430,10 +438,13 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
     setClienteRazonSocial(cli.razon_social || cli.nombre || "");
     setDireccionLlegada(cli.direccion || "");
     direccionLlegadaRef.current = cli.direccion || "";
-    // Si la ficha trae dirección pero no distrito, intentar detectarlo en el texto
+    // Distrito de la ficha NORMALIZADO contra el <select> ("Surco" → "Santiago de
+    // Surco"); si no hay o no matchea, detectarlo en el texto de la dirección
     // (solo con coincidencia inequívoca; si no, queda libre para elegir a mano).
-    const distritoFicha = cli.distrito || detectarDistritoEnDireccion(cli.direccion) || "";
-    if (!cli.distrito && distritoFicha) {
+    const distritoFicha = matchDistritoLima(cli.distrito)
+      ?? detectarDistritoEnDireccion(cli.direccion)
+      ?? "";
+    if (distritoFicha && distritoFicha !== cli.distrito) {
       distAutollenado.current = distritoFicha;
     }
     setDistritoLlegada(distritoFicha);
@@ -1063,7 +1074,9 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 mb-0.5 flex items-center gap-1">
                             Peso Bruto (Kg)
-                            <span className="text-[9px] text-slate-400 font-normal">(Auto-calculado)</span>
+                            <span className="text-[9px] text-slate-400 font-normal">
+                              {unidadesMixtas ? "(Ingrésalo a mano)" : "(Auto-calculado)"}
+                            </span>
                           </label>
                           <input
                             type="number"
@@ -1074,12 +1087,19 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                               setPesoBrutoTotal(e.target.value);
                               setPesoModificado(true);
                             }}
-                            placeholder="0.00"
+                            placeholder={unidadesMixtas ? "Pesa la carga…" : "0.00"}
                             className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.2 focus:outline-none focus:ring-1.5 focus:ring-indigo-500 font-bold text-indigo-700 bg-indigo-50/30"
                             required
                           />
                         </div>
                       </div>
+                      {unidadesMixtas && !pesoBrutoTotal && (
+                        <p className="mt-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5 leading-snug">
+                          Los productos tienen distintas unidades (kg y unidades), así que no
+                          podemos calcular el peso por ti. Pesa la carga e ingresa el total en
+                          kilogramos.
+                        </p>
+                      )}
                     </div>
                   </div>
 
