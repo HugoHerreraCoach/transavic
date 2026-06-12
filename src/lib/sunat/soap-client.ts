@@ -8,6 +8,7 @@
 import * as zlib from "zlib";
 import { SunatConfig, generarNombreArchivo } from "./config-transavic";
 import { ResultadoEmision, EstadoSunat } from "./types";
+import { decodeEntidadesXml } from "./mensajes-amigables";
 // archiver@7 es CJS. Para evitar bugs de bundling con webpack, lo cargamos
 // con createRequire (ESM-safe require) y `serverExternalPackages` en next.config.ts.
 import { createRequire } from "module";
@@ -269,6 +270,28 @@ function clasificarErrorSunat(faultCode: string | null, faultString: string): {
     };
   }
 
+  // "El sistema no puede responder su solicitud" / "El servicio de autenticación
+  // no está disponible" = SUNAT caído (transitorio). NO es un rechazo de datos:
+  // debe quedar como ERROR reintentable, no como RECHAZADA (caso F001-78, 10 jun 2026).
+  // Guard: si el faultcode trae un código de validación real (2xxx-4xxx), ese
+  // diagnóstico manda — no lo enmascaramos con el patrón amplio de "no disponible".
+  const codigoValidacion = parseInt(code.replace(/\D/g, ""));
+  const esCodigoValidacion = codigoValidacion >= 2000 && codigoValidacion <= 4999;
+  if (
+    !esCodigoValidacion &&
+    (msg.includes("no puede responder su solicitud") ||
+      msg.includes("servicio de autenticaci") ||
+      msg.includes("service unavailable") ||
+      msg.includes("no está disponible") ||
+      msg.includes("no esta disponible"))
+  ) {
+    return {
+      tipo: "SUNAT_SERVIDOR",
+      mensajeUsuario: "SUNAT no está disponible en este momento (es una caída de sus servidores, no del sistema). El comprobante NO se emitió. Intenta de nuevo en unos minutos.",
+      mensajeTecnico: `SOAP Fault ${faultCode}: ${faultString}`,
+    };
+  }
+
   // Error 0111 genérico (permisos del usuario SOL)
   if (code.includes("0111")) {
     return {
@@ -376,7 +399,10 @@ function extractSoapValue(xml: string, tagName: string): string | null {
 
   for (const pattern of patterns) {
     const match = xml.match(pattern);
-    if (match?.[1]) return match[1];
+    // SUNAT escapa los acentos como entidades XML (&#243;) en los faultstring.
+    // Decodificar aquí cubre todos los caminos (sendBill/sendSummary/getStatus);
+    // es inofensivo para el base64 del CDR, que no contiene '&'.
+    if (match?.[1]) return decodeEntidadesXml(match[1]);
   }
   return null;
 }

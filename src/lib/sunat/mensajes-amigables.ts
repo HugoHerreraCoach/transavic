@@ -1,0 +1,77 @@
+// src/lib/sunat/mensajes-amigables.ts
+// Traducción de mensajes técnicos de SUNAT a texto amigable para la UI.
+//
+// Contexto (11 jun 2026): la F001-78 quedó "rechazada" con el faultstring crudo
+// "El sistema no puede responder su solicitud. (El servicio de autenticaci&#243;n
+// no est&#225; disponible)" — entidades XML sin decodificar y un mensaje que en
+// realidad significa "SUNAT está caído", no un rechazo de datos. Este módulo
+// centraliza: (a) la decodificación de entidades y (b) el mapeo a mensajes
+// claros que la asesora pueda entender, manteniendo el técnico para soporte.
+
+/**
+ * Decodifica entidades XML/HTML básicas y numéricas (`&#243;` → `ó`).
+ * SUNAT devuelve los faultstring con los acentos escapados.
+ */
+export function decodeEntidadesXml(texto: string): string {
+  if (!texto.includes("&")) return texto;
+  return texto
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/** ¿El mensaje indica que SUNAT estaba caído / fuera de servicio (transitorio)? */
+export function esMensajeSunatCaido(mensaje: string): boolean {
+  const m = decodeEntidadesXml(mensaje).toLowerCase();
+  return (
+    m.includes("no puede responder su solicitud") ||
+    m.includes("servicio de autenticaci") ||
+    m.includes("rejected by policy") ||
+    m.includes("service unavailable") ||
+    m.includes("no está disponible") ||
+    m.includes("no esta disponible")
+  );
+}
+
+/** ¿El mensaje es un rechazo por formato/esquema del XML (error del sistema emisor)? */
+export function esMensajeErrorEsquema(mensaje: string): boolean {
+  const m = decodeEntidadesXml(mensaje);
+  return /ValidarEsquema|SAXException|cvc-/i.test(m);
+}
+
+export interface MensajeSunat {
+  /** Texto corto y claro para mostrar a la asesora/admin. */
+  amigable: string;
+  /** Mensaje técnico original (decodificado) — para tooltip/soporte. */
+  tecnico: string;
+}
+
+/**
+ * Traduce un `mensaje_sunat` guardado en DB a su versión amigable.
+ * Si no matchea ningún patrón conocido, devuelve el mensaje decodificado tal cual.
+ */
+export function mensajeSunatAmigable(mensaje: string): MensajeSunat {
+  const tecnico = decodeEntidadesXml(mensaje).trim();
+
+  if (esMensajeSunatCaido(tecnico)) {
+    return {
+      amigable:
+        "SUNAT estuvo fuera de servicio en ese momento; el documento NO llegó a registrarse. Verifica si ya se emitió un reemplazo antes de reintentar.",
+      tecnico,
+    };
+  }
+
+  if (esMensajeErrorEsquema(tecnico)) {
+    return {
+      amigable:
+        "SUNAT rechazó el archivo por un error de formato del sistema (ya corregido). El documento NO quedó registrado en SUNAT.",
+      tecnico,
+    };
+  }
+
+  return { amigable: tecnico, tecnico };
+}

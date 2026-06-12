@@ -14,6 +14,7 @@ import {
   FiRefreshCw
 } from "react-icons/fi";
 import Link from "next/link";
+import { mensajeSunatAmigable } from "@/lib/sunat/mensajes-amigables";
 
 interface Guia {
   id: string;
@@ -284,11 +285,15 @@ export default function GuiasClient({ userRole: _userRole }: GuiasClientProps) {
                     </td>
                     <td className="px-6 py-4.5">
                       <div>{getEstadoBadge(g.estado)}</div>
-                      {g.mensaje_sunat && (
-                        <div className="text-[10px] text-slate-400 dark:text-slate-550 max-w-[200px] truncate mt-1" title={g.mensaje_sunat}>
-                          {g.mensaje_sunat}
-                        </div>
-                      )}
+                      {g.mensaje_sunat &&
+                        (() => {
+                          const msg = mensajeSunatAmigable(g.mensaje_sunat);
+                          return (
+                            <div className="text-[10px] text-slate-400 dark:text-slate-550 max-w-[200px] truncate mt-1" title={msg.tecnico}>
+                              {msg.amigable}
+                            </div>
+                          );
+                        })()}
                     </td>
                     <td className="px-6 py-4.5 text-right">
                       <div className="flex justify-end items-center gap-1.5">

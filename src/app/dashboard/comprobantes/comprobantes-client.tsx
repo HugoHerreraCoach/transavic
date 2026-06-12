@@ -38,6 +38,7 @@ import ModalShell from "@/components/ModalShell";
 import EmitirGuiaModal, { ComprobanteInfo } from "../guias/emitir-guia-modal";
 import EmitirGuiaDirectaModal from "../guias/emitir-guia-directa-modal";
 import { Pedido } from "@/lib/types";
+import { mensajeSunatAmigable } from "@/lib/sunat/mensajes-amigables";
 
 
 interface Comprobante {
@@ -2903,14 +2904,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
               {(c.estado === "rechazado" ||
                 c.estado === "error" ||
                 c.estado === "observado") &&
-                c.mensaje_sunat && (
-                  <div
-                    className="mb-2 text-[11px] text-red-600 line-clamp-2"
-                    title={c.mensaje_sunat}
-                  >
-                    ⚠ {c.mensaje_sunat}
-                  </div>
-                )}
+                c.mensaje_sunat &&
+                (() => {
+                  const msg = mensajeSunatAmigable(c.mensaje_sunat);
+                  return (
+                    <div
+                      className="mb-2 text-[11px] text-red-600 line-clamp-2"
+                      title={msg.tecnico}
+                    >
+                      ⚠ {msg.amigable}
+                    </div>
+                  );
+                })()}
               <div className="text-right text-lg font-bold mb-3">
                 {c.tipo === "09" ? (
                   <span className="text-amber-700 text-sm font-semibold">
@@ -3055,7 +3060,12 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                           </span>
                           {conProblema && (
                             <span
-                              title={c.mensaje_sunat ?? ""}
+                              title={(() => {
+                                const msg = mensajeSunatAmigable(c.mensaje_sunat ?? "");
+                                return msg.amigable === msg.tecnico
+                                  ? msg.tecnico
+                                  : `${msg.amigable}\n\nDetalle técnico: ${msg.tecnico}`;
+                              })()}
                               className="text-red-600 cursor-help"
                               aria-label="Motivo SUNAT"
                             >
