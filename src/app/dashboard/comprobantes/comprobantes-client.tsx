@@ -3104,30 +3104,38 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                       const conProblema =
                         (c.estado === "rechazado" || c.estado === "error") ||
                         (c.estado === "observado" && !!c.mensaje_sunat);
+                      // El motivo se muestra VISIBLE bajo el chip (antes vivía solo
+                      // en el tooltip del ⓘ y en PC nadie lo encontraba). Clic = detalle completo.
+                      const msg = !conProblema
+                        ? null
+                        : c.mensaje_sunat
+                          ? mensajeSunatAmigable(c.mensaje_sunat)
+                          : (() => {
+                              const def = mensajeEstadoSinDetalle(c.estado);
+                              return def ? { amigable: def, tecnico: def } : null;
+                            })();
                       return (
-                        <div className="flex items-center justify-center gap-1.5">
+                        <div>
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${ui.bg} ${ui.text}`}
                           >
                             <ui.Icon size={10} />
                             {ui.label}
                           </span>
-                          {conProblema && (
-                            <span
-                              title={(() => {
-                                if (!c.mensaje_sunat) {
-                                  return mensajeEstadoSinDetalle(c.estado) ?? "";
-                                }
-                                const msg = mensajeSunatAmigable(c.mensaje_sunat);
-                                return msg.amigable === msg.tecnico
-                                  ? msg.tecnico
-                                  : `${msg.amigable}\n\nDetalle técnico: ${msg.tecnico}`;
-                              })()}
-                              className="text-red-600 cursor-help"
-                              aria-label="Motivo SUNAT"
+                          {msg && (
+                            <button
+                              onClick={() =>
+                                alert(
+                                  msg.amigable === msg.tecnico
+                                    ? msg.amigable
+                                    : `${msg.amigable}\n\nDetalle técnico: ${msg.tecnico}`
+                                )
+                              }
+                              title="Haz clic para ver el detalle completo"
+                              className="mt-1 block w-full max-w-[230px] mx-auto text-left text-[10px] leading-snug text-red-600 hover:underline cursor-pointer"
                             >
-                              <FiInfo size={13} />
-                            </span>
+                              <span className="line-clamp-2">⚠ {msg.amigable}</span>
+                            </button>
                           )}
                         </div>
                       );
