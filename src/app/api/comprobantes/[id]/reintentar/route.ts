@@ -68,7 +68,9 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
       c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at,
       c.hash_cpe, c.xml_firmado_base64, c.items_json, c.emitido_por,
-      p.asesor_id AS pedido_asesor_id
+      c.forma_pago, c.fecha_vencimiento,
+      p.asesor_id AS pedido_asesor_id, p.cliente_id AS pedido_cliente_id,
+      p.cliente AS pedido_cliente
     FROM comprobantes c
     LEFT JOIN pedidos p ON p.id = c.pedido_id
     WHERE c.id = ${id}::uuid LIMIT 1
@@ -92,7 +94,11 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     xml_firmado_base64: string | null;
     items_json: unknown;
     emitido_por: string | null;
+    forma_pago: string | null;
+    fecha_vencimiento: string | Date | null;
     pedido_asesor_id: string | null;
+    pedido_cliente_id: string | null;
+    pedido_cliente: string | null;
   }>;
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
@@ -272,6 +278,70 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         UPDATE facturas SET numero_comprobante = ${c.serie_numero}
         WHERE pedido_id = ${c.pedido_id}::uuid AND numero_comprobante IS NULL
       `;
+    }
+
+    // Regla "TODA venta crea cobranza": la emisión original falló y por eso NO
+    // creó cobranza; el reintento exitoso debe crearla (gap detectado con
+    // F002-83, 12 jun 2026 — quedó aceptada sin deuda registrada). Solo
+    // facturas/boletas (una NC no es deuda). `vincularCobranzaAComprobante` es
+    // idempotente ("un pedido = una cobranza"); el caso standalone se guarda
+    // contra duplicados por `comprobante_id`. Misma cascada de asesor que la
+    // emisión: pedido → emisora asesora → cartera del cliente.
+    if (sunatAcepto && (c.tipo === "01" || c.tipo === "03")) {
+      try {
+        const { vincularCobranzaAComprobante, crearFacturaStandalone, plazoDeCobranza } =
+          await import("@/lib/cobranzas");
+        // Plazo: si el comprobante fue a Crédito con vencimiento guardado, se
+        // respetan los días que faltan hasta esa fecha; si no, el plazo del cliente.
+        let plazoDias: number | null = null;
+        if (c.forma_pago === "Credito" && c.fecha_vencimiento) {
+          const venc =
+            c.fecha_vencimiento instanceof Date
+              ? c.fecha_vencimiento
+              : new Date(`${String(c.fecha_vencimiento).slice(0, 10)}T00:00:00`);
+          plazoDias = Math.max(0, Math.round((venc.getTime() - Date.now()) / 86_400_000));
+        }
+        if (c.pedido_id) {
+          let cobranzaAsesorId: string | null = c.pedido_asesor_id ?? null;
+          if (!cobranzaAsesorId && session.user.role === "asesor") {
+            cobranzaAsesorId = session.user.id;
+          }
+          if (!cobranzaAsesorId && c.pedido_cliente_id) {
+            const cliRows = (await sql`
+              SELECT asesor_id FROM clientes WHERE id = ${c.pedido_cliente_id}::uuid
+            `) as Array<{ asesor_id: string | null }>;
+            cobranzaAsesorId = cliRows[0]?.asesor_id ?? null;
+          }
+          await vincularCobranzaAComprobante({
+            pedidoId: c.pedido_id,
+            clienteNombre: c.cliente_razon_social || c.pedido_cliente || "Cliente",
+            clienteId: c.pedido_cliente_id,
+            asesorId: cobranzaAsesorId,
+            monto: Number(c.monto_total),
+            plazoDias: plazoDias ?? (await plazoDeCobranza(c.pedido_cliente_id)),
+            numeroComprobante: c.serie_numero,
+          });
+        } else {
+          const ya = (await sql`
+            SELECT id FROM facturas WHERE comprobante_id = ${id}::uuid LIMIT 1
+          `) as Array<{ id: string }>;
+          if (ya.length === 0) {
+            await crearFacturaStandalone({
+              clienteNombre: c.cliente_razon_social || "Cliente",
+              asesorId: session.user.role === "asesor" ? session.user.id : null,
+              monto: Number(c.monto_total),
+              plazoDias: plazoDias ?? (await plazoDeCobranza(null)),
+              numeroComprobante: c.serie_numero,
+              comprobanteId: id,
+            });
+          }
+        }
+      } catch (errCobranza) {
+        console.error(
+          "Reintento aceptado pero no se pudo crear la cobranza asociada:",
+          errCobranza
+        );
+      }
     }
 
     // P2.10 — Si volvió a rechazar / errorear, re-notificar (admin + asesora).
