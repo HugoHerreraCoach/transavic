@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Session } from "next-auth";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import {
   FiPlus,
@@ -210,6 +210,37 @@ export default function DashboardLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const userRole = session.user.role;
 
+  // Asesoras: contador de autorizaciones de precio APROBADAS sin usar — el
+  // badge en el menú evita que una aprobación pase desapercibida (12 jun 2026:
+  // Saraí no vio la notificación y pidió la misma autorización 3 veces).
+  const [aprobadasSinUsar, setAprobadasSinUsar] = useState(0);
+  useEffect(() => {
+    if (userRole !== "asesor") return;
+    const cargar = () =>
+      fetch("/api/autorizaciones-precio?estado=aprobada")
+        .then((r) => (r.ok ? r.json() : []))
+        .then((d: Array<{ usada_at: string | null; resuelta_at: string | null; created_at: string }>) => {
+          if (!Array.isArray(d)) return;
+          // Solo aprobadas RECIENTES (7 días): una autorización cuya venta se
+          // cayó no debe dejar el badge encendido para siempre (un badge
+          // permanente entrena a ignorarlo).
+          const corte = Date.now() - 7 * 24 * 60 * 60 * 1000;
+          setAprobadasSinUsar(
+            d.filter(
+              (a) =>
+                !a.usada_at &&
+                new Date(a.resuelta_at ?? a.created_at).getTime() > corte
+            ).length
+          );
+        })
+        .catch(() => {});
+    cargar();
+    const t = setInterval(cargar, 60_000);
+    return () => clearInterval(t);
+  }, [userRole]);
+  const badgePara = (href: string) =>
+    href === "/dashboard/autorizaciones" && aprobadasSinUsar > 0 ? aprobadasSinUsar : 0;
+
   const filteredNavItems = navItems.filter((item) => {
     // Si tiene roles definidos, solo mostrar a esos roles
     if (item.roles) return item.roles.includes(userRole);
@@ -247,6 +278,11 @@ export default function DashboardLayout({
       >
         <span className={`transition-transform duration-200 ${active ? "scale-110" : ""}`}>{item.icon}</span>
         <span>{item.label}</span>
+        {badgePara(item.href) > 0 && (
+          <span className="ml-auto min-w-[20px] h-5 px-1.5 bg-indigo-600 text-white text-[11px] font-bold rounded-full flex items-center justify-center">
+            {badgePara(item.href)}
+          </span>
+        )}
       </Link>
     );
   };
@@ -263,7 +299,14 @@ export default function DashboardLayout({
           active ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm" : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
         }`}
       >
-        <span className={`flex-shrink-0 transition-all duration-200 ${active ? "text-red-600 scale-110" : "text-gray-400"}`}>{item.icon}</span>
+        <span className={`relative flex-shrink-0 transition-all duration-200 ${active ? "text-red-600 scale-110" : "text-gray-400"}`}>
+          {item.icon}
+          {badgePara(item.href) > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 bg-indigo-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+              {badgePara(item.href)}
+            </span>
+          )}
+        </span>
         <span className="opacity-0 group-hover:opacity-100 transition-opacity duration-300 whitespace-nowrap">
           {item.label}
         </span>

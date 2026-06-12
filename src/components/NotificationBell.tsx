@@ -16,6 +16,7 @@ import {
   FiAlertTriangle,
   FiTrendingDown,
   FiClock,
+  FiX,
 } from "react-icons/fi";
 // Fuente única del tipo: lo importamos del backend para que el frontend nunca
 // quede desfasado cuando se agregan tipos nuevos (import type → se borra en build,
@@ -66,6 +67,25 @@ function iconoParaTipo(tipo: TipoNotificacion) {
       return <FiClock className="text-gray-500" />;
     default:
       return <FiBell className="text-gray-500" />;
+  }
+}
+
+// Tipos IMPORTANTES: se destacan con borde de color para que no pasen
+// desapercibidos (decisión 12 jun 2026: la asesora no vio su autorización
+// aprobada). Igual se pueden cerrar con la "x" — el dato vive en su módulo.
+function acentoParaTipo(tipo: TipoNotificacion): string | null {
+  switch (tipo) {
+    case "comprobante_rechazado":
+    case "comprobante_error":
+    case "pedido_fallido":
+      return "border-l-[3px] border-l-red-500";
+    case "factura_vencida":
+      return "border-l-[3px] border-l-amber-500";
+    case "autorizacion_resuelta":
+    case "autorizacion_solicitada":
+      return "border-l-[3px] border-l-indigo-500";
+    default:
+      return null;
   }
 }
 
@@ -131,6 +151,28 @@ export default function NotificationBell() {
     setUnread(0);
   };
 
+  // Descartar UNA notificación (la "x"). Optimista: sale de la lista al toque.
+  const eliminar = async (n: Notificacion) => {
+    setNotifs((prev) => prev.filter((x) => x.id !== n.id));
+    if (!n.leida) setUnread((prev) => Math.max(0, prev - 1));
+    await fetch(`/api/notificaciones/${n.id}`, { method: "DELETE" }).catch(() => {});
+  };
+
+  // Borrar todas las YA LEÍDAS de un golpe. Con confirmación: "Marcar todas
+  // leídas" + "Limpiar" son 2 taps que podrían borrar avisos nunca vistos
+  // (leída ≠ vista), así que el conteo en el confirm da una última mirada.
+  const limpiarLeidas = async () => {
+    const cuantas = notifs.filter((n) => n.leida).length;
+    const ok = window.confirm(
+      `¿Borrar ${cuantas === 1 ? "la notificación leída" : `las ${cuantas} notificaciones leídas`}? Esta acción no se puede deshacer.`
+    );
+    if (!ok) return;
+    setNotifs((prev) => prev.filter((n) => !n.leida));
+    await fetch("/api/notificaciones/limpiar-leidas", { method: "POST" }).catch(() => {});
+  };
+
+  const hayLeidas = notifs.some((n) => n.leida);
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -148,16 +190,27 @@ export default function NotificationBell() {
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b bg-gray-50">
+          <div className="flex items-center justify-between gap-2 px-4 py-3 border-b bg-gray-50">
             <h3 className="font-semibold text-gray-800">Notificaciones</h3>
-            {unread > 0 && (
-              <button
-                onClick={marcarTodasLeidas}
-                className="text-xs text-blue-600 hover:underline"
-              >
-                Marcar todas leídas
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {unread > 0 && (
+                <button
+                  onClick={marcarTodasLeidas}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Marcar todas leídas
+                </button>
+              )}
+              {hayLeidas && (
+                <button
+                  onClick={limpiarLeidas}
+                  className="text-xs text-gray-500 hover:text-gray-700 hover:underline"
+                  title="Borra las notificaciones que ya leíste"
+                >
+                  Limpiar leídas
+                </button>
+              )}
+            </div>
           </div>
           <div className="max-h-96 overflow-y-auto">
             {notifs.length === 0 && (
@@ -166,9 +219,10 @@ export default function NotificationBell() {
               </div>
             )}
             {notifs.map((n) => {
-              const className = `flex items-start gap-3 px-4 py-3 border-b last:border-b-0 cursor-pointer transition-colors ${
+              const acento = acentoParaTipo(n.tipo);
+              const className = `group/notif flex items-start gap-3 px-4 py-3 border-b last:border-b-0 cursor-pointer transition-colors ${
                 n.leida ? "bg-white hover:bg-gray-50" : "bg-blue-50/40 hover:bg-blue-50"
-              }`;
+              } ${acento ?? ""}`;
               const handleClick = () => {
                 if (!n.leida) marcarLeida(n.id);
                 setOpen(false);
@@ -196,6 +250,22 @@ export default function NotificationBell() {
                   {!n.leida && (
                     <span className="flex-shrink-0 w-2 h-2 mt-2 rounded-full bg-blue-500" />
                   )}
+                  {/* Descartar: área táctil ≥40px (las asesoras usan celular; un
+                      fallo de dedo aquí navegaría al link de la fila). Los
+                      márgenes negativos compensan el padding para que el layout
+                      no se infle. */}
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      eliminar(n);
+                    }}
+                    title="Descartar notificación"
+                    aria-label="Descartar notificación"
+                    className="flex-shrink-0 -mr-2 -my-1.5 min-w-[40px] min-h-[40px] flex items-center justify-center rounded-md text-gray-300 hover:text-gray-600 hover:bg-gray-100 group-hover/notif:text-gray-400 transition-colors"
+                  >
+                    <FiX className="w-4 h-4" />
+                  </button>
                 </>
               );
               if (n.link) {
