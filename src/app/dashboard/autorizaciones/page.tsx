@@ -7,8 +7,11 @@ export const dynamic = "force-dynamic";
 
 export default async function AutorizacionesPage() {
   const session = await auth();
-  if (!session?.user || session.user.role !== "admin") {
+  // Admin gestiona; la asesora ve LAS SUYAS en solo lectura (el GET ya scopea)
+  // y puede usar una aprobada con "Emitir con esta autorización" — antes era
+  // solo-admin y la asesora no tenía NINGUNA vía para retomar su aprobación.
+  if (!session?.user || !["admin", "asesor"].includes(session.user.role)) {
     redirect("/dashboard");
   }
-  return <AutorizacionesClient />;
+  return <AutorizacionesClient esAdmin={session.user.role === "admin"} />;
 }

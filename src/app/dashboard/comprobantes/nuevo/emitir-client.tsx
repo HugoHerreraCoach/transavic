@@ -140,6 +140,7 @@ export default function EmitirComprobanteClient({
   empresas,
   pedidoIdProp,
   onClose,
+  userRole = "asesor",
 }: {
   // `empresas` es opcional: cuando el form se usa embebido (ej. modal desde la
   // lista de pedidos) no viene del server, así que se trae de /api/sunat/empresas.
@@ -148,6 +149,9 @@ export default function EmitirComprobanteClient({
   pedidoIdProp?: string | null;
   // Si está embebido en un modal: cerrar en vez de navegar.
   onClose?: () => void;
+  // Rol del usuario: el admin está EXENTO del control de precio mínimo (igual
+  // que en el server). Default "asesor" = comportamiento conservador.
+  userRole?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -213,6 +217,19 @@ export default function EmitirComprobanteClient({
   const [razonSolicitud, setRazonSolicitud] = useState("");
   const [enviandoSolicitud, setEnviandoSolicitud] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  // La PRECARGA del form desde la autorización solo corre cuando el id vino
+  // por URL (link de notificación / botón "Emitir con esta autorización") —
+  // NUNCA cuando el efecto de auto-adjuntar setea el id en pleno tipeo (si no,
+  // pisaría los ítems/cliente que la asesora está escribiendo).
+  const precargarDesdeAutorizacionRef = useRef(!!searchParams.get("autorizacion_id"));
+  // Autorización auto-adjuntada (para explicar en el banner qué pasó).
+  const [autoAdjuntada, setAutoAdjuntada] = useState(false);
+  // Búsqueda de aprobadas en vuelo (el CTA de solicitar espera a que termine).
+  const [buscandoAprobada, setBuscandoAprobada] = useState(false);
+  // Ids que la asesora quitó a mano: no volver a auto-adjuntarlos.
+  const idsQuitadosRef = useRef<Set<string>>(new Set());
+  // Aviso de precarga parcial (la solicitud solo guarda los ítems bajo mínimo).
+  const [precargaParcial, setPrecargaParcial] = useState(false);
 
   // Empresas: si no vinieron por prop (form embebido en un modal), las traemos.
   useEffect(() => {
@@ -287,9 +304,11 @@ export default function EmitirComprobanteClient({
 
   // Pre-carga cuando la asesora vuelve con ?autorizacion_id=XXX aprobada.
   // Rellena empresa, tipo, ítems y datos del cliente para que no tenga que
-  // re-escribir todo desde cero.
+  // re-escribir todo desde cero. SOLO corre si el id vino por URL (ref) — el
+  // auto-adjuntar en pleno tipeo NO debe pisar lo que la asesora escribió.
   useEffect(() => {
-    if (!autorizacionId) return;
+    if (!autorizacionId || !precargarDesdeAutorizacionRef.current) return;
+    precargarDesdeAutorizacionRef.current = false; // una sola vez
     // Si ya hay un pedido cargado en el form, ese tiene prioridad.
     if (pedidoIdProp ?? searchParams.get("pedido")) return;
     let active = true;
@@ -299,6 +318,18 @@ export default function EmitirComprobanteClient({
         if (!res.ok || !active) return;
         const a = await res.json();
         if (!active) return;
+        // Link viejo: si ya fue usada o no está aprobada, avisar y soltar el id
+        // (el sistema buscará otra aprobada disponible automáticamente).
+        if (a.estado !== "aprobada" || a.usada_at) {
+          setAutorizacionId(null);
+          setToastMsg(
+            a.usada_at
+              ? "Esa autorización ya se usó en otra emisión. Si tienes otra aprobada, se aplicará sola."
+              : "Esa autorización no está aprobada. Si tienes otra aprobada, se aplicará sola."
+          );
+          setTimeout(() => setToastMsg(null), 6000);
+          return;
+        }
         setEmpresa(a.empresa as Empresa);
         setTipo(a.tipo as Tipo);
         if (Array.isArray(a.items_json) && a.items_json.length > 0) {
@@ -313,6 +344,9 @@ export default function EmitirComprobanteClient({
               })
             )
           );
+          // La solicitud solo guardó los ítems bajo mínimo: avisar que la
+          // venta puede tener más productos por agregar.
+          setPrecargaParcial(true);
         }
         if (a.cliente_json) {
           if (a.cliente_json.numDocumento) setNumDoc(a.cliente_json.numDocumento);
@@ -608,7 +642,8 @@ export default function EmitirComprobanteClient({
       })
       .filter((x): x is NonNullable<typeof x> => x !== null);
 
-    const necesitaAutorizacion = itemsConPrecioBajo.length > 0 && !autorizacionId;
+    const necesitaAutorizacion =
+      itemsConPrecioBajo.length > 0 && !autorizacionId && userRole !== "admin";
 
     return {
       itemsValidos,
@@ -619,9 +654,91 @@ export default function EmitirComprobanteClient({
       necesitaAutorizacion,
       puedeEmitir: itemsValidos && clienteValido && !necesitaAutorizacion,
     };
-  }, [items, numDoc, razonSocial, tipo, boletaGrande, productos, autorizacionId]);
+  }, [items, numDoc, razonSocial, tipo, boletaGrande, productos, autorizacionId, userRole]);
 
   const puedeEmitir = reqs.puedeEmitir;
+
+  // Auto-adjuntar una autorización APROBADA disponible (caso Saraí ×3, 12 jun
+  // 2026): antes la única vía era entrar por el link de la notificación con
+  // ?autorizacion_id= — si la asesora abría el form por el menú o desde el
+  // pedido, el sistema la mandaba a solicitar OTRA autorización en loop.
+  // Ahora, al detectar ítems bajo mínimo sin autorización adjunta, buscamos
+  // sus aprobadas sin usar y usamos la que cubra los ítems (el server valida
+  // igual por su cuenta — esto es solo para que la UI no bloquee el botón).
+  // Clave estable (JSON: tolera nombres con cualquier carácter).
+  const bajoMinimoKey =
+    reqs.itemsConPrecioBajo.length === 0
+      ? ""
+      : JSON.stringify(
+          reqs.itemsConPrecioBajo.map((i) => [
+            i.nombre.trim().toLowerCase(),
+            i.precio_solicitado,
+            i.cantidad,
+          ])
+        );
+  useEffect(() => {
+    if (!bajoMinimoKey || autorizacionId || userRole === "admin") {
+      setBuscandoAprobada(false);
+      return;
+    }
+    let cancelado = false;
+    setBuscandoAprobada(true);
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/autorizaciones-precio?estado=aprobada", {
+          signal: ctrl.signal,
+        });
+        if (!res.ok || cancelado) return;
+        const lista = (await res.json()) as Array<{
+          id: string;
+          usada_at: string | null;
+          items_json: Array<{
+            nombre?: string;
+            precio_solicitado?: number | string;
+            cantidad?: number | string;
+          }>;
+        }>;
+        if (cancelado) return;
+        const bajos = (JSON.parse(bajoMinimoKey) as Array<[string, number, number]>).map(
+          ([nombre, precio, cantidad]) => ({ nombre, precio, cantidad })
+        );
+        // Mismo criterio que el server (lib/autorizaciones-precio.ts):
+        // nombre + precio autorizado ≤ precio + cantidad ≤ autorizada×1.1.
+        const match = (Array.isArray(lista) ? lista : []).find(
+          (a) =>
+            !a.usada_at &&
+            !idsQuitadosRef.current.has(a.id) &&
+            Array.isArray(a.items_json) &&
+            bajos.every((b) =>
+              a.items_json.some((l) => {
+                if (typeof l.nombre !== "string" || l.nombre.trim().toLowerCase() !== b.nombre)
+                  return false;
+                const pAut = Number(l.precio_solicitado);
+                if (!(pAut > 0) || pAut > b.precio + 0.005) return false;
+                const cAut = Number(l.cantidad);
+                if (cAut > 0 && b.cantidad > 0 && b.cantidad > cAut * 1.1 + 0.01) return false;
+                return true;
+              })
+            )
+        );
+        if (!cancelado && match) {
+          setAutorizacionId(match.id);
+          setAutoAdjuntada(true);
+        }
+      } catch {
+        /* abortado o sin conexión — el server hace el mismo match al emitir */
+      } finally {
+        if (!cancelado) setBuscandoAprobada(false);
+      }
+    }, 400);
+    return () => {
+      cancelado = true;
+      clearTimeout(timer);
+      ctrl.abort();
+      setBuscandoAprobada(false);
+    };
+  }, [bajoMinimoKey, autorizacionId, userRole]);
 
   // Descarga el PDF del comprobante recién emitido
   async function descargarPdf(id: string) {
@@ -744,7 +861,16 @@ export default function EmitirComprobanteClient({
           mensaje: typeof j.mensaje === "string" ? j.mensaje : "Ya existe un comprobante igual.",
         });
       } else if (!res.ok) {
-        setErrorMsg(typeof j.error === "string" ? j.error : "No se pudo emitir. Revisa los datos.");
+        // Códigos del control de precios → mensajes claros (no el código crudo).
+        const msg =
+          j?.error === "precio_bajo_sin_autorizacion"
+            ? `El precio de "${j.producto ?? "un producto"}" está por debajo del mínimo (S/ ${Number(j.precio_minimo ?? 0).toFixed(2)}) y no hay una autorización aprobada disponible. Solicita la autorización al administrador.`
+            : j?.error === "autorizacion_invalida"
+              ? "La autorización ya fue usada o no está vigente. Solicita una nueva al administrador."
+              : typeof j.error === "string"
+                ? j.error
+                : "No se pudo emitir. Revisa los datos.";
+        setErrorMsg(msg);
       } else {
         setResultado(j);
         const emitidoOk =
@@ -1581,11 +1707,25 @@ export default function EmitirComprobanteClient({
                 <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 text-xs text-amber-800 flex items-start gap-2">
                   <FiCheckCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                   <span>
-                    <strong>Autorización aprobada.</strong> Puedes emitir con el precio solicitado.
-                    {" "}
+                    <strong>
+                      {autoAdjuntada
+                        ? "Se aplicó tu autorización aprobada automáticamente."
+                        : "Autorización aprobada."}
+                    </strong>{" "}
+                    Puedes emitir con el precio solicitado. Se marcará como usada al emitir.
+                    {precargaParcial && (
+                      <span className="block mt-0.5 text-amber-700">
+                        Se cargaron solo los ítems autorizados — si la venta tenía más
+                        productos, agrégalos antes de emitir.
+                      </span>
+                    )}{" "}
                     <button
                       className="underline text-amber-700 hover:text-amber-900"
-                      onClick={() => setAutorizacionId(null)}
+                      onClick={() => {
+                        if (autorizacionId) idsQuitadosRef.current.add(autorizacionId);
+                        setAutorizacionId(null);
+                        setAutoAdjuntada(false);
+                      }}
                     >
                       Quitar
                     </button>
@@ -1596,18 +1736,31 @@ export default function EmitirComprobanteClient({
               {reqs.necesitaAutorizacion ? (
                 /* Precio bajo mínimo: reemplaza el botón emit */
                 <div className="space-y-2">
-                  <p className="text-[11px] text-red-600 font-medium flex items-start gap-1.5 leading-snug">
-                    <FiAlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                    Precio por debajo del mínimo. El admin debe autorizar antes de emitir.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowModalAutorizacion(true)}
-                    className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer"
-                  >
-                    <FiAlertCircle className="w-4 h-4" />
-                    Solicitar autorización al admin
-                  </button>
+                  {buscandoAprobada ? (
+                    <button
+                      type="button"
+                      disabled
+                      className="w-full py-3.5 bg-gray-200 text-gray-500 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+                    >
+                      <FiLoader className="w-4 h-4 animate-spin" />
+                      Buscando autorizaciones aprobadas…
+                    </button>
+                  ) : (
+                    <>
+                      <p className="text-[11px] text-red-600 font-medium flex items-start gap-1.5 leading-snug">
+                        <FiAlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                        Precio por debajo del mínimo. El admin debe autorizar antes de emitir.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setShowModalAutorizacion(true)}
+                        className="w-full py-3.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98] cursor-pointer"
+                      >
+                        <FiAlertCircle className="w-4 h-4" />
+                        Solicitar autorización al admin
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1644,14 +1797,25 @@ export default function EmitirComprobanteClient({
           </div>
           
           {reqs.necesitaAutorizacion ? (
-            <button
-              type="button"
-              onClick={() => setShowModalAutorizacion(true)}
-              className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs"
-            >
-              <FiAlertCircle className="w-4 h-4" />
-              Solicitar autorización
-            </button>
+            buscandoAprobada ? (
+              <button
+                type="button"
+                disabled
+                className="px-5 py-3 bg-gray-200 text-gray-500 rounded-xl font-bold flex items-center justify-center gap-1.5 text-xs"
+              >
+                <FiLoader className="w-4 h-4 animate-spin" />
+                Buscando autorización…
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowModalAutorizacion(true)}
+                className="px-5 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all text-xs"
+              >
+                <FiAlertCircle className="w-4 h-4" />
+                Solicitar autorización
+              </button>
+            )
           ) : (
             <button
               onClick={() => emitir()}

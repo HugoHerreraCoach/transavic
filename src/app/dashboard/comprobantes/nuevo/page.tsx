@@ -21,7 +21,7 @@ export default async function NuevoComprobantePage() {
 
   return (
     <Suspense fallback={null}>
-      <EmitirComprobanteClient empresas={empresas} />
+      <EmitirComprobanteClient empresas={empresas} userRole={session.user.role} />
     </Suspense>
   );
 }

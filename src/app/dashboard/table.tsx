@@ -669,6 +669,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                         <EmitirComprobanteClient
                             pedidoIdProp={pedido.id}
                             onClose={() => { setShowEmitirModal(false); void cargarComprobantes(); }}
+                            userRole={userRole}
                         />
                     </Suspense>
                 </ModalShell>

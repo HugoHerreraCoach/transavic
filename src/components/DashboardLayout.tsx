@@ -163,7 +163,9 @@ const navItems: NavItem[] = [
     href: "/dashboard/autorizaciones",
     label: "Autorizaciones",
     icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />,
-    adminOnly: true,
+    // Asesoras también (12 jun 2026): ven SUS solicitudes y usan las aprobadas
+    // con "Emitir con esta autorización" — antes no tenían vía de retorno.
+    roles: ["admin", "asesor"],
   },
   {
     href: "/dashboard/comunicados",

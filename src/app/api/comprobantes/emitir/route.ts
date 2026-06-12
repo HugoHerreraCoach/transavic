@@ -17,6 +17,7 @@ import {
   esReceptorIdentificado,
 } from "@/lib/sunat/validacion-cliente";
 import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
+import { controlarPrecioMinimo } from "@/lib/autorizaciones-precio";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
 export const dynamic = "force-dynamic";
@@ -183,43 +184,27 @@ export async function POST(request: Request) {
     }
 
     // ── Validación de precio mínimo (solo asesoras) ──
-    // El admin puede emitir cualquier precio.
+    // El admin puede emitir cualquier precio. El helper compartido usa la
+    // autorización enviada O busca automáticamente una aprobada sin usar que
+    // cubra los ítems (la asesora ya no depende del link de la notificación).
+    let autorizacionUsadaId: string | null = null;
     if (session.user.role === "asesor") {
-      const autorizacionId = parsed.data.autorizacion_id ?? null;
-      for (const item of items) {
-        const prodRows = (await sql`
-          SELECT precio_venta FROM productos
-          WHERE LOWER(TRIM(nombre)) = LOWER(TRIM(${item.producto_nombre}))
-          LIMIT 1
-        `) as Array<{ precio_venta: string | null }>;
-        const minimo = prodRows[0]?.precio_venta ? Number(prodRows[0].precio_venta) : 0;
-        if (minimo > 0 && item.precio_unitario < minimo) {
-          if (!autorizacionId) {
-            return NextResponse.json(
-              {
-                error: "precio_bajo_sin_autorizacion",
-                producto: item.producto_nombre,
-                precio_minimo: minimo,
-              },
-              { status: 402 }
-            );
-          }
-          // Verificar que la autorización sea válida para este asesor y no esté usada
-          const authRows = (await sql`
-            SELECT id FROM autorizaciones_precio
-            WHERE id = ${autorizacionId}
-              AND asesora_id = ${session.user.id}
-              AND estado = 'aprobada'
-              AND usada_at IS NULL
-          `) as Array<{ id: string }>;
-          if (authRows.length === 0) {
-            return NextResponse.json(
-              { error: "autorizacion_invalida" },
-              { status: 403 }
-            );
-          }
-        }
+      const control = await controlarPrecioMinimo(sql, {
+        items: items.map((it) => ({
+          nombre: it.producto_nombre,
+          precioUnitario: it.precio_unitario,
+          cantidad: it.cantidad,
+        })),
+        asesoraId: session.user.id,
+        autorizacionId: parsed.data.autorizacion_id ?? null,
+        empresa: empresaFromPedidoString(pedido.empresa),
+        tipo: parsed.data.tipo,
+        clienteNumDoc: cliNumDoc || null,
+      });
+      if (!control.ok) {
+        return NextResponse.json(control.body, { status: control.status });
       }
+      autorizacionUsadaId = control.autorizacionId;
     }
 
     const empresa = empresaFromPedidoString(pedido.empresa);
@@ -458,12 +443,19 @@ export async function POST(request: Request) {
       }
     }
 
-    // Marcar la autorización de precio como usada (una sola emisión por autorización)
-    const autorizacionId = parsed.data.autorizacion_id ?? null;
-    if (autorizacionId && emisionOk) {
+    // Marcar la autorización de precio como usada (una sola emisión por
+    // autorización). SOLO se consume `autorizacionUsadaId` — la que el control
+    // validó/auto-matcheó y la emisión realmente necesitó. El id del body
+    // NUNCA se consume a ciegas: quemaba autorizaciones en emisiones que no
+    // las usaban (asesora con link viejo y precios normales) y dejaba al admin
+    // estampar usada_at en autorizaciones ajenas/pendientes. El guard
+    // estado/usada_at hace el consumo atómico (dos emisiones concurrentes no
+    // queman la misma dos veces sin que quede rastro).
+    if (autorizacionUsadaId && emisionOk) {
       await sql`
         UPDATE autorizaciones_precio SET usada_at = NOW()
-        WHERE id = ${autorizacionId}
+        WHERE id = ${autorizacionUsadaId}
+          AND estado = 'aprobada' AND usada_at IS NULL
       `.catch(() => {});
     }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
 import {
   FiCheckCircle,
   FiXCircle,
@@ -109,11 +110,13 @@ function CardAutorizacion({
   onAprobar,
   onRechazar,
   cargandoId,
+  esAdmin,
 }: {
   auth: Autorizacion;
   onAprobar: (id: string) => void;
   onRechazar: (id: string, asesoraNombre: string) => void;
   cargandoId: string | null;
+  esAdmin: boolean;
 }) {
   const [expandido, setExpandido] = useState(true);
   const esPendiente = a.estado === "pendiente";
@@ -242,8 +245,8 @@ function CardAutorizacion({
             </div>
           )}
 
-          {/* Botones (solo pendientes) */}
-          {esPendiente && (
+          {/* Botones de gestión (solo admin, solo pendientes) */}
+          {esPendiente && esAdmin && (
             <div className="flex gap-2 pt-1">
               <button
                 disabled={cargando}
@@ -261,13 +264,28 @@ function CardAutorizacion({
               </button>
             </div>
           )}
+          {esPendiente && !esAdmin && (
+            <p className="text-xs text-gray-400 pt-1">
+              Esperando la respuesta del administrador. Te llegará una notificación.
+            </p>
+          )}
+
+          {/* Asesora: usar una aprobada disponible (pre-llena el form de emisión) */}
+          {!esAdmin && a.estado === "aprobada" && !a.usada_at && (
+            <Link
+              href={`/dashboard/comprobantes/nuevo?autorizacion_id=${a.id}`}
+              className="block w-full py-2.5 text-center text-sm font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors active:scale-[0.97]"
+            >
+              Emitir con esta autorización
+            </Link>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-export function AutorizacionesClient() {
+export function AutorizacionesClient({ esAdmin = true }: { esAdmin?: boolean }) {
   const [filtro, setFiltro] = useState<Filtro>("pendiente");
   const [autorizaciones, setAutorizaciones] = useState<Autorizacion[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -412,6 +430,7 @@ export function AutorizacionesClient() {
               onAprobar={handleAprobar}
               onRechazar={(id, nombre) => setModalRechazo({ id, nombre })}
               cargandoId={cargandoId}
+              esAdmin={esAdmin}
             />
           ))}
         </div>
