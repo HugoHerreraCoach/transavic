@@ -341,11 +341,25 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
         latitude: formDatos.latitude,
         longitude: formDatos.longitude,
       };
-      const res = await fetch('/api/clientes', {
+      const enviar = (permitirDuplicado: boolean) => fetch('/api/clientes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify(permitirDuplicado ? { ...body, permitir_duplicado: true } : body),
       });
+      let res = await enviar(false);
+      // 409 + puede_forzar = admin ante un duplicado: confirmar explícito y reintentar.
+      if (res.status === 409) {
+        const errPeek = await res.clone().json().catch(() => null);
+        if (errPeek?.error === 'cliente_duplicado' && errPeek.puede_forzar) {
+          const confirmar = window.confirm(
+            `${errPeek.mensaje || 'Ya existe un cliente con este documento/celular.'}\n\n¿Crear de todas formas?`
+          );
+          // Cancelar NO cierra la oferta: el admin conserva el contexto por si
+          // quiere corregir el dato (mismo comportamiento que el modal de clientes).
+          if (!confirmar) return;
+          res = await enviar(true);
+        }
+      }
       if (res.ok) {
         setShowGuardarCliente(false);
         alert('✅ Cliente guardado como frecuente');

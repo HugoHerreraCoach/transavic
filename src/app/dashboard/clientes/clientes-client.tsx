@@ -361,11 +361,26 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     if (!editingId) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/clientes/${editingId}`, {
+      const enviar = (permitirDuplicado: boolean) => fetch(`/api/clientes/${editingId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify(permitirDuplicado ? { ...editForm, permitir_duplicado: true } : editForm),
       });
+      let res = await enviar(false);
+      // 409 = el nuevo RUC/celular choca con otro cliente registrado.
+      if (res.status === 409) {
+        const err = await res.json().catch(() => null);
+        if (err?.error === 'cliente_duplicado' && (err.es_mio || err.puede_forzar)) {
+          const confirmar = window.confirm(
+            `${err.mensaje || 'Ese documento/celular ya pertenece a otro cliente registrado.'}\n\n¿Guardar de todas formas?`
+          );
+          if (!confirmar) return;
+          res = await enviar(true);
+        } else if (err?.error === 'cliente_duplicado') {
+          alert(err?.mensaje || 'Ese documento/celular ya pertenece a un cliente de otra ejecutiva.');
+          return;
+        }
+      }
       if (res.ok) {
         const updated = await res.json();
         setClientes(prev => prev.map(c => c.id === editingId ? updated : c));
@@ -373,7 +388,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
         setEditForm({});
       } else {
         const err = await res.json();
-        alert(err.error || 'Error al guardar');
+        alert(err.mensaje || err.error || 'Error al guardar');
       }
     } catch {
       alert('Error de conexión');
@@ -413,10 +428,10 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
       // 409 = cliente duplicado (RUC/DNI o WhatsApp ya registrados).
       if (res.status === 409) {
         const err = await res.json().catch(() => null);
-        if (err?.error === 'cliente_duplicado' && err.es_mio) {
-          // Duplicado propio: se puede confirmar (caso real: otra sucursal).
+        if (err?.error === 'cliente_duplicado' && (err.es_mio || err.puede_forzar)) {
+          // Duplicado propio (otra sucursal) o admin forzando: confirmar explícito.
           const confirmar = window.confirm(
-            `${err.mensaje || 'Ya tienes un cliente registrado con este documento/celular.'}\n\n¿Crear de todas formas? (ej. otra sucursal)`
+            `${err.mensaje || 'Ya existe un cliente registrado con este documento/celular.'}\n\n¿Crear de todas formas?`
           );
           if (!confirmar) return;
           res = await enviar(true);
@@ -953,8 +968,9 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                     Ya tienes un cliente con este documento/celular{dupCreate.cliente_nombre ? `: ${dupCreate.cliente_nombre}` : ''}. Puedes guardarlo igual si es otra sucursal.
                   </div>
                 ) : isAdmin ? (
-                  <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
-                    Cliente ya registrado en la base de datos · Ejecutiva responsable: {dupCreate.asesora_nombre || 'sin asignar'}.
+                  <div className="mt-4 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 text-sm text-amber-900">
+                    <p className="font-semibold">⚠ Cliente ya registrado en la base de datos · Ejecutiva responsable: {dupCreate.asesora_nombre || 'sin asignar'}.</p>
+                    <p className="mt-1">Si guardas, se creará un DUPLICADO (el sistema te pedirá confirmarlo).</p>
                   </div>
                 ) : (
                   <div className="mt-4 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 text-sm text-amber-900">

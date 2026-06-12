@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { chequearDuplicadoCliente } from "@/lib/clientes-duplicados";
 
 export const dynamic = "force-dynamic";
 
@@ -93,6 +94,32 @@ export async function PATCH(request: Request) {
       const targetUser = await sql`SELECT id FROM users WHERE id = ${parsed.data.asesor_id}`;
       if (!targetUser[0]) {
         return NextResponse.json({ error: "El asesor destino no existe" }, { status: 400 });
+      }
+    }
+
+    // ── Anti-duplicados también en la EDICIÓN (cierra el bypass: antes una
+    // asesora podía editar un cliente propio y ponerle el RUC/WhatsApp de un
+    // cliente ajeno sin chequeo). Solo se verifica el campo que CAMBIA respecto
+    // al valor actual — así editar dirección/notas de un duplicado ya consentido
+    // no vuelve a molestar. Misma regla compartida que el POST.
+    {
+      const norm9 = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-9);
+      const rucNuevo = parsed.data.ruc_dni !== undefined ? String(parsed.data.ruc_dni ?? "").trim() : null;
+      const cambioRuc = rucNuevo !== null && rucNuevo !== "" && rucNuevo !== String(existing[0].ruc_dni ?? "").trim();
+      const waNuevo = parsed.data.whatsapp !== undefined ? String(parsed.data.whatsapp ?? "") : null;
+      const cambioWa = waNuevo !== null && norm9(waNuevo).length === 9 && norm9(waNuevo) !== norm9(existing[0].whatsapp);
+      if (cambioRuc || cambioWa) {
+        const conflicto = await chequearDuplicadoCliente(sql, {
+          rucDni: cambioRuc ? rucNuevo : null,
+          whatsapp: cambioWa ? waNuevo : null,
+          userId: session.user.id,
+          role: session.user.role,
+          permitirDuplicado: (body as { permitir_duplicado?: boolean })?.permitir_duplicado === true,
+          excluirClienteId: id,
+        });
+        if (conflicto) {
+          return NextResponse.json(conflicto, { status: 409 });
+        }
       }
     }
 

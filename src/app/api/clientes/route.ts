@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { chequearDuplicadoCliente } from "@/lib/clientes-duplicados";
 
 export const dynamic = "force-dynamic";
 
@@ -244,52 +245,20 @@ export async function POST(request: Request) {
       : session.user.id;
 
     // ── Anti-duplicados (11 jun 2026, protege la cartera entre asesoras) ──
-    // Match EXACTO por RUC/DNI o WhatsApp (últimos 9 dígitos):
-    //   · cliente de OTRA asesora → 409 DURO (la vía legítima es pedir la
-    //     transferencia al admin, que ya existe en /dashboard/clientes);
-    //   · cliente de la MISMA asesora → 409 blando: el body puede reenviar
-    //     `permitir_duplicado: true` (caso real: cadena con varias sucursales).
-    //   · admin exento (sanea/asigna a propósito). Nombre/dirección nunca bloquean.
-    if (session.user.role === "asesor") {
-      const rucNorm = (ruc_dni ?? "").trim();
-      const waNorm = (whatsapp ?? "").replace(/\D/g, "").slice(-9);
-      const permitirDuplicado = body?.permitir_duplicado === true;
-      const dups = await sql`
-        SELECT c.id, c.asesor_id, u.name AS asesor_name,
-               CASE WHEN ${rucNorm} <> '' AND TRIM(COALESCE(c.ruc_dni,'')) = ${rucNorm} THEN 'ruc_dni' ELSE 'whatsapp' END AS campo
-        FROM clientes c LEFT JOIN users u ON u.id = c.asesor_id
-        WHERE (${rucNorm} <> '' AND TRIM(COALESCE(c.ruc_dni,'')) = ${rucNorm})
-           OR (${waNorm} <> '' AND LENGTH(${waNorm}) = 9
-               AND RIGHT(regexp_replace(COALESCE(c.whatsapp,''), '\\D', '', 'g'), 9) = ${waNorm})
-        LIMIT 1
-      `;
-      if (dups.length > 0) {
-        const dup = dups[0];
-        const esMio = dup.asesor_id === session.user.id;
-        if (!esMio) {
-          return NextResponse.json(
-            {
-              error: "cliente_duplicado",
-              campo: dup.campo,
-              asesora_nombre: (dup.asesor_name as string | null)?.trim() || "otra asesora",
-              mensaje: `Este cliente ya está registrado y tiene una ejecutiva asignada (${(dup.asesor_name as string | null)?.trim() || "otra asesora"}). Si crees que debería ser tuyo, pide la transferencia a un administrador.`,
-            },
-            { status: 409 }
-          );
-        }
-        if (!permitirDuplicado) {
-          return NextResponse.json(
-            {
-              error: "cliente_duplicado",
-              campo: dup.campo,
-              es_mio: true,
-              cliente_id: dup.id,
-              mensaje: "Ya tienes un cliente registrado con este documento/celular. Puedes usar ese registro, o confirmar que quieres crear otro (ej. otra sucursal).",
-            },
-            { status: 409 }
-          );
-        }
-      }
+    // Regla compartida con el PATCH en `lib/clientes-duplicados.ts`:
+    //   asesora+ajeno → 409 duro; asesora+propio → 409 blando (permitir_duplicado);
+    //   admin → 409 blando SIEMPRE (puede_forzar — antes estaba exento y creaba
+    //   duplicados sin enterarse, caso ECO AMIGABLE); si matchean propio Y ajeno,
+    //   gana el ajeno. Nombre/dirección nunca bloquean.
+    const conflicto = await chequearDuplicadoCliente(sql, {
+      rucDni: ruc_dni ?? null,
+      whatsapp: whatsapp ?? null,
+      userId: session.user.id,
+      role: session.user.role,
+      permitirDuplicado: body?.permitir_duplicado === true,
+    });
+    if (conflicto) {
+      return NextResponse.json(conflicto, { status: 409 });
     }
 
     const result = await sql`
