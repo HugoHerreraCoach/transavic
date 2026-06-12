@@ -23,10 +23,52 @@ export const dynamic = "force-dynamic";
 const Schema = z.object({
   // null = quitar la asignación (deja "Emitido por" vacío).
   asesorId: z.string().uuid().nullable(),
+  // true = mover también la cobranza vinculada (facturas.asesor_id) para que la
+  // responsabilidad de cobrar acompañe a la atribución de la venta.
+  reasignarCobranza: z.boolean().optional().default(false),
 });
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+// GET — info mínima para el modal "Cambiar asesora": ¿este comprobante tiene
+// una cobranza vinculada (no anulada)? Permite preguntar ANTES de guardar si
+// también se desea reasignarla.
+export async function GET(req: NextRequest, { params }: RouteParams) {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
+  if (session.user.role !== "admin") {
+    return NextResponse.json({ error: "Solo administradores" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  if (!id || !/^[0-9a-f-]{36}$/i.test(id)) {
+    return NextResponse.json({ error: "ID inválido" }, { status: 400 });
+  }
+
+  const sql = neon(process.env.DATABASE_URL!);
+  const rows = (await sql`
+    SELECT f.id, f.estado, f.monto, u.name AS asesor_name
+    FROM facturas f
+    LEFT JOIN users u ON u.id = f.asesor_id
+    WHERE f.comprobante_id = ${id}::uuid AND f.estado <> 'Anulada'
+    ORDER BY f.created_at DESC
+    LIMIT 1
+  `) as Array<{ id: string; estado: string; monto: string; asesor_name: string | null }>;
+
+  return NextResponse.json({
+    cobranza: rows[0]
+      ? {
+          id: rows[0].id,
+          estado: rows[0].estado,
+          monto: rows[0].monto,
+          asesorName: rows[0].asesor_name?.trim() ?? null,
+        }
+      : null,
+  });
 }
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
@@ -76,5 +118,16 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Comprobante no encontrado." }, { status: 404 });
   }
 
-  return NextResponse.json({ ok: true, emitidoPor: nombre });
+  // Mover también la cobranza vinculada (si se pidió). Las anuladas no se tocan.
+  let cobranzaReasignada = false;
+  if (parsed.data.reasignarCobranza) {
+    const f = (await sql`
+      UPDATE facturas SET asesor_id = ${parsed.data.asesorId}
+      WHERE comprobante_id = ${id}::uuid AND estado <> 'Anulada'
+      RETURNING id
+    `) as Array<{ id: string }>;
+    cobranzaReasignada = f.length > 0;
+  }
+
+  return NextResponse.json({ ok: true, emitidoPor: nombre, cobranzaReasignada });
 }

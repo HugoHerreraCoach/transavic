@@ -668,6 +668,27 @@ function ModalAsignarAsesora({
   const [guardando, setGuardando] = useState(false);
   const isMouseDownInside = useRef(true);
   const [error, setError] = useState<string | null>(null);
+  // Cobranza vinculada (si la hay): se consulta al abrir para PREGUNTAR si
+  // también se reasigna — la responsabilidad de cobrar suele acompañar a la venta.
+  const [cobranza, setCobranza] = useState<{
+    estado: string;
+    monto: string;
+    asesorName: string | null;
+  } | null>(null);
+  const [reasignarCobranza, setReasignarCobranza] = useState(true);
+
+  useEffect(() => {
+    let cancelado = false;
+    fetch(`/api/comprobantes/${comprobante.id}/emisor`)
+      .then((r) => (r.ok ? r.json() : { cobranza: null }))
+      .then((j) => {
+        if (!cancelado) setCobranza(j.cobranza ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [comprobante.id]);
 
   async function guardar() {
     setGuardando(true);
@@ -676,16 +697,22 @@ function ModalAsignarAsesora({
       const res = await fetch(`/api/comprobantes/${comprobante.id}/emisor`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ asesorId: asesorId || null }),
+        body: JSON.stringify({
+          asesorId: asesorId || null,
+          reasignarCobranza: reasignarCobranza && !!cobranza,
+        }),
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(typeof j.error === "string" ? j.error : "No se pudo guardar.");
       } else {
         const nombre = (j.emitidoPor ?? null) as string | null;
+        const sufijo = j.cobranzaReasignada ? " (cobranza incluida)" : "";
         onGuardado(
           nombre,
-          nombre ? `Asignado a ${nombre}` : "Se quitó la asesora (sin asignar)"
+          nombre
+            ? `Asignado a ${nombre}${sufijo}`
+            : `Se quitó la asesora (sin asignar)${sufijo}`
         );
         onClose();
       }
@@ -752,6 +779,24 @@ function ModalAsignarAsesora({
               Actual: {comprobante.emitidoPor?.trim() || "sin asignar"}
             </p>
           </div>
+          {cobranza && (
+            <label className="flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={reasignarCobranza}
+                onChange={(e) => setReasignarCobranza(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-indigo-600"
+              />
+              <span className="text-xs text-gray-700">
+                Reasignar también la cobranza vinculada (S/{" "}
+                {Number(cobranza.monto).toFixed(2)} · {cobranza.estado})
+                <span className="block text-[11px] text-gray-500 mt-0.5">
+                  Hoy la cobra: {cobranza.asesorName ?? "sin asesora"}. Con esto, la
+                  nueva asesora será la responsable de cobrarla.
+                </span>
+              </span>
+            </label>
+          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
         <div className="px-5 py-4 border-t border-gray-100 flex gap-2">

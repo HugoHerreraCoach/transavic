@@ -55,14 +55,30 @@ export async function GET(request: Request) {
         f.estado, f.numero_comprobante, f.notas,
         f.metodo_pago, f.pago_detalle,
         f.anulada_por, f.anulada_motivo,
+        f.comprobante_id,
         COALESCE(
           (SELECT array_agg(pi.id::text ORDER BY pi.orden)
            FROM pago_imagenes pi WHERE pi.factura_id = f.id),
           ARRAY[]::text[]
         ) AS imagenes_ids,
-        u.name AS asesor_name
+        u.name AS asesor_name,
+        sug.id AS asesor_sugerido_id,
+        sug.name AS asesor_sugerido_name
       FROM facturas f
       LEFT JOIN users u ON f.asesor_id = u.id
+      -- Sugerencia para cobranzas SIN asesora (solo se calcula en ese caso):
+      -- misma cascada que la emisión — asesora del pedido → asesora de la
+      -- cartera del cliente. El admin la ve como preselección al reasignar.
+      LEFT JOIN LATERAL (
+        SELECT u2.id, u2.name FROM users u2
+        WHERE f.asesor_id IS NULL
+          AND u2.role = 'asesor'
+          AND u2.id = COALESCE(
+            (SELECT p.asesor_id FROM pedidos p WHERE p.id = f.pedido_id),
+            (SELECT cl.asesor_id FROM clientes cl WHERE cl.id = f.cliente_id)
+          )
+        LIMIT 1
+      ) sug ON TRUE
       ${where}
       ORDER BY f.fecha_vencimiento ASC, f.created_at DESC
       LIMIT 200`,

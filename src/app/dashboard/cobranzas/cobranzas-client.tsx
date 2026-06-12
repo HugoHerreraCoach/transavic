@@ -22,6 +22,7 @@ import {
   FiTrash2,
   FiChevronDown,
   FiSearch,
+  FiUser,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
 
@@ -38,6 +39,11 @@ interface Factura {
   numero_comprobante: string | null;
   notas: string | null;
   asesor_name: string | null;
+  // Reasignación de asesora (admin): vínculo al comprobante + sugerencia
+  // calculada en el GET para cobranzas huérfanas (pedido → cartera del cliente).
+  comprobante_id: string | null;
+  asesor_sugerido_id: string | null;
+  asesor_sugerido_name: string | null;
   // M4 — Datos del pago
   metodo_pago?: string | null;
   pago_detalle?: string | null;
@@ -396,6 +402,71 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     } finally {
       setGuardandoVenc(null);
       setEditandoVenc(null);
+    }
+  };
+
+  // ── Reasignar asesora (solo admin) ──
+  // Mueve la responsabilidad de cobrar a otra asesora. Si la cobranza está
+  // vinculada a un comprobante, ofrece reasignarlo también (emitido_por →
+  // la asesora lo ve en su lista y cuenta para sus metas). Para cobranzas
+  // huérfanas, el GET trae una sugerencia (pedido → cartera del cliente).
+  const [asesoras, setAsesoras] = useState<{ id: string; name: string }[]>([]);
+  const [reasignarModal, setReasignarModal] = useState<Factura | null>(null);
+  const [reasignarAsesorId, setReasignarAsesorId] = useState<string>("");
+  const [reasignarTbComprobante, setReasignarTbComprobante] = useState(true);
+  const [reasignando, setReasignando] = useState(false);
+  const [reasignarError, setReasignarError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (userRole !== "admin") return;
+    fetch("/api/users?role=asesor")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Array<{ id: string; name: string }>) =>
+        setAsesoras(Array.isArray(data) ? data.map((u) => ({ id: u.id, name: u.name })) : [])
+      )
+      .catch(() => {});
+  }, [userRole]);
+
+  const abrirReasignar = (f: Factura) => {
+    setReasignarModal(f);
+    // Preselección inteligente: la asesora actual; si no hay, la sugerida.
+    const actual = asesoras.find(
+      (a) => a.name.trim().toLowerCase() === (f.asesor_name ?? "").trim().toLowerCase()
+    );
+    setReasignarAsesorId(actual?.id ?? f.asesor_sugerido_id ?? "");
+    setReasignarTbComprobante(!!f.comprobante_id);
+    setReasignarError(null);
+  };
+
+  const confirmarReasignar = async () => {
+    if (!reasignarModal) return;
+    setReasignando(true);
+    setReasignarError(null);
+    try {
+      const res = await fetch(`/api/facturas/${reasignarModal.id}/asesor`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          asesorId: reasignarAsesorId || null,
+          reasignarComprobante: reasignarTbComprobante && !!reasignarModal.comprobante_id,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof j.error === "string" ? j.error : "No se pudo reasignar.");
+      }
+      setReasignarModal(null);
+      setMensaje(
+        j.asesorName
+          ? `✅ Cobranza reasignada a ${j.asesorName}${j.comprobanteReasignado ? ` (incluido el comprobante ${j.comprobanteReasignado})` : ""}`
+          : "✅ Cobranza sin asesora asignada"
+      );
+      setTimeout(() => setMensaje(null), 4000);
+      fetchData();
+    } catch (e) {
+      setReasignarError(e instanceof Error ? e.message : "No se pudo reasignar.");
+    } finally {
+      setReasignando(false);
     }
   };
 
@@ -761,7 +832,25 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     )}
                   </td>
                   {userRole === "admin" && (
-                    <td className="px-3 py-3 text-gray-600">{f.asesor_name ?? "—"}</td>
+                    <td className="px-3 py-3 text-gray-600">
+                      <button
+                        onClick={() => abrirReasignar(f)}
+                        title="Reasignar asesora de esta cobranza"
+                        className="group inline-flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-white/70 transition-colors cursor-pointer text-left"
+                      >
+                        {f.asesor_name ? (
+                          <span>{f.asesor_name.trim()}</span>
+                        ) : (
+                          <span className="text-amber-600 font-medium">Sin asesora</span>
+                        )}
+                        <FiEdit2 className="h-2.5 w-2.5 text-gray-300 group-hover:text-gray-500 flex-shrink-0" />
+                      </button>
+                      {!f.asesor_name && f.asesor_sugerido_name && (
+                        <div className="text-[10px] text-gray-400">
+                          Sugerida: {f.asesor_sugerido_name.trim()}
+                        </div>
+                      )}
+                    </td>
                   )}
                   <td className="px-3 py-3 text-right font-mono font-semibold">
                     S/ {toNum(f.monto).toFixed(2)}
@@ -1016,6 +1105,105 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
       )}
 
       {/* Modal: Anular cobranza (pide motivo) */}
+      {reasignarModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+          onClick={() => !reasignando && setReasignarModal(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <FiUser className="text-indigo-600" /> Reasignar asesora
+              </h3>
+              <button
+                onClick={() => !reasignando && setReasignarModal(null)}
+                className="text-gray-400 hover:text-gray-700"
+                aria-label="Cerrar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              {reasignarModal.cliente_nombre}
+              {reasignarModal.numero_comprobante
+                ? ` · ${reasignarModal.numero_comprobante}`
+                : ""}{" "}
+              · S/ {toNum(reasignarModal.monto).toFixed(2)}
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 mb-1">
+              Asesora responsable de cobrar
+            </label>
+            <select
+              value={reasignarAsesorId}
+              onChange={(e) => setReasignarAsesorId(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+            >
+              <option value="">— Sin asesora (solo el admin la ve) —</option>
+              {asesoras.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name.trim()}
+                  {a.id === reasignarModal.asesor_sugerido_id ? " (sugerida)" : ""}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[11px] text-gray-400">
+              Actual: {reasignarModal.asesor_name?.trim() || "sin asesora"}
+              {!reasignarModal.asesor_name && reasignarModal.asesor_sugerido_name
+                ? ` · Sugerencia: ${reasignarModal.asesor_sugerido_name.trim()} (asesora del pedido o del cliente)`
+                : ""}
+            </p>
+
+            {reasignarModal.comprobante_id && (
+              <label className="mt-4 flex items-start gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={reasignarTbComprobante}
+                  onChange={(e) => setReasignarTbComprobante(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-indigo-600"
+                />
+                <span className="text-xs text-gray-700">
+                  Reasignar también el comprobante{" "}
+                  <strong className="font-mono">
+                    {reasignarModal.numero_comprobante ?? "vinculado"}
+                  </strong>
+                  <span className="block text-[11px] text-gray-500 mt-0.5">
+                    La asesora lo verá en su lista de comprobantes y la venta contará
+                    para sus metas.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {reasignarError && (
+              <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {reasignarError}
+              </div>
+            )}
+
+            <div className="mt-5 flex gap-3 justify-end">
+              <button
+                onClick={() => setReasignarModal(null)}
+                disabled={reasignando}
+                className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarReasignar}
+                disabled={reasignando}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {reasignando ? "Guardando..." : "Guardar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {anularModal && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
