@@ -226,7 +226,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         serieNumero: resultado.serieNumero ?? null,
         tipo: "07",
         estado: resultado.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
-        mensajeSunat: resultado.mensaje ?? null,
+        mensajeSunat: resultado.mensaje ?? resultado.error ?? null,
         pedidoId: c.pedido_id ?? null,
         empresa: c.empresa,
         asesorId: c.asesor_id ?? null,

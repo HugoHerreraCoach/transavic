@@ -3,8 +3,9 @@
 // 'rechazado'. Reutiliza el MISMO correlativo (serie+numero) — esto evita
 // huecos en la numeración correlativa que SUNAT exige sin saltos.
 //
-// Solo admin puede disparar reintento (para auditoría — la asesora pide al
-// admin si su comprobante falló).
+// Pueden reintentar: el ADMIN y la ASESORA DUEÑA del comprobante (scope de
+// `lib/comprobante-scope.ts` — mismo criterio que las guías; abierto el
+// 12 jun 2026 por el caso F002-83, antes era solo-admin).
 //
 // Flujo:
 //   1. Validar que el comprobante existe y está en estado error/rechazado
@@ -30,8 +31,11 @@ import {
   EstadoSunat,
 } from "@/lib/sunat/types";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
+import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
 export const dynamic = "force-dynamic";
+// El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
+export const maxDuration = 60;
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -42,8 +46,12 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
-  if (session.user.role !== "admin") {
-    return NextResponse.json({ error: "Solo admin puede reintentar" }, { status: 403 });
+  // Admin o asesora dueña (scope real abajo, con el comprobante cargado).
+  // Antes era solo-admin; se abrió el 12 jun 2026 (caso F002-83): un fallo de
+  // conexión dejaba a la asesora bloqueada esperando al admin — para guías ya
+  // podía reintentar ella misma.
+  if (!["admin", "asesor"].includes(session.user.role)) {
+    return NextResponse.json({ error: "Sin permiso para reintentar" }, { status: 403 });
   }
 
   const { id } = await params;
@@ -59,8 +67,10 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       c.id, c.pedido_id, c.empresa, c.tipo, c.serie, c.numero, c.serie_numero,
       c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
       c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at,
-      c.hash_cpe, c.xml_firmado_base64, c.items_json
+      c.hash_cpe, c.xml_firmado_base64, c.items_json, c.emitido_por,
+      p.asesor_id AS pedido_asesor_id
     FROM comprobantes c
+    LEFT JOIN pedidos p ON p.id = c.pedido_id
     WHERE c.id = ${id}::uuid LIMIT 1
   `) as Array<{
     id: string;
@@ -81,11 +91,24 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     hash_cpe: string | null;
     xml_firmado_base64: string | null;
     items_json: unknown;
+    emitido_por: string | null;
+    pedido_asesor_id: string | null;
   }>;
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
   const c = rows[0];
+
+  // Scope: la asesora solo reintenta SUS comprobantes (mismo criterio que el
+  // resto de endpoints por id). 404 — no revelar existencia de ajenos.
+  if (
+    !asesoraPuedeVerComprobante(session.user.role, session.user.id, session.user.name, {
+      pedidoAsesorId: c.pedido_asesor_id,
+      emitidoPor: c.emitido_por,
+    })
+  ) {
+    return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
+  }
 
   if (c.estado !== "error" && c.estado !== "rechazado") {
     return NextResponse.json(
@@ -236,7 +259,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         xml_firmado_base64 = ${Buffer.from(xmlFirmado).toString("base64")},
         cdr_base64 = ${resultadoEnvio.cdrBase64 ?? null},
         observaciones = ${observacionesStr},
-        mensaje_sunat = ${resultadoEnvio.descripcion ?? null}
+        mensaje_sunat = ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null}
       WHERE id = ${id}::uuid
     `;
 
@@ -270,7 +293,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         serieNumero: c.serie_numero,
         tipo: c.tipo,
         estado: resultadoEnvio.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
-        mensajeSunat: resultadoEnvio.descripcion ?? null,
+        mensajeSunat: resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null,
         pedidoId: c.pedido_id ?? null,
         empresa: c.empresa,
         asesorId: asesorIdPedido,
@@ -287,7 +310,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         : sunatAcepto
           ? "✅ SUNAT aceptó el comprobante en el reintento."
           : "SUNAT volvió a rechazar. Revisar mensaje_sunat para detalle.",
-      mensajeSunat: resultadoEnvio.descripcion,
+      mensajeSunat: resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null,
       observaciones: resultadoEnvio.observaciones,
     });
   } catch (err) {

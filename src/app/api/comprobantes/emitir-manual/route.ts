@@ -22,6 +22,8 @@ import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 
 export const dynamic = "force-dynamic";
+// El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
+export const maxDuration = 60;
 
 const ItemSchema = z.object({
   codigo: z.string().trim().optional(), // código interno (SellersItemIdentification)
@@ -351,7 +353,7 @@ export async function POST(request: Request) {
         serieNumero: resultado.serieNumero ?? null,
         tipo: parsed.data.tipo,
         estado: resultado.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
-        mensajeSunat: resultado.mensaje ?? null,
+        mensajeSunat: resultado.mensaje ?? resultado.error ?? null,
         pedidoId: null,
         empresa,
         asesorId: session.user.role === "asesor" ? session.user.id : null,

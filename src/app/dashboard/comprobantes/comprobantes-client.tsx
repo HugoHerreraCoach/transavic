@@ -38,7 +38,7 @@ import ModalShell from "@/components/ModalShell";
 import EmitirGuiaModal, { ComprobanteInfo } from "../guias/emitir-guia-modal";
 import EmitirGuiaDirectaModal from "../guias/emitir-guia-directa-modal";
 import { Pedido } from "@/lib/types";
-import { mensajeSunatAmigable } from "@/lib/sunat/mensajes-amigables";
+import { mensajeSunatAmigable, mensajeEstadoSinDetalle } from "@/lib/sunat/mensajes-amigables";
 
 
 interface Comprobante {
@@ -2274,7 +2274,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     c.tipo === "09"
       ? (userRole === "admin" || userRole === "asesor") &&
         ["error", "pendiente", "emitiendo", "rechazado"].includes(c.estado)
-      : userRole === "admin" && (c.estado === "error" || c.estado === "rechazado");
+      : // CPE: admin o la asesora dueña (el endpoint valida el scope real) —
+        // antes era solo-admin y la asesora quedaba bloqueada esperando por un
+        // fallo que suele ser solo de conexión (caso F002-83, 12 jun 2026).
+        (userRole === "admin" || userRole === "asesor") &&
+        (c.estado === "error" || c.estado === "rechazado");
   // Comunicación de baja: solo admin, sobre FACTURAS aceptadas/observadas (boletas → resumen).
   // Días transcurridos desde la emisión (para la regla de la Comunicación de Baja).
   const diasDesde = (iso: string) =>
@@ -2949,12 +2953,19 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
               {(c.estado === "rechazado" ||
                 c.estado === "error" ||
                 c.estado === "observado") &&
-                c.mensaje_sunat &&
                 (() => {
-                  const msg = mensajeSunatAmigable(c.mensaje_sunat);
+                  // Sin mensaje guardado (filas históricas) → fallback por estado:
+                  // la asesora siempre debe saber si el documento vale y qué hacer.
+                  const msg = c.mensaje_sunat
+                    ? mensajeSunatAmigable(c.mensaje_sunat)
+                    : (() => {
+                        const def = mensajeEstadoSinDetalle(c.estado);
+                        return def ? { amigable: def, tecnico: def } : null;
+                      })();
+                  if (!msg) return null;
                   return (
                     <div
-                      className="mb-2 text-[11px] text-red-600 line-clamp-2"
+                      className="mb-2 text-[11px] text-red-600 line-clamp-3"
                       title={msg.tecnico}
                     >
                       ⚠ {msg.amigable}
@@ -3091,10 +3102,8 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     {(() => {
                       const ui = estadoUI(c.estado);
                       const conProblema =
-                        (c.estado === "rechazado" ||
-                          c.estado === "error" ||
-                          c.estado === "observado") &&
-                        !!c.mensaje_sunat;
+                        (c.estado === "rechazado" || c.estado === "error") ||
+                        (c.estado === "observado" && !!c.mensaje_sunat);
                       return (
                         <div className="flex items-center justify-center gap-1.5">
                           <span
@@ -3106,7 +3115,10 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                           {conProblema && (
                             <span
                               title={(() => {
-                                const msg = mensajeSunatAmigable(c.mensaje_sunat ?? "");
+                                if (!c.mensaje_sunat) {
+                                  return mensajeEstadoSinDetalle(c.estado) ?? "";
+                                }
+                                const msg = mensajeSunatAmigable(c.mensaje_sunat);
                                 return msg.amigable === msg.tecnico
                                   ? msg.tecnico
                                   : `${msg.amigable}\n\nDetalle técnico: ${msg.tecnico}`;

@@ -33,7 +33,11 @@ export function esMensajeSunatCaido(mensaje: string): boolean {
     m.includes("rejected by policy") ||
     m.includes("service unavailable") ||
     m.includes("no está disponible") ||
-    m.includes("no esta disponible")
+    m.includes("no esta disponible") ||
+    m.includes("no está respondiendo") ||
+    m.includes("no esta respondiendo") ||
+    m.includes("no se recibió respuesta") ||
+    m.includes("no se recibio respuesta")
   );
 }
 
@@ -74,4 +78,22 @@ export function mensajeSunatAmigable(mensaje: string): MensajeSunat {
   }
 
   return { amigable: tecnico, tecnico };
+}
+
+/**
+ * Mensaje por defecto cuando un comprobante quedó con problema pero SIN
+ * `mensaje_sunat` (filas históricas anteriores al fix que persiste el error
+ * de conexión — caso F002-83, 12 jun 2026). La asesora necesita saber dos
+ * cosas: si el documento vale y qué hacer.
+ */
+export function mensajeEstadoSinDetalle(estado: string): string | null {
+  if (estado === "error") {
+    // Corto a propósito: en móvil (360px) la card corta a ~3 líneas y la
+    // garantía "no se duplica" debe entrar SÍ o SÍ.
+    return 'Falló la conexión con SUNAT. NO quedó registrado — usa ⋯ → "Reintentar envío" (mismo número, no se duplica).';
+  }
+  if (estado === "rechazado") {
+    return "SUNAT lo rechazó; NO quedó registrado. Si fue una caída de SUNAT, reintenta el envío; si es por datos, consulta al administrador.";
+  }
+  return null;
 }

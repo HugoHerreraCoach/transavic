@@ -292,7 +292,7 @@ export async function emitirComprobante(
         ${Buffer.from(xmlFirmado).toString("base64")},
         ${resultadoEnvio.cdrBase64 ?? null},
         ${observacionesStr},
-        ${resultadoEnvio.descripcion ?? null},
+        ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null},
         ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
         ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
