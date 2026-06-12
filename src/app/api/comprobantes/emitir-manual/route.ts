@@ -287,10 +287,20 @@ export async function POST(request: Request) {
 
     if (debeCrearCobranza) {
       try {
+        // Asesor responsable de la cobranza: la emisora si es asesora → el de la
+        // ficha del cliente. Antes, las emisiones del ADMIN dejaban cobranzas
+        // SIN asesor (bug reportado 11 jun 2026).
+        let cobranzaAsesorId: string | null =
+          session.user.role === "asesor" ? session.user.id : null;
+        if (!cobranzaAsesorId && cliente.id) {
+          const sqlAsesor = neon(process.env.DATABASE_URL!);
+          const cliRows = await sqlAsesor`SELECT asesor_id FROM clientes WHERE id = ${cliente.id}::uuid`;
+          cobranzaAsesorId = (cliRows[0]?.asesor_id as string | null) ?? null;
+        }
         await crearFacturaStandalone({
           clienteNombre: clienteFinal.razonSocial,
           clienteId: cliente.id ?? null,
-          asesorId: session.user.role === "asesor" ? session.user.id : null,
+          asesorId: cobranzaAsesorId,
           monto: totalConIgv,
           // Crédito → plazo del form. Contado (factura sin "ya cobrado") →
           // plazo del CLIENTE (plazo_pago_dias) o el default del negocio, en vez

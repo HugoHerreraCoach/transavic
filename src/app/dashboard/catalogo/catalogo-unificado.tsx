@@ -15,6 +15,11 @@
 //
 // Banner ámbar arriba si hay productos sin precio_venta (no suman a ventas/
 // metas/reportes hasta que lo seteen).
+//
+// Modo asesora (isAdmin=false): SOLO LECTURA de la lista de precios de venta —
+// sin columna Compra/Margen, sin edición inline ni modales, sin alta de
+// productos (el backend ya devuelve precio_compra: null para ese rol).
+// El botón/modal "Historial de precios" es SOLO admin.
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -29,6 +34,7 @@ import {
   FiSave,
   FiTrendingUp,
   FiCheckCircle,
+  FiClock,
 } from "react-icons/fi";
 import type { Producto } from "@/lib/types";
 
@@ -64,6 +70,29 @@ function getEmoji(cat: string): string {
 function getBadge(cat: string): string {
   return DEFAULT_BADGES[cat] ?? "bg-gray-100 text-gray-700";
 }
+function fmtFechaLima(fecha: string): string {
+  const d = new Date(fecha);
+  if (Number.isNaN(d.getTime())) return fecha;
+  return d.toLocaleString("es-PE", {
+    timeZone: "America/Lima",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// Registro del historial de precios (GET /api/precios/historial).
+interface HistorialPrecio {
+  tipo: "catalogo" | "venta_bajo_catalogo";
+  fecha: string;
+  producto: string;
+  usuario: string;
+  precio_anterior: number | string | null;
+  precio_nuevo: number | string;
+  autorizado_por: string | null;
+}
 
 interface InlineEdit {
   productoId: string;
@@ -92,7 +121,7 @@ interface ModalNuevo {
   precio_compra: string;
 }
 
-export default function CatalogoUnificado() {
+export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   const [busqueda, setBusqueda] = useState("");
@@ -130,15 +159,34 @@ export default function CatalogoUnificado() {
   });
   const customUnitRef = useRef<HTMLInputElement>(null);
 
+  // Modal de historial de precios (solo admin).
+  const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [historial, setHistorial] = useState<HistorialPrecio[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(false);
+  const [errorHistorial, setErrorHistorial] = useState<string | null>(null);
+  const [filtroHistorial, setFiltroHistorial] = useState("");
+
   const fetchProductos = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/productos");
+      if (!res.ok) {
+        // El GET ahora exige sesión: un 401 (sesión expirada) no debe dejar la
+        // lista vacía en silencio.
+        throw new Error(
+          res.status === 401
+            ? "Tu sesión expiró — vuelve a iniciar sesión."
+            : "No se pudieron cargar los productos"
+        );
+      }
       const json = await res.json();
       setProductos(json.data ?? []);
     } catch (e) {
       console.error("Error cargando productos", e);
-      setMensaje({ tipo: "error", texto: "No se pudieron cargar los productos" });
+      setMensaje({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "No se pudieron cargar los productos",
+      });
     } finally {
       setLoading(false);
     }
@@ -217,6 +265,7 @@ export default function CatalogoUnificado() {
   // Edición inline de precio
   // ════════════════════════════════════════════════════════════════════
   const iniciarInline = (productoId: string, campo: InlineEdit["campo"], valorInicial: number | string | null | undefined) => {
+    if (!isAdmin) return; // asesora: lista de precios en solo lectura
     setInline({
       productoId,
       campo,
@@ -466,6 +515,38 @@ export default function CatalogoUnificado() {
   };
 
   // ════════════════════════════════════════════════════════════════════
+  // Historial de precios (solo admin)
+  // ════════════════════════════════════════════════════════════════════
+  const abrirHistorial = async () => {
+    setHistorialAbierto(true);
+    setFiltroHistorial("");
+    setCargandoHistorial(true);
+    setErrorHistorial(null);
+    try {
+      const res = await fetch("/api/precios/historial");
+      if (!res.ok) throw new Error("No se pudo cargar el historial");
+      const json = await res.json();
+      const data: HistorialPrecio[] = json.data ?? [];
+      // Orden defensivo por fecha DESC (lo más reciente arriba).
+      data.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setHistorial(data);
+    } catch (e) {
+      console.error("Error cargando historial de precios", e);
+      setErrorHistorial(
+        e instanceof Error ? e.message : "No se pudo cargar el historial"
+      );
+    } finally {
+      setCargandoHistorial(false);
+    }
+  };
+
+  const historialFiltrado = useMemo(() => {
+    const q = filtroHistorial.trim().toLowerCase();
+    if (!q) return historial;
+    return historial.filter((h) => h.producto.toLowerCase().includes(q));
+  }, [historial, filtroHistorial]);
+
+  // ════════════════════════════════════════════════════════════════════
   // Render
   // ════════════════════════════════════════════════════════════════════
   if (loading) {
@@ -492,21 +573,34 @@ export default function CatalogoUnificado() {
             Catálogo
           </h1>
           <p className="text-gray-500 mt-1 text-sm">
-            Productos, precios y márgenes ·{" "}
+            {isAdmin ? "Productos, precios y márgenes" : "Lista de precios de venta"} ·{" "}
             <span className="text-amber-700">precios <strong>con IGV incluido</strong></span>
           </p>
         </div>
-        <button
-          onClick={abrirNuevo}
-          className="flex items-center justify-center gap-2 bg-red-600 text-white px-5 py-2.5 rounded-lg hover:bg-red-700 transition active:scale-[0.98] font-semibold shadow-sm"
-        >
-          <FiPlus />
-          Agregar Producto
-        </button>
+        {isAdmin && (
+          <div className="flex flex-col sm:flex-row gap-2">
+            <button
+              onClick={abrirHistorial}
+              className="flex items-center justify-center gap-2 bg-white text-gray-700 border border-gray-300 px-5 py-2.5 rounded-lg hover:bg-gray-50 transition active:scale-[0.98] font-semibold shadow-sm"
+            >
+              <FiClock />
+              Historial de precios
+            </button>
+            <button
+              onClick={abrirNuevo}
+              className="flex items-center justify-center gap-2 bg-red-600 text-white px-5 py-2.5 rounded-lg hover:bg-red-700 transition active:scale-[0.98] font-semibold shadow-sm"
+            >
+              <FiPlus />
+              Agregar Producto
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* ── KPIs del catálogo: panorama de un vistazo ── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      {/* ── KPIs del catálogo: panorama de un vistazo ──
+          Asesora: solo los neutrales (Productos / Listos para vender); los de
+          margen y "sin precio" (gestión de precios) son solo admin. */}
+      <div className={`grid grid-cols-2 ${isAdmin ? "lg:grid-cols-4" : ""} gap-3 mb-5`}>
         <KpiCatalogo
           color="gray"
           icon={<FiPackage />}
@@ -521,23 +615,27 @@ export default function CatalogoUnificado() {
           value={conPrecio}
           hint="con precio asignado"
         />
-        <KpiCatalogo
-          color="amber"
-          icon={<FiAlertTriangle />}
-          label="Sin precio"
-          value={productosSinPrecio}
-          hint={productosSinPrecio > 0 ? (soloSinPrecio ? "← mostrando estos" : "clic para ver") : "todo OK"}
-          highlight={productosSinPrecio > 0}
-          active={soloSinPrecio}
-          onClick={productosSinPrecio > 0 ? () => setSoloSinPrecio((v) => !v) : undefined}
-        />
-        <KpiCatalogo
-          color="indigo"
-          icon={<FiTrendingUp />}
-          label="Margen promedio"
-          value={margenPromedio === null ? "—" : `${margenPromedio.toFixed(0)}%`}
-          hint="de los que tienen costo"
-        />
+        {isAdmin && (
+          <KpiCatalogo
+            color="amber"
+            icon={<FiAlertTriangle />}
+            label="Sin precio"
+            value={productosSinPrecio}
+            hint={productosSinPrecio > 0 ? (soloSinPrecio ? "← mostrando estos" : "clic para ver") : "todo OK"}
+            highlight={productosSinPrecio > 0}
+            active={soloSinPrecio}
+            onClick={productosSinPrecio > 0 ? () => setSoloSinPrecio((v) => !v) : undefined}
+          />
+        )}
+        {isAdmin && (
+          <KpiCatalogo
+            color="indigo"
+            icon={<FiTrendingUp />}
+            label="Margen promedio"
+            value={margenPromedio === null ? "—" : `${margenPromedio.toFixed(0)}%`}
+            hint="de los que tienen costo"
+          />
+        )}
       </div>
 
       {/* Toast flotante (no empuja el contenido como un banner; entra suave desde
@@ -593,10 +691,12 @@ export default function CatalogoUnificado() {
       ) : (
         <>
           {/* Pista de edición inline (descubrible sin tener que adivinar) */}
-          <p className="hidden lg:flex items-center gap-1.5 text-xs text-gray-400 mb-2">
-            <FiEdit2 className="h-3 w-3" />
-            Toca un precio de compra o venta para editarlo al instante.
-          </p>
+          {isAdmin && (
+            <p className="hidden lg:flex items-center gap-1.5 text-xs text-gray-400 mb-2">
+              <FiEdit2 className="h-3 w-3" />
+              Toca un precio de compra o venta para editarlo al instante.
+            </p>
+          )}
           {/* Desktop */}
           <div className="hidden lg:block overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
             <table className="min-w-full divide-y divide-gray-200">
@@ -611,18 +711,24 @@ export default function CatalogoUnificado() {
                   <th className="px-3 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Unidad
                   </th>
-                  <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Compra S/
-                  </th>
+                  {isAdmin && (
+                    <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Compra S/
+                    </th>
+                  )}
                   <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
                     Venta S/
                   </th>
-                  <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Margen
-                  </th>
-                  <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    Acciones
-                  </th>
+                  {isAdmin && (
+                    <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Margen
+                    </th>
+                  )}
+                  {isAdmin && (
+                    <th className="px-3 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      Acciones
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-100">
@@ -635,7 +741,7 @@ export default function CatalogoUnificado() {
                     <tr
                       key={p.id}
                       className={`hover:bg-gray-50 transition-colors ${
-                        sinPrecio ? "bg-amber-50/30" : ""
+                        isAdmin && sinPrecio ? "bg-amber-50/30" : ""
                       }`}
                     >
                       <td className="px-4 py-4">
@@ -660,39 +766,44 @@ export default function CatalogoUnificado() {
                       </td>
                       <td className="px-3 py-4 text-sm text-gray-600">{p.unidad}</td>
 
-                      {/* Precio compra (inline-editable, descubrible con lápiz) */}
-                      <td
-                        className="px-3 py-4 text-right text-sm group/celda cursor-pointer"
-                        onClick={() =>
-                          inline?.productoId !== p.id &&
-                          iniciarInline(p.id, "precio_compra", p.precio_compra)
-                        }
-                      >
-                        {inline?.productoId === p.id && inline.campo === "precio_compra" ? (
-                          <CeldaInline
-                            value={inline.valor}
-                            onChange={(v) => setInline({ ...inline, valor: v })}
-                            onSave={guardarInline}
-                            onCancel={cancelarInline}
-                            disabled={guardandoInline}
-                          />
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 justify-end rounded-lg px-2 py-1 -mr-2 text-gray-400 tabular-nums group-hover/celda:bg-blue-50 group-hover/celda:text-blue-700 transition-colors">
-                            {fmtMoney(p.precio_compra)}
-                            <FiEdit2 className="h-3 w-3 text-gray-300 group-hover/celda:text-blue-500 transition-colors" />
-                          </span>
-                        )}
-                      </td>
+                      {/* Precio compra (inline-editable, descubrible con lápiz) — solo admin */}
+                      {isAdmin && (
+                        <td
+                          className="px-3 py-4 text-right text-sm group/celda cursor-pointer"
+                          onClick={() =>
+                            inline?.productoId !== p.id &&
+                            iniciarInline(p.id, "precio_compra", p.precio_compra)
+                          }
+                        >
+                          {inline?.productoId === p.id && inline.campo === "precio_compra" ? (
+                            <CeldaInline
+                              value={inline.valor}
+                              onChange={(v) => setInline({ ...inline, valor: v })}
+                              onSave={guardarInline}
+                              onCancel={cancelarInline}
+                              disabled={guardandoInline}
+                            />
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 justify-end rounded-lg px-2 py-1 -mr-2 text-gray-400 tabular-nums group-hover/celda:bg-blue-50 group-hover/celda:text-blue-700 transition-colors">
+                              {fmtMoney(p.precio_compra)}
+                              <FiEdit2 className="h-3 w-3 text-gray-300 group-hover/celda:text-blue-500 transition-colors" />
+                            </span>
+                          )}
+                        </td>
+                      )}
 
-                      {/* Precio venta (inline-editable; si falta, botón accionable) */}
+                      {/* Precio venta (admin: inline-editable; asesora: solo lectura) */}
                       <td
-                        className="px-3 py-4 text-right text-sm group/celda cursor-pointer"
+                        className={`px-3 py-4 text-right text-sm ${
+                          isAdmin ? "group/celda cursor-pointer" : ""
+                        }`}
                         onClick={() =>
+                          isAdmin &&
                           inline?.productoId !== p.id &&
                           iniciarInline(p.id, "precio_venta", p.precio_venta)
                         }
                       >
-                        {inline?.productoId === p.id && inline.campo === "precio_venta" ? (
+                        {isAdmin && inline?.productoId === p.id && inline.campo === "precio_venta" ? (
                           <CeldaInline
                             value={inline.valor}
                             onChange={(v) => setInline({ ...inline, valor: v })}
@@ -701,57 +812,67 @@ export default function CatalogoUnificado() {
                             disabled={guardandoInline}
                           />
                         ) : sinPrecio ? (
-                          <span className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 group-hover/celda:bg-amber-200 transition-colors">
-                            <FiPlus className="h-3.5 w-3.5" /> Poner precio
-                          </span>
+                          isAdmin ? (
+                            <span className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 group-hover/celda:bg-amber-200 transition-colors">
+                              <FiPlus className="h-3.5 w-3.5" /> Poner precio
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )
                         ) : (
                           <span className="inline-flex items-baseline gap-1.5 justify-end rounded-lg px-2 py-1 -mr-2 text-gray-900 tabular-nums group-hover/celda:bg-blue-50 group-hover/celda:text-blue-700 transition-colors">
                             <span className="text-xs text-gray-400 font-normal">S/</span>
                             <span className="text-base font-bold">{fmtMoney(p.precio_venta)}</span>
-                            <FiEdit2 className="h-3 w-3 self-center text-gray-300 group-hover/celda:text-blue-500 transition-colors" />
+                            {isAdmin && (
+                              <FiEdit2 className="h-3 w-3 self-center text-gray-300 group-hover/celda:text-blue-500 transition-colors" />
+                            )}
                           </span>
                         )}
                       </td>
 
-                      <td className="px-3 py-4 text-right">
-                        {m !== null ? (
-                          <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
-                              m >= 25
-                                ? "bg-green-100 text-green-700"
-                                : m >= 15
-                                ? "bg-amber-100 text-amber-700"
-                                : "bg-red-100 text-red-700"
-                            }`}
-                            title={
-                              m >= 25 ? "Buen margen" : m >= 15 ? "Margen ajustado" : "Margen bajo"
-                            }
-                          >
-                            {m.toFixed(0)}%
-                          </span>
-                        ) : (
-                          <span className="text-gray-300 text-xs">—</span>
-                        )}
-                      </td>
+                      {isAdmin && (
+                        <td className="px-3 py-4 text-right">
+                          {m !== null ? (
+                            <span
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
+                                m >= 25
+                                  ? "bg-green-100 text-green-700"
+                                  : m >= 15
+                                  ? "bg-amber-100 text-amber-700"
+                                  : "bg-red-100 text-red-700"
+                              }`}
+                              title={
+                                m >= 25 ? "Buen margen" : m >= 15 ? "Margen ajustado" : "Margen bajo"
+                              }
+                            >
+                              {m.toFixed(0)}%
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                      )}
 
-                      <td className="px-3 py-4 text-right">
-                        <div className="flex justify-end gap-1">
-                          <button
-                            onClick={() => abrirEdit(p)}
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Editar completo"
-                          >
-                            <FiEdit2 size={16} />
-                          </button>
-                          <button
-                            onClick={() => eliminar(p)}
-                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Desactivar"
-                          >
-                            <FiTrash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
+                      {isAdmin && (
+                        <td className="px-3 py-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => abrirEdit(p)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Editar completo"
+                            >
+                              <FiEdit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => eliminar(p)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Desactivar"
+                            >
+                              <FiTrash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -770,7 +891,9 @@ export default function CatalogoUnificado() {
                 <div
                   key={p.id}
                   className={`rounded-xl border p-4 ${
-                    sinPrecio ? "bg-amber-50/40 border-amber-200" : "bg-white border-gray-200"
+                    isAdmin && sinPrecio
+                      ? "bg-amber-50/40 border-amber-200"
+                      : "bg-white border-gray-200"
                   }`}
                 >
                   <div className="flex justify-between items-start mb-2">
@@ -792,20 +915,22 @@ export default function CatalogoUnificado() {
                         )}
                       </div>
                     </div>
-                    <div className="flex gap-1 flex-shrink-0">
-                      <button
-                        onClick={() => abrirEdit(p)}
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
-                      >
-                        <FiEdit2 size={16} />
-                      </button>
-                      <button
-                        onClick={() => eliminar(p)}
-                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                      >
-                        <FiTrash2 size={16} />
-                      </button>
-                    </div>
+                    {isAdmin && (
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => abrirEdit(p)}
+                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
+                        >
+                          <FiEdit2 size={16} />
+                        </button>
+                        <button
+                          onClick={() => eliminar(p)}
+                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                        >
+                          <FiTrash2 size={16} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-end justify-between mt-3 pt-3 border-t border-gray-100">
                     <div className="min-w-0">
@@ -813,12 +938,16 @@ export default function CatalogoUnificado() {
                         Precio de venta
                       </div>
                       {sinPrecio ? (
-                        <button
-                          onClick={() => abrirEdit(p)}
-                          className="mt-1.5 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 active:scale-[0.97] transition"
-                        >
-                          <FiPlus className="h-3.5 w-3.5" /> Poner precio
-                        </button>
+                        isAdmin ? (
+                          <button
+                            onClick={() => abrirEdit(p)}
+                            className="mt-1.5 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 active:scale-[0.97] transition"
+                          >
+                            <FiPlus className="h-3.5 w-3.5" /> Poner precio
+                          </button>
+                        ) : (
+                          <div className="mt-0.5 text-sm text-gray-300">—</div>
+                        )
                       ) : (
                         <div className="flex items-baseline gap-1 tabular-nums mt-0.5">
                           <span className="text-xs text-gray-400">S/</span>
@@ -828,24 +957,26 @@ export default function CatalogoUnificado() {
                         </div>
                       )}
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      {m !== null && (
-                        <span
-                          className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
-                            m >= 25
-                              ? "bg-green-100 text-green-700"
-                              : m >= 15
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {m.toFixed(0)}% margen
-                        </span>
-                      )}
-                      <div className="text-[11px] text-gray-400 mt-1.5 tabular-nums">
-                        Compra S/ {fmtMoney(p.precio_compra)}
+                    {isAdmin && (
+                      <div className="text-right flex-shrink-0">
+                        {m !== null && (
+                          <span
+                            className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
+                              m >= 25
+                                ? "bg-green-100 text-green-700"
+                                : m >= 15
+                                ? "bg-amber-100 text-amber-700"
+                                : "bg-red-100 text-red-700"
+                            }`}
+                          >
+                            {m.toFixed(0)}% margen
+                          </span>
+                        )}
+                        <div className="text-[11px] text-gray-400 mt-1.5 tabular-nums">
+                          Compra S/ {fmtMoney(p.precio_compra)}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               );
@@ -880,8 +1011,8 @@ export default function CatalogoUnificado() {
         </div>
       )}
 
-      {/* Modal de edición completa */}
-      {modalEdit.abierto && (
+      {/* Modal de edición completa (solo admin) */}
+      {isAdmin && modalEdit.abierto && (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 anim-fade"
           onClick={cerrarEdit}
@@ -988,8 +1119,8 @@ export default function CatalogoUnificado() {
         </div>
       )}
 
-      {/* Modal nuevo producto */}
-      {modalNuevo.abierto && (
+      {/* Modal nuevo producto (solo admin) */}
+      {isAdmin && modalNuevo.abierto && (
         <div
           className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 anim-fade"
           onClick={cerrarNuevo}
@@ -1144,6 +1275,122 @@ export default function CatalogoUnificado() {
                 <FiPlus size={14} />
                 {guardandoModal ? "Guardando…" : "Agregar"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal historial de precios (solo admin) */}
+      {isAdmin && historialAbierto && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex justify-center items-center p-4 anim-fade"
+          onClick={() => setHistorialAbierto(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col anim-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b flex justify-between items-center">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <FiClock className="text-red-600" />
+                Historial de precios
+              </h2>
+              <button
+                onClick={() => setHistorialAbierto(false)}
+                className="text-gray-500 hover:text-gray-800"
+                aria-label="Cerrar"
+              >
+                <FiX size={20} />
+              </button>
+            </div>
+
+            {/* Filtro client-side por producto */}
+            <div className="px-5 pt-4">
+              <div className="relative">
+                <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Filtrar por producto…"
+                  value={filtroHistorial}
+                  onChange={(e) => setFiltroHistorial(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="p-5 overflow-y-auto flex-1">
+              {cargandoHistorial ? (
+                <div className="py-10 text-center text-gray-400 text-sm">
+                  Cargando historial…
+                </div>
+              ) : errorHistorial ? (
+                <div className="py-10 text-center text-red-600 text-sm">{errorHistorial}</div>
+              ) : historialFiltrado.length === 0 ? (
+                <div className="py-10 text-center text-gray-400 text-sm">
+                  {historial.length === 0
+                    ? "Aún no hay cambios registrados."
+                    : "Ningún producto coincide con el filtro."}
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {historialFiltrado.map((h, i) => {
+                    const ant = toNum(h.precio_anterior);
+                    const nue = toNum(h.precio_nuevo);
+                    const colorNuevo =
+                      ant !== null && nue !== null
+                        ? nue > ant
+                          ? "text-green-600"
+                          : nue < ant
+                            ? "text-red-600"
+                            : "text-gray-900"
+                        : "text-gray-900";
+                    return (
+                      <li key={`${h.fecha}-${h.producto}-${i}`} className="py-3 flex flex-col gap-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                              h.tipo === "catalogo"
+                                ? "bg-indigo-100 text-indigo-700"
+                                : "bg-amber-100 text-amber-700"
+                            }`}
+                          >
+                            {h.tipo === "catalogo"
+                              ? "Cambio de catálogo"
+                              : "Venta bajo catálogo autorizada"}
+                          </span>
+                          <span className="text-xs text-gray-400">{fmtFechaLima(h.fecha)}</span>
+                        </div>
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                          <span className="text-sm font-medium text-gray-800">{h.producto}</span>
+                          <span className="text-sm tabular-nums">
+                            {ant === null ? (
+                              <>
+                                <span className="text-gray-500">Alta inicial</span>{" "}
+                                <span className="text-gray-400">→</span>{" "}
+                                <span className="font-bold text-gray-900">
+                                  S/ {fmtMoney(h.precio_nuevo)}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="text-gray-500">S/ {fmtMoney(h.precio_anterior)}</span>{" "}
+                                <span className="text-gray-400">→</span>{" "}
+                                <span className={`font-bold ${colorNuevo}`}>
+                                  S/ {fmtMoney(h.precio_nuevo)}
+                                </span>
+                              </>
+                            )}
+                          </span>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          por {h.usuario}
+                          {h.autorizado_por ? ` · autorizó ${h.autorizado_por}` : ""}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </div>
           </div>
         </div>

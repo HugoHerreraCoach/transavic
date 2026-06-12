@@ -144,7 +144,8 @@ const navItems: NavItem[] = [
     href: "/dashboard/catalogo",
     label: "Catálogo",
     icon: <FiBox className="h-5 w-5 flex-shrink-0" />,
-    adminOnly: true,
+    // Asesoras: lista de precios en solo lectura (11 jun 2026)
+    roles: ["admin", "asesor"],
   },
   {
     href: "/dashboard/incentivos",

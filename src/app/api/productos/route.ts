@@ -18,6 +18,15 @@ const ProductoSchema = z.object({
 
 export async function GET() {
   try {
+    // El catálogo ahora lo ven también las asesoras (11 jun 2026), pero el
+    // PRECIO DE COMPRA (margen del negocio) es SOLO de admin — y el control
+    // real va aquí, no en la UI (antes este GET ni siquiera pedía sesión).
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+    const esAdmin = session.user.role === "admin";
+
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
       throw new Error("DATABASE_URL no está definida");
@@ -38,7 +47,13 @@ export async function GET() {
         nombre ASC
     `;
 
-    return NextResponse.json({ data: productos });
+    // Mantener la key `precio_compra` (los tipos del cliente la esperan) pero
+    // en null para roles no-admin.
+    const data = esAdmin
+      ? productos
+      : productos.map((p) => ({ ...p, precio_compra: null }));
+
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("Error al obtener productos:", error);
     return NextResponse.json(

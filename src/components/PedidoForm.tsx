@@ -44,6 +44,17 @@ const getTodayString = () => {
 const datosIniciales: TicketData = { cliente: '', razonSocial: '', rucDni: '', whatsapp: '', direccion: '', direccionMapa: '', distrito: 'La Victoria', tipoCliente: 'Frecuente', detalle: '', horaEntrega: '', notas: '', empresa: 'Transavic', fecha: getTodayString(), latitude: null, longitude: null, asesorId: '' };
 type AppState = 'editing' | 'previewing' | 'confirmed';
 
+// Respuesta de GET /api/clientes/verificar — anti-duplicados entre asesoras.
+// Solo afecta la oferta "Guardar como Cliente Frecuente"; el PEDIDO nunca se bloquea.
+type DuplicadoCliente = {
+  match: 'ruc_dni' | 'whatsapp' | 'nombre';
+  exacto: boolean;
+  asesora_nombre: string | null;
+  es_mio: boolean;
+  cliente_id: string | null;
+  cliente_nombre: string | null;
+};
+
 
 
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
@@ -76,6 +87,10 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const [clienteGuardadoId, setClienteGuardadoId] = useState<string | null>(null);
   const [showGuardarCliente, setShowGuardarCliente] = useState(false);
   const [guardandoCliente, setGuardandoCliente] = useState(false);
+  // Duplicado exacto (RUC/DNI o WhatsApp) detectado al confirmar el pedido.
+  // Si es de OTRA asesora, se reemplaza el botón "Guardar como Cliente
+  // Frecuente" por un aviso discreto. El pedido en sí NUNCA se bloquea.
+  const [dupFrecuente, setDupFrecuente] = useState<DuplicadoCliente | null>(null);
   const [formResetKey, setFormResetKey] = useState(0); // Forces child components to reset
 
   // P1.7 — Duplicar pedido: si veníamos del botón "Duplicar" de la lista, se
@@ -273,6 +288,42 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     }));
   };
 
+  // Al confirmarse el pedido (cuando aparece la oferta de guardar como
+  // frecuente), verifica contra /api/clientes/verificar si el WhatsApp o el
+  // RUC/DNI del form ya pertenecen a un cliente registrado. Solo cuentan los
+  // matches EXACTOS; prioriza el de OTRA asesora (es el que oculta el botón).
+  useEffect(() => {
+    if (appState !== 'confirmed' || clienteGuardadoId) {
+      setDupFrecuente(null);
+      return;
+    }
+    const ruc = (formDatos.rucDni ?? '').trim();
+    const wa = (formDatos.whatsapp ?? '').replace(/\D/g, '');
+    if (!ruc && wa.length < 6) {
+      setDupFrecuente(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        if (ruc) params.set('ruc_dni', ruc);
+        if (wa.length >= 6) params.set('whatsapp', wa);
+        const res = await fetch(`/api/clientes/verificar?${params}`, { signal: ctrl.signal });
+        if (!res.ok) return;
+        const json = await res.json();
+        const exactos: DuplicadoCliente[] = (json.duplicados ?? []).filter(
+          (d: DuplicadoCliente) => d.exacto && (d.match === 'ruc_dni' || d.match === 'whatsapp')
+        );
+        const ajeno = exactos.find(d => !d.es_mio);
+        setDupFrecuente(ajeno ?? exactos[0] ?? null);
+      } catch {
+        /* abortado o sin conexión — el backend igual valida al guardar */
+      }
+    })();
+    return () => ctrl.abort();
+  }, [appState, clienteGuardadoId, formDatos.rucDni, formDatos.whatsapp]);
+
   const handleGuardarCliente = async () => {
     setGuardandoCliente(true);
     try {
@@ -298,6 +349,29 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
       if (res.ok) {
         setShowGuardarCliente(false);
         alert('✅ Cliente guardado como frecuente');
+      } else if (res.status === 409) {
+        // Cliente duplicado (RUC/DNI o WhatsApp ya registrados).
+        const err = await res.json().catch(() => null);
+        setShowGuardarCliente(false);
+        if (err?.error === 'cliente_duplicado' && err.es_mio) {
+          // Propio: no insistir — ya existe en su cartera. Marcamos el id para
+          // que la oferta de guardar no vuelva a aparecer.
+          if (err.cliente_id) setClienteGuardadoId(err.cliente_id);
+          alert('Ya está guardado en tus clientes.');
+        } else if (err?.error === 'cliente_duplicado') {
+          // De otra asesora: aviso claro y se oculta la oferta de guardar.
+          alert(err?.mensaje || `Cliente ya registrado · Ejecutiva responsable: ${err?.asesora_nombre || 'otra asesora'}.`);
+          setDupFrecuente({
+            match: err?.campo === 'whatsapp' ? 'whatsapp' : 'ruc_dni',
+            exacto: true,
+            asesora_nombre: err?.asesora_nombre ?? null,
+            es_mio: false,
+            cliente_id: null,
+            cliente_nombre: null,
+          });
+        } else {
+          alert('Error al guardar cliente');
+        }
       } else {
         alert('Error al guardar cliente');
       }
@@ -692,10 +766,17 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
             {appState === 'confirmed' && (
               <>
                 <button onClick={handleNuevoPedido} className="w-full bg-gray-700 text-white font-bold py-3 px-4 rounded-md hover:bg-gray-800 transition-colors flex items-center justify-center"> <FiRotateCcw className="mr-2" /> Registrar Nuevo Pedido </button>
-                {!clienteGuardadoId && !showGuardarCliente && (
+                {/* Si el cliente ya pertenece a OTRA asesora, no se ofrece guardarlo
+                    como frecuente (el pedido en sí ya quedó registrado igual). */}
+                {!clienteGuardadoId && dupFrecuente && !dupFrecuente.es_mio && (
+                  <p className="w-full text-center text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md py-2.5 px-3">
+                    ✓ Cliente ya registrado · Ejecutiva responsable: {dupFrecuente.asesora_nombre || 'otra asesora'}
+                  </p>
+                )}
+                {!clienteGuardadoId && !showGuardarCliente && !(dupFrecuente && !dupFrecuente.es_mio) && (
                   <button onClick={() => setShowGuardarCliente(true)} className="w-full bg-amber-500 text-white font-bold py-3 px-4 rounded-md hover:bg-amber-600 transition-colors flex items-center justify-center"> <FiStar className="mr-2" /> Guardar como Cliente Frecuente </button>
                 )}
-                {showGuardarCliente && (
+                {showGuardarCliente && !(dupFrecuente && !dupFrecuente.es_mio) && (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-3">
                     <p className="text-sm text-amber-800 font-medium">¿Guardar <strong>{formDatos.cliente}</strong> como cliente frecuente? Sus datos se auto-llenarán en futuros pedidos.</p>
                     <div className="flex gap-2">

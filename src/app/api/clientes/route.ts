@@ -243,6 +243,55 @@ export async function POST(request: Request) {
       ? asesor_id
       : session.user.id;
 
+    // ── Anti-duplicados (11 jun 2026, protege la cartera entre asesoras) ──
+    // Match EXACTO por RUC/DNI o WhatsApp (últimos 9 dígitos):
+    //   · cliente de OTRA asesora → 409 DURO (la vía legítima es pedir la
+    //     transferencia al admin, que ya existe en /dashboard/clientes);
+    //   · cliente de la MISMA asesora → 409 blando: el body puede reenviar
+    //     `permitir_duplicado: true` (caso real: cadena con varias sucursales).
+    //   · admin exento (sanea/asigna a propósito). Nombre/dirección nunca bloquean.
+    if (session.user.role === "asesor") {
+      const rucNorm = (ruc_dni ?? "").trim();
+      const waNorm = (whatsapp ?? "").replace(/\D/g, "").slice(-9);
+      const permitirDuplicado = body?.permitir_duplicado === true;
+      const dups = await sql`
+        SELECT c.id, c.asesor_id, u.name AS asesor_name,
+               CASE WHEN ${rucNorm} <> '' AND TRIM(COALESCE(c.ruc_dni,'')) = ${rucNorm} THEN 'ruc_dni' ELSE 'whatsapp' END AS campo
+        FROM clientes c LEFT JOIN users u ON u.id = c.asesor_id
+        WHERE (${rucNorm} <> '' AND TRIM(COALESCE(c.ruc_dni,'')) = ${rucNorm})
+           OR (${waNorm} <> '' AND LENGTH(${waNorm}) = 9
+               AND RIGHT(regexp_replace(COALESCE(c.whatsapp,''), '\\D', '', 'g'), 9) = ${waNorm})
+        LIMIT 1
+      `;
+      if (dups.length > 0) {
+        const dup = dups[0];
+        const esMio = dup.asesor_id === session.user.id;
+        if (!esMio) {
+          return NextResponse.json(
+            {
+              error: "cliente_duplicado",
+              campo: dup.campo,
+              asesora_nombre: (dup.asesor_name as string | null)?.trim() || "otra asesora",
+              mensaje: `Este cliente ya está registrado y tiene una ejecutiva asignada (${(dup.asesor_name as string | null)?.trim() || "otra asesora"}). Si crees que debería ser tuyo, pide la transferencia a un administrador.`,
+            },
+            { status: 409 }
+          );
+        }
+        if (!permitirDuplicado) {
+          return NextResponse.json(
+            {
+              error: "cliente_duplicado",
+              campo: dup.campo,
+              es_mio: true,
+              cliente_id: dup.id,
+              mensaje: "Ya tienes un cliente registrado con este documento/celular. Puedes usar ese registro, o confirmar que quieres crear otro (ej. otra sucursal).",
+            },
+            { status: 409 }
+          );
+        }
+      }
+    }
+
     const result = await sql`
       INSERT INTO clientes (nombre, razon_social, ruc_dni, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, rubro, hora_entrega, notas, empresa, latitude, longitude, asesor_id, plazo_pago_dias)
       VALUES (${nombre}, ${razon_social ?? null}, ${ruc_dni ?? null}, ${whatsapp ?? null}, ${direccion ?? null}, ${direccion_mapa ?? null}, ${distrito ?? 'La Victoria'}, ${tipo_cliente ?? 'Frecuente'}, ${rubro ?? null}, ${hora_entrega ?? null}, ${notas ?? null}, ${empresa ?? 'Transavic'}, ${latitude ?? null}, ${longitude ?? null}, ${finalAsesorId}, ${plazo_pago_dias ?? 0})

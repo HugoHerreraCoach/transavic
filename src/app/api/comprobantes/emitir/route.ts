@@ -399,6 +399,19 @@ export async function POST(request: Request) {
     if (debeCrearCobranza) {
       try {
         const { vincularCobranzaAComprobante, plazoDeCobranza } = await import("@/lib/cobranzas");
+        // Asesor responsable de la cobranza, en cascada: el del PEDIDO (la venta
+        // es suya aunque el ADMIN emita el comprobante) → la emisora si es
+        // asesora → el de la ficha del cliente. Antes era solo "session si es
+        // asesora" y las emisiones del admin dejaban cobranzas SIN asesor
+        // (bug reportado 11 jun 2026).
+        let cobranzaAsesorId: string | null = pedido.asesor_id ?? null;
+        if (!cobranzaAsesorId && session.user.role === "asesor") {
+          cobranzaAsesorId = session.user.id;
+        }
+        if (!cobranzaAsesorId && pedido.cliente_id) {
+          const cliRows = await sql`SELECT asesor_id FROM clientes WHERE id = ${pedido.cliente_id}`;
+          cobranzaAsesorId = (cliRows[0]?.asesor_id as string | null) ?? null;
+        }
         // "Un pedido = una cobranza": si el pedido ya tiene cobranza (la creada al
         // entregar, sin comprobante), la ACTUALIZA con este comprobante en vez de
         // duplicar la deuda; si no, crea una nueva.
@@ -410,7 +423,7 @@ export async function POST(request: Request) {
           // → la lista de /cobranzas mostraba solo el número de comprobante.
           clienteNombre: cliRazon || pedido.cliente || "Cliente",
           clienteId: pedido.cliente_id,
-          asesorId: session.user.role === "asesor" ? session.user.id : null,
+          asesorId: cobranzaAsesorId,
           monto: totalConIgv,
           // Crédito → plazo del form. Contado → plazo del CLIENTE
           // (plazo_pago_dias) o el default del negocio, en vez de vencer hoy.

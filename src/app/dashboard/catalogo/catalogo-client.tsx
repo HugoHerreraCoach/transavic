@@ -7,6 +7,8 @@
 
 import CatalogoUnificado from "./catalogo-unificado";
 
-export default function CatalogoClient() {
-  return <CatalogoUnificado />;
+// isAdmin=false (asesoras): catálogo en SOLO LECTURA, sin precio de compra,
+// margen ni acciones de edición — solo la lista de precios de venta.
+export default function CatalogoClient({ isAdmin }: { isAdmin: boolean }) {
+  return <CatalogoUnificado isAdmin={isAdmin} />;
 }

@@ -66,6 +66,18 @@ interface Cliente {
 
 type ClienteForm = Partial<Cliente>;
 
+// Respuesta de GET /api/clientes/verificar — anti-duplicados entre asesoras.
+// ruc_dni/whatsapp son matches EXACTOS (bloquean si el cliente es de otra
+// asesora); nombre es blando (solo alerta, aquí no se usa).
+interface DuplicadoVerificado {
+  match: 'ruc_dni' | 'whatsapp' | 'nombre';
+  exacto: boolean;
+  asesora_nombre: string | null;
+  es_mio: boolean;
+  cliente_id: string | null;
+  cliente_nombre: string | null;
+}
+
 interface ClientesClientProps {
   userId: string;
   userName: string;
@@ -231,6 +243,10 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState<ClienteForm>({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId });
   const [creating, setCreating] = useState(false);
+  // Duplicado detectado en vivo mientras se escribe RUC/DNI o WhatsApp en el
+  // form de crear. Si es de OTRA asesora, bloquea el guardar (la vía legítima
+  // es pedir la transferencia a un admin). Si es propio, solo informa.
+  const [dupCreate, setDupCreate] = useState<DuplicadoVerificado | null>(null);
   const [historyClienteId, setHistoryClienteId] = useState<string | null>(null);
   const [historyPedidos, setHistoryPedidos] = useState<Record<string, unknown[]>>({});
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -263,6 +279,45 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     }, 400);
     return () => clearTimeout(timer);
   }, [search]);
+
+  // Verificación anti-duplicados en vivo (form de crear): debounce ~600ms
+  // sobre RUC/DNI y WhatsApp → GET /api/clientes/verificar. Solo consideramos
+  // matches EXACTOS de esos 2 campos; el match por nombre es blando y aquí no
+  // se usa. Prioriza el duplicado de OTRA asesora (es el que bloquea).
+  useEffect(() => {
+    if (!showCreateForm) {
+      setDupCreate(null);
+      return;
+    }
+    const ruc = (createForm.ruc_dni ?? '').trim();
+    const wa = (createForm.whatsapp ?? '').replace(/\D/g, '');
+    if (!ruc && wa.length < 6) {
+      setDupCreate(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (ruc) params.set('ruc_dni', ruc);
+        if (wa.length >= 6) params.set('whatsapp', wa);
+        const res = await fetch(`/api/clientes/verificar?${params}`, { signal: ctrl.signal });
+        if (!res.ok) return;
+        const json = await res.json();
+        const exactos: DuplicadoVerificado[] = (json.duplicados ?? []).filter(
+          (d: DuplicadoVerificado) => d.exacto && (d.match === 'ruc_dni' || d.match === 'whatsapp')
+        );
+        const ajeno = exactos.find(d => !d.es_mio);
+        setDupCreate(ajeno ?? exactos[0] ?? null);
+      } catch {
+        /* abortado o sin conexión — el backend igual valida al guardar */
+      }
+    }, 600);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [showCreateForm, createForm.ruc_dni, createForm.whatsapp]);
 
   const fetchClientes = useCallback(async (page: number, searchTerm: string) => {
     setLoading(true);
@@ -349,18 +404,37 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     }
     setCreating(true);
     try {
-      const res = await fetch('/api/clientes', {
+      const enviar = (permitirDuplicado: boolean) => fetch('/api/clientes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(createForm),
+        body: JSON.stringify(permitirDuplicado ? { ...createForm, permitir_duplicado: true } : createForm),
       });
+      let res = await enviar(false);
+      // 409 = cliente duplicado (RUC/DNI o WhatsApp ya registrados).
+      if (res.status === 409) {
+        const err = await res.json().catch(() => null);
+        if (err?.error === 'cliente_duplicado' && err.es_mio) {
+          // Duplicado propio: se puede confirmar (caso real: otra sucursal).
+          const confirmar = window.confirm(
+            `${err.mensaje || 'Ya tienes un cliente registrado con este documento/celular.'}\n\n¿Crear de todas formas? (ej. otra sucursal)`
+          );
+          if (!confirmar) return;
+          res = await enviar(true);
+        } else {
+          // Duplicado de OTRA asesora: bloqueo duro — la vía es pedir la transferencia al admin.
+          alert(err?.mensaje || 'Este cliente ya está registrado con otra ejecutiva. Pide la transferencia a un administrador.');
+          return;
+        }
+      }
       if (res.ok) {
         const newCliente = await res.json();
         setClientes(prev => [newCliente, ...prev]);
         setShowCreateForm(false);
         setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null });
+        setDupCreate(null);
       } else {
-        alert('Error al crear cliente');
+        const err = await res.json().catch(() => null);
+        alert(err?.mensaje || err?.error || 'Error al crear cliente');
       }
     } catch {
       alert('Error de conexión');
@@ -872,12 +946,29 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
             </div>
             <div className="p-6">
               <ClienteFormFields form={createForm} setForm={setCreateForm} asesoras={asesoras} userRole={userRole} />
+              {/* Aviso anti-duplicados en vivo (RUC/DNI o WhatsApp ya registrados) */}
+              {dupCreate && (
+                dupCreate.es_mio ? (
+                  <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+                    Ya tienes un cliente con este documento/celular{dupCreate.cliente_nombre ? `: ${dupCreate.cliente_nombre}` : ''}. Puedes guardarlo igual si es otra sucursal.
+                  </div>
+                ) : isAdmin ? (
+                  <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm text-blue-800">
+                    Cliente ya registrado en la base de datos · Ejecutiva responsable: {dupCreate.asesora_nombre || 'sin asignar'}.
+                  </div>
+                ) : (
+                  <div className="mt-4 bg-amber-50 border border-amber-300 rounded-lg px-4 py-3 text-sm text-amber-900">
+                    <p className="font-semibold">✓ Cliente ya registrado en la base de datos · Ejecutiva responsable: {dupCreate.asesora_nombre || 'otra asesora'}.</p>
+                    <p className="mt-1">No se puede registrar de nuevo — pide la transferencia a un administrador.</p>
+                  </div>
+                )
+              )}
             </div>
             <div className="sticky bottom-0 bg-white px-6 py-4 border-t border-gray-100 flex justify-end gap-2 rounded-b-2xl">
               <button onClick={() => { setShowCreateForm(false); setCreateForm({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId, latitude: null, longitude: null, direccion_mapa: null }); }} className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 transition-colors text-sm">
                 Cancelar
               </button>
-              <button onClick={handleCreate} disabled={creating} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors text-sm disabled:bg-gray-300">
+              <button onClick={handleCreate} disabled={creating || (!isAdmin && !!dupCreate && !dupCreate.es_mio)} className="flex items-center gap-2 px-5 py-2.5 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors text-sm disabled:bg-gray-300 disabled:cursor-not-allowed">
                 <FiSave size={14} />{creating ? 'Guardando…' : 'Guardar cliente'}
               </button>
             </div>
