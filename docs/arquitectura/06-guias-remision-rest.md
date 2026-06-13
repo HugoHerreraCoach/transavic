@@ -136,9 +136,23 @@ La GRE se imprime desde la página HTML `src/app/pedidos/[id]/gre/gre-printable-
   (razón social + tipo/num doc) se toma de la **factura asociada**, NO del nombre informal del
   pedido — así la guía y su factura **coinciden** (ej. "CONEXIPEMA S.A.C.", no "Victor Hugo").
   Solo se sobrescribe si el usuario no mandó override explícito y la factura tiene receptor
-  identificado (`esReceptorIdentificado`); una boleta sin DNI mantiene el flujo de override. La
-  **dirección (punto de llegada)** NO se fuerza a la fiscal: queda la de **entrega** del pedido
-  (editable en el modal), porque el punto de llegada es el lugar físico real de entrega.
+  identificado (`esReceptorIdentificado`); una boleta sin DNI mantiene el flujo de override.
+- **Dirección del punto de llegada — depende del ORIGEN (13 jun 2026, pedido de Hugo: los clientes
+  piden que la guía coincida con la factura):**
+  - Emisión **DESDE una factura** (modal abierto con `comprobante`): el punto de llegada usa la
+    **dirección de la FACTURA**, leída del **XML firmado** (`data.cliente.direccion` vía
+    `parseCpeClienteDireccion`, que `cargarItems` ya descarga) — NO de apisperu, que es intermitente
+    y NO devuelve dirección para muchos **RUC 10** (persona natural). El distrito se deriva del TEXTO
+    de esa dirección con `detectarDistritoEnDireccion` (el XML no trae distrito estructurado; el del
+    pedido sería incoherente). Desde factura NO se consulta apisperu ni se auto-simplifica el modal
+    (la asesora ve/edita los datos fiscales). El campo es editable si la entrega va a otra parte.
+  - Emisión **DESDE un pedido** (sin `comprobante`): queda la dirección de **entrega** del pedido
+    (consulta suave que solo llena vacíos) — el punto de llegada es el lugar físico real.
+  - **Coherencia en el server** (`api/guias/emitir`): el distrito de una fuente (pedido/ficha) solo
+    se hereda si la DIRECCIÓN vino de esa misma fuente; si la dirección la mandó el frontend (XML)
+    sin distrito, se deriva del texto → nunca dirección-del-XML + distrito-del-pedido. Emisión y
+    reintento **ABORTAN si falta el distrito** (antes caían al ubigeo fallback 150101 Cercado de
+    Lima en silencio). `decidirAutollenadoDestino` en modo forzar es ATÓMICO dirección↔distrito.
 - **Ítems = los de la factura (9 jun 2026):** en el mismo bloque, los **bienes por transportar**
   (descripción, cantidad y **unidad kg/unidad**) se toman del **XML firmado de la factura vinculada**
   (fallback `items_json`; si nada parsea, quedan los `pedido_items`) — como en las guías reales de
