@@ -3,7 +3,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle, FiTag } from 'react-icons/fi';
+import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle, FiTag, FiAlertCircle } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import TimeRangePicker from '@/components/TimeRangePicker';
 
@@ -247,6 +247,10 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   // form de crear. Si es de OTRA asesora, bloquea el guardar (la vía legítima
   // es pedir la transferencia a un admin). Si es propio, solo informa.
   const [dupCreate, setDupCreate] = useState<DuplicadoVerificado | null>(null);
+  // Búsqueda GLOBAL desde el buscador: cuando la asesora escribe un teléfono/DNI/RUC
+  // que pertenece a OTRA asesora (fuera de su cartera, por eso no sale en la lista),
+  // se le avisa que ya está registrado y de quién es — sin revelar datos del cliente.
+  const [matchGlobal, setMatchGlobal] = useState<DuplicadoVerificado | null>(null);
   const [historyClienteId, setHistoryClienteId] = useState<string | null>(null);
   const [historyPedidos, setHistoryPedidos] = useState<Record<string, unknown[]>>({});
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -346,6 +350,36 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   }, [isAdmin, filterAsesorId, filtroSinAsesora, filtroDistrito, filtroRubro]);
 
   useEffect(() => { fetchClientes(currentPage, debouncedSearch); }, [currentPage, debouncedSearch, fetchClientes]);
+
+  // Búsqueda GLOBAL anti-cartera: cuando la asesora busca por un teléfono/DNI/RUC
+  // (término numérico), consulta /api/clientes/verificar (global, respuesta mínima)
+  // y avisa si coincide EXACTO con un cliente de OTRA asesora. El admin no lo
+  // necesita (su lista ya incluye a todos). Los propios ya salen en la lista.
+  useEffect(() => {
+    if (isAdmin) { setMatchGlobal(null); return; }
+    const q = debouncedSearch.trim();
+    const soloDigitos = q.replace(/\D/g, '');
+    // Solo si parece documento/teléfono (≥6 dígitos); evita disparar con nombres.
+    if (soloDigitos.length < 6) { setMatchGlobal(null); return; }
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const params = new URLSearchParams();
+        params.set('ruc_dni', soloDigitos);   // DNI(8)/RUC(11): match exacto
+        params.set('whatsapp', soloDigitos);  // teléfono: últimos 9 dígitos
+        const res = await fetch(`/api/clientes/verificar?${params}`, { signal: ctrl.signal });
+        if (!res.ok) return;
+        const json = await res.json();
+        const ajeno: DuplicadoVerificado | undefined = (json.duplicados ?? []).find(
+          (d: DuplicadoVerificado) => d.exacto && !d.es_mio && (d.match === 'ruc_dni' || d.match === 'whatsapp')
+        );
+        setMatchGlobal(ajeno ?? null);
+      } catch {
+        /* abortado o sin conexión — no es crítico */
+      }
+    })();
+    return () => ctrl.abort();
+  }, [debouncedSearch, isAdmin]);
 
   const startEdit = (cliente: Cliente) => {
     setEditingId(cliente.id);
@@ -565,9 +599,22 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre, RUC, WhatsApp o distrito..."
+            placeholder="Buscar por nombre, RUC, DNI, WhatsApp o distrito..."
             className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-xl bg-white text-gray-900 font-medium placeholder:text-gray-400 shadow-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 transition-all"
           />
+          {/* Aviso de cliente de OTRA asesora (búsqueda global por teléfono/DNI/RUC) */}
+          {matchGlobal && (
+            <div className="mt-2 bg-amber-50 border border-amber-300 rounded-lg px-3 py-2.5 text-sm text-amber-900 flex items-start gap-2">
+              <FiAlertCircle className="flex-shrink-0 mt-0.5" />
+              <span>
+                Ese {matchGlobal.match === 'whatsapp' ? 'número' : 'documento'} ya está registrado en la base ·
+                Ejecutiva responsable: <strong>{matchGlobal.asesora_nombre || 'otra asesora'}</strong>.
+                <span className="block text-[12px] text-amber-700 mt-0.5">
+                  Si necesitas atender a este cliente, pide la transferencia a un administrador.
+                </span>
+              </span>
+            </div>
+          )}
         </div>
 
         <button
