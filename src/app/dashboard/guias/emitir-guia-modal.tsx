@@ -189,6 +189,37 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           setTotalBultos(Math.max(1, mappedItems.length));
           setPesoBrutoTotal(todosKg && sumWeight > 0 ? sumWeight.toFixed(2) : "");
           setUnidadesMixtas(mappedItems.length > 0 && !todosKg);
+
+          // Punto de llegada = dirección de la FACTURA (pedido de Hugo: los clientes
+          // piden que la guía coincida con la factura). Solo al emitir DESDE una
+          // factura (`comprobante`). `data.cliente.direccion` viene del XML firmado
+          // (parseCpeClienteDireccion) — fuente fiel y siempre disponible, a
+          // diferencia de apisperu. El distrito se deriva del TEXTO de esa dirección
+          // (el XML no lo trae estructurado; `data.cliente.distrito` es el del PEDIDO
+          // y sería incoherente). Si no se detecta, queda vacío → la asesora lo elige
+          // (el select está visible porque desde factura no se auto-simplifica).
+          // Solo reemplaza la dirección PROVISIONAL del init; si la asesora ya la
+          // editó a mano, se respeta.
+          if (comprobante) {
+            const dirFactura = (data.cliente?.direccion || "").trim();
+            const sinEditarDir =
+              !direccionLlegadaRef.current.trim() ||
+              direccionLlegadaRef.current === dirAutollenada.current;
+            if (dirFactura && sinEditarDir) {
+              dirAutollenada.current = dirFactura;
+              direccionLlegadaRef.current = dirFactura;
+              setDireccionLlegada(dirFactura);
+              const sinEditarDist =
+                !distritoLlegadaRef.current.trim() ||
+                distritoLlegadaRef.current === (distAutollenado.current ?? "");
+              if (sinEditarDist) {
+                const distFactura = detectarDistritoEnDireccion(dirFactura) ?? "";
+                distAutollenado.current = distFactura || null;
+                distritoLlegadaRef.current = distFactura;
+                setDistritoLlegada(distFactura);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error("Error cargando ítems de origen:", err);
@@ -240,6 +271,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     }
     distritoLlegadaRef.current = distritoNormalizado;
     setDistritoLlegada(distritoNormalizado);
+    // La dirección inicial es PROVISIONAL cuando viene de una factura: `cargarItems`
+    // la reemplaza por la del XML de la factura. Marcarla como autollenada permite
+    // ese reemplazo sin pisar lo que la asesora escriba a mano.
+    dirAutollenada.current = direccionInicial;
+    direccionLlegadaRef.current = direccionInicial;
 
     // Prellenar SIEMPRE el destinatario (visible y editable): la fuente más fiel
     // es la FACTURA (datos fiscales aceptados por SUNAT); el pedido es fallback —
@@ -378,27 +414,19 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   }, [docNumOverride]);
 
   // Consulta del destinatario al abrir, según el origen:
-  //  - Desde una FACTURA (hay `comprobante`): se FUERZA la dirección y el distrito
-  //    fiscales del RUC (apisperu), reemplazando la dirección de entrega del
-  //    pedido. Decisión de negocio (12 jun 2026): los clientes piden que la guía
-  //    coincida con la factura, y la factura se emitió justamente con la dirección
-  //    fiscal del RUC, así que apisperu devuelve la MISMA dirección + el distrito
-  //    estructurado y coherente (el XML solo trae la dirección como texto, sin
-  //    distrito). El campo queda editable si la entrega va a otra parte.
+  //  - Desde una FACTURA (hay `comprobante`): NO se consulta apisperu. La dirección
+  //    de la guía debe coincidir con la FACTURA (pedido de Hugo, 12 jun 2026) y la
+  //    fuente fiel es el XML firmado (lo que SUNAT aceptó), que `cargarItems` ya
+  //    descarga y aplica al punto de llegada. apisperu es intermitente —no devuelve
+  //    dirección para muchos RUC 10 (persona natural)— así que depender de él sería
+  //    frágil justo para esos clientes.
   //  - Desde un PEDIDO (sin `comprobante`): consulta SUAVE — solo llena vacíos,
   //    nunca pisa la dirección de ENTREGA del pedido.
   //  Con DNI no aplica en ningún caso: apisperu no devuelve dirección.
   useEffect(() => {
-    const doc = (comprobante?.cliente?.numDocumento
-      || comprobante?.cliente_doc_num
-      || pedido?.ruc_dni
-      || "").trim();
+    if (comprobante) return; // desde factura: la dirección la pone cargarItems (XML)
+    const doc = (pedido?.ruc_dni || "").trim();
     if (doc.length !== 11) return;
-    const desdeFactura = !!comprobante;
-    if (desdeFactura) {
-      void consultarDestinatario(doc, { suave: false });
-      return;
-    }
     const direccionInicial = pedido?.direccion || "";
     const distritoInicial = matchDistritoLima(pedido?.distrito)
       ?? detectarDistritoEnDireccion(direccionInicial)

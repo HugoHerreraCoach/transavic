@@ -17,6 +17,7 @@ import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import { fechaHoyLima, horaActualLima } from "@/lib/sunat/fechas";
 import { EstadoSunat } from "@/lib/sunat/types";
 import { parseCpeItems, parseCpeClienteDireccion, type CpeItem } from "@/lib/sunat/parse-cpe-items";
+import { detectarDistritoEnDireccion } from "@/lib/guia-form-shared";
 import { esReceptorIdentificado } from "@/lib/sunat/validacion-cliente";
 
 export const dynamic = "force-dynamic";
@@ -274,32 +275,45 @@ export async function POST(request: Request) {
       let resolvedDireccion = direccion_llegada;
       let resolvedDistrito = distrito_llegada;
 
-      if ((!resolvedDireccion || !resolvedDistrito) && c.pedido_id) {
+      // COHERENCIA dirección↔distrito: el distrito de una fuente (pedido/ficha)
+      // solo se toma si la DIRECCIÓN también vino de esa fuente. Si la dirección
+      // la mandó el frontend (del XML de la factura) pero falta el distrito, NO
+      // se hereda el del pedido (sería de otra dirección) — se deriva del texto
+      // de la dirección más abajo. Así nunca queda dirección-del-XML + distrito-
+      // del-pedido (par incoherente → ubigeo errado).
+      if (!resolvedDireccion && c.pedido_id) {
         const pedAddr = await sql`SELECT direccion, distrito FROM pedidos WHERE id = ${c.pedido_id}`;
         if (pedAddr.length > 0) {
-          if (!resolvedDireccion) resolvedDireccion = pedAddr[0].direccion;
+          resolvedDireccion = pedAddr[0].direccion;
           if (!resolvedDistrito) resolvedDistrito = pedAddr[0].distrito;
         }
       }
 
-      if ((!resolvedDireccion || !resolvedDistrito) && c.xml_firmado_base64) {
+      if (!resolvedDireccion && c.xml_firmado_base64) {
         try {
           const xml = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
           const xmlAddr = parseCpeClienteDireccion(xml);
-          if (xmlAddr && !resolvedDireccion) resolvedDireccion = xmlAddr;
+          if (xmlAddr) resolvedDireccion = xmlAddr;
         } catch (err) {
           console.error("Error parsing address from XML:", err);
         }
       }
 
-      if ((!resolvedDireccion || !resolvedDistrito) && clienteDocNum) {
+      if (!resolvedDireccion && clienteDocNum) {
         const clientRows = await sql`
           SELECT direccion, distrito FROM clientes WHERE ruc_dni = ${clienteDocNum} LIMIT 1
         `;
         if (clientRows.length > 0) {
-          if (!resolvedDireccion) resolvedDireccion = clientRows[0].direccion;
+          resolvedDireccion = clientRows[0].direccion;
           if (!resolvedDistrito) resolvedDistrito = clientRows[0].distrito;
         }
+      }
+
+      // Si hay dirección pero falta el distrito, derivarlo del TEXTO de la propia
+      // dirección (coherente con lo que se usará como punto de llegada). Si no se
+      // puede, queda vacío → el guard de abajo aborta (no inventa ubigeo).
+      if (resolvedDireccion && !resolvedDistrito) {
+        resolvedDistrito = detectarDistritoEnDireccion(resolvedDireccion) ?? "";
       }
 
       direccionLlegadaFinal = (resolvedDireccion || "").trim();
