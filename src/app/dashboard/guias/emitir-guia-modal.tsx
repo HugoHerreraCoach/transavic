@@ -260,8 +260,10 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
         : docInicial.length === 8 ? "1"
           : (comprobante?.cliente?.tipoDocumento || comprobante?.cliente_doc_tipo || "1")
     );
-    // Lo precargado NO dispara la consulta "forzada" del debounce (pisaría la
-    // dirección de entrega con la fiscal); la consulta suave de abajo cubre los vacíos.
+    // El doc precargado no dispara la consulta "forzada" del DEBOUNCE (esa es solo
+    // para cuando el usuario tipea el doc). La consulta de apertura de más abajo
+    // decide: forzar la dirección fiscal si la GRE sale de una factura, o suave
+    // (solo vacíos) si sale de un pedido.
     ultimoDocConsultado.current = docInicial;
   }, [pedido, comprobante]);
 
@@ -293,8 +295,11 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
               // Evaluar si los datos del repartidor, dirección y cliente están 100% listos para emisión rápida
               const tieneRepartidorListos = indicadorM1L || !!(preselected.chofer_dni && preselected.chofer_licencia && preselected.vehiculo_placa);
               const tieneDireccionListos = !!((pedido?.direccion || comprobante?.cliente?.direccion || comprobante?.pedido_direccion) && (pedido?.distrito || comprobante?.cliente?.distrito || comprobante?.pedido_distrito));
-              
-              if (tieneRepartidorListos && tieneDireccionListos && !necesitaOverride) {
+              // Desde una FACTURA no auto-simplificamos: la dirección/distrito se
+              // fuerzan a los datos FISCALES vía la consulta RUC (async), así que
+              // la asesora debe verlos en modo edición antes de emitir (y el select
+              // de distrito queda visible por si el RUC no trajo uno reconocible).
+              if (tieneRepartidorListos && tieneDireccionListos && !necesitaOverride && !comprobante) {
                 setModoEdicion(false); // Activamos Modo Simplificado automáticamente
               }
             }
@@ -372,25 +377,30 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
     return () => clearTimeout(t);
   }, [docNumOverride]);
 
-  // Consulta SUAVE al abrir: si el origen trae un RUC pero le falta la dirección
-  // de llegada O el distrito, se consulta apisperu para completar SOLO los vacíos
-  // (la dirección de ENTREGA del pedido nunca se pisa; el distrito fiscal queda
-  // como sugerencia editable). Con DNI no aplica: apisperu no devuelve dirección.
+  // Consulta del destinatario al abrir, según el origen:
+  //  - Desde una FACTURA (hay `comprobante`): se FUERZA la dirección y el distrito
+  //    fiscales del RUC (apisperu), reemplazando la dirección de entrega del
+  //    pedido. Decisión de negocio (12 jun 2026): los clientes piden que la guía
+  //    coincida con la factura, y la factura se emitió justamente con la dirección
+  //    fiscal del RUC, así que apisperu devuelve la MISMA dirección + el distrito
+  //    estructurado y coherente (el XML solo trae la dirección como texto, sin
+  //    distrito). El campo queda editable si la entrega va a otra parte.
+  //  - Desde un PEDIDO (sin `comprobante`): consulta SUAVE — solo llena vacíos,
+  //    nunca pisa la dirección de ENTREGA del pedido.
+  //  Con DNI no aplica en ningún caso: apisperu no devuelve dirección.
   useEffect(() => {
     const doc = (comprobante?.cliente?.numDocumento
       || comprobante?.cliente_doc_num
       || pedido?.ruc_dni
       || "").trim();
     if (doc.length !== 11) return;
-    const direccionInicial = pedido?.direccion
-      || comprobante?.cliente?.direccion
-      || comprobante?.pedido_direccion
-      || "";
-    const distritoInicial = matchDistritoLima(
-      pedido?.distrito
-      || comprobante?.cliente?.distrito
-      || comprobante?.pedido_distrito
-    )
+    const desdeFactura = !!comprobante;
+    if (desdeFactura) {
+      void consultarDestinatario(doc, { suave: false });
+      return;
+    }
+    const direccionInicial = pedido?.direccion || "";
+    const distritoInicial = matchDistritoLima(pedido?.distrito)
       ?? detectarDistritoEnDireccion(direccionInicial)
       ?? "";
     if (direccionInicial.trim() && distritoInicial.trim()) return;

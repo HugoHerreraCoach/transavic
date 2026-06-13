@@ -448,6 +448,16 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    // Guard de coherencia: sin distrito NO se puede derivar el ubigeo del punto de
+    // llegada. `obtenerUbigeoDistrito("")` caería al fallback 150101 (Cercado de
+    // Lima) en silencio → GRE con ubigeo de OTRO distrito que la dirección. Mejor
+    // abortar y exigir el distrito (lo legalmente crítico para SUNAT).
+    if (!distritoLlegadaFinal) {
+      return NextResponse.json(
+        { error: "Se requiere el distrito del Punto de Llegada para emitir la Guía de Remisión." },
+        { status: 400 }
+      );
+    }
 
     // 3. Determinar repartidor y sus datos (DNI, licencia, placa, nombres, apellidos)
     // Con M1/L NO auto-resolvemos desde el repartidor del pedido salvo que el cliente lo haya

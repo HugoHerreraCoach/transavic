@@ -198,6 +198,20 @@ export async function POST(_req: Request, { params }: RouteParams) {
         { status: 422 }
       );
     }
+    // Sin distrito no se puede derivar el ubigeo: abortar en vez de caer al
+    // fallback silencioso 150101 (Cercado de Lima), que dejaría la GRE con un
+    // ubigeo de otro distrito que la dirección.
+    if (!distritoLlegada) {
+      await sql`
+        UPDATE comprobantes_guias
+        SET estado = 'error', mensaje_sunat = 'Reintento abortado: no se pudo recuperar el distrito de llegada.', updated_at = NOW()
+        WHERE id = ${id}::uuid
+      `;
+      return NextResponse.json(
+        { error: "No se pudo recuperar el distrito de llegada para reintentar la guía." },
+        { status: 422 }
+      );
+    }
 
     // Chofer/vehículo: columnas de la fila; nombres con fallback al perfil del repartidor.
     let choferNombres = String(g.chofer_nombres || "").trim();

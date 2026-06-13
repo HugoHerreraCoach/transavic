@@ -189,9 +189,11 @@ export function decidirAutollenadoDestino(p: {
   distAutollenado: string | null;
 }): { direccion?: string; distrito?: string } {
   const out: { direccion?: string; distrito?: string } = {};
+  let direccionReemplazada = false;
   if (p.direccionApi) {
     if (p.forzar || !p.direccionActual.trim() || p.direccionActual === p.dirAutollenada) {
       out.direccion = p.direccionApi;
+      direccionReemplazada = true;
     }
   }
   const nuevoDist = matchDistritoLima(p.distritoApi) ?? detectarDistritoEnDireccion(p.direccionApi);
@@ -199,8 +201,14 @@ export function decidirAutollenadoDestino(p: {
     if (p.forzar || !p.distritoActual.trim() || p.distritoActual === p.distAutollenado) {
       out.distrito = nuevoDist;
     }
-  } else if (p.forzar && p.distritoActual.trim() && p.distritoActual === p.distAutollenado) {
-    out.distrito = "";
+  } else if (p.forzar && p.distritoActual.trim()) {
+    // No hay distrito reconocible para el RUC nuevo. Si REEMPLAZAMOS la dirección,
+    // el distrito viejo corresponde a OTRA dirección → se limpia SIEMPRE (la
+    // asesora lo elige): nunca dejar un par dirección/distrito incoherente.
+    // Si la dirección NO cambió, solo se limpia si era un autollenado nuestro.
+    if (direccionReemplazada || p.distritoActual === p.distAutollenado) {
+      out.distrito = "";
+    }
   }
   return out;
 }
