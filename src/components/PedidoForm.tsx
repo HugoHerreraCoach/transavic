@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { toJpeg } from 'html-to-image';
-import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend, FiStar } from 'react-icons/fi';
+import {  FiEdit2, FiDownload, FiShare2, FiCheckSquare, FiFileText, FiRotateCcw, FiSend, FiStar, FiCheckCircle, FiUserCheck, FiAlertCircle } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
 import ProductSelector, { SelectedItem } from '@/components/ProductSelector';
 import TimeRangePicker from '@/components/TimeRangePicker';
@@ -91,6 +91,12 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   // Si es de OTRA asesora, se reemplaza el botón "Guardar como Cliente
   // Frecuente" por un aviso discreto. El pedido en sí NUNCA se bloquea.
   const [dupFrecuente, setDupFrecuente] = useState<DuplicadoCliente | null>(null);
+  // Consulta EN VIVO mientras se escribe el celular/DNI/RUC (reemplaza la
+  // pregunta manual en el grupo de WhatsApp "¿este número es de alguien?").
+  // `null` = sin resultado todavía; objeto = match exacto; 'nuevo' = consulta
+  // válida sin coincidencias. NUNCA bloquea el pedido (solo informa).
+  const [dupEnVivo, setDupEnVivo] = useState<DuplicadoCliente | "nuevo" | null>(null);
+  const [cargandoCliente, setCargandoCliente] = useState(false);
   const [formResetKey, setFormResetKey] = useState(0); // Forces child components to reset
 
   // P1.7 — Duplicar pedido: si veníamos del botón "Duplicar" de la lista, se
@@ -323,6 +329,64 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
     })();
     return () => ctrl.abort();
   }, [appState, clienteGuardadoId, formDatos.rucDni, formDatos.whatsapp]);
+
+  // Consulta EN VIVO mientras se LLENA el pedido (appState 'editing'): igual que
+  // preguntar en el grupo de WhatsApp "¿este número/DNI/RUC es de alguien?".
+  // Debounce 500ms; reusa /api/clientes/verificar (global, respuesta mínima).
+  // NO bloquea el pedido — solo muestra un aviso. Si ya se cargó un cliente por
+  // el buscador de nombre (clienteGuardadoId), no hace falta consultar.
+  useEffect(() => {
+    if (appState !== 'editing' || clienteGuardadoId) {
+      setDupEnVivo(null);
+      return;
+    }
+    const ruc = (formDatos.rucDni ?? '').trim();
+    const wa = (formDatos.whatsapp ?? '').replace(/\D/g, '');
+    // Umbral conservador para no consultar con datos a medio escribir.
+    if (!ruc && wa.length < 8) {
+      setDupEnVivo(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams();
+        if (ruc) params.set('ruc_dni', ruc);
+        if (wa.length >= 8) params.set('whatsapp', wa);
+        const res = await fetch(`/api/clientes/verificar?${params}`, { signal: ctrl.signal });
+        if (!res.ok) return;
+        const json = await res.json();
+        const exactos: DuplicadoCliente[] = (json.duplicados ?? []).filter(
+          (d: DuplicadoCliente) => d.exacto && (d.match === 'ruc_dni' || d.match === 'whatsapp')
+        );
+        const ajeno = exactos.find(d => !d.es_mio);
+        setDupEnVivo(ajeno ?? exactos[0] ?? "nuevo");
+      } catch {
+        /* abortado o sin conexión — no es crítico, el pedido sigue su curso */
+      }
+    }, 500);
+    return () => {
+      clearTimeout(timer);
+      ctrl.abort();
+    };
+  }, [appState, clienteGuardadoId, formDatos.rucDni, formDatos.whatsapp]);
+
+  // Cargar la ficha completa de un cliente PROPIO encontrado en la consulta en
+  // vivo (autocompleta el form y enlaza el pedido al cliente, evitando duplicar).
+  const cargarClientePropio = async (clienteId: string) => {
+    setCargandoCliente(true);
+    try {
+      const res = await fetch(`/api/clientes/${clienteId}`);
+      if (!res.ok) return;
+      const cliente = await res.json();
+      handleClienteSelected(cliente);
+      setDupEnVivo(null);
+    } catch {
+      /* si falla, la asesora puede seguir llenando a mano */
+    } finally {
+      setCargandoCliente(false);
+    }
+  };
 
   const handleGuardarCliente = async () => {
     setGuardandoCliente(true);
@@ -691,6 +755,34 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
               <div>
                 <input type="tel" inputMode="numeric" name="whatsapp" value={formDatos.whatsapp} placeholder="Número de WhatsApp" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.whatsapp ? 'border-red-500' : 'border-gray-300'}`} />
                 {errors.whatsapp && <p className="text-red-500 text-sm mt-1">{errors.whatsapp}</p>}
+                {/* Consulta en vivo: ¿este celular/DNI/RUC ya es cliente de
+                    alguien? Informativo, NUNCA bloquea el pedido. */}
+                {appState === 'editing' && dupEnVivo && (
+                  dupEnVivo === "nuevo" ? (
+                    <p className="mt-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-md py-2 px-3 flex items-center gap-1.5">
+                      <FiCheckCircle className="flex-shrink-0" /> Cliente nuevo · sin registro previo
+                    </p>
+                  ) : dupEnVivo.es_mio ? (
+                    <div className="mt-2 text-xs text-blue-800 bg-blue-50 border border-blue-200 rounded-md py-2 px-3 flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <FiUserCheck className="flex-shrink-0" />
+                        <span className="truncate">Es tu cliente: <strong>{dupEnVivo.cliente_nombre}</strong></span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => dupEnVivo.cliente_id && cargarClientePropio(dupEnVivo.cliente_id)}
+                        disabled={cargandoCliente}
+                        className="flex-shrink-0 px-2.5 py-1 bg-blue-600 text-white rounded-md font-semibold hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      >
+                        {cargandoCliente ? 'Cargando…' : 'Cargar sus datos'}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md py-2 px-3 flex items-center gap-1.5">
+                      <FiAlertCircle className="flex-shrink-0" /> Cliente ya registrado · Ejecutiva responsable: <strong>{dupEnVivo.asesora_nombre || 'otra asesora'}</strong>
+                    </p>
+                  )
+                )}
               </div>
               <div>
                 <input type="text" name="direccion" value={formDatos.direccion} placeholder="Dirección de Entrega" onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.direccion ? 'border-red-500' : 'border-gray-300'}`} />
