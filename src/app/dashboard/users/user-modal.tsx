@@ -159,8 +159,13 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                         {role === 'repartidor' && (
                             <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl space-y-3 mt-4">
                                 <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider">
-                                    Datos de Conductor (SUNAT)
+                                    Datos de Conductor (SUNAT) · opcional
                                 </h3>
+                                <p className="text-[11px] text-gray-500 leading-snug -mt-1">
+                                    Puedes dejarlos en blanco y completarlos después. Al emitir una guía de
+                                    remisión se piden si hacen falta (con moto o auto ligero no son necesarios).
+                                    Varios repartidores pueden tener la misma placa.
+                                </p>
                                 <div>
                                     <label htmlFor="choferNombres" className="block text-xs font-medium text-gray-600">
                                         Nombres del Conductor
@@ -172,7 +177,6 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                         onChange={(e) => setChoferNombres(e.target.value)}
                                         placeholder="Ej. Juan Carlos"
                                         className={INPUT_CLS}
-                                        required
                                     />
                                 </div>
                                 <div>
@@ -186,7 +190,6 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                         onChange={(e) => setChoferApellidos(e.target.value)}
                                         placeholder="Ej. Pérez Gómez"
                                         className={INPUT_CLS}
-                                        required
                                     />
                                 </div>
                                 <div>
@@ -200,7 +203,6 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                         onChange={(e) => setChoferDni(e.target.value)}
                                         placeholder="Ej. 70443212"
                                         className={INPUT_CLS}
-                                        required
                                     />
                                 </div>
                                 <div>
@@ -214,7 +216,6 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                         onChange={(e) => setChoferLicencia(e.target.value)}
                                         placeholder="Ej. Q20384812"
                                         className={INPUT_CLS}
-                                        required
                                     />
                                 </div>
                                 <div>
@@ -228,7 +229,6 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                         onChange={(e) => setVehiculoPlaca(e.target.value)}
                                         placeholder="Ej. C1A-098"
                                         className={INPUT_CLS}
-                                        required
                                     />
                                 </div>
                             </div>
