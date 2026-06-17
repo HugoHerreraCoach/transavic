@@ -36,6 +36,9 @@ export interface FilaComprobante {
   estado: string; // lowercase: aceptado | observado | pendiente | rechazado | error | anulado
   mensaje_sunat: string | null;
   created_at: string | Date;
+  // Fecha de emisión REAL del XML (puede ser retroactiva). Si es null (fila vieja
+  // sin backfill), se cae a created_at. DATE puro → sin componente de hora/zona.
+  fecha_emision: string | Date | null;
   forma_pago: string | null;
   fecha_vencimiento: string | Date | null;
 }
@@ -79,8 +82,19 @@ const num = (v: string | number | null | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
+/** Fuente de fecha de emisión de una fila: la columna fecha_emision o, si falta, created_at. */
+function fuenteEmision(it: FilaComprobante): string | Date {
+  return it.fecha_emision ?? it.created_at;
+}
+
 /** Fecha de emisión en formato DD/MM/YYYY (zona Lima). */
 function fechaEmision(v: string | Date): string {
+  // DATE puro "YYYY-MM-DD": formatear directo, sin pasar por TZ (un new Date()
+  // de medianoche UTC se correría al día anterior en Lima).
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const [y, m, d] = v.split("-");
+    return `${d}/${m}/${y}`;
+  }
   const d = typeof v === "string" ? new Date(v) : v;
   return new Intl.DateTimeFormat("es-PE", {
     timeZone: "America/Lima",
@@ -92,6 +106,8 @@ function fechaEmision(v: string | Date): string {
 
 /** Clave de día (YYYY-MM-DD en zona Lima) para agrupar el desglose diario. */
 function diaClave(v: string | Date): string {
+  // DATE puro ya viene como YYYY-MM-DD → usar tal cual (sin shift de TZ).
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
   const d = typeof v === "string" ? new Date(v) : v;
   // en-CA da YYYY-MM-DD
   return new Intl.DateTimeFormat("en-CA", {
@@ -148,7 +164,7 @@ function buildDetailSheet(items: FilaComprobante[], titulo: string): XLSX.WorkSh
     }
     rows.push([
       idx + 1,
-      fechaEmision(it.created_at),
+      fechaEmision(fuenteEmision(it)),
       TIPO_LABELS[it.tipo] ?? it.tipo,
       it.serie ?? "",
       String(it.numero ?? ""),
@@ -196,8 +212,8 @@ function buildRegistroVentasSheet(
   rows.push(DETAIL_HEADERS);
 
   const ordenados = [...items].sort((a, b) => {
-    const fa = diaClave(a.created_at);
-    const fb = diaClave(b.created_at);
+    const fa = diaClave(fuenteEmision(a));
+    const fb = diaClave(fuenteEmision(b));
     if (fa !== fb) return fa.localeCompare(fb);
     return a.serie_numero.localeCompare(b.serie_numero);
   });
@@ -217,7 +233,7 @@ function buildRegistroVentasSheet(
     }
     rows.push([
       idx + 1,
-      fechaEmision(it.created_at),
+      fechaEmision(fuenteEmision(it)),
       TIPO_LABELS[it.tipo] ?? it.tipo,
       it.serie ?? "",
       String(it.numero ?? ""),
@@ -323,7 +339,7 @@ function buildResumenSheet(
     { facturas: number; boletas: number; nc: number; base: number; igv: number; total: number }
   > = {};
   for (const it of validos) {
-    const k = diaClave(it.created_at);
+    const k = diaClave(fuenteEmision(it));
     if (!dailyMap[k]) dailyMap[k] = { facturas: 0, boletas: 0, nc: 0, base: 0, igv: 0, total: 0 };
     const sign = it.tipo === "07" ? -1 : 1;
     if (it.tipo === "01") dailyMap[k].facturas++;

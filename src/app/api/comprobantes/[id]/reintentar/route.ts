@@ -22,6 +22,7 @@ import { getSunatConfig, CATALOGO } from "@/lib/sunat/config-transavic";
 import { generarXMLComprobante } from "@/lib/sunat/xml-builder";
 import { firmarXML } from "@/lib/sunat/xml-signer";
 import { enviarComprobante } from "@/lib/sunat/soap-client";
+import { horaActualLima } from "@/lib/sunat/fechas";
 import {
   type EmpresaId,
   TipoComprobante,
@@ -66,7 +67,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     SELECT
       c.id, c.pedido_id, c.empresa, c.tipo, c.serie, c.numero, c.serie_numero,
       c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
-      c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at,
+      c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at, c.fecha_emision,
       c.hash_cpe, c.xml_firmado_base64, c.items_json, c.emitido_por,
       c.forma_pago, c.fecha_vencimiento,
       p.asesor_id AS pedido_asesor_id, p.cliente_id AS pedido_cliente_id,
@@ -90,6 +91,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     monto_total: string | number;
     estado: string;
     created_at: string | Date;
+    fecha_emision: string | Date | null;
     hash_cpe: string | null;
     xml_firmado_base64: string | null;
     items_json: unknown;
@@ -186,8 +188,14 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const fechaEmision =
-    typeof c.created_at === "string"
+  // Preferir la fecha de emisión REAL del comprobante (puede ser retroactiva); solo
+  // si está NULL (filas viejas) caer a created_at. Importa cuando se RECONSTRUYE el
+  // XML: debe llevar la misma fecha que el original, no la de hoy.
+  const fechaEmision = c.fecha_emision
+    ? typeof c.fecha_emision === "string"
+      ? c.fecha_emision.slice(0, 10)
+      : c.fecha_emision.toISOString().slice(0, 10)
+    : typeof c.created_at === "string"
       ? c.created_at.slice(0, 10)
       : c.created_at.toISOString().slice(0, 10);
 
@@ -220,7 +228,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
           serie: c.serie,
           numero: c.numero,
           fechaEmision,
-          horaEmision: new Date().toLocaleTimeString("en-US", { hour12: false }),
+          horaEmision: horaActualLima(),
           tipoOperacion: TipoOperacion.VENTA_INTERNA,
           moneda: CATALOGO.MONEDA.SOLES,
           cliente: {

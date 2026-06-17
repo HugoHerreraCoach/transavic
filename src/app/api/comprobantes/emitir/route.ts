@@ -19,6 +19,7 @@ import {
 import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
 import { controlarPrecioMinimo } from "@/lib/autorizaciones-precio";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
+import { validarFechaEmision } from "@/lib/sunat/fechas";
 
 export const dynamic = "force-dynamic";
 // El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
@@ -29,6 +30,12 @@ const Schema = z.object({
   tipo: z.enum(["01", "03"]),
   formaPago: z.enum(["Contado", "Credito"]).default("Contado"),
   plazoDias: z.number().int().min(0).max(120).default(0),
+  // Fecha de emisión (YYYY-MM-DD). Opcional: si no viene, el motor usa hoy en Lima.
+  // El rango permitido (hoy, o retroactiva 3 días factura / 7 boleta) se valida abajo.
+  fechaEmision: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
   confirmarDuplicado: z.boolean().default(false),
   // ID de autorización de precio mínimo (aprobada por el admin).
@@ -77,6 +84,16 @@ export async function POST(request: Request) {
         { error: parsed.error.flatten().fieldErrors },
         { status: 400 }
       );
+    }
+
+    // Fecha de emisión: si la mandaron, validar el rango por tipo (no futura;
+    // factura hasta 3 días atrás, boleta 7). Defensa en servidor: una asesora no
+    // puede saltarse el límite manipulando el request.
+    if (parsed.data.fechaEmision) {
+      const v = validarFechaEmision(parsed.data.fechaEmision, parsed.data.tipo);
+      if (!v.ok) {
+        return NextResponse.json({ error: v.motivo }, { status: 400 });
+      }
     }
 
     const sql = neon(process.env.DATABASE_URL!);
@@ -348,6 +365,7 @@ export async function POST(request: Request) {
       items: itemsSunat,
       formaPago: parsed.data.formaPago,
       plazoDias: parsed.data.plazoDias,
+      fechaEmision: parsed.data.fechaEmision,
       emitidoPor: session.user.name?.trim() || undefined,
     });
 
@@ -418,6 +436,9 @@ export async function POST(request: Request) {
             ? parsed.data.plazoDias
             : await plazoDeCobranza(pedido.cliente_id),
           numeroComprobante: resultado.serieNumero!,
+          // Vencimiento y fecha_emision de la cobranza desde la fecha del comprobante
+          // (no "hoy"), para que coincidan con el XML cuando la emisión es retroactiva.
+          fechaEmision: parsed.data.fechaEmision,
         });
       } catch (errCobranza) {
         console.error(

@@ -72,13 +72,19 @@ export async function GET(req: NextRequest) {
     conditions.push(`c.cliente_doc_num = $${i++}`);
     params.push(clienteDocNum);
   }
-  // Rango de fechas: comparamos la fecha (sin hora) de created_at en zona Lima.
+  // Rango de fechas: comparamos por la fecha de emisión REAL del comprobante
+  // (fecha_emision, que puede ser retroactiva) con fallback a created_at en zona
+  // Lima — así un comprobante con fecha retroactiva cae en el período correcto.
   if (esFecha(desdeRaw)) {
-    conditions.push(`(c.created_at AT TIME ZONE 'America/Lima')::date >= $${i++}`);
+    conditions.push(
+      `COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) >= $${i++}`
+    );
     params.push(desdeRaw);
   }
   if (esFecha(hastaRaw)) {
-    conditions.push(`(c.created_at AT TIME ZONE 'America/Lima')::date <= $${i++}`);
+    conditions.push(
+      `COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) <= $${i++}`
+    );
     params.push(hastaRaw);
   }
 
@@ -88,10 +94,10 @@ export async function GET(req: NextRequest) {
     `SELECT c.serie, c.numero, c.serie_numero, c.tipo, c.empresa,
             c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
             c.monto_subtotal, c.monto_igv, c.monto_total,
-            c.estado, c.mensaje_sunat, c.created_at, c.forma_pago, c.fecha_vencimiento
+            c.estado, c.mensaje_sunat, c.created_at, c.fecha_emision, c.forma_pago, c.fecha_vencimiento
      FROM comprobantes c
      ${where}
-     ORDER BY c.created_at ASC
+     ORDER BY COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) ASC, c.created_at ASC
      LIMIT 10000`,
     params
   )) as FilaComprobante[];

@@ -51,7 +51,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           c.serie_numero, c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
           c.monto_subtotal, c.monto_igv, c.monto_total, c.moneda,
           c.estado, c.hash_cpe, c.xml_firmado_base64, c.cdr_base64,
-          c.observaciones, c.mensaje_sunat, c.created_at,
+          c.observaciones, c.mensaje_sunat, c.created_at, c.fecha_emision,
           c.forma_pago, c.fecha_vencimiento, c.emitido_por,
           p.asesor_id AS pedido_asesor_id,
           p.cliente AS pedido_cliente, p.direccion AS pedido_direccion,
@@ -84,6 +84,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     observaciones: string | null;
     mensaje_sunat: string | null;
     created_at: string | Date;
+    fecha_emision: string | Date | null;
     forma_pago: string | null;
     fecha_vencimiento: string | Date | null;
     emitido_por: string | null;
@@ -209,19 +210,24 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     distrito: sunatConfig.distrito,
   };
 
-  // fechaEmision en zona horaria de Lima (UTC-5), NO en UTC.
-  // Un comprobante emitido a las 21:00 Lima tiene created_at = 02:00 UTC del
-  // día siguiente. Si usamos `created_at.slice(0,10)` (UTC), la fecha que
-  // muestra el PDF queda 1 día adelantada respecto a la fecha del XML
-  // firmado — discrepancia observable por SUNAT en fiscalización.
-  const fechaEmisionLima = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Lima",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(
-    typeof c.created_at === "string" ? new Date(c.created_at) : c.created_at
-  );
+  // fechaEmision: preferimos la columna `fecha_emision` (la fecha REAL del XML,
+  // que puede ser retroactiva). Es un DATE puro (sin hora/zona), así que se usa
+  // tal cual. Solo si está NULL (filas viejas sin backfill) caemos al cálculo
+  // sobre created_at en zona Lima (UTC-5, NO UTC): un comprobante emitido a las
+  // 21:00 Lima tiene created_at = 02:00 UTC del día siguiente; usar el UTC crudo
+  // adelantaría la fecha 1 día respecto al XML firmado.
+  const fechaEmisionLima = c.fecha_emision
+    ? typeof c.fecha_emision === "string"
+      ? c.fecha_emision.slice(0, 10)
+      : c.fecha_emision.toISOString().slice(0, 10)
+    : new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Lima",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(
+        typeof c.created_at === "string" ? new Date(c.created_at) : c.created_at
+      );
 
   // Vencimiento como "YYYY-MM-DD" (columna DATE; neon la devuelve string, Date por las dudas).
   const fechaVencimiento =

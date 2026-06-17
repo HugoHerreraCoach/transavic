@@ -18,6 +18,7 @@ import {
 import { generarXMLResumenDiario } from "@/lib/sunat/xml-builder";
 import { firmarXML } from "@/lib/sunat/xml-signer";
 import { enviarResumen } from "@/lib/sunat/soap-client";
+import { fechaHoyLima } from "@/lib/sunat/fechas";
 import {
   type EmpresaId,
   TipoComprobante,
@@ -106,7 +107,7 @@ export async function enviarResumenDiario(opts: {
     WHERE empresa = ${empresa}
       AND ruc_emisor = ${config.ruc}
       AND tipo = '03'
-      AND DATE(created_at AT TIME ZONE 'America/Lima') = ${fecha}::date
+      AND COALESCE(fecha_emision, DATE(created_at AT TIME ZONE 'America/Lima')) = ${fecha}::date
     ORDER BY numero ASC
   `) as Array<{
     serie: string;
@@ -173,7 +174,7 @@ export async function enviarResumenDiario(opts: {
 
     const xmlSinFirma = generarXMLResumenDiario(
       {
-        fechaEmision: new Date().toISOString().slice(0, 10),
+        fechaEmision: fechaHoyLima(),
         fechaReferencia: fecha,
         correlativo,
         items,

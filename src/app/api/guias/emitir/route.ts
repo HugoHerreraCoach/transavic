@@ -155,6 +155,9 @@ export async function POST(request: Request) {
     let empresaString = "";
     let repartidorAsignadoId: string | null = null;
     let itemsRows: Array<{ producto_nombre: string; cantidad: number; unidad: string }> = [];
+    // Flag: los ítems YA provienen del XML firmado de un comprobante (camino
+    // comprobante_id). Si es true, NO hay que re-vincular la factura más abajo.
+    let itemsDesdeComprobanteXml = false;
 
     if (!pedido_id && !comprobante_id) {
       // Emisión directa
@@ -349,21 +352,37 @@ export async function POST(request: Request) {
           unidad: String(itemObj.unidadMedida || itemObj.unidad || "NIU"),
         };
       });
+      // Los ítems ya son la fuente fiel (XML firmado de este comprobante).
+      itemsDesdeComprobanteXml = true;
     }
 
-    // Si la guía se emite desde un PEDIDO sin comprobante explícito, vincular su factura/boleta
-    // aceptada para que la guía muestre su "Documento Relacionado" Y para que el DESTINATARIO
-    // y los ÍTEMS (descripción, cantidad y UNIDAD de medida) COINCIDAN con la factura.
-    if (!finalComprobanteId && finalPedidoId) {
-      const compRows = await sql`
-        SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
-        FROM comprobantes
-        WHERE pedido_id = ${finalPedidoId}::uuid
-          AND estado IN ('aceptado', 'observado')
-          AND tipo IN ('01', '03')
-        ORDER BY created_at DESC
-        LIMIT 1
-      `;
+    // Vincular la factura/boleta del pedido para que la guía muestre su "Documento
+    // Relacionado" Y para que el DESTINATARIO y los ÍTEMS (descripción, cantidad y
+    // UNIDAD) COINCIDAN con la factura (fuente fiel = su XML firmado). Solo si los
+    // ítems NO vinieron ya del XML de un comprobante (camino comprobante_id). Cubre
+    // el caso del modal de Comprobantes, que manda pedido_id + comprobante_id juntos
+    // → gana el camino pedido_id (cantidades ESTIMADAS) y, sin este bloque, la guía
+    // salía con el estimado del pedido en vez del peso real de la factura.
+    if (!itemsDesdeComprobanteXml && finalPedidoId) {
+      // Si vino comprobante_id EXPLÍCITO, usar ESE comprobante (no "la última factura
+      // aceptada del pedido", que podría ser otra). Si solo vino pedido_id, descubrirla.
+      const compRows = finalComprobanteId
+        ? await sql`
+            SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
+            FROM comprobantes
+            WHERE id = ${finalComprobanteId}::uuid
+              AND tipo IN ('01', '03')
+            LIMIT 1
+          `
+        : await sql`
+            SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
+            FROM comprobantes
+            WHERE pedido_id = ${finalPedidoId}::uuid
+              AND estado IN ('aceptado', 'observado')
+              AND tipo IN ('01', '03')
+            ORDER BY created_at DESC
+            LIMIT 1
+          `;
       if (compRows.length > 0) {
         finalComprobanteId = compRows[0].id as string;
         // El destinatario de la guía debe COINCIDIR con la factura. Solo se sobrescribe si el
@@ -531,24 +550,27 @@ export async function POST(request: Request) {
       cantidad: Number(it.cantidad),
     }));
 
-    // Peso bruto: si no fue enviado, suma EXACTA solo cuando TODOS los ítems están
-    // en kilogramos (= peso de la factura). Con unidades mixtas NO se estima nada:
-    // se exige que el usuario ingrese el peso real (pedido de Antonio, 10 jun 2026).
-    let finalPesoBruto = pesoBrutoTotal;
+    // Peso bruto coherente con las líneas: cuando TODOS los ítems son KGM, el peso
+    // bruto es la suma EXACTA de las cantidades (= las de la factura) y es
+    // AUTORITATIVO — se ignora el `pesoBrutoTotal` del request para garantizar que
+    // GrossWeightMeasure == Σ DeliveredQuantity (si no, líneas y peso podían
+    // divergir: caso T002-00000022). Con unidades mixtas NO se estima: se exige el
+    // peso del request (pedido de Antonio, 10 jun 2026).
+    const todosKg =
+      itemsRows.length > 0 &&
+      itemsRows.every((it) => aUnitCodeSunat(it.unidad) === "KGM");
+    let finalPesoBruto: number | null | undefined;
+    if (todosKg) {
+      const suma = itemsRows.reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0);
+      finalPesoBruto = suma > 0 ? Number(suma.toFixed(2)) : null;
+    } else {
+      finalPesoBruto = pesoBrutoTotal;
+    }
     if (!finalPesoBruto) {
-      const todosKg =
-        itemsRows.length > 0 &&
-        itemsRows.every((it) => aUnitCodeSunat(it.unidad) === "KGM");
-      if (todosKg) {
-        const suma = itemsRows.reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0);
-        if (suma > 0) finalPesoBruto = Number(suma.toFixed(2));
-      }
-      if (!finalPesoBruto) {
-        return NextResponse.json(
-          { error: "Ingresa el Peso Bruto total (KGM): los productos tienen unidades distintas a kilogramos y no se puede calcular automáticamente." },
-          { status: 400 }
-        );
-      }
+      return NextResponse.json(
+        { error: "Ingresa el Peso Bruto total (KGM): los productos tienen unidades distintas a kilogramos y no se puede calcular automáticamente." },
+        { status: 400 }
+      );
     }
 
     // 4. Configurar datos de emisor

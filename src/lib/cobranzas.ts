@@ -143,16 +143,25 @@ export async function crearFacturaStandalone(params: {
   // ambas tienen F001/B001), el id desambigua la empresa. Sirve para que la NC
   // anule la cobranza correcta sin tocar la de la otra empresa.
   comprobanteId?: string | null;
+  // Fecha de emisión del comprobante (YYYY-MM-DD). Si viene, el vencimiento se
+  // cuenta desde ella (no desde hoy) y se guarda en `facturas.fecha_emision`, para
+  // que la cobranza coincida con el XML cuando la emisión es retroactiva. Si no
+  // viene, se usa hoy en Lima (comportamiento previo).
+  fechaEmision?: string | null;
 }): Promise<string> {
   const sql = neon(process.env.DATABASE_URL!);
 
   const plazoNum = Number(params.plazoDias);
-  const vencimiento = calcularVencimiento(new Date(), plazoNum);
+  // Mediodía evita que el parse UTC reste un día al construir el Date.
+  const baseEmision = params.fechaEmision
+    ? new Date(params.fechaEmision + "T12:00:00")
+    : new Date();
+  const vencimiento = calcularVencimiento(baseEmision, plazoNum);
   const venIso = `${vencimiento.getFullYear()}-${String(vencimiento.getMonth() + 1).padStart(2, "0")}-${String(vencimiento.getDate()).padStart(2, "0")}`;
 
   const res = (await sql`
-    INSERT INTO facturas (cliente_nombre, cliente_id, asesor_id, monto, plazo_dias, fecha_vencimiento, numero_comprobante, pedido_id, comprobante_id)
-    VALUES (${params.clienteNombre}, ${params.clienteId ?? null}, ${params.asesorId ?? null}, ${params.monto}, ${plazoNum}, ${venIso}::date, ${params.numeroComprobante ?? null}, ${params.pedidoId ?? null}, ${params.comprobanteId ?? null})
+    INSERT INTO facturas (cliente_nombre, cliente_id, asesor_id, monto, plazo_dias, fecha_vencimiento, numero_comprobante, pedido_id, comprobante_id, fecha_emision)
+    VALUES (${params.clienteNombre}, ${params.clienteId ?? null}, ${params.asesorId ?? null}, ${params.monto}, ${plazoNum}, ${venIso}::date, ${params.numeroComprobante ?? null}, ${params.pedidoId ?? null}, ${params.comprobanteId ?? null}, COALESCE(${params.fechaEmision ?? null}::date, (now() AT TIME ZONE 'America/Lima')::date))
     RETURNING id
   `) as Array<{ id: string }>;
 
@@ -176,10 +185,15 @@ export async function vincularCobranzaAComprobante(params: {
   monto: number;
   plazoDias: number;
   numeroComprobante: string;
+  // Fecha de emisión del comprobante (YYYY-MM-DD). Ver crearFacturaStandalone.
+  fechaEmision?: string | null;
 }): Promise<string> {
   const sql = neon(process.env.DATABASE_URL!);
   const plazoNum = Number(params.plazoDias);
-  const vencimiento = calcularVencimiento(new Date(), plazoNum);
+  const baseEmision = params.fechaEmision
+    ? new Date(params.fechaEmision + "T12:00:00")
+    : new Date();
+  const vencimiento = calcularVencimiento(baseEmision, plazoNum);
   const venIso = `${vencimiento.getFullYear()}-${String(vencimiento.getMonth() + 1).padStart(2, "0")}-${String(vencimiento.getDate()).padStart(2, "0")}`;
 
   // (a) Cobranza existente del pedido SIN comprobante (la de la entrega) → la
@@ -199,7 +213,8 @@ export async function vincularCobranzaAComprobante(params: {
         asesor_id = COALESCE(${params.asesorId ?? null}, asesor_id),
         monto = ${params.monto},
         plazo_dias = ${plazoNum},
-        fecha_vencimiento = ${venIso}::date
+        fecha_vencimiento = ${venIso}::date,
+        fecha_emision = COALESCE(${params.fechaEmision ?? null}::date, fecha_emision)
       WHERE id = ${sinComp[0].id}
     `;
     return sinComp[0].id;
@@ -223,6 +238,7 @@ export async function vincularCobranzaAComprobante(params: {
     plazoDias: params.plazoDias,
     numeroComprobante: params.numeroComprobante,
     pedidoId: params.pedidoId,
+    fechaEmision: params.fechaEmision ?? null,
   });
 }
 

@@ -23,6 +23,7 @@ import {
 import { generarXMLComprobante } from "./xml-builder";
 import { firmarXML } from "./xml-signer";
 import { enviarComprobante } from "./soap-client";
+import { horaActualLima, fechaHoyLima } from "./fechas";
 import {
   type EmpresaId,
   type ClienteComprobante,
@@ -126,6 +127,20 @@ export async function emitirComprobante(
     };
   }
 
+  // Barrera defensiva: si el caller pasó una fecha de emisión FUTURA, abortar ANTES
+  // de consumir el correlativo atómico (un número quemado deja hueco). SUNAT rechaza
+  // las fechas futuras con 2329. El rango completo (3/7 días atrás según tipo) lo
+  // valida el endpoint, que conoce el tipo; acá solo cubrimos lo que SUNAT rechaza
+  // siempre. La NC y la emisión "hoy" no pasan fechaEmision → no se ven afectadas.
+  if (opts.fechaEmision && opts.fechaEmision > fechaHoyLima()) {
+    return {
+      exito: false,
+      estado: EstadoSunat.ERROR,
+      serieNumero: "",
+      error: "No se permiten fechas de emisión futuras (SUNAT rechaza con 2329).",
+    };
+  }
+
   // 1) Serie + correlativo atómico.
   //    Convención multi-empresa: cada empresa tiene su propia familia de series
   //    para que Antonio pueda distinguir visualmente comprobantes por origen.
@@ -205,14 +220,14 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
+        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'pendiente',
         ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
         ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;
@@ -240,7 +255,7 @@ export async function emitirComprobante(
         serie,
         numero,
         fechaEmision,
-        horaEmision: new Date().toLocaleTimeString("en-US", { hour12: false }),
+        horaEmision: horaActualLima(),
         tipoOperacion: TipoOperacion.VENTA_INTERNA,
         moneda: CATALOGO.MONEDA.SOLES,
         cliente: opts.cliente,
@@ -282,7 +297,7 @@ export async function emitirComprobante(
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado,
         hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
+        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
@@ -293,7 +308,7 @@ export async function emitirComprobante(
         ${resultadoEnvio.cdrBase64 ?? null},
         ${observacionesStr},
         ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
         ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;
@@ -324,14 +339,14 @@ export async function emitirComprobante(
         pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
         cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
         monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por
+        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por
       ) VALUES (
         ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
         ${serie}, ${numero}, ${serieNumero},
         ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
         ${subtotal}, ${igv}, ${total}, 'error',
         ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${JSON.stringify(itemsNorm)}::jsonb,
+        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
         ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null}
       )
     `;

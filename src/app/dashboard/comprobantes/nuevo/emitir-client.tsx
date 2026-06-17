@@ -122,6 +122,29 @@ function diasHasta(iso: string): number {
   return Math.max(0, Math.round(ms / 86_400_000));
 }
 
+/** Días (>=0) entre dos fechas ISO (hasta - desde). Para el plazo de crédito cuando
+ *  la emisión NO es hoy: el vencimiento del XML se cuenta desde la fecha de emisión. */
+function diasEntre(desde: string, hasta: string): number {
+  const ms = new Date(hasta + "T00:00:00").getTime() - new Date(desde + "T00:00:00").getTime();
+  return Math.max(0, Math.round(ms / 86_400_000));
+}
+
+/** Días hacia atrás permitidos por tipo (mismo límite que el servidor, lib/sunat/fechas.ts).
+ *  SUNAT no acepta fechas futuras y la retroactividad va por el plazo de envío:
+ *  factura 3 días, boleta 7. */
+const LIMITE_RETRO_DIAS: Record<Tipo, number> = { "01": 3, "03": 7 };
+
+/** Rango [min,max] del selector de fecha de emisión, según el tipo de comprobante. */
+function rangoEmisionLocal(tipo: Tipo): { min: string; max: string } {
+  return { min: isoLocalMasDias(-(LIMITE_RETRO_DIAS[tipo] ?? 3)), max: isoLocalMasDias(0) };
+}
+
+/** Recorta una fecha ISO al rango [min,max] (fecha futura → hoy; muy vieja → mínimo). */
+function clampFecha(iso: string, min: string, max: string): string {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return max;
+  return iso < min ? min : iso > max ? max : iso;
+}
+
 interface ResultadoEmision {
   id?: string; // id del comprobante en DB (para descargar su PDF)
   sunatCaido?: boolean; // SUNAT no respondió (caído) → aviso amigable + emisión manual
@@ -175,6 +198,9 @@ export default function EmitirComprobanteClient({
   const [empresa, setEmpresa] = useState<Empresa>("transavic");
   const [formaPago, setFormaPago] = useState<FormaPago>("Contado");
   const [fechaVenc, setFechaVenc] = useState<string>(() => isoLocalMasDias(7));
+  // Fecha de emisión del comprobante. Default hoy; al emitir desde un pedido se
+  // precarga la fecha del pedido (recortada al rango válido) — ver useEffect abajo.
+  const [fechaEmision, setFechaEmision] = useState<string>(() => isoLocalMasDias(0));
   
   // Datos del receptor/cliente
   const [numDoc, setNumDoc] = useState("");
@@ -269,7 +295,16 @@ export default function EmitirComprobanteClient({
         const doc = (ped.ruc_dni || "").trim();
         setNumDoc(doc);
         setRazonSocial((ped.razon_social || ped.cliente || "").trim());
-        setTipo(doc.length === 11 ? "01" : "03");
+        const tipoPed: Tipo = doc.length === 11 ? "01" : "03";
+        setTipo(tipoPed);
+        // Fecha de emisión sugerida = la del pedido (fecha de entrega), recortada al
+        // rango válido del tipo. Si la entrega es futura o muy antigua, se recorta —
+        // la asesora puede cambiarla. fecha_pedido es DATE (puede venir "YYYY-MM-DD…").
+        const fp = String(ped.fecha_pedido || "").slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fp)) {
+          const { min, max } = rangoEmisionLocal(tipoPed);
+          setFechaEmision(clampFecha(fp, min, max));
+        }
         if (pedItems.length > 0) {
           setItems(
             pedItems.map(
@@ -301,6 +336,13 @@ export default function EmitirComprobanteClient({
       active = false;
     };
   }, [searchParams, pedidoIdProp]);
+
+  // Al cambiar factura↔boleta cambia el límite de retroactividad (3↔7 días). Si la
+  // fecha de emisión quedó fuera del nuevo rango, la recortamos.
+  useEffect(() => {
+    const { min, max } = rangoEmisionLocal(tipo);
+    setFechaEmision((f) => clampFecha(f, min, max));
+  }, [tipo]);
 
   // Pre-carga cuando la asesora vuelve con ?autorizacion_id=XXX aprobada.
   // Rellena empresa, tipo, ítems y datos del cliente para que no tenga que
@@ -794,7 +836,10 @@ export default function EmitirComprobanteClient({
     }
     setEmitiendo(true);
     try {
-      const plazo = formaPago === "Credito" ? diasHasta(fechaVenc) : 0;
+      // Plazo = días entre la FECHA DE EMISIÓN y el vencimiento (no entre hoy y el
+      // vencimiento): el servidor calcula vencimiento = emisión + plazo, así la fecha
+      // absoluta que eligió el usuario se preserva aunque la emisión sea retroactiva.
+      const plazo = formaPago === "Credito" ? diasEntre(fechaEmision, fechaVenc) : 0;
       // Si venimos de un pedido → /emitir (vincula el comprobante al pedido, su
       // cobranza y el badge "Facturado"). Si es emisión suelta → /emitir-manual.
       // Misma interfaz para ambos; solo cambia el endpoint y el armado del payload.
@@ -807,6 +852,7 @@ export default function EmitirComprobanteClient({
               tipo,
               formaPago,
               plazoDias: plazo,
+              fechaEmision,
               confirmarDuplicado,
               autorizacion_id: autorizacionId ?? undefined,
               // Datos del receptor tal como están en el form (precargados del
@@ -846,6 +892,7 @@ export default function EmitirComprobanteClient({
               })),
               formaPago,
               plazoDias: plazo,
+              fechaEmision,
               confirmarDuplicado,
               autorizacion_id: autorizacionId ?? undefined,
             }),
@@ -1074,7 +1121,7 @@ export default function EmitirComprobanteClient({
                 )}
                 <div className="flex justify-between">
                   <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px]">Forma de Pago:</span>
-                  <span className="font-bold text-gray-800 uppercase tracking-wide text-[10px]">{formaPago === "Credito" ? `CRÉDITO (${diasHasta(fechaVenc)} días)` : "CONTADO"}</span>
+                  <span className="font-bold text-gray-800 uppercase tracking-wide text-[10px]">{formaPago === "Credito" ? `CRÉDITO (${diasEntre(fechaEmision, fechaVenc)} días)` : "CONTADO"}</span>
                 </div>
               </div>
               
@@ -1584,6 +1631,39 @@ export default function EmitirComprobanteClient({
               <SectionHeader paso={4} titulo="Forma de pago" />
 
               <div className="space-y-4">
+                {/* Fecha de emisión del comprobante (hoy por defecto; retroactiva
+                    dentro del plazo SUNAT: factura 3 días, boleta 7; nunca futura). */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-gray-500 uppercase">Fecha de emisión</label>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-gray-700 font-bold whitespace-nowrap">Emitir con fecha:</span>
+                    <input
+                      type="date"
+                      value={fechaEmision}
+                      min={rangoEmisionLocal(tipo).min}
+                      max={rangoEmisionLocal(tipo).max}
+                      onChange={(e) =>
+                        setFechaEmision(
+                          clampFecha(
+                            e.target.value,
+                            rangoEmisionLocal(tipo).min,
+                            rangoEmisionLocal(tipo).max
+                          )
+                        )
+                      }
+                      className={`p-2 border rounded-lg text-xs bg-white text-gray-900 font-bold focus:ring-2 focus:outline-none ${theme.ring}`}
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-500 font-medium leading-normal">
+                    {fechaEmision === isoLocalMasDias(0) ? (
+                      <>Hoy ({formatFechaLegible(fechaEmision)}).</>
+                    ) : (
+                      <>Se emitirá con fecha <strong>{formatFechaLegible(fechaEmision)}</strong>.</>
+                    )}{" "}
+                    No se permiten fechas futuras; máximo {LIMITE_RETRO_DIAS[tipo]} días atrás ({tipo === "01" ? "factura" : "boleta"}).
+                  </p>
+                </div>
+
                 {/* Forma de Pago Segmented Control */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-gray-500 uppercase">Forma de pago</label>
@@ -1622,7 +1702,7 @@ export default function EmitirComprobanteClient({
                         ))}
                       </div>
                       <p className="text-[10px] text-gray-500 font-medium leading-normal pt-1.5 border-t border-gray-200">
-                        🗓️ Vence el <strong>{formatFechaLegible(fechaVenc)}</strong> ({diasHasta(fechaVenc)} días). Crea deuda automática en Cobranzas.
+                        🗓️ Vence el <strong>{formatFechaLegible(fechaVenc)}</strong> ({diasEntre(fechaEmision, fechaVenc)} días). Crea deuda automática en Cobranzas.
                       </p>
                     </div>
                   )}
