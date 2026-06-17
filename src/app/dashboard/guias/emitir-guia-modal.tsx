@@ -47,6 +47,26 @@ interface EmitirGuiaModalProps {
 // DISTRITOS_LIMA, MotorizadoUser, dividirNombreLocal, validarChofer, etc. viven en
 // src/lib/guia-form-shared.ts — fuente única compartida con emitir-guia-directa-modal.tsx.
 
+/**
+ * Peso bruto + aviso de mixtas a partir de los productos de la guía. El peso es la
+ * suma EXACTA solo si TODOS los ítems están en kilogramos (igual que el backend, que
+ * lo recalcula así). Con unidades mixtas (kg + uni) queda vacío para que la asesora
+ * ingrese el peso real a mano. Misma fórmula en la carga inicial y al editar.
+ */
+function calcularPesoMixtas(
+  items: Array<{ cantidad: number | string; unidad: string }>
+): { pesoStr: string; mixtas: boolean } {
+  const todosKg =
+    items.length > 0 && items.every((it) => aUnitCodeSunat(it.unidad) === "KGM");
+  const suma = todosKg
+    ? items.reduce((acc, it) => acc + (Number(it.cantidad) || 0), 0)
+    : 0;
+  return {
+    pesoStr: todosKg && suma > 0 ? suma.toFixed(2) : "",
+    mixtas: items.length > 0 && !todosKg,
+  };
+}
+
 export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito }: EmitirGuiaModalProps) {
   const [repartidores, setRepartidores] = useState<MotorizadoUser[]>([]);
   const [repartidorId, setRepartidorId] = useState<string>("");
@@ -109,7 +129,9 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   // Con M1/L los datos del chofer son opcionales → se ocultan y solo se piden si el usuario quiere
   // (o si el pedido ya trae un repartidor con datos). Sin M1/L, siempre visibles (obligatorios).
   const [mostrarChofer, setMostrarChofer] = useState<boolean>(false);
-  const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number; unidad: string }>>([]);
+  // `cantidad` admite string para tolerar la edición (campo vacío mientras se tipea);
+  // se convierte con Number() al calcular el peso, validar y enviar.
+  const [items, setItems] = useState<Array<{ producto_nombre: string; cantidad: number | string; unidad: string }>>([]);
   const [cargandoItems, setCargandoItems] = useState<boolean>(false);
   // true cuando los bienes mezclan kg con otras unidades → el peso NO se autocalcula
   // y se le explica al usuario que debe pesar la carga e ingresarlo a mano.
@@ -176,19 +198,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           setEnvioExcluido(mappedSinFiltrar.length !== mappedItems.length);
           setItems(mappedItems);
 
-          // Peso bruto: suma EXACTA solo si TODOS los ítems están en kilogramos
-          // (= el peso de la factura). Con unidades mixtas se deja EN BLANCO para
-          // que la asesora ingrese el peso real — nada de estimaciones.
-          const todosKg =
-            mappedItems.length > 0 &&
-            mappedItems.every((it: { unidad: string }) => aUnitCodeSunat(it.unidad) === "KGM");
-          const sumWeight = todosKg
-            ? mappedItems.reduce((acc: number, it: { cantidad: number }) => acc + (Number(it.cantidad) || 0), 0)
-            : 0;
-
+          // Peso/bultos/mixtas desde los ítems (= el peso de la factura cuando todos
+          // son kg). El recálculo al editar vive en el useEffect([items]) de abajo.
+          const { pesoStr, mixtas } = calcularPesoMixtas(mappedItems);
           setTotalBultos(Math.max(1, mappedItems.length));
-          setPesoBrutoTotal(todosKg && sumWeight > 0 ? sumWeight.toFixed(2) : "");
-          setUnidadesMixtas(mappedItems.length > 0 && !todosKg);
+          setPesoBrutoTotal(pesoStr);
+          setUnidadesMixtas(mixtas);
 
           // Punto de llegada = dirección de la FACTURA (pedido de Hugo: los clientes
           // piden que la guía coincida con la factura). Solo al emitir DESDE una
@@ -233,6 +248,24 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       active = false;
     };
   }, [pedido?.id, comprobante?.id]);
+
+  // Al EDITAR cantidad/unidad de un producto, recalcular el peso y el aviso de mixtas.
+  // No corre durante la carga inicial (cargarItems ya lo hizo) ni toca `totalBultos`
+  // (no se agregan/quitan productos → su número no cambia; respeta un ajuste manual).
+  // Con todo KGM el peso es la suma autoritativa (igual que el backend); con unidades
+  // mixtas NO se toca el peso (es edición manual de la asesora).
+  useEffect(() => {
+    if (cargandoItems) return;
+    const { pesoStr, mixtas } = calcularPesoMixtas(items);
+    setUnidadesMixtas(mixtas);
+    if (!mixtas) setPesoBrutoTotal(pesoStr);
+  }, [items, cargandoItems]);
+
+  // Edición de un producto a transportar (solo cantidad y unidad; la descripción es fija).
+  const handleItemCantidad = (i: number, raw: string) =>
+    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, cantidad: raw } : it)));
+  const handleItemUnidad = (i: number, unidadUI: string) =>
+    setItems((prev) => prev.map((it, idx) => (idx === i ? { ...it, unidad: unidadUI } : it)));
 
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -490,6 +523,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
       return;
     }
 
+    // Cantidades de los productos a transportar: deben ser > 0 (el usuario pudo editarlas).
+    if (items.length > 0) {
+      const invalida = items.find((it) => !(Number(it.cantidad) > 0));
+      if (invalida) {
+        setError(`La cantidad de "${invalida.producto_nombre}" debe ser mayor a 0.`);
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       const res = await fetch("/api/guias/emitir", {
         method: "POST",
@@ -515,6 +558,16 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           cliente_doc_tipo: docTipoOverride,
           cliente_doc_num: docNumOverride.trim(),
           cliente_razon_social: razonSocialOverride.trim(),
+          // Productos a transportar: lo que el usuario VE y editó (precargado de la
+          // factura). Si la lista está vacía (no cargó), el backend usa la factura.
+          items:
+            items.length > 0
+              ? items.map((it) => ({
+                  producto_nombre: it.producto_nombre,
+                  cantidad: Number(it.cantidad),
+                  unidad: it.unidad,
+                }))
+              : null,
         }),
       });
 
@@ -924,6 +977,50 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         </select>
                       </div>
                     </div>
+
+                    {/* Productos a transportar: precargados de la factura, editables
+                        (cantidad y unidad). Lo que el usuario VE aquí es lo que se emite. */}
+                    {items.length > 0 && (
+                      <div className="space-y-1.5">
+                        <label className="block text-[10px] font-bold text-gray-500">
+                          Productos a transportar
+                        </label>
+                        <div className="space-y-1.5">
+                          {items.map((it, i) => (
+                            <div
+                              key={i}
+                              className="grid grid-cols-[1fr_72px_60px] gap-2 items-center"
+                            >
+                              <span
+                                className="text-xs text-gray-700 truncate"
+                                title={it.producto_nombre}
+                              >
+                                {it.producto_nombre}
+                              </span>
+                              <input
+                                type="number"
+                                min={0.01}
+                                step={0.01}
+                                value={it.cantidad}
+                                onChange={(e) => handleItemCantidad(i, e.target.value)}
+                                className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1 text-right focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                              />
+                              <select
+                                value={aUnitCodeSunat(it.unidad) === "KGM" ? "kg" : "uni"}
+                                onChange={(e) => handleItemUnidad(i, e.target.value)}
+                                className="w-full text-xs border border-gray-200 rounded-lg px-1.5 py-1 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                              >
+                                <option value="kg">kg</option>
+                                <option value="uni">uni</option>
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {cargandoItems && (
+                      <p className="text-[10px] text-gray-400">Cargando productos…</p>
+                    )}
 
                     <div className="grid grid-cols-2 gap-2.5">
                       <div>

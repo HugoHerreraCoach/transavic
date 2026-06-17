@@ -430,6 +430,21 @@ export async function POST(request: Request) {
       }
     }
 
+    // Los ítems del request son la ÚLTIMA PALABRA sobre las líneas: el usuario los vio
+    // y editó en el modal ("lo mostrado == lo emitido"). Va DESPUÉS de toda la
+    // resolución de dirección/repartidor/cliente (que vive en los caminos pedido_id/
+    // comprobante_id) para no pisarla. Sin ítems en el request, itemsRows queda como
+    // lo dejó la vinculación de la factura (XML firmado) o pedido_items de fallback —
+    // así el fix de cantidades se conserva para llamadas API sin ítems. El peso bruto
+    // (más abajo) y items_json ya leen de itemsRows → quedan coherentes con lo editado.
+    if (parsed.data.items?.length) {
+      itemsRows = parsed.data.items.map((it) => ({
+        producto_nombre: it.producto_nombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+      }));
+    }
+
     // --- PREVENIR DOBLE EMISIÓN ---
     if (finalComprobanteId) {
       const activeGuia = await sql`
