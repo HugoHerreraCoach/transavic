@@ -204,6 +204,10 @@ export interface ResultadoEmision {
    * caller que orquesta el flujo (`emitirComprobante` en index.ts). El
    * soap-client puro no lo conoce. */
   serieNumero?: string;
+  /** Importe TOTAL emitido (== cbc:PayableAmount del XML). Lo agrega
+   * `emitirComprobante`. El caller lo usa como monto de la cobranza para que la
+   * deuda coincida EXACTO con el comprobante legal (no con el bruto crudo). */
+  total?: number;
   error?: string;
   mensaje?: string;
   /** true si el fallo fue porque SUNAT está caído/no disponible (NO un rechazo de

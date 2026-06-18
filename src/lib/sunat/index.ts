@@ -20,7 +20,7 @@ import {
   generarNombreArchivo,
   CATALOGO,
 } from "./config-transavic";
-import { generarXMLComprobante } from "./xml-builder";
+import { generarXMLComprobante, calcularTotales, r2 } from "./xml-builder";
 import { firmarXML } from "./xml-signer";
 import { enviarComprobante } from "./soap-client";
 import { horaActualLima, fechaHoyLima } from "./fechas";
@@ -181,18 +181,18 @@ export async function emitirComprobante(
 
   const itemsNorm = opts.items.map(normalizarItem);
 
-  // Calcular totales para guardar (el xml-builder los recalcula pero acá los queremos en DB)
-  let subtotal = 0;
-  let igv = 0;
-  for (const it of itemsNorm) {
-    const base = it.precioUnitario * it.cantidad;
-    const igvLinea = base * (it.porcentajeIGV / 100);
-    subtotal += base;
-    igv += igvLinea;
-  }
-  subtotal = Number(subtotal.toFixed(2));
-  igv = Number(igv.toFixed(2));
-  const total = Number((subtotal + igv).toFixed(2));
+  // Totales para DB: se calculan con la MISMA función que arma el XML
+  // (`calcularTotales`) — fuente ÚNICA de verdad. Antes había un cálculo paralelo
+  // que sumaba sin redondear por línea y divergía 1-2 céntimos del cbc:PayableAmount
+  // del XML → el PDF/lista mostraban un total que no validaba en SUNAT. Ahora
+  // monto_total/subtotal/igv == lo que SUNAT registra. (`totales` se reusa al
+  // generar el XML para que NO se recalcule y queden idénticos por construcción.)
+  const totales = calcularTotales(itemsNorm);
+  const subtotal = r2(
+    totales.totalGravadas + totales.totalExoneradas + totales.totalInafectas
+  );
+  const igv = totales.totalIGV;
+  const total = totales.importeTotal;
 
   const sql = neon(process.env.DATABASE_URL!);
 
@@ -241,6 +241,7 @@ export async function emitirComprobante(
       exito: true,
       estado: EstadoSunat.PENDIENTE,
       serieNumero,
+      total,
       mensaje:
         "Comprobante registrado con correlativo atómico. Pendiente de envío a SUNAT (configurar certificado .p12 en SUNAT_*_CERT_B64).",
     };
@@ -260,6 +261,8 @@ export async function emitirComprobante(
         moneda: CATALOGO.MONEDA.SOLES,
         cliente: opts.cliente,
         items: itemsNorm,
+        // Reusar los totales ya calculados → el XML y la DB quedan idénticos.
+        totales,
         formaPago: opts.formaPago ?? "Contado",
         fechaVencimiento,
         documentoReferencia: opts.documentoReferencia,
@@ -328,6 +331,7 @@ export async function emitirComprobante(
     return {
       ...resultadoEnvio,
       serieNumero,
+      total,
       hashCpe,
       xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
     };

@@ -109,6 +109,58 @@ export function parseCpeItems(xml: string): CpeItem[] {
   return items;
 }
 
+export interface CpeTotales {
+  subtotal: number; // LineExtensionAmount global (total neto sin IGV)
+  igv: number; // TaxAmount global del documento
+  importeTotal: number; // cbc:PayableAmount — lo que SUNAT registra y valida
+}
+
+/**
+ * Extrae los TOTALES DE CABECERA de un CPE firmado (factura/boleta/NC).
+ *
+ * POR QUÉ EXISTE: el `cbc:PayableAmount` del XML es la ÚNICA fuente de verdad del
+ * importe total ante SUNAT (la Consulta de Validez compara exacto al céntimo). El
+ * PDF/lista deben mostrar ESE número, no un recálculo. Los mismos tags
+ * (LineExtensionAmount, TaxAmount) existen por línea, así que primero se quitan
+ * las líneas y se leen los totales de documento (cac:LegalMonetaryTotal y el
+ * cac:TaxTotal de cabecera).
+ *
+ * Devuelve null si el XML no trae PayableAmount (no confiable).
+ */
+export function parseCpeTotales(xml: string): CpeTotales | null {
+  if (!xml || typeof xml !== "string") return null;
+
+  // Quitar las líneas → quedan solo los totales de cabecera.
+  const header = xml
+    .replace(/<cac:InvoiceLine>[\s\S]*?<\/cac:InvoiceLine>/g, "")
+    .replace(/<cac:CreditNoteLine>[\s\S]*?<\/cac:CreditNoteLine>/g, "")
+    .replace(/<cac:DebitNoteLine>[\s\S]*?<\/cac:DebitNoteLine>/g, "");
+
+  const pay = header.match(
+    /<cbc:PayableAmount[^>]*>([\d.]+)<\/cbc:PayableAmount>/
+  );
+  if (!pay) return null;
+  const importeTotal = num(pay[1]);
+
+  // Subtotal neto = LineExtensionAmount dentro de cac:LegalMonetaryTotal.
+  const legal = header.match(
+    /<cac:LegalMonetaryTotal>([\s\S]*?)<\/cac:LegalMonetaryTotal>/
+  );
+  const legalBlock = legal ? legal[1] : header;
+  const lev = legalBlock.match(
+    /<cbc:LineExtensionAmount[^>]*>([\d.]+)<\/cbc:LineExtensionAmount>/
+  );
+  const subtotal = lev ? num(lev[1]) : 0;
+
+  // IGV global = TaxAmount del cac:TaxTotal de documento (ya sin líneas).
+  const tax = header.match(
+    /<cac:TaxTotal>[\s\S]*?<cbc:TaxAmount[^>]*>([\d.]+)<\/cbc:TaxAmount>/
+  );
+  const igv = tax ? num(tax[1]) : 0;
+
+  return { subtotal, igv, importeTotal };
+}
+
 /**
  * Extrae la DIRECCIÓN del cliente (adquirente) del XML CPE firmado.
  * Es la dirección fiel a lo emitido (la fiscal declarada a SUNAT). El PDF la

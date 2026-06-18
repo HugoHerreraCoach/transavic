@@ -10,7 +10,9 @@ import type { EmpresaId } from "@/lib/sunat/types";
 import {
   parseCpeItems,
   parseCpeClienteDireccion,
+  parseCpeTotales,
   type CpeItem,
+  type CpeTotales,
 } from "@/lib/sunat/parse-cpe-items";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 
@@ -123,6 +125,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   // → las facturas standalone salían sin dirección del cliente y el PDF mostraba
   // la del EMISOR con la etiqueta "Establecimiento del Emisor" (confundía).
   let clienteDireccionXml: string | null = null;
+  // Totales del XML firmado: el cbc:PayableAmount es la ÚNICA fuente de verdad del
+  // importe ante SUNAT (la Consulta de Validez compara exacto al céntimo). El PDF
+  // DEBE mostrar ese número, no `monto_total` de DB (que históricamente podía
+  // diferir 1-2 céntimos por un recálculo paralelo, ya corregido en la emisión).
+  let totalesXml: CpeTotales | null = null;
 
   // (1) XML firmado — la representación impresa DEBE coincidir con el XML.
   if (c.xml_firmado_base64) {
@@ -130,6 +137,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       const xml = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
       items = parseCpeItems(xml);
       clienteDireccionXml = parseCpeClienteDireccion(xml);
+      totalesXml = parseCpeTotales(xml);
     } catch {
       items = [];
     }
@@ -257,14 +265,17 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       whatsapp: c.pedido_whatsapp,
     },
     items,
+    // Totales: si hay XML firmado, se usan SUS importes (== lo que SUNAT registró)
+    // para que el PDF valide en la Consulta de Validez. Sin XML (pendiente/error),
+    // se cae a los montos de DB.
     totales: {
-      totalGravadas: Number(c.monto_subtotal),
+      totalGravadas: totalesXml ? totalesXml.subtotal : Number(c.monto_subtotal),
       totalExoneradas: 0,
       totalInafectas: 0,
-      totalIGV: Number(c.monto_igv),
+      totalIGV: totalesXml ? totalesXml.igv : Number(c.monto_igv),
       totalISC: 0,
       totalOtrosCargos: 0,
-      importeTotal: Number(c.monto_total),
+      importeTotal: totalesXml ? totalesXml.importeTotal : Number(c.monto_total),
     },
     moneda: c.moneda || "PEN",
     estado: c.estado,

@@ -429,7 +429,9 @@ export async function POST(request: Request) {
           clienteNombre: cliRazon || pedido.cliente || "Cliente",
           clienteId: pedido.cliente_id,
           asesorId: cobranzaAsesorId,
-          monto: totalConIgv,
+          // Total EMITIDO (== PayableAmount del XML), no el bruto crudo: la deuda
+          // coincide EXACTO con el comprobante legal.
+          monto: resultado.total ?? totalConIgv,
           // Crédito → plazo del form. Contado → plazo del CLIENTE
           // (plazo_pago_dias) o el default del negocio, en vez de vencer hoy.
           plazoDias: esCredito

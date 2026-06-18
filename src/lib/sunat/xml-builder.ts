@@ -35,7 +35,9 @@ const NS = {
 };
 
 // --- Helper: Redondeo a 2 decimales ---
-function r2(n: number): number {
+// Exportado para que el motor (index.ts) calcule los totales de DB con la MISMA
+// aritmética que el XML (evita el descuadre de 1 céntimo monto_total≠PayableAmount).
+export function r2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
@@ -54,7 +56,11 @@ function formatDecimalSunat(n: number, minDecimals: number = 2, maxDecimals: num
 }
 
 // --- Helper: Calcular totales ---
-function calcularTotales(items: ComprobanteItem[]): TotalesComprobante {
+// Fuente ÚNICA de verdad de los importes del comprobante: redondea cada línea
+// (r2) y suma líneas ya redondeadas → produce el cbc:PayableAmount del XML que
+// SUNAT registra y valida. El motor (index.ts) la usa para persistir
+// monto_total/subtotal/igv idénticos al XML (NO recalcular en paralelo).
+export function calcularTotales(items: ComprobanteItem[]): TotalesComprobante {
   let totalGravadas = 0;
   let totalExoneradas = 0;
   let totalInafectas = 0;
@@ -62,12 +68,39 @@ function calcularTotales(items: ComprobanteItem[]): TotalesComprobante {
   let totalIGV = 0;
 
   for (const item of items) {
-    const valorVenta = r2(item.cantidad * item.precioUnitario);
-    const montoIGV = r2(valorVenta * (item.porcentajeIGV / 100));
+    let valorVenta: number;
+    let montoIGV: number;
+    let brutoLinea: number;
+
+    if (item.valorVenta != null && item.montoIGV != null) {
+      // Línea con importes YA fijados (ej. una NOTA DE CRÉDITO que copia EXACTO
+      // las líneas del XML firmado de su factura): se respetan tal cual para que
+      // NC == factura. NO se re-ancla: re-anclar podría dar un total mayor al de
+      // una factura vieja que quedó 1 céntimo por debajo → SUNAT 3286 (NC > factura).
+      valorVenta = r2(item.valorVenta);
+      montoIGV = r2(item.montoIGV);
+      brutoLinea = r2(valorVenta + montoIGV);
+    } else {
+      // ANCLAJE AL BRUTO (precio CON IGV): el negocio cobra un precio con IGV
+      // (ej. S/100). Para que el TOTAL del comprobante sea EXACTAMENTE ese bruto
+      // (y no 100.01 por el redondeo del IGV), se calcula así:
+      //   bruto de línea = redondeo(precio_con_igv * cantidad)
+      //   valorVenta (base) = redondeo(bruto / 1.18)
+      //   IGV = bruto - base   (en vez de redondeo(base*0.18), que desviaba 1 céntimo)
+      // El IGV resultante difiere ≤0.005 de base*18% — dentro de la tolerancia que
+      // SUNAT aplica al validar el impuesto por línea (verificado en beta: boleta
+      // S/100 ACEPTADA con IGV 15.25). Así total == precio con IGV tecleado, y
+      // pantalla/cobranza/XML cuadran.
+      const factor = 1 + item.porcentajeIGV / 100; // 1.18 (gravada) ó 1 (exonerada/inafecta)
+      const precioConIgvUnit = r2(item.precioUnitario * factor);
+      brutoLinea = r2(precioConIgvUnit * item.cantidad);
+      valorVenta = r2(brutoLinea / factor);
+      montoIGV = r2(brutoLinea - valorVenta);
+    }
 
     item.valorVenta = valorVenta;
     item.montoIGV = montoIGV;
-    item.precioTotal = r2(valorVenta + montoIGV);
+    item.precioTotal = brutoLinea;
 
     switch (item.tipoAfectacionIGV) {
       case TipoAfectacionIGV.GRAVADA_ONEROSA:

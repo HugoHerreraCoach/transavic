@@ -19,8 +19,10 @@ import {
   TipoComprobante,
   TipoNotaCredito,
   TipoDocIdentidad,
+  TipoAfectacionIGV,
   EstadoSunat,
   type EmpresaId,
+  type ComprobanteItem,
 } from "@/lib/sunat/types";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
@@ -153,25 +155,27 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   // recalculaba el IGV sobre el subtotal, lo que daba hasta 1 céntimo de más → SUNAT
   // rechazaba con 3286 ("el monto de la NC supera al de la factura"). Fallback: 1
   // línea por el subtotal neto (solo si no se pueden leer las líneas de la factura).
-  type LineaNC = {
-    descripcion: string;
-    unidadMedida: string;
-    cantidad: number;
-    precioUnitario: number;
-    igvPorcentaje: number;
-  };
-  let itemsNC: LineaNC[] | null = null;
+  // La NC copia las líneas con sus importes EXACTOS del XML firmado de la factura
+  // (valorVenta + IGV por línea). `calcularTotales` respeta esos importes (no los
+  // re-calcula) → NC == factura al céntimo, incluso si la factura es vieja y su
+  // total no es "redondo". Así nunca se supera a la factura (evita SUNAT 3286).
+  let itemsNC: ComprobanteItem[] | null = null;
   if (c.xml_firmado_base64) {
     try {
       const xmlFactura = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
       const lineas = parseCpeItems(xmlFactura);
       if (lineas.length > 0) {
         itemsNC = lineas.map((it) => ({
+          codigo: it.codigo || undefined,
           descripcion: it.descripcion || "Item",
           unidadMedida: it.unidadMedida || "NIU",
           cantidad: it.cantidad,
           precioUnitario: it.precioUnitario, // valor unitario SIN IGV, igual que la factura
-          igvPorcentaje: 18,
+          tipoAfectacionIGV: TipoAfectacionIGV.GRAVADA_ONEROSA,
+          porcentajeIGV: 18,
+          // Importes EXACTOS de la línea de la factura → la NC los reproduce tal cual.
+          valorVenta: it.valorVenta,
+          montoIGV: it.montoIGV,
         }));
       }
     } catch (e) {
@@ -185,7 +189,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         unidadMedida: "NIU",
         cantidad: 1,
         precioUnitario: Number(subtotalNeto.toFixed(2)),
-        igvPorcentaje: 18,
+        tipoAfectacionIGV: TipoAfectacionIGV.GRAVADA_ONEROSA,
+        porcentajeIGV: 18,
       },
     ];
   }
