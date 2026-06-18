@@ -19,6 +19,18 @@ export async function GET(request: Request) {
     const empresa = searchParams.get("empresa");
     const pedidoId = searchParams.get("pedido_id");
     const clienteDocNum = searchParams.get("cliente_doc_num")?.trim();
+    // Búsqueda SERVER-SIDE (toda la BD, no solo lo cargado) + rango de fechas.
+    const searchRaw = searchParams.get("search");
+    const desdeRaw = searchParams.get("desde"); // YYYY-MM-DD
+    const hastaRaw = searchParams.get("hasta"); // YYYY-MM-DD
+    const esFecha = (s: string | null): s is string =>
+      !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+    // Saneo del término: trim, máx 60, escapar comodines LIKE (\ % _) → patrón %term%.
+    const searchTerm = (() => {
+      const t = (searchRaw ?? "").trim().slice(0, 60);
+      if (!t) return null;
+      return `%${t.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+    })();
 
     const sql = neon(process.env.DATABASE_URL!);
 
@@ -66,6 +78,26 @@ export async function GET(request: Request) {
     if (clienteDocNum && /^\d{8,11}$/.test(clienteDocNum)) {
       outerConditions.push(`t.cliente_doc_num = $${ctx.i++}`);
       params.push(clienteDocNum);
+    }
+
+    // Búsqueda libre: número / razón social / RUC-DNI / nombre del cliente del pedido.
+    // Un solo placeholder reutilizado en las 4 columnas (PG posicional lo permite).
+    if (searchTerm) {
+      const n = ctx.i++;
+      outerConditions.push(
+        `(t.serie_numero ILIKE $${n} ESCAPE '\\' OR t.cliente_razon_social ILIKE $${n} ESCAPE '\\' OR t.cliente_doc_num ILIKE $${n} ESCAPE '\\' OR COALESCE(p.cliente, '') ILIKE $${n} ESCAPE '\\')`
+      );
+      params.push(searchTerm);
+    }
+    // Rango de fechas por la fecha de emisión real (o created_at Lima de fallback),
+    // expuesta como `t.fecha_filtro` en las subconsultas.
+    if (esFecha(desdeRaw)) {
+      outerConditions.push(`t.fecha_filtro >= $${ctx.i++}`);
+      params.push(desdeRaw);
+    }
+    if (esFecha(hastaRaw)) {
+      outerConditions.push(`t.fecha_filtro <= $${ctx.i++}`);
+      params.push(hastaRaw);
     }
 
     const outerWhere =
@@ -127,9 +159,15 @@ export async function GET(request: Request) {
         FALSE                               AS tiene_nc,
         g.peso_bruto_total::numeric         AS peso_bruto_total,
         g.total_bultos::integer             AS total_bultos,
-        NULL::text                          AS guia_serie_numero
+        NULL::text                          AS guia_serie_numero,
+        (g.created_at AT TIME ZONE 'America/Lima')::date AS fecha_filtro
       FROM comprobantes_guias g
       LEFT JOIN comprobantes ref ON g.comprobante_id = ref.id`;
+
+    // LIMIT con margen: 500 cuando hay búsqueda o rango de fechas (el usuario espera
+    // ver todo el rango), 300 en la vista normal (la paginación client-side es de 15).
+    const LIMITE =
+      searchTerm || esFecha(desdeRaw) || esFecha(hastaRaw) ? 500 : 300;
 
     let query: string;
 
@@ -141,7 +179,7 @@ export async function GET(request: Request) {
         LEFT JOIN pedidos p ON t.pedido_id = p.id
         ${outerWhere}
         ORDER BY t.created_at DESC
-        LIMIT 100`;
+        LIMIT ${LIMITE}`;
     } else if (
       tipo === "01" ||
       tipo === "03" ||
@@ -171,7 +209,8 @@ export async function GET(request: Request) {
             SELECT string_agg(g.serie_numero, ', ')
             FROM comprobantes_guias g
             WHERE g.comprobante_id = c.id
-          )              AS guia_serie_numero
+          )              AS guia_serie_numero,
+          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id
         WHERE c.tipo = $${ctx.i++}`;
@@ -183,7 +222,7 @@ export async function GET(request: Request) {
         LEFT JOIN pedidos p ON t.pedido_id = p.id
         ${outerWhere}
         ORDER BY t.created_at DESC
-        LIMIT 100`;
+        LIMIT ${LIMITE}`;
     } else {
       // Todos (UNION ALL): comprobantes + guías
       // Para comprobantes necesitamos los JOINs de referencia y tiene_nc;
@@ -210,7 +249,8 @@ export async function GET(request: Request) {
             SELECT string_agg(g.serie_numero, ', ')
             FROM comprobantes_guias g
             WHERE g.comprobante_id = c.id
-          )              AS guia_serie_numero
+          )              AS guia_serie_numero,
+          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id`;
 
@@ -224,11 +264,11 @@ export async function GET(request: Request) {
         LEFT JOIN pedidos p ON t.pedido_id = p.id
         ${outerWhere}
         ORDER BY t.created_at DESC
-        LIMIT 100`;
+        LIMIT ${LIMITE}`;
     }
 
     const rows = await sql.query(query, params);
-    return NextResponse.json({ data: rows });
+    return NextResponse.json({ data: rows, alcanzoTope: rows.length >= LIMITE });
   } catch (error) {
     console.error("Error en GET /api/comprobantes:", error);
     return NextResponse.json(

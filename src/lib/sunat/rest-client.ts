@@ -221,27 +221,37 @@ async function consultarTicketRest(
       const codRespuesta = String(data.codRespuesta);
 
       if (codRespuesta === "0" && data.arcCdr) {
-        // ¡Procesamiento completado con éxito!
-        const cdrXml = await descomprimirCDR(data.arcCdr);
-        const { codigo, descripcion, observaciones } = parsearRespuestaCDR(cdrXml);
-
-        const codigoNum = parseInt(codigo);
-        let estado: EstadoSunat = EstadoSunat.ACEPTADA;
-
-        if (codigoNum === 0) {
-          estado = observaciones.length > 0
-            ? EstadoSunat.ACEPTADA_CON_OBSERVACIONES
-            : EstadoSunat.ACEPTADA;
-        } else if (codigoNum >= 100 && codigoNum <= 3999) {
-          estado = EstadoSunat.RECHAZADA;
-        } else if (codigoNum >= 4000) {
-          estado = EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
+        // codRespuesta 0 = el ticket se procesó, pero hay que LEER el ResponseCode
+        // del CDR para saber si aceptó o rechazó. Si no se puede leer → ERROR
+        // (nunca asumir ACEPTADA — mismo fail-safe que soap-client).
+        const { xml: cdrXml, ok } = descomprimirCDR(data.arcCdr);
+        if (!ok) {
+          return {
+            exito: false,
+            estado: EstadoSunat.ERROR,
+            codigoRespuesta: "",
+            descripcion: "No se pudo leer la constancia (CDR) de SUNAT. Requiere revisión manual.",
+            error: "CDR_ILEGIBLE",
+            cdrBase64: data.arcCdr,
+            xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
+          };
         }
+        const { codigo, descripcion, observaciones } = parsearRespuestaCDR(cdrXml);
+        const codigoNum = Number(codigo);
+        const codigoValido = codigo !== "" && Number.isInteger(codigoNum) && codigoNum >= 0;
+
+        let estado: EstadoSunat;
+        if (!codigoValido) estado = EstadoSunat.ERROR;
+        else if (codigoNum === 0)
+          estado = observaciones.length > 0 ? EstadoSunat.ACEPTADA_CON_OBSERVACIONES : EstadoSunat.ACEPTADA;
+        else if (codigoNum >= 100 && codigoNum <= 3999) estado = EstadoSunat.RECHAZADA;
+        else if (codigoNum >= 4000) estado = EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
+        else estado = EstadoSunat.ERROR;
 
         return {
           exito: estado === EstadoSunat.ACEPTADA || estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES,
           codigoRespuesta: codigo,
-          descripcion: descripcion || data.message || "Guía aceptada por SUNAT.",
+          descripcion: (codigoValido ? `${codigo}: ${descripcion}` : descripcion) || data.message || "Guía procesada por SUNAT.",
           hashCpe: "",
           cdrBase64: data.arcCdr,
           xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
@@ -260,7 +270,7 @@ async function consultarTicketRest(
         let observaciones: string[] = [];
         if (data.arcCdr) {
           try {
-            const cdrXml = await descomprimirCDR(data.arcCdr);
+            const { xml: cdrXml } = descomprimirCDR(data.arcCdr);
             const parsed = parsearRespuestaCDR(cdrXml);
             observaciones = parsed.observaciones;
           } catch (cdrErr) {

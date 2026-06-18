@@ -5,7 +5,7 @@
 // to avoid authentication issues with SUNAT's WSDL endpoints.
 // ============================================================
 
-import * as zlib from "zlib";
+import { unzipSync, strFromU8 } from "fflate";
 import { SunatConfig, generarNombreArchivo } from "./config-transavic";
 import { ResultadoEmision, EstadoSunat } from "./types";
 import { decodeEntidadesXml } from "./mensajes-amigables";
@@ -42,100 +42,37 @@ async function comprimirXML(xml: string, nombreArchivo: string): Promise<Buffer>
 }
 
 /**
- * Descomprime un ZIP de respuesta CDR de SUNAT
- * SUNAT devuelve archivos PKZip (no gzip), debemos extraer el XML del ZIP
+ * Descomprime el ZIP del CDR (constancia) de SUNAT y devuelve su XML.
+ *
+ * SUNAT entrega un ZIP con "data descriptor" (compressedSize=0 en el header
+ * local). El parser PKZip manual anterior NO lo leía → devolvía crudo/vacío →
+ * `parsearRespuestaCDR` no hallaba el ResponseCode → la clasificación caía a
+ * "aceptado" por defecto. Ese fue el bug que marcó como ACEPTADAS 5 notas de
+ * crédito que SUNAT RECHAZÓ (3286), jun 2026. `fflate.unzipSync` lee el central
+ * directory (igual que python/zipfile) y maneja el data descriptor sin problema.
+ *
+ * Devuelve `{ xml, ok }`. **`ok=false` significa que NO se pudo leer la
+ * constancia** — el caller NUNCA debe asumir ACEPTADA en ese caso (debe quedar
+ * ERROR para revisión). Jamás se devuelve el base64 crudo disfrazado de XML.
  */
-export async function descomprimirCDR(zipBase64: string): Promise<string> {
+export function descomprimirCDR(zipBase64: string): { xml: string; ok: boolean } {
   try {
-    const zipBuffer = Buffer.from(zipBase64, "base64");
-
-    // PKZip: buscar el local file header (PK\x03\x04)
-    if (zipBuffer[0] === 0x50 && zipBuffer[1] === 0x4B) {
-      // Parse PKZip local file header
-      let compressedSize = zipBuffer.readUInt32LE(18);
-      const fileNameLength = zipBuffer.readUInt16LE(26);
-      const extraFieldLength = zipBuffer.readUInt16LE(28);
-      const dataOffset = 30 + fileNameLength + extraFieldLength;
-      const compressionMethod = zipBuffer.readUInt16LE(8);
-
-      // If compressedSize is 0, the ZIP uses a data descriptor; read until end of central directory
-      if (compressedSize === 0) {
-        // Find central directory header (PK\x01\x02) to determine data end
-        const centralDirSignature = Buffer.from([0x50, 0x4B, 0x01, 0x02]);
-        let endOfData = zipBuffer.length;
-        for (let i = dataOffset; i < zipBuffer.length - 3; i++) {
-          if (
-            zipBuffer[i] === centralDirSignature[0] &&
-            zipBuffer[i + 1] === centralDirSignature[1] &&
-            zipBuffer[i + 2] === centralDirSignature[2] &&
-            zipBuffer[i + 3] === centralDirSignature[3]
-          ) {
-            // Check for data descriptor (PK\x07\x08) before central dir
-            if (i >= 16 && zipBuffer[i - 16] === 0x50 && zipBuffer[i - 15] === 0x4B && zipBuffer[i - 14] === 0x07 && zipBuffer[i - 13] === 0x08) {
-              endOfData = i - 16;
-            } else {
-              endOfData = i;
-            }
-            break;
-          }
-        }
-        compressedSize = endOfData - dataOffset;
-      }
-
-      const compressedData = zipBuffer.subarray(dataOffset, dataOffset + compressedSize);
-
-      if (compressionMethod === 8) {
-        // Deflate
-        return new Promise((resolve) => {
-          zlib.inflateRaw(compressedData, (err, result) => {
-            if (err) {
-              console.error("[CDR] Deflate error:", err.message, "- trying unzip fallback");
-              // Fallback: try unzipping the entire buffer
-              zlib.unzip(zipBuffer, (err2, result2) => {
-                if (err2) {
-                  console.error("[CDR] Unzip fallback also failed:", err2.message);
-                  // Last resort: try to find XML content directly
-                  const rawStr = zipBuffer.toString("utf-8");
-                  if (rawStr.includes("<?xml") || rawStr.includes("<ApplicationResponse") || rawStr.includes("<cbc:ResponseCode")) {
-                    resolve(rawStr);
-                  } else {
-                    resolve(zipBase64);
-                  }
-                } else {
-                  resolve(result2.toString("utf-8"));
-                }
-              });
-            } else {
-              resolve(result.toString("utf-8"));
-            }
-          });
-        });
-      } else if (compressionMethod === 0) {
-        // Stored (sin compresión)
-        return compressedData.toString("utf-8");
+    const files = unzipSync(new Uint8Array(Buffer.from(zipBase64, "base64")));
+    // SUNAT mete una carpeta vacía "dummy/" + el CDR real "R-<ruc>-<tipo>-<serie>.xml".
+    const nombre =
+      Object.keys(files).find((n) => /(^|\/)R-.*\.xml$/i.test(n)) ??
+      Object.keys(files).find((n) => n.toLowerCase().endsWith(".xml"));
+    if (nombre && files[nombre]?.length) {
+      const xml = strFromU8(files[nombre]);
+      if (xml.includes("ApplicationResponse") || xml.includes("ResponseCode")) {
+        return { xml, ok: true };
       }
     }
-
-    // Fallback: intentar zlib.unzip directo
-    return new Promise((resolve) => {
-      zlib.unzip(zipBuffer, (err, result) => {
-        if (err) {
-          zlib.inflateRaw(zipBuffer, (err2, result2) => {
-            if (err2) {
-              console.error("[CDR] All decompression failed, returning raw");
-              resolve(zipBase64);
-            } else {
-              resolve(result2.toString("utf-8"));
-            }
-          });
-        } else {
-          resolve(result.toString("utf-8"));
-        }
-      });
-    });
+    console.error("[CDR] ZIP sin XML de constancia reconocible.");
+    return { xml: "", ok: false };
   } catch (e) {
-    console.error("[CDR] Decompression exception:", e);
-    return zipBase64;
+    console.error("[CDR] descompresión falló:", (e as Error).message);
+    return { xml: "", ok: false };
   }
 }
 
@@ -460,30 +397,56 @@ export async function enviarComprobante(
     const appResponse = extractSoapValue(responseXml, "applicationResponse");
 
     if (appResponse) {
-      const cdrXml = await descomprimirCDR(appResponse);
+      const { xml: cdrXml, ok } = descomprimirCDR(appResponse);
+
+      // FAIL-SAFE: si no se pudo leer la constancia (CDR), NO clasificamos por
+      // código → queda ERROR (revisar/reintentar), NUNCA ACEPTADA. Bug jun 2026:
+      // el CDR ilegible se colaba como "aceptado" (5 NC rechazadas mostradas OK).
+      if (!ok) {
+        return {
+          exito: false,
+          estado: EstadoSunat.ERROR,
+          codigoRespuesta: "",
+          descripcion: "No se pudo leer la constancia (CDR) de SUNAT. Requiere revisión manual.",
+          error: "CDR_ILEGIBLE: la respuesta de SUNAT no se pudo descomprimir/parsear.",
+          cdrBase64: appResponse,
+          xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
+        };
+      }
+
       const { codigo, descripcion, observaciones } = parsearRespuestaCDR(cdrXml);
 
-      const codigoNum = parseInt(codigo);
-      let estado: EstadoSunat;
+      // El código DEBE ser un entero válido antes de aplicar rangos. Si no lo es,
+      // NO se asume aceptado: queda ERROR. (`parseInt("")`=NaN caía al `else`→
+      // ACEPTADA — el corazón del bug.)
+      const codigoNum = Number(codigo);
+      const codigoValido =
+        codigo !== "" && Number.isInteger(codigoNum) && codigoNum >= 0;
 
-      if (codigoNum === 0) {
-        estado = observaciones.length > 0
-          ? EstadoSunat.ACEPTADA_CON_OBSERVACIONES
-          : EstadoSunat.ACEPTADA;
-      } else if (codigoNum >= 100 && codigoNum <= 1999) {
-        estado = EstadoSunat.RECHAZADA;
-      } else if (codigoNum >= 2000 && codigoNum <= 3999) {
-        estado = EstadoSunat.RECHAZADA;
+      let estado: EstadoSunat;
+      if (!codigoValido) {
+        estado = EstadoSunat.ERROR;
+      } else if (codigoNum === 0) {
+        estado =
+          observaciones.length > 0
+            ? EstadoSunat.ACEPTADA_CON_OBSERVACIONES
+            : EstadoSunat.ACEPTADA;
+      } else if (codigoNum >= 100 && codigoNum <= 3999) {
+        estado = EstadoSunat.RECHAZADA; // 100-3999 = rechazo (incluye 3286)
       } else if (codigoNum >= 4000) {
         estado = EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
       } else {
-        estado = EstadoSunat.ACEPTADA;
+        estado = EstadoSunat.ERROR; // 1-99: rango no estándar → indeterminado
       }
+
+      // Persistir SIEMPRE código+descripción (también en aceptados) → un aceptado
+      // real tendrá "0: …ha sido aceptada" en mensaje_sunat (señal de salud).
+      const mensajeSunat = codigoValido ? `${codigo}: ${descripcion}`.trim() : descripcion || "";
 
       return {
         exito: estado === EstadoSunat.ACEPTADA || estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES,
         codigoRespuesta: codigo,
-        descripcion,
+        descripcion: mensajeSunat,
         hashCpe: "",
         cdrBase64: appResponse,
         xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
@@ -587,15 +550,35 @@ export async function consultarTicket(
     const content = extractSoapValue(responseXml, "content");
 
     if (statusCode === "0" && content) {
-      const cdrXml = await descomprimirCDR(content);
+      const { xml: cdrXml, ok } = descomprimirCDR(content);
+      // FAIL-SAFE: statusCode 0 NO garantiza aceptación — hay que leer el
+      // ResponseCode del CDR. Si no se puede leer, ERROR (no asumir ACEPTADA).
+      if (!ok) {
+        return {
+          exito: false,
+          estado: EstadoSunat.ERROR,
+          descripcion: "No se pudo leer la constancia (CDR) de SUNAT. Requiere revisión manual.",
+          cdrBase64: content,
+          ticket,
+        };
+      }
       const { codigo, descripcion, observaciones } = parsearRespuestaCDR(cdrXml);
+      const codigoNum = Number(codigo);
+      const codigoValido = codigo !== "" && Number.isInteger(codigoNum) && codigoNum >= 0;
+      let estado: EstadoSunat;
+      if (!codigoValido) estado = EstadoSunat.ERROR;
+      else if (codigoNum === 0)
+        estado = observaciones.length > 0 ? EstadoSunat.ACEPTADA_CON_OBSERVACIONES : EstadoSunat.ACEPTADA;
+      else if (codigoNum >= 100 && codigoNum <= 3999) estado = EstadoSunat.RECHAZADA;
+      else if (codigoNum >= 4000) estado = EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
+      else estado = EstadoSunat.ERROR;
 
       return {
-        exito: true,
+        exito: estado === EstadoSunat.ACEPTADA || estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES,
         codigoRespuesta: codigo,
-        descripcion,
+        descripcion: codigoValido ? `${codigo}: ${descripcion}`.trim() : descripcion,
         cdrBase64: content,
-        estado: EstadoSunat.ACEPTADA,
+        estado,
         observaciones,
         ticket,
       };
@@ -615,7 +598,7 @@ export async function consultarTicket(
       // Try to parse CDR for detailed error
       if (content99) {
         try {
-          const cdrXml = await descomprimirCDR(content99);
+          const { xml: cdrXml } = descomprimirCDR(content99);
           const { codigo, descripcion, observaciones } = parsearRespuestaCDR(cdrXml);
           console.error("[SUNAT BAJA] CDR Code:", codigo, "Description:", descripcion);
           if (observaciones?.length) console.error("[SUNAT BAJA] Observaciones:", observaciones);

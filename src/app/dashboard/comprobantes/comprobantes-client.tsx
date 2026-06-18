@@ -2202,6 +2202,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // Búsqueda local sobre lo ya traído: matchea serie_numero, cliente y doc.
   // El usuario escribe "F001-23" o "Lucy" o "20123…" y filtra al toque.
   const [busqueda, setBusqueda] = useState<string>("");
+  // Búsqueda SERVER-SIDE (toda la BD, no solo lo cargado) con debounce + rango de fechas.
+  const [searchDebounced, setSearchDebounced] = useState<string>("");
+  const [filtroDesde, setFiltroDesde] = useState<string>(""); // YYYY-MM-DD | ""
+  const [filtroHasta, setFiltroHasta] = useState<string>("");
+  const [alcanzoTope, setAlcanzoTope] = useState<boolean>(false);
   const [accionEnProgreso, setAccionEnProgreso] = useState<string | null>(null);
   // Menú "⋯" de acciones por fila (posición fija para escapar del overflow de la tabla).
   const [menuAcciones, setMenuAcciones] = useState<{
@@ -2311,6 +2316,10 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
       if (filtroEmpresa !== "all") params.set("empresa", filtroEmpresa);
       // Si vinimos con ?pedido_id= (ej. link del badge "Facturado"), filtramos.
       if (pedidoIdFiltro) params.set("pedido_id", pedidoIdFiltro);
+      // Búsqueda en toda la BD (≥2 chars) + rango de fechas → se resuelven en el server.
+      if (searchDebounced.length >= 2) params.set("search", searchDebounced);
+      if (filtroDesde) params.set("desde", filtroDesde);
+      if (filtroHasta) params.set("hasta", filtroHasta);
       const qs = params.toString();
       const url = qs ? `/api/comprobantes?${qs}` : "/api/comprobantes";
       const res = await fetch(url);
@@ -2318,7 +2327,9 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         const j = await res.json().catch(() => ({}));
         throw new Error(j.error || `HTTP ${res.status}`);
       }
-      setComprobantes((await res.json()).data ?? []);
+      const json = await res.json();
+      setComprobantes(json.data ?? []);
+      setAlcanzoTope(Boolean(json.alcanzoTope));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -2330,12 +2341,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroTipo, filtroEmpresa, pedidoIdFiltro]);
+  }, [filtroTipo, filtroEmpresa, pedidoIdFiltro, searchDebounced, filtroDesde, filtroHasta]);
 
-  // Volver a la página 1 cuando cambia cualquier filtro (incluida la búsqueda).
+  // Debounce de la búsqueda server-side: no dispara un fetch en cada tecla.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchDebounced(busqueda.trim()), 400);
+    return () => clearTimeout(t);
+  }, [busqueda]);
+
+  // Volver a la página 1 cuando cambia cualquier filtro (incluida la búsqueda y fechas).
   useEffect(() => {
     setPagina(1);
-  }, [filtroTipo, filtroEmpresa, filtroEstado, busqueda]);
+  }, [filtroTipo, filtroEmpresa, filtroEstado, busqueda, filtroDesde, filtroHasta]);
 
   useEffect(() => {
     if (!toast) return;
@@ -2830,7 +2847,84 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             { v: "problemas", l: "Con problemas", swatch: "bg-red-500" },
           ]}
         />
+        {/* Fecha: rango por fecha de emisión (server-side) + atajos rápidos. */}
+        <div className="flex items-start gap-3 flex-wrap">
+          <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider w-16 pt-2 flex-shrink-0">
+            Fecha
+          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="date"
+              value={filtroDesde}
+              max={filtroHasta || fechaLima(0)}
+              onChange={(e) => setFiltroDesde(e.target.value)}
+              className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+              aria-label="Desde"
+            />
+            <span className="text-xs text-gray-400">a</span>
+            <input
+              type="date"
+              value={filtroHasta}
+              min={filtroDesde || undefined}
+              max={fechaLima(0)}
+              onChange={(e) => setFiltroHasta(e.target.value)}
+              className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+              aria-label="Hasta"
+            />
+            {[
+              {
+                l: "Hoy",
+                fn: () => {
+                  const h = fechaLima(0);
+                  setFiltroDesde(h);
+                  setFiltroHasta(h);
+                },
+              },
+              {
+                l: "Este mes",
+                fn: () => {
+                  const h = fechaLima(0);
+                  setFiltroDesde(primerDiaDelMes(h));
+                  setFiltroHasta(h);
+                },
+              },
+              {
+                l: "Mes pasado",
+                fn: () => {
+                  const ini = mesAnteriorISO(fechaLima(0));
+                  setFiltroDesde(ini);
+                  setFiltroHasta(ultimoDiaDelMes(ini));
+                },
+              },
+            ].map((a) => (
+              <button
+                key={a.l}
+                onClick={a.fn}
+                className="px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 text-gray-600 bg-white hover:bg-gray-50 font-medium"
+              >
+                {a.l}
+              </button>
+            ))}
+            {(filtroDesde || filtroHasta) && (
+              <button
+                onClick={() => {
+                  setFiltroDesde("");
+                  setFiltroHasta("");
+                }}
+                className="px-2.5 py-1.5 text-xs rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100 font-medium"
+              >
+                Limpiar
+              </button>
+            )}
+          </div>
+        </div>
       </div>
+
+      {alcanzoTope && (
+        <div className="mb-3 text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          Se muestran los primeros resultados. Acota por fecha o afina la búsqueda para ver el resto.
+        </div>
+      )}
 
       {/* Mobile: card layout (más legible que tabla con 7 columnas en 375px) */}
       <div className="sm:hidden space-y-3">

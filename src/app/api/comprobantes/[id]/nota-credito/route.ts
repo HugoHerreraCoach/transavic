@@ -25,6 +25,7 @@ import {
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 import { anularCobranzasDeComprobante } from "@/lib/cobranzas";
+import { parseCpeItems } from "@/lib/sunat/parse-cpe-items";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const rows = (await sql`
     SELECT c.empresa, c.tipo, c.serie, c.numero, c.serie_numero, c.estado,
            c.monto_subtotal, c.cliente_doc_num, c.cliente_razon_social,
-           c.observaciones, c.pedido_id, c.emitido_por, p.asesor_id
+           c.observaciones, c.pedido_id, c.emitido_por, c.xml_firmado_base64, p.asesor_id
     FROM comprobantes c
     LEFT JOIN pedidos p ON c.pedido_id = p.id
     WHERE c.id = ${id}::uuid LIMIT 1
@@ -82,6 +83,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     observaciones: string | null;
     pedido_id: string | null;
     emitido_por: string | null;
+    xml_firmado_base64: string | null;
     asesor_id: string | null;
   }>;
   if (rows.length === 0)
@@ -146,6 +148,48 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const esRuc = /^\d{11}$/.test(docNum);
   const refNumero = String(c.numero).padStart(8, "0");
 
+  // Las líneas de la NC = las MISMAS de la factura (de su XML firmado) → el total de
+  // la NC coincide EXACTO con la factura. Antes se consolidaba TODO en 1 línea y se
+  // recalculaba el IGV sobre el subtotal, lo que daba hasta 1 céntimo de más → SUNAT
+  // rechazaba con 3286 ("el monto de la NC supera al de la factura"). Fallback: 1
+  // línea por el subtotal neto (solo si no se pueden leer las líneas de la factura).
+  type LineaNC = {
+    descripcion: string;
+    unidadMedida: string;
+    cantidad: number;
+    precioUnitario: number;
+    igvPorcentaje: number;
+  };
+  let itemsNC: LineaNC[] | null = null;
+  if (c.xml_firmado_base64) {
+    try {
+      const xmlFactura = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
+      const lineas = parseCpeItems(xmlFactura);
+      if (lineas.length > 0) {
+        itemsNC = lineas.map((it) => ({
+          descripcion: it.descripcion || "Item",
+          unidadMedida: it.unidadMedida || "NIU",
+          cantidad: it.cantidad,
+          precioUnitario: it.precioUnitario, // valor unitario SIN IGV, igual que la factura
+          igvPorcentaje: 18,
+        }));
+      }
+    } catch (e) {
+      console.error("No se pudieron leer las líneas de la factura para la NC:", e);
+    }
+  }
+  if (!itemsNC) {
+    itemsNC = [
+      {
+        descripcion: `${parsed.data.motivo} (ref. ${c.serie}-${refNumero})`.slice(0, 250),
+        unidadMedida: "NIU",
+        cantidad: 1,
+        precioUnitario: Number(subtotalNeto.toFixed(2)),
+        igvPorcentaje: 18,
+      },
+    ];
+  }
+
   try {
     const resultado = await emitirComprobante({
       empresa: c.empresa as EmpresaId,
@@ -155,15 +199,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         numDocumento: docNum,
         razonSocial: c.cliente_razon_social ?? "CLIENTE",
       },
-      items: [
-        {
-          descripcion: `${parsed.data.motivo} (ref. ${c.serie}-${refNumero})`.slice(0, 250),
-          unidadMedida: "NIU",
-          cantidad: 1,
-          precioUnitario: Number(subtotalNeto.toFixed(2)),
-          igvPorcentaje: 18,
-        },
-      ],
+      items: itemsNC,
       documentoReferencia: {
         tipoComprobante: c.tipo as TipoComprobante,
         serie: c.serie,

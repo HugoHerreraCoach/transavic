@@ -27,6 +27,7 @@
     "bcrypt": "^6.0.0",
     "browser-image-compression": "^2.0.2",
     "dotenv": "^17.2.0",
+    "fflate": "^0.8.3",
     "html-to-image": "^1.11.13",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
