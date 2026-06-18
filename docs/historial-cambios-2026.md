@@ -531,4 +531,33 @@ Como `r2(Σx) ≠ Σr2(x)`, divergían 1‑2 céntimos cuando los precios tenía
 
 **Consistencia de la cobranza:** `emitirComprobante` ahora devuelve `total` (== PayableAmount) en `ResultadoEmision`; `emitir-manual` y `emitir` (pedido) usan `resultado.total` como monto de la cobranza (antes el bruto crudo, que con cantidades fraccionarias podía diferir 1 céntimo del XML). El preview del frontend ya calculaba el bruto (100.00), así que pantalla/XML/cobranza cuadran sin tocar el frontend.
 
-**Archivos:** `xml-builder.ts` (anclaje + rama pre-set), `index.ts`/`types.ts` (`ResultadoEmision.total`), `emitir-manual` + `emitir` (cobranza usa `resultado.total`), `[id]/nota-credito/route.ts` (NC con importes exactos). `lint`+`build` OK. **Las 189 ya emitidas NO se corrigen** (XML firmado, inmutable y válido); aplica de aquí en adelante. **Pendiente operativo:** desplegar (git push a main). Decisión de diseño: conexipema NO ancla (emite 100.01); Transavic SÍ ancla por decisión de Hugo.
+**Archivos:** `xml-builder.ts` (anclaje + rama pre-set), `index.ts`/`types.ts` (`ResultadoEmision.total`), `emitir-manual` + `emitir` (cobranza usa `resultado.total`), `[id]/nota-credito/route.ts` (NC con importes exactos). `lint`+`build` OK. **Las 189 ya emitidas NO se corrigen** (XML firmado, inmutable y válido); aplica de aquí en adelante. Desplegado a main (commit `2224f9f`, 18 jun 2026). Decisión de diseño: conexipema NO ancla (emite 100.01); Transavic SÍ ancla por decisión de Hugo.
+
+### 🔧 Diagnóstico y recuperación de totales (runbook para errores futuros)
+
+Si vuelve a aparecer un problema con los importes de un comprobante (PDF ≠ SUNAT, cobranza ≠ comprobante, NC rechazada, total que no cuadra), esta es la caja de herramientas:
+
+**Scripts (read-only salvo el backfill con `--apply`; por defecto apuntan a PROD `.env`; para dev: `DATABASE_URL_UNPOOLED="…" node …`):**
+- **`scripts/diagnostico-totales-comprobantes.mjs`** — chequeo de salud. Reporta: (1) `monto_total` (DB) ≠ `PayableAmount` (XML); (2) total emitido ≠ bruto intencional (no anclado); (3) cobranza `facturas.monto` ≠ comprobante vinculado. NO escribe.
+- **`scripts/backfill-monto-total-desde-xml.mjs`** — corrige (1) y alinea cobranzas NO pagadas. Dry-run por defecto; `--apply` para escribir (respaldo CSV automático en `scratch/`). Idempotente.
+
+**Baseline sano (tras los fixes del 18 jun 2026)** — `node scripts/diagnostico-totales-comprobantes.mjs` debe dar:
+- (1) **0** — si sube de 0, el motor está guardando un total distinto al XML → revisar que `emitirComprobante` (`index.ts`) siga usando `calcularTotales` y pasándole el mismo `totales` al builder; correr el backfill.
+- (2) **189** (los emitidos ANTES del anclaje, XML inmutable). En comprobantes NUEVOS debe ser **0**: si un nuevo sale "no anclado", el anclaje de `calcularTotales` regresó (revisar el bloque `bruto/valorVenta/IGV=bruto−valorVenta`).
+- (3) **16** (todas `Pagada`, 1 céntimo, intencional). Si sube con `Pendiente/Vencida`, la cobranza no tomó `resultado.total` (revisar `emitir-manual`/`emitir`).
+
+**Probar un total contra SUNAT BETA (receta reproducible, sin tocar prod):**
+1. `.env.local` ya está en `SUNAT_ENVIRONMENT="beta"`. Lanzar el dev server habilitando el bypass de auth y forzando la credencial de prueba MODDATOS (vacía → el config la usa en beta):
+   `VERCEL_ENV=development SUNAT_TRA_SOL_USER= SUNAT_TRA_SOL_PASSWORD= SUNAT_AVI_SOL_USER= SUNAT_AVI_SOL_PASSWORD= SUNAT_ENVIRONMENT=beta npm run dev -- -p 3055`
+   (el bypass se bloquea si `VERCEL_ENV=production` o `SUNAT_ENVIRONMENT=production` — por eso los overrides).
+2. Emitir con el header `x-bypass-auth: <AUTH_SECRET de .env.local>`:
+   `POST http://localhost:3055/api/comprobantes/emitir-manual` con `{tipo:"03", empresa:"transavic", cliente:{numDocumento:"",razonSocial:"PRUEBA"}, items:[{descripcion:"X",unidad:"NIU",cantidad:1,precio_unitario:100}], formaPago:"Contado"}`.
+3. La respuesta trae `estado` (`ACEPTADA`/`RECHAZADA`), `xmlFirmadoBase64` y `cdrBase64`. Decodificar el XML (base64→utf8) y mirar `cbc:PayableAmount`/`cbc:TaxAmount`. **Nota:** el bypass NO aplica a la ruta de NC (`/[id]/nota-credito` usa solo `auth()`); para probar una NC, loguearse de verdad o validar la lógica con un script read-only sobre el XML de la factura.
+
+**Señales de alarma → dónde mirar:**
+- *El PDF muestra un total distinto a SUNAT* → `[id]/route.ts` debe leer los totales del XML vía `parseCpeTotales` (gotcha #36); correr diagnóstico (1).
+- *Un comprobante nuevo no totaliza el precio con IGV tecleado* → anclaje de `calcularTotales` (gotcha #37).
+- *NC rechazada 3286 (NC > factura)* → la NC debe copiar `valorVenta`+`montoIGV` exactos del XML de la factura y `calcularTotales` respetarlos (rama pre-set); verificar con el chequeo "NC reproduce el total exacto" (425/425 al 18 jun).
+- *SUNAT rechaza un total recién cambiado* → re-validar en beta con la receta de arriba ANTES de tocar el cálculo (la tolerancia del IGV por línea se confirmó así).
+
+**Respaldo de la corrección de datos:** `scratch/backup-comprobantes-2026-06-18.csv` y `scratch/backup-facturas-2026-06-18.csv` (gitignored; estado previo al backfill, por si hay que revertir un valor puntual).
