@@ -160,7 +160,8 @@ export async function GET(request: Request) {
         g.peso_bruto_total::numeric         AS peso_bruto_total,
         g.total_bultos::integer             AS total_bultos,
         NULL::text                          AS guia_serie_numero,
-        (g.created_at AT TIME ZONE 'America/Lima')::date AS fecha_filtro
+        (g.created_at AT TIME ZONE 'America/Lima')::date AS fecha_filtro,
+        NULL::text                          AS reemplazada_por
       FROM comprobantes_guias g
       LEFT JOIN comprobantes ref ON g.comprobante_id = ref.id`;
 
@@ -210,7 +211,11 @@ export async function GET(request: Request) {
             FROM comprobantes_guias g
             WHERE g.comprobante_id = c.id
           )              AS guia_serie_numero,
-          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro
+          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro,
+          (SELECT nc2.serie_numero FROM comprobantes nc2
+             WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
+               AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
+             ORDER BY nc2.created_at DESC LIMIT 1) AS reemplazada_por
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id
         WHERE c.tipo = $${ctx.i++}`;
@@ -250,7 +255,11 @@ export async function GET(request: Request) {
             FROM comprobantes_guias g
             WHERE g.comprobante_id = c.id
           )              AS guia_serie_numero,
-          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro
+          COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro,
+          (SELECT nc2.serie_numero FROM comprobantes nc2
+             WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
+               AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
+             ORDER BY nc2.created_at DESC LIMIT 1) AS reemplazada_por
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id`;
 

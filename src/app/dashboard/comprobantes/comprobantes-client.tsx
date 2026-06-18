@@ -65,6 +65,9 @@ interface Comprobante {
   referencia_cliente_razon_social: string | null;
   referencia_monto_total: string | number | null;
   tiene_nc: boolean;
+  // Para una NC: serie-número de OTRA NC aceptada que ya acredita la misma factura
+  // (→ esta NC rechazada ya fue "reemplazada"). Null si no hay reemplazo.
+  reemplazada_por: string | null;
   // Campos extra para Guías de Remisión (tipo='09'). Null en CPEs.
   peso_bruto_total: string | number | null;
   total_bultos: number | null;
@@ -2270,20 +2273,29 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     (c.estado === "aceptado" || c.estado === "observado") &&
     (c.tipo === "01" || c.tipo === "03");
   // Reintentar:
-  //  - Comprobantes: solo admin, sobre rechazado/error (reusa el correlativo).
+  //  - CPE (01/03/07): solo en 'error' (transitorio: SUNAT caído, CDR ilegible,
+  //    emisión interrumpida) — ahí reenviar el MISMO XML puede pasar. NO en
+  //    'rechazado': SUNAT ya evaluó y rechazó por DATOS (ej. 3286 "el monto de la
+  //    NC supera la factura") → reenviar lo idéntico da el MISMO rechazo y confunde.
+  //    Para una NC rechazada, la acción correcta es "Emitir nota de crédito
+  //    corregida" (abajo), que emite una NC NUEVA con el monto ya corregido.
   //  - Guías (09): admin o la asesora dueña, sobre error/pendiente/rechazado o una
-  //    guía ATASCADA en "emitiendo" (reusa el MISMO número; si SUNAT ya la tenía,
-  //    el reintento lo detecta y la marca aceptada). Las rechazadas SÍ se
-  //    reintentan: un rechazo no registra el documento, el número sigue libre.
+  //    guía ATASCADA en "emitiendo" (semántica propia: reusa el MISMO número; si
+  //    SUNAT ya la tenía, el reintento lo detecta y la marca aceptada).
   const puedeReintentar = (c: Comprobante) =>
     c.tipo === "09"
       ? (userRole === "admin" || userRole === "asesor") &&
         ["error", "pendiente", "emitiendo", "rechazado"].includes(c.estado)
-      : // CPE: admin o la asesora dueña (el endpoint valida el scope real) —
-        // antes era solo-admin y la asesora quedaba bloqueada esperando por un
-        // fallo que suele ser solo de conexión (caso F002-83, 12 jun 2026).
-        (userRole === "admin" || userRole === "asesor") &&
-        (c.estado === "error" || c.estado === "rechazado");
+      : (userRole === "admin" || userRole === "asesor") && c.estado === "error";
+  // NC rechazada (por datos) que aún NO fue reemplazada por una NC válida → ofrecer
+  // emitir una NC NUEVA sobre su factura (con el monto ya corregido). Reemplaza al
+  // inútil "Reintentar envío" para este caso.
+  const puedeReemitirNC = (c: Comprobante) =>
+    (userRole === "admin" || userRole === "asesor") &&
+    c.tipo === "07" &&
+    c.estado === "rechazado" &&
+    !!c.referencia_comprobante_id &&
+    !c.reemplazada_por;
   // Comunicación de baja: solo admin, sobre FACTURAS aceptadas/observadas (boletas → resumen).
   // Días transcurridos desde la emisión (para la regla de la Comunicación de Baja).
   const diasDesde = (iso: string) =>
@@ -2950,6 +2962,16 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                       anula {serieCorta(c.referencia_serie_numero)}
                     </button>
                   )}
+                  {c.tipo === "07" && c.estado === "rechazado" && c.reemplazada_por && (
+                    <button
+                      onClick={() => setBusqueda(c.reemplazada_por ?? "")}
+                      title={`Ya se emitió la nota de crédito ${c.reemplazada_por} en su lugar — esta rechazada no es un pendiente`}
+                      className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:underline active:scale-[0.98]"
+                    >
+                      <FiCheckCircle size={11} className="flex-shrink-0" />
+                      ya reemplazada por {serieCorta(c.reemplazada_por)}
+                    </button>
+                  )}
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     {(() => {
                       const t = tipoUI(c.tipo);
@@ -3119,6 +3141,16 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                       >
                         <FiCornerUpLeft size={11} className="flex-shrink-0" />
                         anula {serieCorta(c.referencia_serie_numero)}
+                      </button>
+                    )}
+                    {c.tipo === "07" && c.estado === "rechazado" && c.reemplazada_por && (
+                      <button
+                        onClick={() => setBusqueda(c.reemplazada_por ?? "")}
+                        title={`Ya se emitió la nota de crédito ${c.reemplazada_por} en su lugar — esta rechazada no es un pendiente`}
+                        className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:underline active:scale-[0.98]"
+                      >
+                        <FiCheckCircle size={11} className="flex-shrink-0" />
+                        ya reemplazada por {serieCorta(c.reemplazada_por)}
                       </button>
                     )}
                     {c.tipo !== "07" && c.tiene_nc && (
@@ -3442,6 +3474,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                           <span>
                             <span className="block text-sm font-medium text-orange-700">Emitir nota de crédito</span>
                             <span className="block text-[11px] text-gray-500 leading-tight">Devolución, descuento o corrección</span>
+                          </span>
+                        </button>
+                      )}
+                      {!esGuia && puedeReemitirNC(c) && (
+                        <button
+                          onClick={() => { setMenuAcciones(null); setModalNC({ id: c.referencia_comprobante_id!, serie_numero: c.referencia_serie_numero ?? "" }); }}
+                          className="w-full px-3 py-2 text-sm flex items-start gap-2.5 hover:bg-orange-50 text-left text-gray-700 transition-colors"
+                        >
+                          <FiFileMinus className="h-4 w-4 text-orange-600 flex-shrink-0 mt-0.5" />
+                          <span>
+                            <span className="block text-sm font-medium text-orange-700">Emitir nota de crédito corregida</span>
+                            <span className="block text-[11px] text-gray-500 leading-tight">Esta NC fue rechazada; emite una nueva sobre {c.referencia_serie_numero}</span>
                           </span>
                         </button>
                       )}
