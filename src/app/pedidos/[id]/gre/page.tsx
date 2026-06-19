@@ -160,6 +160,7 @@ export default async function GrePage({ params }: PageProps) {
         motivoTraslado: g.motivo_traslado,
         indicadorM1L,
         fechaInicioTraslado: new Date(g.fecha_inicio_traslado).toLocaleDateString("es-PE", {
+          timeZone: "UTC",
           day: "2-digit",
           month: "2-digit",
           year: "numeric"

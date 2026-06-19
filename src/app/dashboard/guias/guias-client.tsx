@@ -258,6 +258,7 @@ export default function GuiasClient({ userRole: _userRole }: GuiasClientProps) {
                     </td>
                     <td className="px-6 py-4.5">
                       {new Date(g.fecha_inicio_traslado).toLocaleDateString("es-PE", {
+                        timeZone: "UTC",
                         day: "2-digit",
                         month: "2-digit",
                         year: "numeric"

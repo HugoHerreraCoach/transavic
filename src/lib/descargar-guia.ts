@@ -57,6 +57,7 @@ export async function descargarPdfGuia(id: string): Promise<void> {
       hour: "2-digit", minute: "2-digit", hour12: true,
     }),
     fechaInicioTraslado: new Date(g.fecha_inicio_traslado).toLocaleDateString("es-PE", {
+      timeZone: "UTC",
       day: "2-digit", month: "2-digit", year: "numeric",
     }),
     motivoTraslado: g.motivo_traslado,
