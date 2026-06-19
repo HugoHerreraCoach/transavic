@@ -403,6 +403,21 @@ export async function POST(request: Request) {
     const debeCrearCobranza = !!resultado.serieNumero && emisionOk;
 
     if (debeCrearCobranza) {
+      // Si la empresa emisora seleccionada en UI difiere de la del pedido, la sincronizamos en DB
+      // para evitar descuadres entre reportes de pedidos y comprobantes.
+      if (parsed.data.empresa && parsed.data.empresa !== empresaFromPedidoString(pedido.empresa)) {
+        try {
+          const nuevaEmpresaLabel = parsed.data.empresa === "avicola" ? "Avícola de Tony" : "Transavic";
+          await sql`
+            UPDATE pedidos
+            SET empresa = ${nuevaEmpresaLabel}
+            WHERE id = ${parsed.data.pedido_id}
+          `;
+        } catch (errUpdate) {
+          console.error("Error al actualizar la empresa del pedido:", errUpdate);
+        }
+      }
+
       try {
         const { vincularCobranzaAComprobante, plazoDeCobranza } = await import("@/lib/cobranzas");
         // Asesor responsable de la cobranza, en cascada: el del PEDIDO (la venta
