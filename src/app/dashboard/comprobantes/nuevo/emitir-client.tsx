@@ -859,6 +859,7 @@ export default function EmitirComprobanteClient({
             body: JSON.stringify({
               pedido_id: pedidoId,
               tipo,
+              empresa,
               formaPago,
               plazoDias: plazo,
               fechaEmision,

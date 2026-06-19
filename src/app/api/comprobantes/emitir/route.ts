@@ -28,6 +28,7 @@ export const maxDuration = 60;
 const Schema = z.object({
   pedido_id: z.string().uuid(),
   tipo: z.enum(["01", "03"]),
+  empresa: z.enum(["transavic", "avicola"]).optional(),
   formaPago: z.enum(["Contado", "Credito"]).default("Contado"),
   plazoDias: z.number().int().min(0).max(120).default(0),
   // Fecha de emisión (YYYY-MM-DD). Opcional: si no viene, el motor usa hoy en Lima.
@@ -200,6 +201,8 @@ export async function POST(request: Request) {
       );
     }
 
+    const empresa = parsed.data.empresa || empresaFromPedidoString(pedido.empresa);
+
     // ── Validación de precio mínimo (solo asesoras) ──
     // El admin puede emitir cualquier precio. El helper compartido usa la
     // autorización enviada O busca automáticamente una aprobada sin usar que
@@ -214,7 +217,7 @@ export async function POST(request: Request) {
         })),
         asesoraId: session.user.id,
         autorizacionId: parsed.data.autorizacion_id ?? null,
-        empresa: empresaFromPedidoString(pedido.empresa),
+        empresa,
         tipo: parsed.data.tipo,
         clienteNumDoc: cliNumDoc || null,
       });
@@ -223,8 +226,6 @@ export async function POST(request: Request) {
       }
       autorizacionUsadaId = control.autorizacionId;
     }
-
-    const empresa = empresaFromPedidoString(pedido.empresa);
 
     // ════════════════════════════════════════════════════════════════════
     // CONVENCIÓN CRÍTICA DE PRECIOS (decisión de negocio Transavic 2026):
