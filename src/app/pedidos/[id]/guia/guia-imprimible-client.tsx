@@ -370,14 +370,14 @@ function TicketLayout({
 }: Props & { incluirPrecios: boolean; referencia?: RefObject<HTMLDivElement | null> }) {
   const esTransavic = empresa === "Transavic";
   const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
-  const linea = "border-t border-dashed border-gray-500 my-2";
+  const linea = "border-t border-dashed border-black my-3";
   return (
     <div
       ref={referencia}
       className="orden-ticket bg-white text-black shadow-lg print:shadow-none"
       style={{ width: "80mm" }}
     >
-      <div className="px-3 py-3" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
+      <div className="px-4 py-4" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
         {/* Encabezado: logo a color + datos del emisor (como un ticket real).
             El JPG de Transavic trae aire arriba/abajo dentro del cuadrado 600×600;
             lo recortamos con un contenedor más bajo (aspect 3/2) + object-cover,
@@ -404,15 +404,15 @@ function TicketLayout({
         {/* Tipo de documento — tamaños alineados al REPORTE del día (la asesora
             reportó que el ticket salía con letra muy pequeña en la ticketera) */}
         <div className="text-center leading-tight">
-          <div className="text-[16px] font-bold">ORDEN DE PEDIDO</div>
-          <div className="text-[18px] font-extrabold">N° {numero}</div>
-          <div className="text-[12px]">{fecha}</div>
+          <div className="text-[20px] font-bold">ORDEN DE PEDIDO</div>
+          <div className="text-[24px] font-black">N° {numero}</div>
+          <div className="text-[14px] font-semibold mt-0.5">{fecha}</div>
         </div>
 
         <div className={linea} />
 
         {/* Datos del cliente */}
-        <div className="text-[14px] leading-snug space-y-0.5">
+        <div className="text-[16px] leading-snug space-y-1">
           <TicketRow label="Cliente" value={cliente} />
           {razonSocial && <TicketRow label="Razón social" value={razonSocial} />}
           {rucDni && <TicketRow label="RUC/DNI" value={rucDni} />}
@@ -425,21 +425,21 @@ function TicketLayout({
         <div className={linea} />
 
         {/* Ítems — en ticket mostramos Cant · Producto · Importe (sin P. Unit. por el ancho) */}
-        <div className="text-[14px]">
-          <div className="flex font-bold border-b border-black pb-1 mb-1">
-            <span className="w-14 flex-shrink-0">Cant.</span>
+        <div className="text-[16px]">
+          <div className="flex font-bold border-b border-black pb-1.5 mb-1.5">
+            <span className="w-24 flex-shrink-0">Cant.</span>
             <span className="flex-1">Producto</span>
-            {incluirPrecios && <span className="w-16 text-right">Importe</span>}
+            {incluirPrecios && <span className="w-20 text-right">Importe</span>}
           </div>
           {items.map((it, i) => (
-            <div key={i} className="flex py-0.5 leading-snug">
-              <span className="w-14 flex-shrink-0 font-mono">
+            <div key={i} className="flex py-1 leading-snug border-b border-gray-100 last:border-0">
+              <span className="w-24 flex-shrink-0 font-mono font-bold">
                 {it.cantidad}
                 {it.unidad ? ` ${it.unidad}` : ""}
               </span>
-              <span className="flex-1 break-words pr-1">{it.producto}</span>
+              <span className="flex-1 break-words pr-1 font-bold text-gray-900">{it.producto}</span>
               {incluirPrecios && (
-                <span className="w-16 text-right font-mono">
+                <span className="w-20 text-right font-mono font-bold">
                   {it.subtotal > 0 ? it.subtotal.toFixed(2) : "—"}
                 </span>
               )}
@@ -450,7 +450,7 @@ function TicketLayout({
         {incluirPrecios && (
           <>
             <div className={linea} />
-            <div className="flex justify-between items-baseline font-extrabold text-[18px]">
+            <div className="flex justify-between items-baseline font-black text-[22px]">
               <span>TOTAL</span>
               <span className="font-mono">S/ {total.toFixed(2)}</span>
             </div>
@@ -460,18 +460,18 @@ function TicketLayout({
         {notas && (
           <>
             <div className={linea} />
-            <div className="text-[14px]">
+            <div className="text-[16px] bg-yellow-50/50 p-2 rounded border border-gray-200">
               <span className="font-bold">Notas: </span>
-              <span className="whitespace-pre-wrap break-words">{notas}</span>
+              <span className="whitespace-pre-wrap break-words font-bold text-gray-900">{notas}</span>
             </div>
           </>
         )}
 
         {/* Firma del cliente */}
-        <div className="mt-12 text-center text-[14px]">
-          <div className="border-t border-black mx-3 pt-1">
-            <div className="font-semibold">Firma del cliente</div>
-            <div className="text-[11px]">Recibí conforme</div>
+        <div className="mt-12 text-center text-[16px]">
+          <div className="border-t border-black mx-3 pt-2">
+            <div className="font-bold">Firma del cliente</div>
+            <div className="text-[13px] text-gray-600">Recibí conforme</div>
           </div>
         </div>
       </div>
