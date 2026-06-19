@@ -49,6 +49,8 @@ interface Item {
   cantidad: number;
   unidad: string; // KGM | NIU
   precio: number; // CON IGV
+  cantidad_pedido?: number;
+  cantidad_real?: number;
 }
 
 /** Estilo visual por empresa para diferenciarla de un vistazo. */
@@ -314,17 +316,24 @@ export default function EmitirComprobanteClient({
                 unidad?: string;
                 precio_unitario?: number | string | null;
                 codigo?: string | null;
-              }) => ({
-                descripcion: it.producto_nombre || "",
-                cantidad: Number(it.cantidad) || 1,
-                // Normalizamos a código SUNAT (KGM/NIU) para que el desplegable
-                // muestre la unidad REAL del pedido. Si viniera cruda ("kg"), el
-                // <select> (opciones NIU/KGM) no la mostraría y caería a "Unidad",
-                // confundiendo a la asesora aunque el pedido diga kilos.
-                unidad: unidadSunatDesde(it.unidad),
-                precio: Number(it.precio_unitario) || 0,
-                codigo: it.codigo || undefined,
-              })
+                cantidad_real?: number | string | null;
+              }) => {
+                const cantReal = it.cantidad_real != null ? Number(it.cantidad_real) : null;
+                const cantPed = Number(it.cantidad) || 0;
+                return {
+                  descripcion: it.producto_nombre || "",
+                  cantidad: cantReal ?? cantPed ?? 1,
+                  // Normalizamos a código SUNAT (KGM/NIU) para que el desplegable
+                  // muestre la unidad REAL del pedido. Si viniera cruda ("kg"), el
+                  // <select> (opciones NIU/KGM) no la mostraría y caería a "Unidad",
+                  // confundiendo a la asesora aunque el pedido diga kilos.
+                  unidad: unidadSunatDesde(it.unidad),
+                  precio: Number(it.precio_unitario) || 0,
+                  codigo: it.codigo || undefined,
+                  cantidad_pedido: cantPed,
+                  cantidad_real: cantReal ?? undefined,
+                };
+              }
             )
           );
         }
@@ -1517,6 +1526,16 @@ export default function EmitirComprobanteClient({
                           placeholder="Escribe el nombre del producto..."
                           className={`w-full p-2 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring}`}
                         />
+                        {it.cantidad_pedido !== undefined && (
+                          <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-gray-500 font-medium">
+                            <span>Pedido original: <span className="font-bold text-gray-700">{it.cantidad_pedido} {it.unidad === "KGM" ? "Kg" : "Und"}</span></span>
+                            {it.cantidad_real !== undefined && (
+                              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-bold">
+                                Pesado real: {it.cantidad_real} {it.unidad === "KGM" ? "Kg" : "Und"}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
