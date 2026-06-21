@@ -72,6 +72,7 @@ export default function ProduccionClient() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [pedidoActivo, setPedidoActivo] = useState<Pedido | null>(null);
+  const [filtroEstado, setFiltroEstado] = useState<string>("todos");
 
   // ── Cargar pedidos del día ──
   const fetchPedidos = async () => {
@@ -91,17 +92,21 @@ export default function ProduccionClient() {
     return () => clearInterval(interval);
   }, []);
 
-  // ── Filtrado por búsqueda ──
+  // ── Filtrado por búsqueda y estado de tarjeta ──
   const filtrados = useMemo(() => {
+    let filtered = pedidos;
+    if (filtroEstado !== "todos") {
+      filtered = filtered.filter((p) => p.estado === filtroEstado);
+    }
     const q = query.trim().toLowerCase();
-    if (!q) return pedidos;
-    return pedidos.filter(
+    if (!q) return filtered;
+    return filtered.filter(
       (p) =>
         p.cliente.toLowerCase().includes(q) ||
         (p.distrito ?? "").toLowerCase().includes(q) ||
         (p.asesor_name ?? "").toLowerCase().includes(q)
     );
-  }, [pedidos, query]);
+  }, [pedidos, query, filtroEstado]);
 
   // ── Stats ──
   const stats = useMemo(() => {
@@ -133,10 +138,46 @@ export default function ProduccionClient() {
 
         {/* Stats */}
         <div className="px-4 sm:px-6 lg:px-8 pb-3 grid grid-cols-4 gap-2 text-center">
-          <Stat label="Total" value={stats.total} color="text-gray-700" />
-          <Stat label="Pendientes" value={stats.pendientes} color="text-amber-600" />
-          <Stat label="En producción" value={stats.enProduccion} color="text-purple-600" />
-          <Stat label="Listos" value={stats.listos} color="text-teal-600" />
+          <Stat
+            label="Total"
+            value={stats.total}
+            color="text-gray-700"
+            active={filtroEstado === "todos"}
+            onClick={() => setFiltroEstado("todos")}
+            activeBg="bg-gray-100"
+            activeBorder="border-gray-400"
+            hoverBg="hover:border-gray-200"
+          />
+          <Stat
+            label="Pendientes"
+            value={stats.pendientes}
+            color="text-amber-600"
+            active={filtroEstado === "Pendiente"}
+            onClick={() => setFiltroEstado("Pendiente")}
+            activeBg="bg-amber-50"
+            activeBorder="border-amber-400"
+            hoverBg="hover:border-amber-200 hover:bg-amber-50/30"
+          />
+          <Stat
+            label="En producción"
+            value={stats.enProduccion}
+            color="text-purple-600"
+            active={filtroEstado === "En_Produccion"}
+            onClick={() => setFiltroEstado("En_Produccion")}
+            activeBg="bg-purple-50"
+            activeBorder="border-purple-400"
+            hoverBg="hover:border-purple-200 hover:bg-purple-50/30"
+          />
+          <Stat
+            label="Listos"
+            value={stats.listos}
+            color="text-teal-600"
+            active={filtroEstado === "Listo_Para_Despacho"}
+            onClick={() => setFiltroEstado("Listo_Para_Despacho")}
+            activeBg="bg-teal-50"
+            activeBorder="border-teal-400"
+            hoverBg="hover:border-teal-200 hover:bg-teal-50/30"
+          />
         </div>
 
         {/* Buscador */}
@@ -248,14 +289,45 @@ export default function ProduccionClient() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  Stat compacto del header
+//  Stat compacto del header (Filtro interactivo)
 // ════════════════════════════════════════════════════════════
-function Stat({ label, value, color }: { label: string; value: number; color: string }) {
+function Stat({
+  label,
+  value,
+  color,
+  active,
+  onClick,
+  activeBg,
+  activeBorder,
+  hoverBg,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  active: boolean;
+  onClick: () => void;
+  activeBg: string;
+  activeBorder: string;
+  hoverBg: string;
+}) {
   return (
-    <div className="bg-gray-50 rounded-lg py-2">
-      <div className={`text-xl font-bold ${color}`}>{value}</div>
-      <div className="text-[10px] text-gray-500 uppercase tracking-wide">{label}</div>
-    </div>
+    <button
+      onClick={onClick}
+      className={`w-full border-2 rounded-xl py-2 px-1 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-purple-500/30 cursor-pointer flex flex-col items-center justify-center ${
+        active
+          ? `${activeBg} ${activeBorder} shadow-sm font-bold scale-[1.02]`
+          : `bg-gray-50 border-transparent hover:bg-gray-100 ${hoverBg}`
+      }`}
+    >
+      <div className={`text-xl font-bold transition-transform ${color}`}>{value}</div>
+      <div
+        className={`text-[10px] font-medium uppercase tracking-wide transition-colors ${
+          active ? "text-gray-700" : "text-gray-500"
+        }`}
+      >
+        {label}
+      </div>
+    </button>
   );
 }
 
