@@ -512,6 +512,20 @@ Tres casos manejados en `despacho-content.tsx:1006-1141` (handler `onDragEnd`):
 
 Si hay >25 pedidos, los excedentes se asignan secuencialmente al final sin optimización (líneas 213-222).
 
+#### E2. Bloqueo de Ruta (🔒/🔓)
+
+Para evitar que la secuencia de entrega se altere de forma no autorizada o accidental (por ejemplo, cuando el motorizado ya está en camino y el orden asignado por administración debe respetarse rigurosamente), se ha implementado un mecanismo de **Bloqueo de Ruta**:
+
+1. **Control de Admin (🔒/🔓)**: Solo el rol `admin` puede bloquear o desbloquear la ruta diaria de un motorizado haciendo clic en el icono del candado en la columna correspondiente del panel de despacho.
+2. **Persistencia temporal**: El estado de bloqueo se almacena en la tabla `settings` bajo la clave `'despacho_rutas_bloqueadas'` con una estructura JSON `{ "fecha": "YYYY-MM-DD", "bloqueados": ["id_repartidor_1", ...] }`.
+3. **Reinicio automático**: La clave utiliza la fecha actual en la zona horaria de Lima (`fechaHoyLima()`), lo que significa que el bloqueo se limpia automáticamente al cambiar de día.
+4. **Protecciones del Bloqueo**:
+   - **En el panel de Despacho (Admin)**: Se deshabilita el drag-and-drop para pedidos asignados a una ruta bloqueada. Los dropdowns de asignación rápida (`quickAssign`) muestran a los repartidores bloqueados marcados con un candado `🔒` y con la opción deshabilitada. El botón de "Optimización con IA" de la columna del motorizado se oculta.
+   - **En el Backend (API Guard)**: Los endpoints `POST /api/despacho/asignar` y `PATCH /api/despacho/reordenar` validan el estado de bloqueo antes de realizar modificaciones. Si la ruta destino o de origen está bloqueada, retornan un error `409 Conflict`.
+   - **Restricción de Optimización**: El endpoint `POST /api/despacho/optimizar-ruta` queda restringido exclusivamente para el rol `admin`, y se eliminó el botón de auto-optimización de la pantalla del motorizado (`/dashboard/mi-ruta`).
+5. **Estabilidad de la Secuencia en Vivo**:
+   - Para evitar saltos y desorganización visual cuando el motorizado inicia una entrega y el estado del pedido cambia a `En_Camino`, la ordenación de las consultas en el backend (`GET /api/despacho` y `GET /api/repartidor/mi-ruta`) agrupa los pedidos terminados (`Entregado`, `Fallido`) al fondo de la lista, pero mantiene la secuencia del resto de pedidos activos de forma inalterada según `orden_ruta ASC`, sin alterar el flujo visual ante cambios de estado en vivo.
+
 #### F. Mapa lateral (`mapa-despacho.tsx`)
 
 - **Markers por estado** con colores diferenciados (Pendiente=ámbar, Asignado=azul, En_Camino=índigo, Entregado=verde, Fallido=rojo).

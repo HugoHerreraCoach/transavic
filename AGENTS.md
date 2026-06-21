@@ -747,3 +747,20 @@ Antes de empezar cualquier tarea:
 - ✅ Reintento de envío para comprobantes en error/rechazado
 
 **Decisión sobre QR (NO se implementa):** el PDF replica el diseño de las boletas/facturas que entrega la propia SUNAT, que **no incluyen QR**. Por eso no se agrega. (Si a futuro se exige la representación impresa con QR, se añadiría con `qrcode`.)
+
+---
+
+## 14. Reglas de Soporte y Comunicación (WhatsApp)
+
+Cuando el cliente (Antonio u otros asesores) reporte errores de la SUNAT (ej. caídas de servidor o demoras en responder):
+- **Estructura "No me hagas pensar"**: Usa negritas, listas con viñetas cortas, títulos claros y emojis para que el mensaje sea escaneable al instante.
+- **Responsabilidad clara**: Explicar de manera directa y sencilla que es una falla externa de la SUNAT (puede durar horas o días a nivel nacional) y que nuestro sistema está funcionando bien.
+- **Alternativa urgente**: Sugerir que si la emisión es crítica y no se puede esperar, lo realicen directamente ingresando al **Portal Web de la SUNAT**.
+
+## 15. Bloqueo de Ruta y Estabilidad de Secuencia (21 jun 2026)
+
+Para evitar la alteración de la secuencia de reparto por optimizaciones automáticas o asignaciones manuales concurrentes, se implementó el **Bloqueo de Ruta**:
+- **Bloqueo/Desbloqueo (🔒/🔓)**: Controlado en el panel de despacho por el admin. Se persiste en la tabla `settings` (key `'despacho_rutas_bloqueadas'`) usando la fecha actual de Lima (`fechaHoyLima()`), lo que permite que se resetee automáticamente cada día.
+- **Restricciones del bloqueo**: Se bloquea el drag-and-drop de pedidos para repartidores bloqueados, se deshabilitan en el dropdown `quickAssign` con un indicador `🔒`, y se oculta el botón "Optimizar con IA".
+- **API y seguridad**: Los endpoints `POST /api/despacho/asignar` y `PATCH /api/despacho/reordenar` validan y retornan un error `409 Conflict` si se intenta modificar una ruta bloqueada. El endpoint `POST /api/despacho/optimizar-ruta` está restringido exclusivamente a administradores y se removió la opción de auto-optimización en la vista del repartidor.
+- **Estabilidad visual**: Los pedidos del repartidor mantienen su secuencia según `orden_ruta ASC` independientemente de si están `Asignado` o `En_Camino` (agrupando pedidos completados `Entregado` y `Fallido` al final), evitando saltos y confusión visual ante actualizaciones de estado en vivo.

@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
+import { fechaHoyLima } from "@/lib/sunat/fechas";
 
 const ReordenarSchema = z.object({
   repartidor_id: z.string().uuid(),
@@ -32,6 +33,19 @@ export async function PATCH(request: Request) {
     if (!connectionString) throw new Error("DATABASE_URL no definida");
 
     const sql = neon(connectionString);
+
+    // Verificar si la ruta del repartidor está bloqueada
+    const hoy = fechaHoyLima();
+    const configResult = await sql`SELECT value FROM settings WHERE key = 'despacho_rutas_bloqueadas'`;
+    if (configResult.length > 0) {
+      const val = configResult[0].value as { fecha: string; bloqueados: string[] };
+      if (val.fecha === hoy && Array.isArray(val.bloqueados) && val.bloqueados.includes(repartidor_id)) {
+        return NextResponse.json(
+          { error: "La ruta de este repartidor está bloqueada por el administrador." },
+          { status: 409 }
+        );
+      }
+    }
 
     for (const item of orden) {
       await sql`

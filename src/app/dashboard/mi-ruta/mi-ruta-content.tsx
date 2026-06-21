@@ -28,7 +28,6 @@ import {
   FiCornerUpLeft,
   FiExternalLink,
   FiRotateCcw,
-  FiZap,
   FiUser,
   FiHome,
   FiEdit2,
@@ -1214,8 +1213,6 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
   const [queueCount, setQueueCount] = useState(0);
   const [queuedPedidoIds, setQueuedPedidoIds] = useState<Set<string>>(new Set());
   const [syncMessage, setSyncMessage] = useState<{ type: string; text: string } | null>(null);
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [optimizeResult, setOptimizeResult] = useState<{ message: string; km: number; min: number } | null>(null);
   const [puntoPartida, setPuntoPartida] = useState<PuntoPartida | null>(null);
   const [showPuntoModal, setShowPuntoModal] = useState(false);
 
@@ -1476,39 +1473,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
     }
   };
 
-  const handleOptimizarRuta = async () => {
-    if (!online) {
-      alert("Necesitas conexión a internet para optimizar tu ruta.");
-      return;
-    }
-    
-    setIsOptimizing(true);
-    setOptimizeResult(null);
-    try {
-      // session.user.id is the repartidor_id
-      const res = await fetch("/api/despacho/optimizar-ruta", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repartidor_id: session.user.id }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setOptimizeResult({
-          message: data.message,
-          km: data.distancia_total_km,
-          min: data.duracion_total_min,
-        });
-        setTimeout(() => setOptimizeResult(null), 5000);
-        await fetchRuta();
-      } else {
-        alert(data.error || "Error al optimizar ruta");
-      }
-    } catch {
-      alert("Error de conexión.");
-    } finally {
-      setIsOptimizing(false);
-    }
-  };
+
 
   // ── Render ──
 
@@ -1638,24 +1603,9 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
         {/* Progress Bar con resumen de ruta */}
         <ProgressBar stats={stats} rutaResumen={rutaResumen} />
 
-        {/* Optimize result message */}
-        {optimizeResult && (
-          <div className="px-4 py-3 rounded-2xl bg-violet-50 border border-violet-200 text-violet-800 text-sm font-medium animate-pulse">
-            ✅ {optimizeResult.message}
-          </div>
-        )}
 
-        {/* Optimizar Ruta Botón */}
-        {activePedidos.length >= 2 && online && (
-          <button
-            onClick={handleOptimizarRuta}
-            disabled={isOptimizing || processing}
-            className="w-full py-3 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-500 text-white font-bold text-sm flex items-center justify-center gap-2 hover:from-violet-600 hover:to-indigo-600 transition-all disabled:opacity-50 shadow-md cursor-pointer"
-          >
-            <FiZap className="text-lg" />
-            {isOptimizing ? "Optimizando con IA..." : "🧭 Optimizar mi ruta actual"}
-          </button>
-        )}
+
+
 
         {/* Sin pedidos */}
         {pedidos.length === 0 ? (

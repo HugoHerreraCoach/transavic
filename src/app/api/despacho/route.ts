@@ -2,6 +2,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { fechaHoyLima } from "@/lib/sunat/fechas";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,17 @@ export async function GET() {
     const baseLocation = baseResult.length > 0
       ? baseResult[0].value
       : { lat: -12.0464, lng: -77.0428, address: "Centro de Lima", name: "Local Principal" };
+
+    // 0b. Obtener rutas bloqueadas para el día de hoy
+    const hoy = fechaHoyLima();
+    const rutasBloqueadasResult = await sql`SELECT value FROM settings WHERE key = 'despacho_rutas_bloqueadas'`;
+    let rutasBloqueadas: string[] = [];
+    if (rutasBloqueadasResult.length > 0) {
+      const val = rutasBloqueadasResult[0].value as { fecha: string; bloqueados: string[] };
+      if (val.fecha === hoy && Array.isArray(val.bloqueados)) {
+        rutasBloqueadas = val.bloqueados;
+      }
+    }
 
     // 1. Pedidos del día de hoy sin asignar (Pendientes)
     const pendientes = await sql`
@@ -138,14 +150,9 @@ export async function GET() {
       WHERE p.fecha_pedido >= date_trunc('week', (NOW() AT TIME ZONE 'America/Lima')::date)
         AND p.repartidor_id IS NOT NULL
       ORDER BY
-        CASE p.estado
-          WHEN 'En_Camino' THEN 0
-          WHEN 'Asignado' THEN 1
-          WHEN 'Listo_Para_Despacho' THEN 2
-          WHEN 'En_Produccion' THEN 3
-          WHEN 'Pendiente' THEN 4
-          WHEN 'Entregado' THEN 5
-          WHEN 'Fallido' THEN 6
+        CASE 
+          WHEN p.estado IN ('Entregado', 'Fallido') THEN 1 
+          ELSE 0 
         END,
         p.orden_ruta ASC NULLS LAST,
         p.created_at ASC
@@ -174,6 +181,7 @@ export async function GET() {
       pedidosExternos: pedidosExternos.map(parseCoords),
       repartidores: repartidoresConPedidos,
       baseLocation,
+      rutasBloqueadas,
     });
   } catch (error) {
     console.error("Error en despacho:", error);

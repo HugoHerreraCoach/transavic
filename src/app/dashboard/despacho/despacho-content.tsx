@@ -27,6 +27,8 @@ import {
   FiZap,
   FiSettings,
   FiX,
+  FiLock,
+  FiUnlock,
 } from "react-icons/fi";
 import { EstadoPedido } from "@/lib/types";
 import {
@@ -225,6 +227,8 @@ function RepartidorColumn({
   onToggleCollapse,
   isOptimizing,
   soloLectura,
+  estaBloqueado,
+  onToggleBloqueoRuta,
 }: {
   repartidor: Repartidor;
   onDesasignar: (pedidoId: string) => void;
@@ -233,6 +237,8 @@ function RepartidorColumn({
   onToggleCollapse: () => void;
   isOptimizing: boolean;
   soloLectura: boolean;
+  estaBloqueado: boolean;
+  onToggleBloqueoRuta: (repartidorId: string) => void;
 }) {
   const entregados = repartidor.pedidos.filter((p) => p.estado === "Entregado").length;
   const fallidos = repartidor.pedidos.filter((p) => p.estado === "Fallido").length;
@@ -253,7 +259,11 @@ function RepartidorColumn({
 
   return (
     <div className={`rounded-2xl border-2 transition-all flex flex-col max-h-[calc(100vh-180px)] ${
-      tieneRetraso ? "border-red-300 bg-red-50/30" : "border-gray-200 bg-gray-50/50"
+      tieneRetraso
+        ? "border-red-300 bg-red-50/30"
+        : estaBloqueado
+        ? "border-red-200 bg-gray-50/20 opacity-95 shadow-sm"
+        : "border-gray-200 bg-gray-50/50"
     }`}>
       {/* Header del repartidor — sticky */}
       <div className="px-4 py-3 border-b border-gray-100 bg-inherit rounded-t-2xl sticky top-0 z-10">
@@ -263,7 +273,14 @@ function RepartidorColumn({
               {repartidor.name.charAt(0)}
             </span>
             <div>
-              <p className="font-semibold text-gray-900 text-sm">{repartidor.name}</p>
+              <div className="flex items-center gap-1">
+                <p className="font-semibold text-gray-900 text-sm">{repartidor.name}</p>
+                {estaBloqueado && (
+                  <span className="text-[10px] bg-red-50 text-red-600 px-1 py-0.5 rounded font-medium flex items-center gap-0.5">
+                    🔒 Fijo
+                  </span>
+                )}
+              </div>
               <p className="text-[10px] text-gray-400">🏍️ Repartidor</p>
             </div>
           </div>
@@ -271,14 +288,31 @@ function RepartidorColumn({
             <p className="text-sm font-bold text-gray-700">{entregados}/{total}</p>
             <p className="text-[10px] text-gray-400">entregados{fallidos > 0 ? ` · ${fallidos} fallido${fallidos > 1 ? 's' : ''}` : ''}</p>
           </div>
-          {/* Botón colapsar/expandir */}
-          <button
-            onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
-            className="p-1 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 cursor-pointer"
-            title={isCollapsed ? "Expandir" : "Colapsar"}
-          >
-            {isCollapsed ? <FiChevronDown size={14} /> : <FiChevronUp size={14} />}
-          </button>
+          {/* Botones de control */}
+          <div className="flex items-center gap-1">
+            {/* Botón Candado (Bloquear/Desbloquear) — solo admin */}
+            {!soloLectura && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleBloqueoRuta(repartidor.id); }}
+                className={`p-1 rounded-lg transition-colors cursor-pointer ${
+                  estaBloqueado
+                    ? "bg-red-50 text-red-500 hover:bg-red-100"
+                    : "text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+                }`}
+                title={estaBloqueado ? "Desbloquear Ruta (Ruta Cerrada)" : "Bloquear Ruta (Permitir cambios)"}
+              >
+                {estaBloqueado ? <FiLock size={13} /> : <FiUnlock size={13} />}
+              </button>
+            )}
+            {/* Botón colapsar/expandir */}
+            <button
+              onClick={(e) => { e.stopPropagation(); onToggleCollapse(); }}
+              className="p-1 rounded-lg hover:bg-gray-200 transition-colors text-gray-400 cursor-pointer"
+              title={isCollapsed ? "Expandir" : "Colapsar"}
+            >
+              {isCollapsed ? <FiChevronDown size={14} /> : <FiChevronUp size={14} />}
+            </button>
+          </div>
         </div>
 
         {/* Barra de progreso mini */}
@@ -307,7 +341,7 @@ function RepartidorColumn({
         )}
 
         {/* Botón Optimizar Ruta — solo admin (la asesora solo mira) */}
-        {!soloLectura && activos.length >= 2 && (
+        {!soloLectura && !estaBloqueado && activos.length >= 2 && (
           <button
             onClick={(e) => { e.stopPropagation(); onOptimizarRuta(repartidor.id); }}
             disabled={isOptimizing}
@@ -349,7 +383,7 @@ function RepartidorColumn({
             )}
             {pedidosOrdenados.map((pedido, index) => (
               <Draggable key={pedido.id} draggableId={pedido.id} index={index}
-                isDragDisabled={soloLectura || pedido.estado === "Entregado" || pedido.estado === "En_Camino"}
+                isDragDisabled={soloLectura || estaBloqueado || pedido.estado === "Entregado" || pedido.estado === "En_Camino"}
               >
                 {(provided, snapshot) => (
                   <div
@@ -359,7 +393,7 @@ function RepartidorColumn({
                     className="group relative"
                   >
                     <PedidoMiniCard pedido={pedido} isDragging={snapshot.isDragging} />
-                    {!soloLectura && pedido.estado === "Asignado" && (
+                    {!soloLectura && !estaBloqueado && pedido.estado === "Asignado" && (
                       <button
                         onClick={(e) => { e.stopPropagation(); onDesasignar(pedido.id); }}
                         className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm hover:bg-red-600"
@@ -939,6 +973,7 @@ export default function DespachoContent({ session }: { session: Session }) {
   const [repartidores, setRepartidores] = useState<Repartidor[]>([]);
   const [externosPedidos, setExternosPedidos] = useState<PedidoDespacho[]>([]);
   const [baseLocation, setBaseLocation] = useState<BaseLocation>({ lat: -12.0464, lng: -77.0428, address: "Centro de Lima", name: "Local Principal" });
+  const [rutasBloqueadas, setRutasBloqueadas] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filtroDistrito, setFiltroDistrito] = useState<string>("");
@@ -960,6 +995,7 @@ export default function DespachoContent({ session }: { session: Session }) {
       setExternosPedidos(data.pedidosExternos || []);
       setRepartidores(data.repartidores);
       if (data.baseLocation) setBaseLocation(data.baseLocation);
+      if (data.rutasBloqueadas) setRutasBloqueadas(data.rutasBloqueadas);
     } catch (err) {
       console.error(err);
     } finally {
@@ -967,6 +1003,31 @@ export default function DespachoContent({ session }: { session: Session }) {
       setRefreshing(false);
     }
   }, []);
+
+  const handleToggleBloqueoRuta = async (repartidorId: string) => {
+    if (soloLectura) return;
+    const estaBloqueado = rutasBloqueadas.includes(repartidorId);
+    
+    // Optimistic Update
+    setRutasBloqueadas((prev) =>
+      estaBloqueado ? prev.filter((id) => id !== repartidorId) : [...prev, repartidorId]
+    );
+
+    try {
+      const res = await fetch("/api/despacho/bloquear-ruta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repartidor_id: repartidorId, bloquear: !estaBloqueado }),
+      });
+      if (!res.ok) throw new Error("Error al bloquear ruta");
+      const data = await res.json();
+      setRutasBloqueadas(data.bloqueados);
+    } catch (err) {
+      console.error(err);
+      alert("No se pudo cambiar el estado de bloqueo de la ruta.");
+      await fetchData();
+    }
+  };
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1014,6 +1075,11 @@ export default function DespachoContent({ session }: { session: Session }) {
 
   // ── Quick Assign (sin drag) ──
   const quickAssign = async (pedidoId: string, repartidorId: string, fromList: "pendientes" | "anteriores") => {
+    if (rutasBloqueadas.includes(repartidorId)) {
+      alert("No puedes asignar pedidos a una ruta bloqueada por el administrador.");
+      return;
+    }
+
     const sourceList = fromList === "pendientes" ? pendientes : pendientesAnteriores;
     const setSourceList = fromList === "pendientes" ? setPendientes : setPendientesAnteriores;
     const pedido = sourceList.find((p) => p.id === pedidoId);
@@ -1064,6 +1130,14 @@ export default function DespachoContent({ session }: { session: Session }) {
     const { source, destination, draggableId } = result;
     if (!destination) return;
     if (source.droppableId === destination.droppableId && source.index === destination.index) return;
+
+    // Verificar si la ruta de origen o la de destino están bloqueadas
+    const isSourceBloqueado = rutasBloqueadas.includes(source.droppableId);
+    const isDestBloqueado = rutasBloqueadas.includes(destination.droppableId);
+    if (isSourceBloqueado || isDestBloqueado) {
+      alert("No puedes modificar una ruta bloqueada por el administrador.");
+      return;
+    }
 
     const pedidoId = draggableId;
 
@@ -1414,7 +1488,9 @@ export default function DespachoContent({ session }: { session: Session }) {
                               >
                                 <option value="">⚡ Asignar a...</option>
                                 {repartidores.filter(r => r.role === "repartidor").map((r) => (
-                                  <option key={r.id} value={r.id}>{r.name}</option>
+                                  <option key={r.id} value={r.id} disabled={rutasBloqueadas.includes(r.id)}>
+                                    {r.name} {rutasBloqueadas.includes(r.id) ? "🔒" : ""}
+                                  </option>
                                 ))}
                                 <option value="__externo__">📦 Delivery Externo</option>
                               </select>
@@ -1482,7 +1558,9 @@ export default function DespachoContent({ session }: { session: Session }) {
                                       >
                                         <option value="">⚡ Asignar a...</option>
                                         {repartidores.filter(r => r.role === "repartidor").map((r) => (
-                                          <option key={r.id} value={r.id}>{r.name}</option>
+                                          <option key={r.id} value={r.id} disabled={rutasBloqueadas.includes(r.id)}>
+                                            {r.name} {rutasBloqueadas.includes(r.id) ? "🔒" : ""}
+                                          </option>
                                         ))}
                                         <option value="__externo__">📦 Delivery Externo</option>
                                       </select>
@@ -1538,6 +1616,8 @@ export default function DespachoContent({ session }: { session: Session }) {
                       }}
                       isOptimizing={optimizingId === repartidor.id}
                       soloLectura={soloLectura}
+                      estaBloqueado={rutasBloqueadas.includes(repartidor.id)}
+                      onToggleBloqueoRuta={handleToggleBloqueoRuta}
                     />
                   );
                 });

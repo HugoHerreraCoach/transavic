@@ -28,14 +28,9 @@ export async function GET() {
       WHERE p.repartidor_id = ${session.user.id}
         AND p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
       ORDER BY
-        CASE p.estado
-          WHEN 'En_Camino' THEN 0
-          WHEN 'Asignado' THEN 1
-          WHEN 'Listo_Para_Despacho' THEN 2
-          WHEN 'En_Produccion' THEN 3
-          WHEN 'Pendiente' THEN 4
-          WHEN 'Entregado' THEN 5
-          WHEN 'Fallido' THEN 6
+        CASE 
+          WHEN p.estado IN ('Entregado', 'Fallido') THEN 1 
+          ELSE 0 
         END,
         p.orden_ruta ASC NULLS LAST,
         p.created_at ASC

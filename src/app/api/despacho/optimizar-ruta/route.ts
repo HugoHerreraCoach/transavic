@@ -39,8 +39,8 @@ export async function POST(request: Request) {
 
     const { repartidor_id } = parsed.data;
 
-    if (session.user.role !== "admin" && session.user.id !== repartidor_id) {
-        return NextResponse.json({ error: "No autorizado." }, { status: 403 });
+    if (session.user.role !== "admin") {
+        return NextResponse.json({ error: "No autorizado. Solo el administrador puede optimizar rutas." }, { status: 403 });
     }
     const googleKey = process.env.Maps_SERVER_KEY;
 

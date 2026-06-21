@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { crearNotificacion } from "@/lib/notificaciones";
+import { fechaHoyLima } from "@/lib/sunat/fechas";
 
 const AsignarSchema = z.object({
   pedido_ids: z.array(z.string().uuid()).min(1, "Debes seleccionar al menos un pedido."),
@@ -43,6 +44,19 @@ export async function POST(request: Request) {
 
     const sql = neon(connectionString);
     const googleKey = process.env.Maps_SERVER_KEY;
+
+    // Verificar si la ruta del repartidor está bloqueada
+    const hoy = fechaHoyLima();
+    const configResult = await sql`SELECT value FROM settings WHERE key = 'despacho_rutas_bloqueadas'`;
+    if (configResult.length > 0) {
+      const val = configResult[0].value as { fecha: string; bloqueados: string[] };
+      if (val.fecha === hoy && Array.isArray(val.bloqueados) && val.bloqueados.includes(repartidor_id)) {
+        return NextResponse.json(
+          { error: "La ruta de este repartidor está bloqueada por el administrador." },
+          { status: 409 }
+        );
+      }
+    }
 
     // Obtener ubicación base para cálculo de distancia
     let baseLocation = {
