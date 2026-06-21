@@ -17,6 +17,7 @@ import {
   FiUser,
   FiPrinter,
   FiRotateCcw,
+  FiRefreshCw,
 } from "react-icons/fi";
 
 interface Item {
@@ -70,20 +71,28 @@ function estadoBadge(estado: Pedido["estado"]) {
 export default function ProduccionClient() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
   const [pedidoActivo, setPedidoActivo] = useState<Pedido | null>(null);
   const [filtroEstado, setFiltroEstado] = useState<string>("todos");
 
   // ── Cargar pedidos del día ──
   const fetchPedidos = async () => {
-    const res = await fetch("/api/produccion/pedidos");
-    if (!res.ok) {
+    setRefreshing(true);
+    try {
+      const res = await fetch("/api/produccion/pedidos");
+      if (!res.ok) {
+        setLoading(false);
+        return;
+      }
+      const data = await res.json();
+      setPedidos(data.data ?? []);
+    } catch (e) {
+      console.error("Error al refrescar pedidos:", e);
+    } finally {
       setLoading(false);
-      return;
+      setRefreshing(false);
     }
-    const data = await res.json();
-    setPedidos(data.data ?? []);
-    setLoading(false);
   };
 
   useEffect(() => {
@@ -130,9 +139,11 @@ export default function ProduccionClient() {
           </div>
           <button
             onClick={fetchPedidos}
-            className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-lg hover:bg-purple-600"
+            disabled={refreshing}
+            className="px-3 py-1.5 text-sm bg-purple-500 text-white rounded-lg hover:bg-purple-600 active:scale-[0.97] transition-all disabled:opacity-75 disabled:cursor-not-allowed flex items-center gap-1.5"
           >
-            Refrescar
+            <FiRefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refrescando..." : "Refrescar"}
           </button>
         </div>
 
