@@ -63,6 +63,8 @@ function iconoParaTipo(tipo: TipoNotificacion) {
       return <FiXCircle className="text-red-600" />;
     case "comprobante_error":
       return <FiAlertTriangle className="text-amber-600" />;
+    case "repartidor_oscuro":
+      return <FiAlertTriangle className="text-red-600" />;
     case "cliente_inactivo":
       return <FiClock className="text-gray-500" />;
     default:
@@ -78,6 +80,7 @@ function acentoParaTipo(tipo: TipoNotificacion): string | null {
     case "comprobante_rechazado":
     case "comprobante_error":
     case "pedido_fallido":
+    case "repartidor_oscuro":
       return "border-l-[3px] border-l-red-500";
     case "factura_vencida":
       return "border-l-[3px] border-l-amber-500";

@@ -3,8 +3,13 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { fechaHoyLima } from "@/lib/sunat/fechas";
+import { ridersConPedidosActivosHoy } from "@/lib/repartidor-jornada";
 
 export const dynamic = "force-dynamic";
+
+// Un motorizado CON pedidos activos cuya última ubicación tenga más de esto sin
+// actualizarse se considera "sin señal" (oscuro ambiguo) en el mapa.
+const OSCURO_STALE_MS = 10 * 60 * 1000;
 
 export async function GET() {
   try {
@@ -116,11 +121,20 @@ export async function GET() {
     //     sigue funcionando. Así el deploy no depende del orden de la migración.
     const ubicPorRider = new Map<
       string,
-      { lat: number; lng: number; heading: number | null; capturedAt: string }
+      {
+        lat: number;
+        lng: number;
+        heading: number | null;
+        capturedAt: string;
+        updatedAt: string;
+        gpsStatus: string | null;
+        simulated: boolean;
+      }
     >();
     try {
       const ubicaciones = await sql`
-        SELECT repartidor_id, latitude, longitude, heading, captured_at
+        SELECT repartidor_id, latitude, longitude, heading, captured_at,
+               updated_at, gps_status, simulated
         FROM rider_locations
       `;
       for (const u of ubicaciones) {
@@ -129,11 +143,20 @@ export async function GET() {
           lng: parseFloat(u.longitude as string),
           heading: u.heading != null ? parseFloat(u.heading as string) : null,
           capturedAt: String(u.captured_at),
+          updatedAt: String(u.updated_at),
+          gpsStatus: (u.gps_status as string | null) ?? null,
+          simulated: u.simulated === true,
         });
       }
     } catch (e) {
       console.warn("rider_locations no disponible (¿falta migración?):", e);
     }
+
+    // Repartidores con pedidos activos HOY (Asignado/En_Camino): solo a ellos les
+    // exigimos transmitir, así que solo ellos pueden quedar "oscuros".
+    const idsConPedidosActivos = new Set(
+      (await ridersConPedidosActivosHoy()).map((r) => r.id)
+    );
 
     const pedidosAsignados = await sql`
       SELECT
@@ -166,14 +189,41 @@ export async function GET() {
       duracion_estimada_min: p.duracion_estimada_min ? parseInt(p.duracion_estimada_min as string) : null,
     });
 
-    // Agrupar pedidos por repartidor (+ adjuntar su última ubicación en vivo)
-    const repartidoresConPedidos = repartidores.map((r) => ({
-      ...r,
-      ubicacion: ubicPorRider.get(r.id as string) ?? null,
-      pedidos: pedidosAsignados
-        .filter((p) => p.repartidor_id === r.id)
-        .map(parseCoords),
-    }));
+    // Agrupar pedidos por repartidor (+ adjuntar su última ubicación en vivo y la
+    // clasificación de "oscuro" para el mapa).
+    const ahoraMs = Date.now();
+    const repartidoresConPedidos = repartidores.map((r) => {
+      const ubic = ubicPorRider.get(r.id as string) ?? null;
+      const tienePedidosActivos = idsConPedidosActivos.has(r.id as string);
+
+      // alerta:
+      //   'deliberado' → revocó permiso o GPS simulado (alta confianza)  → rojo
+      //   'sin_senal'  → con pedidos activos pero sin reportar (ambiguo)  → ámbar
+      let alerta: "deliberado" | "sin_senal" | null = null;
+      if (tienePedidosActivos) {
+        if (
+          ubic &&
+          (ubic.gpsStatus === "permiso_revocado" ||
+            ubic.simulated === true ||
+            ubic.gpsStatus === "mock")
+        ) {
+          alerta = "deliberado";
+        } else {
+          const edadMs = ubic ? ahoraMs - new Date(ubic.updatedAt).getTime() : Infinity;
+          if (!ubic || edadMs > OSCURO_STALE_MS) alerta = "sin_senal";
+        }
+      }
+
+      return {
+        ...r,
+        ubicacion: ubic,
+        tienePedidosActivos,
+        alerta,
+        pedidos: pedidosAsignados
+          .filter((p) => p.repartidor_id === r.id)
+          .map(parseCoords),
+      };
+    });
 
     return NextResponse.json({
       pendientes: pendientes.map(parseCoords),

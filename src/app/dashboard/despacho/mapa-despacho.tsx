@@ -52,7 +52,16 @@ interface Repartidor {
     lng: number;
     heading: number | null;
     capturedAt: string;
+    updatedAt?: string;
+    gpsStatus?: string | null;
+    simulated?: boolean;
   } | null;
+  // ¿Tiene pedidos activos hoy (Asignado/En_Camino)? Solo a ellos se les exige GPS.
+  tienePedidosActivos?: boolean;
+  // Clasificación de "oscuro" calculada en el server:
+  //   'deliberado' → revocó el permiso o GPS simulado (rojo)
+  //   'sin_senal'  → con pedidos activos pero sin transmitir hace rato (ámbar)
+  alerta?: "deliberado" | "sin_senal" | null;
 }
 
 interface BaseLocation {
@@ -176,12 +185,20 @@ const EN_VIVO_SEG = 300; // ≤5 min ⇒ consideramos la ubicación "en vivo"
 // (heading). EN VIVO = color saturado del repartidor + halo de doble anillo (sensación
 // de "pulso") + chevron. SIN SEÑAL = gris-slate, sin halo y sin chevron (así se
 // distingue del live de un vistazo), pero igual de grande y nítido (no apagado).
-function createRiderMarkerIcon(color: string, heading: number | null, enVivo: boolean): string {
-  const c = enVivo ? color : "#94a3b8";
-  // Halo de doble anillo solo en vivo → da sensación de "transmitiendo ahora".
-  const halo = enVivo
-    ? `<circle cx="30" cy="30" r="27" fill="${c}" opacity="0.14"/><circle cx="30" cy="30" r="21" fill="${c}" opacity="0.22"/>`
-    : "";
+type ModoRider = "vivo" | "gris" | "rojo" | "ambar";
+
+function createRiderMarkerIcon(color: string, heading: number | null, modo: ModoRider): string {
+  const enVivo = modo === "vivo";
+  const alerta = modo === "rojo" || modo === "ambar";
+  // EN VIVO = color del repartidor; ALERTA = rojo (deliberado) / ámbar (sin señal);
+  // gris = sin señal reciente sin alerta (no tiene pedidos activos, p. ej.).
+  const c =
+    modo === "vivo" ? color : modo === "rojo" ? "#ef4444" : modo === "ambar" ? "#f59e0b" : "#94a3b8";
+  // Halo de doble anillo en vivo (pulso) y también en alerta (para que salte a la vista).
+  const halo =
+    enVivo || alerta
+      ? `<circle cx="30" cy="30" r="27" fill="${c}" opacity="0.14"/><circle cx="30" cy="30" r="21" fill="${c}" opacity="0.22"/>`
+      : "";
   // Chevron de rumbo solo cuando está en vivo (con la posición vieja el rumbo no aplica).
   const chevron =
     enVivo && heading != null
@@ -189,6 +206,10 @@ function createRiderMarkerIcon(color: string, heading: number | null, enVivo: bo
       : "";
   // Silueta de motocicleta (estilo Material "motorcycle"), blanca, centrada en el badge.
   const moto = `<g transform="translate(19 20) scale(0.9)" fill="#fff"><path d="M19.44 9.03L15.41 5H11v2h3.59l2 2H5c-2.8 0-5 2.2-5 5s2.2 5 5 5c2.46 0 4.45-1.69 4.9-4h1.65l2.77-2.77c-.21.54-.32 1.14-.32 1.77 0 2.8 2.2 5 5 5s5-2.2 5-5c0-2.79-2.21-5-4.56-4.97zM7.82 15C7.4 16.15 6.28 17 5 17c-1.63 0-3-1.37-3-3s1.37-3 3-3c1.28 0 2.4.85 2.82 2H5v2h2.82zM19 17c-1.63 0-3-1.37-3-3s1.37-3 3-3 3 1.37 3 3-1.37 3-3 3z"/></g>`;
+  // Badge "!" en la esquina superior derecha cuando hay alerta (sin transmitir).
+  const alertaBadge = alerta
+    ? `<g><circle cx="46" cy="14" r="9" fill="#fff"/><circle cx="46" cy="14" r="7.5" fill="${c}"/><rect x="44.9" y="9.6" width="2.2" height="6" rx="1.1" fill="#fff"/><circle cx="46" cy="18.3" r="1.3" fill="#fff"/></g>`
+    : "";
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 60 60">
       <defs>
@@ -202,8 +223,16 @@ function createRiderMarkerIcon(color: string, heading: number | null, enVivo: bo
         <circle cx="30" cy="30" r="15" fill="${c}" stroke="#fff" stroke-width="3.5"/>
       </g>
       ${moto}
+      ${alertaBadge}
     </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+// Decide el modo visual del marcador a partir de la alerta del server + frescura.
+function modoRider(alerta: "deliberado" | "sin_senal" | null | undefined, enVivo: boolean): ModoRider {
+  if (alerta === "deliberado") return "rojo";
+  if (alerta === "sin_senal") return "ambar";
+  return enVivo ? "vivo" : "gris";
 }
 
 // "hace 15 s" / "hace 3 min" / "hace 2 h" + los segundos (para decidir si está en vivo).
@@ -525,21 +554,31 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                 const { segundos } = haceCuanto(u.capturedAt);
                 const enVivo = segundos <= EN_VIVO_SEG;
                 const color = colorPorRepartidor.get(r.id) || REPARTIDOR_COLORS[0];
+                const modo = modoRider(r.alerta, enVivo);
+                const titulo =
+                  r.alerta === "deliberado"
+                    ? `${r.name} · ⚠️ apagó su ubicación`
+                    : r.alerta === "sin_senal"
+                      ? `${r.name} · ⚠️ sin señal`
+                      : enVivo
+                        ? `${r.name} · en vivo`
+                        : `${r.name} · sin señal reciente`;
                 return (
                   <MarkerF
                     key={`rider-${r.id}`}
                     position={{ lat: u.lat, lng: u.lng }}
                     icon={{
-                      url: createRiderMarkerIcon(color, u.heading, enVivo),
+                      url: createRiderMarkerIcon(color, u.heading, modo),
                       scaledSize: new google.maps.Size(56, 56),
                       anchor: new google.maps.Point(28, 28),
                     }}
-                    title={`${r.name} · ${enVivo ? "en vivo" : "sin señal reciente"}`}
+                    title={titulo}
                     onClick={() => {
                       setSelectedPedido(null);
                       setRiderInfo(r.id);
                     }}
-                    zIndex={300}
+                    // Las alertas (rojo/ámbar) por encima del resto para que no se pierdan.
+                    zIndex={r.alerta ? 350 : 300}
                   />
                 );
               })}
@@ -620,13 +659,41 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                     <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
                     <h3 className="font-bold text-sm text-gray-900 truncate">{r.name}</h3>
                   </div>
-                  <p className="mt-1 flex items-center gap-1.5 text-xs">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${enVivo ? "bg-emerald-500" : "bg-gray-400"}`} />
-                    <span className={enVivo ? "text-emerald-700 font-semibold" : "text-gray-500"}>
-                      {enVivo ? "En vivo" : "Sin señal reciente"}
-                    </span>
-                    {texto && <span className="text-gray-400">· {texto}</span>}
-                  </p>
+                  {(() => {
+                    const motivoDeliberado =
+                      r.ubicacion?.gpsStatus === "permiso_revocado"
+                        ? "revocó el permiso"
+                        : r.ubicacion?.simulated || r.ubicacion?.gpsStatus === "mock"
+                          ? "GPS simulado"
+                          : "apagó su ubicación";
+                    if (r.alerta === "deliberado") {
+                      return (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-red-500" />
+                          <span className="text-red-700 font-bold">⚠️ Apagó su ubicación</span>
+                          <span className="text-gray-400">· {motivoDeliberado}</span>
+                        </p>
+                      );
+                    }
+                    if (r.alerta === "sin_senal") {
+                      return (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0 bg-amber-500" />
+                          <span className="text-amber-700 font-bold">⚠️ Sin señal</span>
+                          {texto && <span className="text-gray-400">· {texto}</span>}
+                        </p>
+                      );
+                    }
+                    return (
+                      <p className="mt-1 flex items-center gap-1.5 text-xs">
+                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${enVivo ? "bg-emerald-500" : "bg-gray-400"}`} />
+                        <span className={enVivo ? "text-emerald-700 font-semibold" : "text-gray-500"}>
+                          {enVivo ? "En vivo" : "Sin señal reciente"}
+                        </span>
+                        {texto && <span className="text-gray-400">· {texto}</span>}
+                      </p>
+                    );
+                  })()}
                   <p className="mt-1 text-xs text-gray-600 flex items-center gap-1">
                     <FiPackage size={10} className="flex-shrink-0" /> {porEntregar} por entregar
                     {enCamino > 0 && <span className="text-indigo-600">· {enCamino} en camino</span>}
@@ -699,11 +766,20 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                   />
                   <div className="flex-1 text-left min-w-0">
                     <span className="block truncate">{r.name}</span>
-                    {enCamino && (
+                    {r.alerta ? (
+                      <span
+                        className={`block text-[10px] truncate font-semibold ${
+                          r.alerta === "deliberado" ? "text-red-600" : "text-amber-600"
+                        }`}
+                      >
+                        <FiAlertTriangle size={8} className="inline mr-0.5" />
+                        {r.alerta === "deliberado" ? "apagó su ubicación" : "sin señal"}
+                      </span>
+                    ) : enCamino ? (
                       <span className="block text-[10px] text-indigo-600 truncate">
                         <FiNavigation size={8} className="inline mr-0.5" />→ {enCamino.cliente}
                       </span>
-                    )}
+                    ) : null}
                   </div>
                   <span className="text-[10px] font-bold text-gray-400">{count}</span>
                   {seleccionado && <FiCheck size={13} style={{ color }} />}

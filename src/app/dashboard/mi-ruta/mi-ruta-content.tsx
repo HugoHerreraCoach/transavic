@@ -35,6 +35,7 @@ import {
 import { useJsApiLoader } from "@react-google-maps/api";
 import nextDynamic from "next/dynamic";
 import { esPlataformaNativa } from "@/lib/plataforma";
+import { dentroDeVentanaOperativa } from "@/lib/ventana-operativa";
 
 // Seguimiento de ubicación de la APP NATIVA. Se carga SOLO en el navegador (ssr:false)
 // para que el import de @capacitor/core nunca corra en el servidor. En web devuelve null.
@@ -1218,10 +1219,17 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 
   const online = useOnlineStatus();
 
-  // GPS: solo se activa cuando el mapa está abierto o hay un pedido En_Camino
-  const pedidoEnCaminoExists = pedidos.some(p => p.estado === 'En_Camino');
-  // reportar=true → la posición se manda al backend (seguimiento en vivo del despacho).
-  const driverPosition = useGeolocation(showMap || pedidoEnCaminoExists, true);
+  // GPS OBLIGATORIO durante la jornada: mientras el repartidor tenga pedidos activos
+  // (Asignado/En_Camino) y estemos en horario operativo, reporta al backend SIEMPRE
+  // —ya no depende de que el mapa esté abierto (antes, ocultar el mapa apagaba el
+  // reporte). El corte horario evita rastrear de noche por un pedido sin cerrar.
+  const hayPedidosActivos = pedidos.some(
+    (p) => p.estado === 'Asignado' || p.estado === 'En_Camino'
+  );
+  const debeRastrear = hayPedidosActivos && dentroDeVentanaOperativa();
+  // enabled: el GPS corre si el mapa está abierto (para ubicar al repartidor) O si
+  // debe rastrear. reportar: solo se manda al backend durante la jornada.
+  const driverPosition = useGeolocation(showMap || debeRastrear, debeRastrear);
 
   const refreshQueueState = useCallback(() => {
     setQueueCount(getQueueCount());
@@ -1529,7 +1537,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
       <div className="max-w-lg mx-auto px-4 mt-4 space-y-4">
 
         {/* Seguimiento de ubicación — solo visible dentro de la app nativa */}
-        <SeguimientoUbicacionNativo />
+        <SeguimientoUbicacionNativo hayPedidosActivos={debeRastrear} />
 
         {/* Offline Banner */}
         {!online && (

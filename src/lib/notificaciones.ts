@@ -25,7 +25,10 @@ export type TipoNotificacion =
   | "autorizacion_resuelta"     // a la asesora cuando el admin aprueba o rechaza
   // Alertas de arribo del motorizado
   | "pedido_por_llegar"
-  | "pedido_llegado";
+  | "pedido_llegado"
+  // Motorizado con pedidos activos que dejó de transmitir su ubicación
+  // (revocó el permiso, GPS simulado o sin señal sostenida). Avisa al admin.
+  | "repartidor_oscuro";
 
 export interface CrearNotificacionParams {
   userId: string;

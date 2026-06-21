@@ -22,6 +22,10 @@ const Schema = z.object({
   heading: z.number().min(0).max(360).optional(),
   speed: z.number().optional(),
   capturedAt: z.string().datetime().optional(), // ISO; si no viene, usamos ahora
+  // GPS falso (mock provider) detectado por el plugin nativo. Lo decide el SERVIDOR:
+  // marca el estado y NO usa la coordenada falsa. No se confía en el cliente para
+  // filtrarlo (un APK modificado lo saltaría) — acá está la fuente de verdad.
+  simulated: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -40,7 +44,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
   }
 
-  const { lat, lng, accuracy, heading, speed, capturedAt } = parsed.data;
+  const { lat, lng, accuracy, heading, speed, capturedAt, simulated } = parsed.data;
   const captured = capturedAt ?? new Date().toISOString();
   // accuracy (radio de confianza del GPS, en metros) puede venir enorme con señal mala
   // (posicionamiento por celda/WiFi, interiores). La columna es NUMERIC(10,2); recortamos
@@ -49,11 +53,31 @@ export async function POST(request: Request) {
 
     try {
       const sql = neon(process.env.DATABASE_URL!);
+
+      if (simulated) {
+        // GPS FALSO (mock): NO pisamos la última posición real con el punto falso
+        // (no contaminamos el mapa). Solo marcamos el estado para que el mapa lo
+        // pinte en rojo y el cron/beacon alerten al admin. Respondemos 200 (NO 4xx)
+        // a propósito: un 4xx dejaría esta posición "pendiente" en la cola offline
+        // del repartidor y se reintentaría para siempre. Tampoco recalculamos ETA
+        // con una posición falsa. (Es UPDATE: no-op si el rider aún no tiene fila;
+        // ese caso lo cubre el cron por ausencia de reportes.)
+        await sql`
+          UPDATE rider_locations
+          SET simulated = TRUE,
+              gps_status = 'mock',
+              gps_status_changed_at = CASE WHEN gps_status IS DISTINCT FROM 'mock' THEN now() ELSE gps_status_changed_at END,
+              updated_at = now()
+          WHERE repartidor_id = ${session.user.id}
+        `;
+        return NextResponse.json({ ok: true, rejected: true });
+      }
+
       await sql`
         INSERT INTO rider_locations
-          (repartidor_id, latitude, longitude, accuracy, heading, speed, captured_at, updated_at)
+          (repartidor_id, latitude, longitude, accuracy, heading, speed, captured_at, updated_at, simulated, gps_status, gps_status_changed_at)
         VALUES
-          (${session.user.id}, ${lat}, ${lng}, ${accuracyClamp}, ${heading ?? null}, ${speed ?? null}, ${captured}, now())
+          (${session.user.id}, ${lat}, ${lng}, ${accuracyClamp}, ${heading ?? null}, ${speed ?? null}, ${captured}, now(), FALSE, 'activo', now())
         ON CONFLICT (repartidor_id) DO UPDATE SET
           latitude    = EXCLUDED.latitude,
           longitude   = EXCLUDED.longitude,
@@ -61,7 +85,10 @@ export async function POST(request: Request) {
           heading     = EXCLUDED.heading,
           speed       = EXCLUDED.speed,
           captured_at = EXCLUDED.captured_at,
-          updated_at  = now()
+          updated_at  = now(),
+          simulated   = FALSE,
+          gps_status  = 'activo',
+          gps_status_changed_at = CASE WHEN rider_locations.gps_status IS DISTINCT FROM 'activo' THEN now() ELSE rider_locations.gps_status_changed_at END
       `;
 
       try {

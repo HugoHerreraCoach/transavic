@@ -83,7 +83,13 @@ interface Repartidor {
     lng: number;
     heading: number | null;
     capturedAt: string;
+    updatedAt?: string;
+    gpsStatus?: string | null;
+    simulated?: boolean;
   } | null;
+  // GPS enforcement: ¿tiene pedidos activos hoy? y clasificación de "oscuro".
+  tienePedidosActivos?: boolean;
+  alerta?: "deliberado" | "sin_senal" | null;
 }
 
 interface BaseLocation {
