@@ -5,7 +5,7 @@
 // Reusa /api/resumen-diario (admin + produccion).
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   FiBox,
   FiCalendar,
@@ -17,6 +17,7 @@ import {
   FiMapPin,
   FiPackage,
   FiClipboard,
+  FiX,
 } from "react-icons/fi";
 import { toLocalDateString, getLocalDateString } from "@/lib/utils";
 
@@ -64,6 +65,29 @@ export default function ResumenClient() {
   const [loading, setLoading] = useState(true);
   // Por defecto MAÑANA: es lo que se prepara esta noche / mañana temprano.
   const [fecha, setFecha] = useState(() => getLocalDateString(1));
+  const [productoSeleccionado, setProductoSeleccionado] = useState<{
+    nombre: string;
+    unidad: string;
+  } | null>(null);
+
+  // ── Desglose de pedidos para el producto seleccionado ──
+  const pedidosDelProducto = useMemo(() => {
+    if (!productoSeleccionado || !data) return [];
+    return data.pedidos
+      .map((p) => {
+        const item = p.items.find(
+          (it) =>
+            it.producto_nombre === productoSeleccionado.nombre &&
+            it.unidad === productoSeleccionado.unidad
+        );
+        if (!item) return null;
+        return {
+          ...p,
+          cantidad_pedida: item.cantidad,
+        };
+      })
+      .filter((p): p is PedidoConCantidad => p !== null);
+  }, [productoSeleccionado, data]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -187,20 +211,26 @@ export default function ResumenClient() {
             {totales.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {totales.map((t, i) => (
-                  <div
+                  <button
                     key={i}
-                    className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm"
+                    onClick={() => setProductoSeleccionado({ nombre: t.nombre, unidad: t.unidad })}
+                    className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm hover:border-red-300 hover:shadow-md transition-all active:scale-[0.98] text-left focus:outline-none focus:ring-2 focus:ring-red-500/20 cursor-pointer group flex flex-col justify-between h-full min-h-[6.5rem]"
                   >
-                    <div className="text-xs text-gray-500 leading-snug line-clamp-2 min-h-[2rem]">
+                    <div className="text-xs text-gray-500 leading-snug line-clamp-2 group-hover:text-gray-800 transition-colors">
                       {t.nombre}
                     </div>
-                    <div className="mt-1 flex items-baseline gap-1">
-                      <span className="text-2xl font-extrabold text-gray-900 tabular-nums">
-                        {fmtCant(t.total)}
+                    <div className="mt-2 flex items-baseline justify-between w-full">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-2xl font-extrabold text-gray-900 tabular-nums">
+                          {fmtCant(t.total)}
+                        </span>
+                        <span className="text-sm font-medium text-gray-400">{t.unidad}</span>
+                      </div>
+                      <span className="text-[10px] text-red-500 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                        Ver detalle →
                       </span>
-                      <span className="text-sm font-medium text-gray-400">{t.unidad}</span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -276,6 +306,138 @@ export default function ResumenClient() {
           </section>
         </>
       )}
+
+      {/* ── Modal de detalle por producto ── */}
+      {productoSeleccionado && (
+        <DetalleProductoModal
+          producto={productoSeleccionado}
+          pedidos={pedidosDelProducto}
+          onClose={() => setProductoSeleccionado(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════
+//  Modal: desglose de pedidos por producto
+// ════════════════════════════════════════════════════════════
+interface PedidoConCantidad extends PedidoResumen {
+  cantidad_pedida: string;
+}
+
+function DetalleProductoModal({
+  producto,
+  pedidos,
+  onClose,
+}: {
+  producto: { nombre: string; unidad: string };
+  pedidos: PedidoConCantidad[];
+  onClose: () => void;
+}) {
+  const total = pedidos.reduce((acc, p) => acc + Number(p.cantidad_pedida), 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs transition-opacity" onClick={onClose} />
+      <div className="relative bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[90vh] flex flex-col anim-slide-up">
+        {/* Header */}
+        <div className="px-4 sm:px-6 py-4 border-b flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[10px] font-bold text-red-600 uppercase tracking-widest">
+              Desglose de Pedidos
+            </div>
+            <h2 className="text-lg font-bold text-gray-900 mt-0.5">{producto.nombre}</h2>
+            <div className="text-xs text-gray-500 mt-1 flex items-center gap-1.5">
+              <span>Total requerido:</span>
+              <span className="font-semibold text-gray-800 tabular-nums">
+                {fmtCant(total)} {producto.unidad}
+              </span>
+              <span>·</span>
+              <span>{pedidos.length} pedido{pedidos.length !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+          >
+            <FiX className="text-lg" />
+          </button>
+        </div>
+
+        {/* Contenido (Desglose) */}
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3">
+          {pedidos.length === 0 ? (
+            <p className="text-center text-gray-500 py-6 text-sm">
+              No hay pedidos que contengan este producto.
+            </p>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {pedidos.map((p) => (
+                <div key={p.id} className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-bold text-gray-800 text-sm truncate">{p.cliente}</span>
+                      <span className="text-[10px] font-medium text-gray-400 bg-gray-50 border border-gray-100 rounded-md px-1.5 py-0.5 uppercase">
+                        {p.empresa}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500">
+                      {p.distrito && (
+                        <span className="flex items-center gap-1">
+                          <FiMapPin size={11} className="text-gray-400" />
+                          {p.distrito}
+                        </span>
+                      )}
+                      {p.hora_entrega && (
+                        <span className="flex items-center gap-1">
+                          <FiClock size={11} className="text-gray-400" />
+                          {p.hora_entrega}
+                        </span>
+                      )}
+                      {p.asesor_name && (
+                        <span className="flex items-center gap-1">
+                          <FiUser size={11} className="text-gray-400" />
+                          Asesora: {p.asesor_name.trim()}
+                        </span>
+                      )}
+                    </div>
+                    {p.whatsapp && (
+                      <div className="mt-1.5">
+                        <a
+                          href={`https://wa.me/${p.whatsapp.replace(/[^0-9]/g, "")}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-green-600 hover:text-green-700 hover:underline"
+                        >
+                          <FiPhone size={11} />
+                          <span>WhatsApp: {p.whatsapp}</span>
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs text-gray-400 uppercase font-medium">Cantidad</div>
+                    <div className="text-lg font-black text-red-600 tabular-nums">
+                      {fmtCant(p.cantidad_pedida)} <span className="text-xs font-semibold text-gray-500">{producto.unidad}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-4 sm:px-6 py-3 border-t bg-gray-50 text-right">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-gray-800 text-white rounded-lg text-sm font-semibold hover:bg-gray-900 transition-colors"
+          >
+            Cerrar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
