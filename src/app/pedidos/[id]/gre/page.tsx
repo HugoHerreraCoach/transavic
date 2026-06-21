@@ -85,12 +85,19 @@ export default async function GrePage({ params }: PageProps) {
       WHERE pedido_id = ${g.pedido_id}
       ORDER BY producto_nombre ASC
     `;
-    items = pedidoItems.map((it, idx) => ({
-      codigo: `P${String(idx + 1).padStart(3, "0")}`,
-      descripcion: it.producto_nombre,
-      cantidad: Number(it.cantidad),
-      unidad: it.unidad,
-    }));
+    items = pedidoItems
+      .map((it) => ({
+        producto_nombre: it.producto_nombre,
+        cantidad: Number(it.cantidad),
+        unidad: it.unidad,
+      }))
+      .filter((it) => it.cantidad > 0)
+      .map((it, idx) => ({
+        codigo: `P${String(idx + 1).padStart(3, "0")}`,
+        descripcion: it.producto_nombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+      }));
   } else if (g.xml_firmado_base64) {
     // Guía standalone: extraer ítems del XML firmado
     try {

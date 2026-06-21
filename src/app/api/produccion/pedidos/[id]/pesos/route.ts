@@ -11,7 +11,7 @@ const PesosSchema = z.object({
   items: z.array(
     z.object({
       item_id: z.string().uuid(),
-      cantidad_real: z.number().positive("La cantidad debe ser mayor a 0"),
+      cantidad_real: z.number().min(0, "La cantidad no puede ser negativa"),
       // Producción puede ajustar la unidad y el precio al pesar/preparar
       // (ej. el pedido vino en "uni" pero se cobra por kg, o cambió el precio del día).
       unidad: z.string().trim().min(1).max(20).optional(),

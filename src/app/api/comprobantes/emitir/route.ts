@@ -183,12 +183,14 @@ export async function POST(request: Request) {
         unidad: string;
         precio_unitario: string | number;
       }>;
-      items = rows.map((r) => ({
-        producto_nombre: r.producto_nombre,
-        cantidad: Number(r.cantidad),
-        unidad: r.unidad,
-        precio_unitario: Number(r.precio_unitario),
-      }));
+      items = rows
+        .map((r) => ({
+          producto_nombre: r.producto_nombre,
+          cantidad: Number(r.cantidad),
+          unidad: r.unidad,
+          precio_unitario: Number(r.precio_unitario),
+        }))
+        .filter((it) => it.cantidad > 0);
     }
 
     if (items.length === 0 || items.every((it) => it.precio_unitario === 0)) {

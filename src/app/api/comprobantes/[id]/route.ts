@@ -166,22 +166,24 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       codigo: string | null;
     }>;
 
-    items = itemRows.map((r) => {
-      const cantidad = Number(r.cantidad);
-      const precioUnitario = Number(r.precio_unitario);
-      const valorVenta = Number(r.subtotal) || cantidad * precioUnitario;
-      const montoIGV = Number((valorVenta * 0.18).toFixed(2));
-      return {
-        descripcion: r.descripcion,
-        unidadMedida: r.unidad_medida || "NIU",
-        cantidad,
-        precioUnitario,
-        valorVenta,
-        montoIGV,
-        precioTotal: Number((valorVenta + montoIGV).toFixed(2)),
-        codigo: r.codigo || "",
-      };
-    });
+    items = itemRows
+      .map((r) => {
+        const cantidad = Number(r.cantidad);
+        const precioUnitario = Number(r.precio_unitario);
+        const valorVenta = Number(r.subtotal) || cantidad * precioUnitario;
+        const montoIGV = Number((valorVenta * 0.18).toFixed(2));
+        return {
+          descripcion: r.descripcion,
+          unidadMedida: r.unidad_medida || "NIU",
+          cantidad,
+          precioUnitario,
+          valorVenta,
+          montoIGV,
+          precioTotal: Number((valorVenta + montoIGV).toFixed(2)),
+          codigo: r.codigo || "",
+        };
+      })
+      .filter((it) => it.cantidad > 0);
   }
 
   // (3) Último recurso: línea global desde los montos del comprobante

@@ -169,14 +169,16 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       cantidad: string | number;
       precio_unitario: string | number;
     }>;
-    items = itemRows.map((r) => ({
-      descripcion: r.descripcion,
-      unidadMedida: r.unidad_medida || "NIU",
-      cantidad: Number(r.cantidad),
-      precioUnitario: Number(r.precio_unitario),
-      tipoAfectacionIGV: TipoAfectacionIGV.GRAVADA_ONEROSA,
-      porcentajeIGV: 18,
-    }));
+    items = itemRows
+      .map((r) => ({
+        descripcion: r.descripcion,
+        unidadMedida: r.unidad_medida || "NIU",
+        cantidad: Number(r.cantidad),
+        precioUnitario: Number(r.precio_unitario),
+        tipoAfectacionIGV: TipoAfectacionIGV.GRAVADA_ONEROSA,
+        porcentajeIGV: 18,
+      }))
+      .filter((it) => it.cantidad > 0);
   }
 
   const empresaId = (c.empresa as EmpresaId) || "transavic";

@@ -192,9 +192,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
               cantidad: Number(it.cantidad_real ?? it.cantidad ?? 0),
               unidad: it.unidad || it.unidad_medida || it.unidadMedida || "NIU",
             }));
-          // El flete ("ENVIO") es un servicio facturable, no un bien transportable
+          // El flete ("ENVIO") es un servicio facturable, no un bien transportable.
+          // También filtramos ítems anulados (cantidad <= 0).
           const mappedItems = mappedSinFiltrar
-            .filter((it: { producto_nombre: string }) => !/^env[ií]o$/i.test(it.producto_nombre.trim()));
+            .filter((it: { producto_nombre: string; cantidad: number }) => 
+              !/^env[ií]o$/i.test(it.producto_nombre.trim()) && it.cantidad > 0
+            );
           setEnvioExcluido(mappedSinFiltrar.length !== mappedItems.length);
           setItems(mappedItems);
 

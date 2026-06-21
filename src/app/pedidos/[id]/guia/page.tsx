@@ -66,12 +66,17 @@ export default async function GuiaPage({ params }: PageProps) {
     await sql`UPDATE pedidos SET numero_guia = ${numero} WHERE id = ${id}`;
   }
 
+  // Filtrar ítems anulados (cantidad_real = 0)
+  const itemsFiltrados = items.filter(
+    (it) => it.cantidad_real === null || Number(it.cantidad_real) > 0
+  );
+
   // Calcular total
-  const totalReal = items.reduce(
+  const totalReal = itemsFiltrados.reduce(
     (s, it) => s + Number(it.subtotal_real ?? 0),
     0
   );
-  const totalEstimado = items.reduce(
+  const totalEstimado = itemsFiltrados.reduce(
     (s, it) => s + Number(it.subtotal ?? 0),
     0
   );
@@ -90,7 +95,7 @@ export default async function GuiaPage({ params }: PageProps) {
       fecha={pedido.fecha as string}
       asesor={(pedido.asesor_name as string) || ""}
       notas={(pedido.notas as string) || ""}
-      items={items.map((it) => ({
+      items={itemsFiltrados.map((it) => ({
         producto: it.producto_nombre,
         cantidad: Number(it.cantidad_real ?? it.cantidad),
         unidad: it.unidad,

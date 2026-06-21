@@ -313,23 +313,30 @@ function PesoModal({
     return sum;
   }, [pesos, precios, pedido.items]);
 
-  const todoCompleto = pedido.items.every(
-    (it) => parseFloat(pesos[it.id] || "0") > 0
-  );
+  const todoCompleto =
+    pedido.items.every(
+      (it) => pesos[it.id] !== undefined && pesos[it.id] !== ""
+    ) &&
+    pedido.items.some(
+      (it) => parseFloat(pesos[it.id] || "0") > 0
+    );
 
   const guardarPesos = async () => {
     setError(null);
     const items = pedido.items
-      .map((it) => ({
-        item_id: it.id,
-        cantidad_real: parseFloat(pesos[it.id] || "0"),
-        unidad: unidades[it.id] || it.unidad,
-        precio_unitario: parseFloat(precios[it.id] || "0"),
-      }))
-      .filter((x) => x.cantidad_real > 0);
+      .map((it) => {
+        const pesoStr = pesos[it.id];
+        return {
+          item_id: it.id,
+          cantidad_real: pesoStr !== "" ? parseFloat(pesoStr) : null,
+          unidad: unidades[it.id] || it.unidad,
+          precio_unitario: parseFloat(precios[it.id] || "0"),
+        };
+      })
+      .filter((x) => x.cantidad_real !== null && !isNaN(x.cantidad_real));
 
-    if (items.length === 0) {
-      setError("Ingresa al menos un peso");
+    if (items.length === 0 || !items.some((x) => x.cantidad_real! > 0)) {
+      setError("Ingresa al menos un peso mayor a 0");
       return;
     }
 

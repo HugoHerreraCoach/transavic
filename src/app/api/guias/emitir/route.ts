@@ -233,11 +233,13 @@ export async function POST(request: Request) {
           { status: 400 }
         );
       }
-      itemsRows = dbItems.map((it) => ({
-        producto_nombre: it.producto_nombre,
-        cantidad: Number(it.cantidad),
-        unidad: it.unidad,
-      }));
+      itemsRows = dbItems
+        .map((it) => ({
+          producto_nombre: it.producto_nombre,
+          cantidad: Number(it.cantidad),
+          unidad: it.unidad,
+        }))
+        .filter((it) => it.cantidad > 0);
     } else if (comprobante_id) {
       // 2. Cargar desde el comprobante standalone
       const compRows = await sql`
@@ -424,7 +426,8 @@ export async function POST(request: Request) {
               };
             })
             // El flete ("ENVIO") es un servicio facturable, no un bien transportable.
-            .filter((it) => !/^env[ií]o$/i.test(it.producto_nombre.trim()));
+            // También filtramos ítems con cantidad <= 0.
+            .filter((it) => !/^env[ií]o$/i.test(it.producto_nombre.trim()) && it.cantidad > 0);
           if (bienes.length > 0) itemsRows = bienes;
         }
       }

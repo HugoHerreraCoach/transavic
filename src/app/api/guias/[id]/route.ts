@@ -126,7 +126,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
           cantidad: Number(it.cantidad),
           unidad: it.unidad as string,
         }))
-        .filter((it) => !/^env[ií]o$/i.test(it.descripcion.trim()));
+        .filter((it) => !/^env[ií]o$/i.test(it.descripcion.trim()) && it.cantidad > 0);
     }
 
     // Dirección de llegada: pedido → XML firmado.

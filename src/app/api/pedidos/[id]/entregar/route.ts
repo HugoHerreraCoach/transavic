@@ -178,15 +178,17 @@ export async function POST(request: Request) {
                       ? nombreCliente.toUpperCase()
                       : "CLIENTES VARIOS",
                   },
-              items: items.map((it) => ({
-                descripcion: it.producto_nombre,
-                unidadMedida: aUnitCodeSunat(it.unidad),
-                cantidad: Number(it.cantidad),
-                precioUnitario: Number(
-                  (Number(it.precio_unitario) / IGV_FACTOR).toFixed(4)
-                ),
-                igvPorcentaje: 18,
-              })),
+              items: items
+                .map((it) => ({
+                  descripcion: it.producto_nombre,
+                  unidadMedida: aUnitCodeSunat(it.unidad),
+                  cantidad: Number(it.cantidad),
+                  precioUnitario: Number(
+                    (Number(it.precio_unitario) / IGV_FACTOR).toFixed(4)
+                  ),
+                  igvPorcentaje: 18,
+                }))
+                .filter((it) => it.cantidad > 0),
             });
           }
         } catch (e) {
