@@ -38,6 +38,7 @@ export async function descargarPdfComprobante(id: string): Promise<void> {
     moneda: d.moneda,
     hashCpe: d.hashCpe,
     observaciones: d.observaciones,
+    observacionComprobante: d.observacionComprobante ?? null,
     empresa: d.empresa,
     emisor: d.emisor,
     formaPago: d.formaPago ?? undefined,

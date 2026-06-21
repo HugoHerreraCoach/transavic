@@ -22,6 +22,10 @@ import { buscarComprobanteDuplicado } from "@/lib/sunat/duplicado";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import { controlarPrecioMinimo } from "@/lib/autorizaciones-precio";
 import { validarFechaEmision } from "@/lib/sunat/fechas";
+import {
+  MAX_OBSERVACION_CPE,
+  validarObservacionSunat,
+} from "@/lib/sunat/observaciones";
 
 export const dynamic = "force-dynamic";
 // El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
@@ -56,6 +60,7 @@ const Schema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
+  observacionComprobante: z.string().optional().nullable(),
   // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
   confirmarDuplicado: z.boolean().default(false),
   // ID de autorización de precio mínimo (aprobada por el admin).
@@ -101,6 +106,13 @@ export async function POST(request: Request) {
       if (!v.ok) {
         return NextResponse.json({ error: v.motivo }, { status: 400 });
       }
+    }
+    const obs = validarObservacionSunat(
+      parsed.data.observacionComprobante,
+      MAX_OBSERVACION_CPE
+    );
+    if (!obs.ok) {
+      return NextResponse.json({ error: obs.error }, { status: 400 });
     }
 
     const { tipo, empresa, cliente, items } = parsed.data;
@@ -255,6 +267,7 @@ export async function POST(request: Request) {
       formaPago: parsed.data.formaPago,
       plazoDias: parsed.data.plazoDias, // crédito → cuota con vencimiento en el XML
       fechaEmision: parsed.data.fechaEmision,
+      observacionComprobante: obs.value,
       emitidoPor: session.user.name?.trim() || undefined,
       // sin pedidoId → comprobante suelto
     });

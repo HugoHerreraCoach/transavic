@@ -13,6 +13,10 @@ import {
   DatosComunicacionBaja,
 } from "./types";
 import { SunatConfig, CATALOGO, formatNumero, montoATexto } from "./config-transavic";
+import {
+  MAX_OBSERVACION_CPE,
+  normalizarObservacionSunat,
+} from "./observaciones";
 
 // --- Namespaces UBL 2.1 ---
 const NS = {
@@ -228,6 +232,24 @@ export function generarXMLComprobante(
     .ele(NS.cbc, "cbc:Note")
     .att("languageLocaleID", "1000")
     .txt(leyendaTexto);
+
+  // Observación libre del usuario. Se emite como cbc:Note SIN languageLocaleID:
+  // la leyenda de monto en letras conserva el código 1000, pero la observación
+  // de operación no debe usar un código de leyenda ajeno. SUNAT beta rechaza el
+  // código 2012 (catálogo viejo) con 3027; sin atributo queda como nota libre.
+  // Solo aplica a factura/boleta (Invoice). La NC ya tiene su motivo legal en
+  // DiscrepancyResponse/Description y no se duplica.
+  if (rootTag === "Invoice") {
+    const observacion = normalizarObservacionSunat(
+      datos.observacionComprobante,
+      MAX_OBSERVACION_CPE
+    );
+    if (observacion) {
+      doc
+        .ele(NS.cbc, "cbc:Note")
+        .txt(observacion);
+    }
+  }
 
   // Moneda
   doc

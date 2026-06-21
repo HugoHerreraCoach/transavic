@@ -35,6 +35,7 @@ export interface PDFGuiaData {
     tipo: string; // '01' factura, '03' boleta
     ruc: string;
   } | null;
+  observacionComprobante?: string | null;
   items: { descripcion: string; cantidad: number; unidad: string }[];
   pesoBrutoTotal: number;
   totalBultos: number;
@@ -178,6 +179,11 @@ export function generarPDFGuia(data: PDFGuiaData): Blob {
   if (data.comprobanteRelacionado) {
     const c = data.comprobanteRelacionado;
     y = lineaConLabel(ML, y, "Documentos Relacionados:", `${tipoComprobanteLabel(c.tipo)} N° ${c.serieNumero} — RUC N° ${c.ruc}`, MR - ML);
+  }
+
+  const observacion = (data.observacionComprobante || "").trim();
+  if (observacion) {
+    y = lineaConLabel(ML, y, "Observación:", observacion, MR - ML);
   }
 
   // ── BIENES POR TRANSPORTAR ──

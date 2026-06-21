@@ -8,7 +8,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
-import { parseDespatchItems, parseGuiaPuntoLlegada, parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
+import { parseDespatchItems, parseGuiaObservacion, parseGuiaPuntoLlegada, parseCpeItems, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 import { obtenerDistritoPorUbigeo } from "@/lib/sunat/ubigeos";
 
 export const dynamic = "force-dynamic";
@@ -143,6 +143,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
     }
 
     const indicadorM1L = xmlStr.includes("SUNAT_Envio_IndicadorTrasladoVehiculoM1L");
+    const observacionComprobante = xmlStr
+      ? parseGuiaObservacion(xmlStr) || (g.observacion_comprobante as string | null) || null
+      : (g.observacion_comprobante as string | null) || null;
 
     // No mandar al cliente el XML/items de la factura vinculada (solo se usan
     // server-side para reconstruir los ítems de impresión).
@@ -156,6 +159,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
         direccionLlegada,
         distritoLlegada,
         indicadorM1L,
+        observacionComprobante,
         comprobanteRelacionado: g.ref_serie_numero
           ? { serieNumero: g.ref_serie_numero, tipo: g.ref_tipo, ruc: g.ref_ruc }
           : null,

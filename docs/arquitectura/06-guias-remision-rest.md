@@ -1,6 +1,6 @@
 # 06 — Integración de Guías de Remisión Electrónicas (GRE 2.0 REST)
 
-> **Última verificación contra código:** 2026-06-10
+> **Última verificación contra código:** 2026-06-21
 > **Commit del proyecto:** desplegado en `main` (GRE en producción; ver gotchas #28 y #29 del CLAUDE.md)
 > **Archivos clave:** 
 > - [src/lib/sunat/xml-builder-guia.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/xml-builder-guia.ts)
@@ -82,7 +82,7 @@ Regla **central** para el caso de Transavic (muchas entregas las hace un **deliv
 - El entorno lo controla `SUNAT_ENVIRONMENT` (compartido con boletas/facturas SOAP). En Vercel = `production`; en `.env.local` = `beta`.
 - **Endpoints REST** (`rest-client.ts`): envío a `api-cpe-test.sunat.gob.pe` (beta) o `api-cpe.sunat.gob.pe` (producción); OAuth2 en `api-seguridad.sunat.gob.pe` (fijo).
 - **Credenciales OAuth2** en Vercel producción: `SUNAT_TRA_CLIENT_ID/SECRET` y `SUNAT_AVI_CLIENT_ID/SECRET` (cargadas; una por empresa).
-- ⚠️ **Mock de beta (cuidado al validar):** en `api/guias/emitir/route.ts`, **solo cuando `environment === "beta"`**, un fallo de SUNAT (401, red, etc.) se **simula como éxito** (`descripcion` con `[SIMULADO BETA]`, CDR `<MockCDR>`). En producción NO simula: el error se propaga. Por eso una prueba en beta **no es concluyente** si la respuesta trae `[SIMULADO BETA]` — para validar de verdad hace falta una aceptación real (sin ese marcador) o emitir en producción.
+- ⚠️ **Mock de beta (cuidado al validar):** el mock está **apagado por defecto**. Solo si `SUNAT_GRE_MOCK_BETA=1` y `SUNAT_ENVIRONMENT=beta`, un fallo de SUNAT (401, red, etc.) se simula como éxito (`descripcion` con `[SIMULADO BETA]`, CDR `<MockCDR>`). En producción NO simula: el error se propaga. Una prueba en beta solo es concluyente si hay aceptación real de SUNAT, sin `[SIMULADO BETA]`; un 401 de REST valida firma/generación local pero no aceptación SUNAT.
 
 ### Banner del modal (jun 2026)
 El banner del modal **ya no está hardcodeado a "Beta"**. Lo alimenta `GET /api/sunat/entorno` (`{environment, esProduccion}`, dato no sensible): en producción muestra una nota **verde "Producción (SUNAT real)"**, en beta el aviso ámbar. El modal se abre desde `table.tsx` y `comprobantes-client.tsx` (client components), por eso el entorno se expone por endpoint y no por props.
@@ -99,6 +99,14 @@ M1/L exige DNI+licencia+nombres+apellidos+placa — espejo del backend), `consul
 distritos o consultas compartidas se hacen en ese módulo, NUNCA en un solo modal.** Ambos modales
 hoy tienen paridad: banner dinámico, auto-búsqueda del destinatario, M1/L exime y oculta el bloque
 del chofer ("+ Agregar datos del chofer (opcional)").
+
+### Observación libre de la GRE (21 jun 2026)
+Ambos modales (`emitir-guia-modal.tsx` y `emitir-guia-directa-modal.tsx`) aceptan
+`observacionComprobante` opcional (máx. 250). La API la normaliza, la persiste en
+`comprobantes_guias.observacion_comprobante` y el XML la emite como `DespatchAdvice/cbc:Note`
+inmediatamente después de `cbc:DespatchAdviceTypeCode` y antes de `cac:Signature`, porque el orden
+de cabecera de UBL/SUNAT es sensible. El PDF y la vista imprimible la muestran como
+"Observación". No confundir con `comprobantes_guias.observaciones`, que guarda CDR/SUNAT/logs.
 
 ### Auto-búsqueda del destinatario + dirección + distrito (jun 2026)
 En ambos modales, al tipear un DNI(8)/RUC(11) se consulta apisperu (`POST /api/consulta-documento`).

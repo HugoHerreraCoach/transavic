@@ -51,6 +51,7 @@ interface PDFComprobanteData {
   moneda: string;
   hashCpe?: string | null;
   observaciones?: string[] | null;
+  observacionComprobante?: string | null;
   formaPago?: string;
   /** Fecha de vencimiento de la cuota (solo crédito), formato "YYYY-MM-DD". */
   fechaVencimiento?: string;
@@ -477,6 +478,16 @@ function generarPDFFactura(doc: jsPDF, data: PDFComprobanteData): void {
   doc.setFont("helvetica", "normal");
   doc.text("Observación", lx, y);
   doc.text(":", vx - 2, y);
+  const observacionFactura = (data.observacionComprobante || "").trim();
+  if (observacionFactura) {
+    doc.setFont("helvetica", "bold");
+    const obsLines = doc.splitTextToSize(observacionFactura, boxX - vx - 5);
+    doc.text(obsLines[0] || "", vx + 1, y);
+    for (let i = 1; i < obsLines.length; i++) {
+      y += 3.5;
+      doc.text(obsLines[i], vx + 1, y);
+    }
+  }
 
   // === INFORMACIÓN DEL CRÉDITO (solo facturas al crédito) ===
   y = drawInformacionCredito(doc, data, { margin, contentWidth, lx }, y);
@@ -785,6 +796,16 @@ function generarPDFBoleta(doc: jsPDF, data: PDFComprobanteData): void {
   doc.setFont("helvetica", "normal");
   doc.text("Observación", lx, y);
   doc.text(":", vx - 2, y);
+  const observacionBoleta = (data.observacionComprobante || "").trim();
+  if (observacionBoleta) {
+    doc.setFont("helvetica", "bold");
+    const obsLines = doc.splitTextToSize(observacionBoleta, pageWidth - margin - vx - 2);
+    doc.text(obsLines[0] || "", vx + 1, y);
+    for (let i = 1; i < obsLines.length; i++) {
+      y += 3.5;
+      doc.text(obsLines[i], vx + 1, y);
+    }
+  }
 
   // === INFORMACIÓN DEL CRÉDITO (solo boletas al crédito) ===
   y = drawInformacionCredito(doc, data, { margin, contentWidth, lx }, y);

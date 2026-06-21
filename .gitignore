@@ -54,3 +54,5 @@ next-env.d.ts
 # local test/ref directories
 /recursos/
 /scratch/
+/.tmp/
+/downloads/

@@ -4,7 +4,8 @@
 // ============================================================
 
 import { create } from "xmlbuilder2";
-import { SunatConfig, CATALOGO, formatNumero } from "./config-transavic";
+import { SunatConfig, formatNumero } from "./config-transavic";
+import { MAX_OBSERVACION_GRE, normalizarObservacionSunat } from "./observaciones";
 
 export interface DatosGuia {
   serie: string;
@@ -18,6 +19,8 @@ export interface DatosGuia {
   totalBultos: number;
   modalidadTraslado: string; // Catálogo 20: '01' (Público) o '02' (Privado)
   indicadorM1L?: boolean; // Indicador de traslado en vehículos de categoría M1 o L
+  /** Observación libre de cabecera GRE. SUNAT: /DespatchAdvice/cbc:Note, an..250. */
+  observacionComprobante?: string | null;
   repartidor?: {
     docTipo: string; // Catálogo 06: '1' (DNI), etc.
     docNum: string;
@@ -89,6 +92,14 @@ export function generarXMLGuia(datos: DatosGuia, config: SunatConfig): string {
     .att("listName", "Tipo de Documento")
     .att("listURI", "urn:pe:gob:sunat:cpe:see:gem:catalogos:catalogo01")
     .txt("09");
+
+  const observacion = normalizarObservacionSunat(
+    datos.observacionComprobante,
+    MAX_OBSERVACION_GRE
+  );
+  if (observacion) {
+    doc.ele(NS.cbc, "cbc:Note").txt(observacion);
+  }
 
   // --- Firma digital (referencia) ---
   const signature = doc.ele(NS.cac, "cac:Signature");

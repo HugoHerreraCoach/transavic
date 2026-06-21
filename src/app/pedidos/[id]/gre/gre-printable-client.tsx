@@ -29,6 +29,7 @@ interface GrePrintableClientProps {
     clienteDistrito: string | null;
     clienteUbigeo: string;
     asesor: string;
+    observacionComprobante?: string | null;
     comprobanteRelacionado?: {
       serieNumero: string;
       tipo: string;
@@ -292,6 +293,13 @@ export default function GrePrintableClient({ guia, items }: GrePrintableClientPr
               {tipoComprobanteLabel(guia.comprobanteRelacionado.tipo)} N° {guia.comprobanteRelacionado.serieNumero}
               {" "}&mdash;{" "}RUC N° {guia.comprobanteRelacionado.ruc}
             </span>
+          </div>
+        )}
+
+        {guia.observacionComprobante && (
+          <div style={{ fontSize: "10px", marginBottom: "8px" }}>
+            <span style={{ fontWeight: "bold" }}>Observación: </span>
+            <span>{guia.observacionComprobante}</span>
           </div>
         )}
 

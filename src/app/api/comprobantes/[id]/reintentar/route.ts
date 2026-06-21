@@ -69,7 +69,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
       c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at, c.fecha_emision,
       c.hash_cpe, c.xml_firmado_base64, c.items_json, c.emitido_por,
-      c.forma_pago, c.fecha_vencimiento,
+      c.forma_pago, c.fecha_vencimiento, c.observacion_comprobante,
       p.asesor_id AS pedido_asesor_id, p.cliente_id AS pedido_cliente_id,
       p.cliente AS pedido_cliente
     FROM comprobantes c
@@ -98,6 +98,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     emitido_por: string | null;
     forma_pago: string | null;
     fecha_vencimiento: string | Date | null;
+    observacion_comprobante: string | null;
     pedido_asesor_id: string | null;
     pedido_cliente_id: string | null;
     pedido_cliente: string | null;
@@ -242,6 +243,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
           },
           items,
           formaPago: "Contado",
+          observacionComprobante: c.observacion_comprobante,
         },
         config
       );

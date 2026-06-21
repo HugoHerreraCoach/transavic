@@ -178,6 +178,12 @@ export interface DatosComprobante {
   totales?: TotalesComprobante;
   formaPago?: "Contado" | "Credito";
   fechaVencimiento?: string;
+  /**
+   * Observación libre visible en el PDF y enviada en el XML como cbc:Note.
+   * Factura/boleta: nota libre sin languageLocaleID, máximo 200 caracteres.
+   * No se usa en Nota de Crédito: la NC conserva su motivo/sustento legal.
+   */
+  observacionComprobante?: string | null;
   leyendas?: { codigo: string; valor: string }[];
   documentoReferencia?: {
     tipoComprobante: TipoComprobante;

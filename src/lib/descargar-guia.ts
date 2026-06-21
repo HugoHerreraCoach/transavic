@@ -71,6 +71,7 @@ export async function descargarPdfGuia(id: string): Promise<void> {
       razonSocial: g.cliente_razon_social,
     },
     comprobanteRelacionado: imp.comprobanteRelacionado || null,
+    observacionComprobante: imp.observacionComprobante ?? null,
     items: imp.items || [],
     pesoBrutoTotal: Number(g.peso_bruto_total) || 0,
     totalBultos: Number(g.total_bultos) || 1,

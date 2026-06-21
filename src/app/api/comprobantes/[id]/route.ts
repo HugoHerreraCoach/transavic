@@ -10,6 +10,7 @@ import type { EmpresaId } from "@/lib/sunat/types";
 import {
   parseCpeItems,
   parseCpeClienteDireccion,
+  parseCpeObservacion,
   parseCpeTotales,
   type CpeItem,
   type CpeTotales,
@@ -54,7 +55,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           c.monto_subtotal, c.monto_igv, c.monto_total, c.moneda,
           c.estado, c.hash_cpe, c.xml_firmado_base64, c.cdr_base64,
           c.observaciones, c.mensaje_sunat, c.created_at, c.fecha_emision,
-          c.forma_pago, c.fecha_vencimiento, c.emitido_por,
+          c.forma_pago, c.fecha_vencimiento, c.emitido_por, c.observacion_comprobante,
           p.asesor_id AS pedido_asesor_id,
           p.cliente AS pedido_cliente, p.direccion AS pedido_direccion,
           p.distrito AS pedido_distrito,
@@ -84,6 +85,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     xml_firmado_base64: string | null;
     cdr_base64: string | null;
     observaciones: string | null;
+    observacion_comprobante: string | null;
     mensaje_sunat: string | null;
     created_at: string | Date;
     fecha_emision: string | Date | null;
@@ -125,6 +127,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   // → las facturas standalone salían sin dirección del cliente y el PDF mostraba
   // la del EMISOR con la etiqueta "Establecimiento del Emisor" (confundía).
   let clienteDireccionXml: string | null = null;
+  let observacionXml: string | null = null;
   // Totales del XML firmado: el cbc:PayableAmount es la ÚNICA fuente de verdad del
   // importe ante SUNAT (la Consulta de Validez compara exacto al céntimo). El PDF
   // DEBE mostrar ese número, no `monto_total` de DB (que históricamente podía
@@ -137,6 +140,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       const xml = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
       items = parseCpeItems(xml);
       clienteDireccionXml = parseCpeClienteDireccion(xml);
+      observacionXml = parseCpeObservacion(xml);
       totalesXml = parseCpeTotales(xml);
     } catch {
       items = [];
@@ -285,6 +289,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     xmlFirmadoBase64: c.xml_firmado_base64,
     cdrBase64: c.cdr_base64,
     observaciones: c.observaciones ? c.observaciones.split(" | ") : null,
+    observacionComprobante: observacionXml || c.observacion_comprobante || null,
     mensajeSunat: c.mensaje_sunat,
     formaPago: c.forma_pago ?? null,
     fechaVencimiento,

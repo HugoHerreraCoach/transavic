@@ -135,6 +135,7 @@ function diasEntre(desde: string, hasta: string): number {
  *  SUNAT no acepta fechas futuras y la retroactividad va por el plazo de envío:
  *  factura 3 días, boleta 7. */
 const LIMITE_RETRO_DIAS: Record<Tipo, number> = { "01": 3, "03": 7 };
+const MAX_OBSERVACION_CPE = 200;
 
 /** Rango [min,max] del selector de fecha de emisión, según el tipo de comprobante. */
 function rangoEmisionLocal(tipo: Tipo): { min: string; max: string } {
@@ -145,6 +146,10 @@ function rangoEmisionLocal(tipo: Tipo): { min: string; max: string } {
 function clampFecha(iso: string, min: string, max: string): string {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return max;
   return iso < min ? min : iso > max ? max : iso;
+}
+
+function limpiarObservacionInput(value: string, maxLength: number): string {
+  return value.replace(/\s+/g, " ").slice(0, maxLength);
 }
 
 interface ResultadoEmision {
@@ -208,6 +213,7 @@ export default function EmitirComprobanteClient({
   const [numDoc, setNumDoc] = useState("");
   const [razonSocial, setRazonSocial] = useState("");
   const [direccionCliente, setDireccionCliente] = useState("");
+  const [observacionComprobante, setObservacionComprobante] = useState("");
   const [clienteId, setClienteId] = useState<string | null>(null);
   // Aviso de comprobante duplicado: el backend responde 409 con el comprobante igual.
   const [duplicado, setDuplicado] = useState<{
@@ -816,6 +822,7 @@ export default function EmitirComprobanteClient({
         moneda: d.moneda,
         hashCpe: d.hashCpe,
         observaciones: d.observaciones,
+        observacionComprobante: d.observacionComprobante ?? null,
         empresa: d.empresa,
         emisor: d.emisor,
         formaPago: d.formaPago ?? undefined,
@@ -863,6 +870,7 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               fechaEmision,
+              observacionComprobante: observacionComprobante.trim() || undefined,
               confirmarDuplicado,
               autorizacion_id: autorizacionId ?? undefined,
               // Datos del receptor tal como están en el form (precargados del
@@ -903,6 +911,7 @@ export default function EmitirComprobanteClient({
               formaPago,
               plazoDias: plazo,
               fechaEmision,
+              observacionComprobante: observacionComprobante.trim() || undefined,
               confirmarDuplicado,
               autorizacion_id: autorizacionId ?? undefined,
             }),
@@ -953,6 +962,7 @@ export default function EmitirComprobanteClient({
     setNumDoc("");
     setRazonSocial("");
     setDireccionCliente("");
+    setObservacionComprobante("");
     setDocInfo(null);
     setClienteId(null);
     setBusquedaCliente("");
@@ -1735,6 +1745,32 @@ export default function EmitirComprobanteClient({
                     </p>
                   )}
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="block text-xs font-bold text-gray-500 uppercase">
+                    Observación (Opcional)
+                  </label>
+                  <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                    {observacionComprobante.length}/{MAX_OBSERVACION_CPE}
+                  </span>
+                </div>
+                <textarea
+                  value={observacionComprobante}
+                  onChange={(e) =>
+                    setObservacionComprobante(
+                      limpiarObservacionInput(e.target.value, MAX_OBSERVACION_CPE)
+                    )
+                  }
+                  rows={3}
+                  maxLength={MAX_OBSERVACION_CPE}
+                  placeholder="Ej. Facturado según Orden de Compra N° 12345"
+                  className={`w-full resize-none p-2.5 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring}`}
+                />
+                <p className="text-[10px] text-gray-500 font-medium leading-normal">
+                  Se mostrará en la línea Observación del PDF.
+                </p>
               </div>
             </div>
 

@@ -205,7 +205,7 @@ El grupo más grande. Todo lo de emisión/lectura está abierto a **`asesor` + `
 | Path | Método | Auth | Rol | Qué hace |
 |---|---|---|---|---|
 | `/api/comprobantes` | GET | ✅ | admin (todos) / asesor (suyos) | Lista (LIMIT 100). Filtros `?tipo=01\|03\|07\|08`, `?empresa=`, `?pedido_id=`, `?cliente_doc_num=`. Devuelve vínculo NC↔factura (`referencia_*`, `tiene_nc`) y `emitido_por` |
-| `/api/comprobantes/[id]` | GET | ✅ | admin / asesor (suyos) | Detalle + ítems para el PDF. **Ítems por prioridad: (1) XML firmado → (2) `pedido_items` → (3) línea global** (gotcha #18). Incluye `formaPago`, `fechaVencimiento`, `emisor` (de `getSunatConfig`) |
+| `/api/comprobantes/[id]` | GET | ✅ | admin / asesor (suyos) | Detalle + ítems para el PDF. **Ítems por prioridad: (1) XML firmado → (2) `pedido_items` → (3) línea global** (gotcha #18). Incluye `formaPago`, `fechaVencimiento`, `observacionComprobante`, `emisor` (de `getSunatConfig`) |
 | `/api/comprobantes/[id]/xml` | GET | ✅ | admin / asesor (suyos) | Descarga el XML firmado (`xml_firmado_base64`) como attachment; 404 si no se envió |
 | `/api/comprobantes/[id]/cdr` | GET | ✅ | admin / asesor (suyos) | Sirve el **ZIP crudo de la CDR** tal cual SUNAT lo entrega (gotcha #18); 404 si no hay CDR |
 | `/api/comprobantes/[id]/enviar` | POST | ✅ | admin / asesor (suyos) | Envía PDF (`pdfBase64`, ≤7MB) + XML por correo (Brevo→SMTP). 503 si email no configurado |
@@ -213,8 +213,8 @@ El grupo más grande. Todo lo de emisión/lectura está abierto a **`asesor` + `
 | `/api/comprobantes/[id]/anular` | POST | ✅ | **admin only** | Comunicación de Baja (RA-) de **facturas** aceptadas ≤7 días. `{motivo}` → ticket SUNAT. (En la UI está **deshabilitada** a favor de la NC) |
 | `/api/comprobantes/[id]/nota-credito` | POST | ✅ | admin / asesor (suyos) | Emite NC (07) sobre factura/boleta aceptada/observada. `{motivo, tipoNotaCredito?}`. **Bloquea una 2ª NC** (por `referencia_comprobante_id` o regex en observaciones, gotcha #19). Series propias FC0x/BC0x |
 | `/api/comprobantes/[id]/emisor` | PATCH | ✅ | **admin only** | Reasigna la "asesora encargada" reescribiendo `emitido_por` (`{asesorId: uuid\|null}`; resuelve el nombre desde `users` con `role='asesor'`). Así el comprobante aparece en la lista de esa asesora (el scoping filtra por `emitido_por`); `null` lo deja en "—". NO toca XML/CDR/montos (3 jun 2026) |
-| `/api/comprobantes/emitir` | POST | ✅ | asesor (sus pedidos) / admin | Emite factura/boleta **desde un pedido**. Precios CON IGV → ÷1.18. Valida cliente (RUC para factura; boleta <S/700 sin doc → "CLIENTES VARIOS"). Anti-duplicado → **409** `{duplicado}`. Factura → crea cobranza salvo `yaCobrado` |
-| `/api/comprobantes/emitir-manual` | POST | ✅ | asesor / admin | Emite factura/boleta **standalone** (sin pedido). Mismas validaciones. Completa RUC del cliente en su ficha. Factura → cobranza (`crearFacturaStandalone`) |
+| `/api/comprobantes/emitir` | POST | ✅ | asesor (sus pedidos) / admin | Emite factura/boleta **desde un pedido**. Precios CON IGV → ÷1.18. Valida cliente (RUC para factura; boleta <S/700 sin doc → "CLIENTES VARIOS"). Acepta `observacionComprobante` opcional (máx. 200; se imprime y va en XML como `cbc:Note` libre). Anti-duplicado → **409** `{duplicado}`. Factura → crea cobranza salvo `yaCobrado` |
+| `/api/comprobantes/emitir-manual` | POST | ✅ | asesor / admin | Emite factura/boleta **standalone** (sin pedido). Mismas validaciones; acepta `observacionComprobante` opcional (máx. 200). Completa RUC del cliente en su ficha. Factura → cobranza (`crearFacturaStandalone`) |
 | `/api/comprobantes/resumen-diario` | GET/POST | ✅ | **admin only** | GET: boletas del día pendientes de resumen. POST: genera/firma/envía el RC- a SUNAT (`{fecha, empresa, forzar?}`) con idempotencia (`lib/sunat/resumen-diario.ts`) |
 | `/api/comprobantes/consultar-ticket` | POST | ✅ | **admin only** | `getStatus` de un ticket SUNAT (baja/resumen). Persiste en `resumenes_diarios` o marca el comprobante `anulado` si la baja fue aceptada |
 | `/api/comprobantes/resumenes` | GET | ✅ | **admin only** | Lista los últimos 20 RC- enviados (para consultar su ticket días después) |
@@ -779,6 +779,7 @@ Maps_SERVER_KEY=AIzaSy...              # Permisos: Directions API
 | `soap-client.ts` | POST SOAP a SUNAT + parsea CDR; distingue "SUNAT caído" (`sunatCaido`) de rechazo de datos |
 | `resumen-diario.ts` | Helper compartido del Resumen Diario (RC-) con idempotencia (lo usan el cron y el endpoint manual) |
 | `parse-cpe-items.ts` | Parsea las líneas del XML firmado para el PDF/correo (gotcha #18) |
+| `observaciones.ts` | Normaliza/valida observaciones libres para CPE/GRE; separa `observacion_comprobante` de `observaciones` CDR/SUNAT |
 | `validacion-cliente.ts` | `esDniValido` / `esRucValido` (módulo 11) / `esReceptorIdentificado` |
 | `duplicado.ts` | Detecta comprobante duplicado reciente (mismo cliente + tipo + monto) |
 | `pdf-comprobante.ts` | PDF formato SUNAT (jsPDF, generado en cliente, sin QR) |
@@ -801,6 +802,8 @@ Para volver a emitir de forma real en producción:
 2. Restaura las credenciales reales de usuario SOL `SUNAT_TRA_SOL_USER` (ej. `APIFACTU`) y `SUNAT_AVI_SOL_USER` (que están en el Vercel dashboard de producción y en backups locales como `.env.produccion.local`).
 
 **Convención crítica de precios:** `pedido_items.precio_unitario` y `productos.precio_venta` se guardan **CON IGV**. Antes de mandar a SUNAT se divide entre 1.18 (en `comprobantes/emitir` y `emitir-manual`). Ver gotcha #10.
+
+**Observación libre del comprobante:** `observacionComprobante` es texto del usuario y se guarda en `observacion_comprobante`; no reemplaza `observaciones`, que sigue reservado para CDR/SUNAT/logs. En factura/boleta el XML lleva una nota `cbc:Note` adicional **sin `languageLocaleID`** (SUNAT Beta rechazó `languageLocaleID="2012"` con 3027). En GRE se emite como `/DespatchAdvice/cbc:Note`, después de `DespatchAdviceTypeCode` y antes de `Signature`.
 
 **Env vars** (en Vercel, NUNCA en el repo): `SUNAT_TRA_*` y `SUNAT_AVI_*` (RUC, razón social, dirección, ubigeo, SOL user/pass, cert `.p12` en base64 + clave), `SUNAT_ENVIRONMENT` (`beta`/`production`). `AUTO_EMITIR_COMPROBANTE` (flag opcional para emitir al cerrar el pedido). Detalle completo en `CLAUDE.md §4` y `§16`.
 

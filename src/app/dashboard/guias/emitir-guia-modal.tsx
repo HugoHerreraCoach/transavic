@@ -67,6 +67,11 @@ function calcularPesoMixtas(
   };
 }
 
+const MAX_OBSERVACION_GRE = 250;
+function limpiarObservacionInput(value: string): string {
+  return value.replace(/\s+/g, " ").slice(0, MAX_OBSERVACION_GRE);
+}
+
 export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito }: EmitirGuiaModalProps) {
   const [repartidores, setRepartidores] = useState<MotorizadoUser[]>([]);
   const [repartidorId, setRepartidorId] = useState<string>("");
@@ -125,6 +130,7 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   const [motivoTraslado, setMotivoTraslado] = useState<string>("01"); // Venta
   const [totalBultos, setTotalBultos] = useState<number>(1);
   const [pesoBrutoTotal, setPesoBrutoTotal] = useState<string>("");
+  const [observacionComprobante, setObservacionComprobante] = useState<string>("");
   const [indicadorM1L, setIndicadorM1L] = useState<boolean>(true);
   // Con M1/L los datos del chofer son opcionales → se ocultan y solo se piden si el usuario quiere
   // (o si el pedido ya trae un repartidor con datos). Sin M1/L, siempre visibles (obligatorios).
@@ -548,6 +554,7 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           motivoTraslado,
           totalBultos: Number(totalBultos) || 1,
           pesoBrutoTotal: pesoBrutoTotal ? Number(pesoBrutoTotal) : null,
+          observacionComprobante: observacionComprobante.trim() || undefined,
           vehiculo_placa: incluirChofer ? vehiculoPlaca.trim() : "",
           chofer_dni: incluirChofer ? choferDni.trim() : "",
           chofer_licencia: incluirChofer ? choferLicencia.trim() : "",
@@ -788,6 +795,13 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                       {totalBultos} Bulto(s) | {pesoBrutoTotal ? `${pesoBrutoTotal} kg` : "Auto-calcular"}
                     </span>
                   </div>
+
+                  {observacionComprobante && (
+                    <div className="space-y-1 col-span-2 pt-2 border-t border-indigo-50/80">
+                      <span className="text-[10px] uppercase font-bold text-gray-400 block">Observación</span>
+                      <span className="font-semibold text-gray-800 block">{observacionComprobante}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -1068,6 +1082,24 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
                         cuenta en el peso ni en los bultos — es un servicio, no mercadería.
                       </p>
                     )}
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <label className="block text-[10px] font-bold text-gray-500">
+                          Observación (Opcional)
+                        </label>
+                        <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                          {observacionComprobante.length}/{MAX_OBSERVACION_GRE}
+                        </span>
+                      </div>
+                      <textarea
+                        value={observacionComprobante}
+                        onChange={(e) => setObservacionComprobante(limpiarObservacionInput(e.target.value))}
+                        rows={3}
+                        maxLength={MAX_OBSERVACION_GRE}
+                        placeholder="Ej. Conductor autorizado para el ingreso"
+                        className="w-full resize-none text-xs border border-gray-200 rounded-xl px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                      />
+                    </div>
                   </div>
                 </div>
 

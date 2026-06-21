@@ -9,7 +9,7 @@ import { auth } from "@/auth";
 import GrePrintableClient from "./gre-printable-client";
 import { obtenerUbigeoDistrito } from "@/lib/sunat/ubigeos";
 import { obtenerDistritoPorUbigeo } from "@/lib/sunat/ubigeos";
-import { parseDespatchItems, parseGuiaPuntoLlegada } from "@/lib/sunat/parse-cpe-items";
+import { parseDespatchItems, parseGuiaObservacion, parseGuiaPuntoLlegada } from "@/lib/sunat/parse-cpe-items";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -151,6 +151,16 @@ export default async function GrePage({ params }: PageProps) {
     }
   }
 
+  let observacionComprobante: string | null = g.observacion_comprobante || null;
+  if (g.xml_firmado_base64) {
+    try {
+      const xmlStr = Buffer.from(g.xml_firmado_base64, "base64").toString("utf-8");
+      observacionComprobante = parseGuiaObservacion(xmlStr) || observacionComprobante;
+    } catch {
+      // Si falla el parseo, usar la columna persistida.
+    }
+  }
+
   return (
     <GrePrintableClient
       guia={{
@@ -189,6 +199,7 @@ export default async function GrePage({ params }: PageProps) {
         clienteDistrito,
         clienteUbigeo,
         asesor: g.asesor_name || "Asesor",
+        observacionComprobante,
         comprobanteRelacionado: g.ref_comprobante_serie_numero ? {
           serieNumero: g.ref_comprobante_serie_numero,
           tipo: g.ref_comprobante_tipo,

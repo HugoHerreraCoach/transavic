@@ -272,6 +272,7 @@ export async function POST(_req: Request, { params }: RouteParams) {
       totalBultos: Number(g.total_bultos || 1),
       modalidadTraslado: "02",
       indicadorM1L,
+      observacionComprobante: String(g.observacion_comprobante || "").trim() || null,
       repartidor: {
         docTipo: "1",
         docNum: String(g.chofer_doc_num || ""),

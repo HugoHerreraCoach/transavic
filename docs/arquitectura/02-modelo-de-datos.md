@@ -162,6 +162,7 @@ erDiagram
         jsonb items_json
         uuid referencia_comprobante_id FK "NC→original (SET NULL)"
         text emitido_por
+        text observacion_comprobante "nota libre del usuario"
         timestamp created_at
     }
 
@@ -594,7 +595,7 @@ CREATE INDEX idx_precios_vigentes
 
 ### 2.7 `comprobantes`
 
-**Origen:** `scripts/migrate-comprobantes.mjs` / `migrations-fase-ab.sql:146-170` / `migrate-produccion-2026-05-29.sql:35-62` + 4 migraciones aditivas posteriores. Es la tabla de comprobantes electrónicos SUNAT (factura `01`, boleta `03`, nota de crédito `07`).
+**Origen:** `scripts/migrate-comprobantes.mjs` / `migrations-fase-ab.sql:146-170` / `migrate-produccion-2026-05-29.sql:35-62` + migraciones aditivas posteriores. Es la tabla de comprobantes electrónicos SUNAT (factura `01`, boleta `03`, nota de crédito `07`).
 
 ```sql
 CREATE TABLE comprobantes (
@@ -624,6 +625,7 @@ CREATE TABLE comprobantes (
     items_json                JSONB,                            -- líneas emitidas (red de seguridad para reintento)
     referencia_comprobante_id UUID REFERENCES comprobantes(id) ON DELETE SET NULL,  -- NC → comprobante original
     emitido_por               TEXT,                             -- nombre de quien emitió (atribución)
+    observacion_comprobante   TEXT,                             -- nota libre impresa y emitida en XML
     created_at                TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE (ruc_emisor, serie, numero)
 );
@@ -641,8 +643,9 @@ CREATE INDEX idx_comp_referencia ON comprobantes(referencia_comprobante_id);
 | `items_json` (JSONB) | `migrate-comprobante-items.sql` | Guarda las líneas emitidas (descripción, unidad, cantidad, precio, código, afectación IGV) para que el reintento de un comprobante standalone reconstruya el XML con los ítems reales, no una línea genérica. `index.ts` lo persiste en cada emisión. |
 | `referencia_comprobante_id` | `migrate-comprobante-referencia.sql` | Vincula explícitamente una NC (07) con la factura/boleta que acredita → la UI muestra "↩ anula F001-X" y bloquea una 2ª NC. |
 | `emitido_por` (TEXT) | `migrate-comprobante-emisor.sql` | Atribución (quién emitió) **y visibilidad por asesora**: cada asesora ve los comprobantes de sus pedidos (`pedidos.asesor_id`) **o** los que ella emitió (`emitido_por`, match TRIM+lower). Denormalizado, mismo patrón que `pedidos.entregado_por`. Backfill best-effort desde la asesora dueña del pedido; sueltos viejos quedan NULL (solo los ve el admin). |
+| `observacion_comprobante` (TEXT) | `migrate-observacion-comprobante.sql` | Observación libre escrita por el usuario. **No confundir con `observaciones`**, que guarda observaciones del CDR/SUNAT y logs internos. En factura/boleta se emite como un segundo `cbc:Note` libre, sin `languageLocaleID`, porque SUNAT Beta rechazó `languageLocaleID="2012"` con 3027. |
 
-**Persistencia:** `src/lib/sunat/index.ts` hace 3 INSERTs (pendiente/éxito/error) que ya incluyen `forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por` (líneas 208, 285, 327). El **reintento** hace UPDATE (no reinserta) → preserva `emitido_por`.
+**Persistencia:** `src/lib/sunat/index.ts` hace 3 INSERTs (pendiente/éxito/error) que ya incluyen `forma_pago, fecha_vencimiento, items_json, referencia_comprobante_id, emitido_por, observacion_comprobante`. El **reintento** hace UPDATE (no reinserta) → preserva `emitido_por` y reenvía el XML firmado original si existe.
 
 **⚠️ El PDF y el correo leen las líneas del `xml_firmado_base64`, NO de la DB** (`src/lib/sunat/parse-cpe-items.ts`). Las facturas/boletas standalone (sin pedido) NO guardan sus líneas en `pedido_items` — solo en el XML firmado (y, como respaldo, en `items_json`). Ver `CLAUDE.md` gotcha #18. **El XML firmado nunca se modifica** (es el documento legal aceptado por SUNAT). **El CDR (`cdr_base64`) se sirve como ZIP crudo de SUNAT**, no se intenta extraer el XML.
 
@@ -1095,6 +1098,7 @@ Toda migración es **idempotente** (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`, g
 | `migrate-comprobante-items.sql` | + `comprobantes.items_json` (JSONB). |
 | `migrate-comprobante-referencia.sql` | + `comprobantes.referencia_comprobante_id` (FK self) + índice. |
 | `migrate-comprobante-emisor.sql` | + `comprobantes.emitido_por` + backfill best-effort. |
+| `migrate-observacion-comprobante.sql` | + `comprobantes.observacion_comprobante` y `comprobantes_guias.observacion_comprobante`. |
 | `migrate-factura-vinculo.sql` | + `facturas.cliente_id`, `comprobante_id` (FKs) + índices. |
 | `migrate-cobranza-pago.sql` | + `facturas.metodo_pago`, `pago_detalle`, `pago_img_base64`, `pago_img_mime`. |
 | `migrate-pedido-ediciones.sql` | Crea `pedido_ediciones` + índice. |

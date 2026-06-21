@@ -187,6 +187,23 @@ export function parseCpeClienteDireccion(xml: string): string | null {
   return dir || null;
 }
 
+/**
+ * Extrae la observación libre de factura/boleta desde cbc:Note.
+ * Ignora la leyenda 1000 de monto en letras y los motivos de NC.
+ */
+export function parseCpeObservacion(xml: string): string | null {
+  if (!xml || typeof xml !== "string") return null;
+  const notes = xml.match(/<cbc:Note\b[^>]*>[\s\S]*?<\/cbc:Note>/g) || [];
+  for (const note of notes) {
+    if (/languageLocaleID="1000"/.test(note)) continue; // monto en letras
+    const match = note.match(/<cbc:Note\b[^>]*>([\s\S]*?)<\/cbc:Note>/);
+    if (!match) continue;
+    const value = decodeEntities(stripCdata(match[1])).replace(/\s+/g, " ").trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 // ─── Guía de Remisión (GRE) ───────────────────────────────────────────────────
 
 export interface DespatchItem {
@@ -231,6 +248,19 @@ export function parseDespatchItems(xml: string): DespatchItem[] {
   }
 
   return items;
+}
+
+/**
+ * Extrae la observación libre de cabecera GRE. Se acota al bloque anterior a
+ * <cac:Signature> para no confundirla con notas futuras dentro de líneas/detalles.
+ */
+export function parseGuiaObservacion(xml: string): string | null {
+  if (!xml || typeof xml !== "string") return null;
+  const header = xml.split("<cac:Signature>")[0] || xml;
+  const match = header.match(/<cbc:Note\b[^>]*>([\s\S]*?)<\/cbc:Note>/);
+  if (!match) return null;
+  const value = decodeEntities(stripCdata(match[1])).replace(/\s+/g, " ").trim();
+  return value || null;
 }
 
 export interface GuiaPuntoLlegada {

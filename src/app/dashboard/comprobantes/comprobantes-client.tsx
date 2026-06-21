@@ -122,6 +122,7 @@ interface ComprobanteDetalle {
   moneda: string;
   hashCpe: string | null;
   observaciones: string[] | null;
+  observacionComprobante?: string | null;
 }
 
 // "No me hagas pensar": en lugar de un texto crudo en lowercase, devolvemos
@@ -300,6 +301,7 @@ async function generarPdfBlob(detalle: ComprobanteDetalle): Promise<Blob> {
     moneda: detalle.moneda,
     hashCpe: detalle.hashCpe,
     observaciones: detalle.observaciones,
+    observacionComprobante: detalle.observacionComprobante ?? null,
     empresa: detalle.empresa,
     emisor: detalle.emisor,
     formaPago: detalle.formaPago ?? undefined,

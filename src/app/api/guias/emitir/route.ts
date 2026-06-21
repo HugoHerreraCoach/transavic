@@ -19,6 +19,10 @@ import { EstadoSunat } from "@/lib/sunat/types";
 import { parseCpeItems, parseCpeClienteDireccion, type CpeItem } from "@/lib/sunat/parse-cpe-items";
 import { detectarDistritoEnDireccion } from "@/lib/guia-form-shared";
 import { esReceptorIdentificado } from "@/lib/sunat/validacion-cliente";
+import {
+  MAX_OBSERVACION_GRE,
+  validarObservacionSunat,
+} from "@/lib/sunat/observaciones";
 
 export const dynamic = "force-dynamic";
 // La emisión REST hace token + envío + polling del ticket (hasta 6×2s) → puede
@@ -34,6 +38,7 @@ const Schema = z.object({
   motivoTraslado: z.string().default("01"), // Catálogo 18 (Default: '01' Venta)
   totalBultos: z.number().int().min(1).default(1),
   pesoBrutoTotal: z.number().positive().optional().nullable(),
+  observacionComprobante: z.string().optional().nullable(),
   // Overrides para chofer/vehículo por si no están en el perfil del repartidor
   vehiculo_placa: z.string().trim().optional().nullable(),
   chofer_dni: z.string().trim().optional().nullable(),
@@ -118,6 +123,14 @@ export async function POST(request: Request) {
         { error: parsed.error.flatten().fieldErrors },
         { status: 400 }
       );
+    }
+
+    const obs = validarObservacionSunat(
+      parsed.data.observacionComprobante,
+      MAX_OBSERVACION_GRE
+    );
+    if (!obs.ok) {
+      return NextResponse.json({ error: obs.error }, { status: 400 });
     }
 
     const sql = neon(process.env.DATABASE_URL!);
@@ -627,7 +640,7 @@ export async function POST(request: Request) {
         chofer_doc_tipo, chofer_doc_num, chofer_licencia,
         direccion_llegada, distrito_llegada, indicador_m1l,
         chofer_nombres, chofer_apellidos, items_json,
-        estado, mensaje_sunat, emitido_por
+        estado, mensaje_sunat, emitido_por, observacion_comprobante
       )
       SELECT
         ${finalPedidoId}, ${finalComprobanteId}, ${sunatConfig.ruc}, ${empresa}, ${serie},
@@ -638,7 +651,7 @@ export async function POST(request: Request) {
         '1', ${finalChoferDni}, ${finalChoferLicencia},
         ${direccionLlegadaFinal}, ${distritoLlegadaFinal || null}, ${!!indicadorM1L},
         ${finalChoferNombres || null}, ${finalChoferApellidos || null}, ${JSON.stringify(itemsRows)}::jsonb,
-        'emitiendo', 'Reserva — emisión en curso', ${session.user.name || null}
+        'emitiendo', 'Reserva — emisión en curso', ${session.user.name || null}, ${obs.value}
       FROM bump
       RETURNING id, numero, serie_numero
     `) as Array<{ id: string; numero: number; serie_numero: string }>;
@@ -665,6 +678,7 @@ export async function POST(request: Request) {
       totalBultos,
       modalidadTraslado: "02", // Privado
       indicadorM1L: !!indicadorM1L,
+      observacionComprobante: obs.value,
       repartidor: {
         docTipo: "1", // DNI
         docNum: finalChoferDni || "", // vacío = omitir DriverPerson (permitido con M1/L)

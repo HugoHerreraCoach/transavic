@@ -88,6 +88,11 @@ const EMPRESA_UI: Record<Empresa, { logo: string; nombre: string; ring: string; 
   },
 };
 
+const MAX_OBSERVACION_GRE = 250;
+function limpiarObservacionInput(value: string): string {
+  return value.replace(/\s+/g, " ").slice(0, MAX_OBSERVACION_GRE);
+}
+
 export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaDirectaModalProps) {
   const [empresa, setEmpresa] = useState<Empresa>("transavic");
   const [empresasMap, setEmpresasMap] = useState<Record<Empresa, EmpresaInfo>>({
@@ -159,6 +164,7 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
   const [motivoTraslado, setMotivoTraslado] = useState("01"); // Venta
   const [totalBultos, setTotalBultos] = useState(1);
   const [pesoBrutoTotal, setPesoBrutoTotal] = useState("");
+  const [observacionComprobante, setObservacionComprobante] = useState("");
   const [pesoModificado, setPesoModificado] = useState(false);
   const [indicadorM1L, setIndicadorM1L] = useState(true); // por defecto true (repartidores motorizados)
 
@@ -537,6 +543,7 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
         motivoTraslado,
         totalBultos: Number(totalBultos) || 1,
         pesoBrutoTotal: pesoBrutoTotal ? Number(pesoBrutoTotal) : null,
+        observacionComprobante: observacionComprobante.trim() || undefined,
         vehiculo_placa: incluirChofer ? vehiculoPlaca.trim() : "",
         chofer_dni: incluirChofer ? choferDni.trim() : "",
         chofer_licencia: incluirChofer ? choferLicencia.trim() : "",
@@ -1100,6 +1107,24 @@ export default function EmitirGuiaDirectaModal({ onClose, onExito }: EmitirGuiaD
                           kilogramos.
                         </p>
                       )}
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label className="block text-[10px] font-bold text-slate-500">
+                            Observación (Opcional)
+                          </label>
+                          <span className="text-[10px] font-bold text-slate-400 tabular-nums">
+                            {observacionComprobante.length}/{MAX_OBSERVACION_GRE}
+                          </span>
+                        </div>
+                        <textarea
+                          value={observacionComprobante}
+                          onChange={(e) => setObservacionComprobante(limpiarObservacionInput(e.target.value))}
+                          rows={3}
+                          maxLength={MAX_OBSERVACION_GRE}
+                          placeholder="Ej. Conductor autorizado para el ingreso"
+                          className="w-full resize-none text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-1.5 focus:ring-indigo-500"
+                        />
+                      </div>
                     </div>
                   </div>
 
