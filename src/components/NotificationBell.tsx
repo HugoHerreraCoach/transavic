@@ -3,8 +3,9 @@
 // Click → dropdown con últimas 30. Click en notificación → marca leída y navega al link.
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   FiBell,
   FiCheckCircle,
@@ -106,13 +107,34 @@ function formatHora(iso: string): string {
   return `hace ${days} d`;
 }
 
-export default function NotificationBell() {
+// El layout monta DOS campanitas (header mobile + flotante desktop) que con CSS
+// display:none NO se desmontan → ambas pollearían a la vez. Con `variant` cada
+// instancia solo pollea cuando SU viewport está activo, evitando el doble fetch.
+type VariantBell = "mobile" | "desktop";
+
+export default function NotificationBell({ variant }: { variant?: VariantBell }) {
   const [open, setOpen] = useState(false);
   const [notifs, setNotifs] = useState<Notificacion[]>([]);
   const [unread, setUnread] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const fetchData = async () => {
+  // ¿El viewport de ESTA instancia está activo? (de-dup del doble montaje)
+  const [viewportActivo, setViewportActivo] = useState<boolean>(() => {
+    if (typeof window === "undefined" || !variant) return !variant; // sin variant: siempre activa
+    const q = variant === "desktop" ? "(min-width: 1024px)" : "(max-width: 1023px)";
+    return window.matchMedia(q).matches;
+  });
+  useEffect(() => {
+    if (!variant || typeof window === "undefined") return;
+    const q = variant === "desktop" ? "(min-width: 1024px)" : "(max-width: 1023px)";
+    const mql = window.matchMedia(q);
+    setViewportActivo(mql.matches);
+    const handler = (e: MediaQueryListEvent) => setViewportActivo(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, [variant]);
+
+  const fetchData = useCallback(async () => {
     try {
       const res = await fetch("/api/notificaciones");
       if (!res.ok) return;
@@ -122,13 +144,10 @@ export default function NotificationBell() {
     } catch {
       /* silencio: no-crítico */
     }
-  };
-
-  useEffect(() => {
-    fetchData();
-    const t = setInterval(fetchData, POLL_INTERVAL_MS);
-    return () => clearInterval(t);
   }, []);
+
+  // Polling solo con la pestaña visible y solo en la instancia cuyo viewport está activo.
+  usePollingVisible(fetchData, POLL_INTERVAL_MS, { enabled: viewportActivo });
 
   // Click fuera del dropdown → cerrar
   useEffect(() => {

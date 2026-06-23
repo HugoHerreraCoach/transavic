@@ -3,6 +3,7 @@
 
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { Session } from "next-auth";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   DragDropContext,
   Droppable,
@@ -1037,11 +1038,9 @@ export default function DespachoContent({ session }: { session: Session }) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Auto-refresh cada 15s para monitoreo en vivo
-  useEffect(() => {
-    const interval = setInterval(() => fetchData(), 15000);
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  // Auto-refresh cada 15s para monitoreo en vivo — solo con la pestaña visible
+  // (no consume Neon en segundo plano; al volver a la pestaña refresca al instante).
+  usePollingVisible(fetchData, 15000, { immediate: false });
 
   // Distritos únicos para filtro
   const distritos = [...new Set(pendientes.map((p) => p.distrito).filter(Boolean))] as string[];

@@ -5,7 +5,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Session } from "next-auth";
-import { useState, useEffect } from "react";
+import { useState, useCallback } from "react";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import dynamic from "next/dynamic";
 import {
   FiPlus,
@@ -214,30 +215,27 @@ export default function DashboardLayout({
   // badge en el menú evita que una aprobación pase desapercibida (12 jun 2026:
   // Saraí no vio la notificación y pidió la misma autorización 3 veces).
   const [aprobadasSinUsar, setAprobadasSinUsar] = useState(0);
-  useEffect(() => {
-    if (userRole !== "asesor") return;
-    const cargar = () =>
-      fetch("/api/autorizaciones-precio?estado=aprobada")
-        .then((r) => (r.ok ? r.json() : []))
-        .then((d: Array<{ usada_at: string | null; resuelta_at: string | null; created_at: string }>) => {
-          if (!Array.isArray(d)) return;
-          // Solo aprobadas RECIENTES (7 días): una autorización cuya venta se
-          // cayó no debe dejar el badge encendido para siempre (un badge
-          // permanente entrena a ignorarlo).
-          const corte = Date.now() - 7 * 24 * 60 * 60 * 1000;
-          setAprobadasSinUsar(
-            d.filter(
-              (a) =>
-                !a.usada_at &&
-                new Date(a.resuelta_at ?? a.created_at).getTime() > corte
-            ).length
-          );
-        })
-        .catch(() => {});
-    cargar();
-    const t = setInterval(cargar, 60_000);
-    return () => clearInterval(t);
-  }, [userRole]);
+  const cargarAutorizaciones = useCallback(() => {
+    fetch("/api/autorizaciones-precio?estado=aprobada")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: Array<{ usada_at: string | null; resuelta_at: string | null; created_at: string }>) => {
+        if (!Array.isArray(d)) return;
+        // Solo aprobadas RECIENTES (7 días): una autorización cuya venta se
+        // cayó no debe dejar el badge encendido para siempre (un badge
+        // permanente entrena a ignorarlo).
+        const corte = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        setAprobadasSinUsar(
+          d.filter(
+            (a) =>
+              !a.usada_at &&
+              new Date(a.resuelta_at ?? a.created_at).getTime() > corte
+          ).length
+        );
+      })
+      .catch(() => {});
+  }, []);
+  // Polling solo para asesoras y solo con la pestaña visible (no consume Neon en segundo plano).
+  usePollingVisible(cargarAutorizaciones, 60_000, { enabled: userRole === "asesor" });
   const badgePara = (href: string) =>
     href === "/dashboard/autorizaciones" && aprobadasSinUsar > 0 ? aprobadasSinUsar : 0;
 
@@ -344,7 +342,7 @@ export default function DashboardLayout({
             <FiMenu className="h-6 w-6" />
           </button>
           <span className="font-bold text-gray-800">🐔 Transavic</span>
-          <NotificationBell />
+          <NotificationBell variant="mobile" />
         </div>
       </header>
 
@@ -461,7 +459,7 @@ export default function DashboardLayout({
 
       {/* Floating NotificationBell — desktop only (en mobile ya está en el header) */}
       <div className="hidden lg:block fixed top-3 right-4 z-30">
-        <NotificationBell />
+        <NotificationBell variant="desktop" />
       </div>
 
       {/* Main content - ajustado para sidebar colapsado.

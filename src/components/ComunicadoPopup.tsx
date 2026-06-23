@@ -1,8 +1,9 @@
 // src/components/ComunicadoPopup.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { FiX, FiCheckCircle } from "react-icons/fi";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 
 interface ComunicadoPendiente {
   id: string;
@@ -25,24 +26,21 @@ export default function ComunicadoPopup() {
   // El comunicado activo es siempre el primero en la cola (el más antiguo pendiente)
   const activo = pendientes[0] || null;
 
-  const fetchPendientes = async () => {
+  const fetchPendientes = useCallback(async () => {
     try {
       const res = await fetch("/api/comunicados/pendientes");
       if (!res.ok) return;
       const data = (await res.json()) as ComunicadoPendiente[];
-      
+
       // Si la cola cambió o hay nuevos elementos, actualizamos
       setPendientes(data);
     } catch {
       // Silencioso (no crítico)
     }
-  };
-
-  useEffect(() => {
-    fetchPendientes();
-    const timer = setInterval(fetchPendientes, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
   }, []);
+
+  // Polling solo con la pestaña visible (no consume Neon en segundo plano).
+  usePollingVisible(fetchPendientes, POLL_INTERVAL_MS);
 
   // Mostrar el popup si hay un comunicado activo y no está oculto
   useEffect(() => {

@@ -6,7 +6,8 @@
 // Aplica "No me hagas pensar": números grandes, color de semáforo, sin tecnicismos.
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   FiTarget,
   FiTrendingUp,
@@ -174,11 +175,8 @@ export default function MisMetasClient({
     }
   };
 
-  useEffect(() => {
-    fetchData();
-    const t = setInterval(fetchData, 60_000);
-    return () => clearInterval(t);
-  }, []);
+  // Refresh cada 60s, solo con la pestaña visible (no consume Neon en segundo plano).
+  usePollingVisible(fetchData, 60_000);
 
   if (loading) {
     return (

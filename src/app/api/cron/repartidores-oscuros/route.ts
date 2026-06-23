@@ -9,7 +9,8 @@
 // y avisa al admin con debounce por rider (ver lib/repartidor-oscuro.ts).
 //
 // Fuera del horario operativo NO corre (privacidad: no perseguir de noche por un
-// pedido que quedó sin cerrar). Programado cada 5 min en vercel.json.
+// pedido que quedó sin cerrar). Programado cada 10 min en vercel.json (alineado
+// con OSCURO_STALE_MIN; el apagado deliberado igual avisa al instante por beacon).
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { ridersConPedidosActivosHoy } from "@/lib/repartidor-jornada";

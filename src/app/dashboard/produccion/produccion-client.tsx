@@ -6,7 +6,8 @@
 //   - Botón "Listo para despacho" sólo aparece cuando todo está pesado.
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   FiPackage,
   FiSearch,
@@ -95,11 +96,8 @@ export default function ProduccionClient() {
     }
   };
 
-  useEffect(() => {
-    fetchPedidos();
-    const interval = setInterval(fetchPedidos, 30_000); // refresh cada 30s
-    return () => clearInterval(interval);
-  }, []);
+  // Refresh cada 30s, solo con la pestaña visible (no consume Neon en segundo plano).
+  usePollingVisible(fetchPedidos, 30_000);
 
   // ── Filtrado por búsqueda y estado de tarjeta ──
   const filtrados = useMemo(() => {

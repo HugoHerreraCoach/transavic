@@ -2,6 +2,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useSyncExternalStore, useRef } from "react";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import { Session } from "next-auth";
 import { PedidoRuta, EstadoPedido } from "@/lib/types";
 import {
@@ -1288,9 +1289,12 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
   useEffect(() => {
     fetchRuta();
     refreshQueueState();
-    const interval = setInterval(() => fetchRuta(), 60000);
-    return () => clearInterval(interval);
   }, [fetchRuta, refreshQueueState]);
+
+  // Refresco de la ruta cada 60s, solo con la pestaña visible (no consume Neon en
+  // segundo plano). ⚠️ Esto pausa SOLO la LECTURA de la ruta; el reporte de GPS
+  // (watchPosition → /api/repartidor/ubicacion) vive en otro efecto y NO se pausa.
+  usePollingVisible(fetchRuta, 60000, { immediate: false });
 
   // Online sync
   useEffect(() => {

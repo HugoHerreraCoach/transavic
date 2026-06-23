@@ -1,9 +1,10 @@
 // src/components/ArriboPopup.tsx
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { FiX, FiCheck, FiTruck, FiMapPin, FiClock } from "react-icons/fi";
 import Link from "next/link";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 
 interface Notificacion {
   id: string;
@@ -52,11 +53,8 @@ export default function ArriboPopup() {
     }
   }, [cerradosTemporales]);
 
-  useEffect(() => {
-    fetchNotificaciones();
-    const timer = setInterval(fetchNotificaciones, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [fetchNotificaciones]);
+  // Polling solo con la pestaña visible (no consume Neon en segundo plano).
+  usePollingVisible(fetchNotificaciones, POLL_INTERVAL_MS);
 
   const handleMarcarLeido = async () => {
     if (!activo || marcandoLeido) return;

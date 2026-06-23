@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/repartidores-oscuros",
-      "schedule": "*/5 * * * *"
+      "schedule": "*/10 * * * *"
     }
   ]
 }
