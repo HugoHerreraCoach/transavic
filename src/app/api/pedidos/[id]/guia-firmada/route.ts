@@ -9,7 +9,11 @@ import { crearNotificacion } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
-const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2 MB
+// El cliente comprime la foto a ~0.5 MB antes de subir (browser-image-compression).
+// Este límite es solo una red de seguridad para el caso de fallback (compresión
+// falló y se sube el original); es holgado para cubrir hasta celulares de alta
+// resolución (48 MP → 10-15 MB). Volumen real: ~30 fotos/día.
+const MAX_SIZE_BYTES = 12 * 1024 * 1024; // 12 MB
 const VALID_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
 export async function POST(request: Request) {

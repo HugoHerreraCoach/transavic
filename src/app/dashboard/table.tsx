@@ -12,6 +12,7 @@ import HistorialPedidoModal from "./historial-pedido-modal";
 import { descargarPdfComprobante, descargarXmlComprobante, descargarCdrComprobante } from "@/lib/descargar-comprobante";
 import EmitirGuiaModal from "./guias/emitir-guia-modal";
 import { descargarXmlGuia, descargarCdrGuia, descargarPdfGuia } from "@/lib/descargar-guia";
+import imageCompression from "browser-image-compression";
 
 // Comprobante (forma reducida) que la lista de pedidos necesita para el menú
 // "Facturado": id para descargar, serie/estado para mostrar.
@@ -235,8 +236,22 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
         if (!file) return;
         setUploading(true);
         try {
+            // Comprimir antes de subir: las fotos de cámara pesan 3-8 MB y el
+            // servidor rechaza por tamaño. Si la compresión falla, va el original.
+            let archivo: File = file;
+            try {
+                archivo = await imageCompression(file, {
+                    maxSizeMB: 0.6,
+                    maxWidthOrHeight: 1600,
+                    useWebWorker: true,
+                    fileType: 'image/jpeg',
+                    initialQuality: 0.8,
+                });
+            } catch {
+                archivo = file;
+            }
             const formData = new FormData();
-            formData.append('foto', file);
+            formData.append('foto', archivo, 'orden-firmada.jpg');
             const response = await fetch(`/api/pedidos/${pedido.id}/guia-firmada`, {
                 method: 'POST',
                 body: formData,

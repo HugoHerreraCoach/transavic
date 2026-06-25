@@ -4,7 +4,7 @@
 export interface QueuedAction {
   id: string;
   timestamp: number;
-  type: "entregar" | "fallido" | "iniciar-viaje";
+  type: "entregar" | "fallido" | "iniciar-viaje" | "subir-foto";
   pedidoId: string;
   expectedEstado: string; // Estado esperado al momento de encolar (para detección de conflictos)
   payload: Record<string, unknown>;
@@ -41,7 +41,13 @@ export function enqueueAction(action: Omit<QueuedAction, "id" | "timestamp" | "r
     retries: 0,
   };
   queue.push(newAction);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+  } catch {
+    // Cuota de localStorage excedida (~5 MB) — típico al encolar fotos en base64.
+    // Propagamos para que el llamador avise al usuario en vez de fallar en silencio.
+    throw new Error("No hay espacio para guardar la acción offline");
+  }
   return newAction;
 }
 
@@ -68,36 +74,53 @@ export async function syncQueue(): Promise<SyncResult> {
 
   for (const action of queue) {
     try {
-      let url: string;
-      let method: string;
-      let body: Record<string, unknown>;
+      let res: Response;
 
-      switch (action.type) {
-        case "entregar":
-          url = `/api/pedidos/${action.pedidoId}/entregar`;
-          method = "POST";
-          body = { resultado: "Entregado" };
-          break;
-        case "fallido":
-          url = `/api/pedidos/${action.pedidoId}/entregar`;
-          method = "POST";
-          body = { resultado: "Fallido", razon_fallo: action.payload.razon_fallo as string };
-          break;
-        case "iniciar-viaje":
-          url = `/api/pedidos/${action.pedidoId}/iniciar-viaje`;
-          method = "POST";
-          body = action.payload;
-          break;
-        default:
-          removeAction(action.id);
-          continue;
+      if (action.type === "subir-foto") {
+        // Caso especial: la foto va como multipart (binario), NO como JSON.
+        // El payload guarda la imagen YA comprimida como data URL; la
+        // reconstruimos a Blob y la mandamos en un FormData (clave "foto"),
+        // sin header Content-Type para que el navegador ponga el boundary.
+        const dataUrl = action.payload.dataUrl as string;
+        const blob = await (await fetch(dataUrl)).blob();
+        const formData = new FormData();
+        formData.append("foto", blob, "orden-firmada.jpg");
+        res = await fetch(`/api/pedidos/${action.pedidoId}/guia-firmada`, {
+          method: "POST",
+          body: formData,
+        });
+      } else {
+        let url: string;
+        let method: string;
+        let body: Record<string, unknown>;
+
+        switch (action.type) {
+          case "entregar":
+            url = `/api/pedidos/${action.pedidoId}/entregar`;
+            method = "POST";
+            body = { resultado: "Entregado" };
+            break;
+          case "fallido":
+            url = `/api/pedidos/${action.pedidoId}/entregar`;
+            method = "POST";
+            body = { resultado: "Fallido", razon_fallo: action.payload.razon_fallo as string };
+            break;
+          case "iniciar-viaje":
+            url = `/api/pedidos/${action.pedidoId}/iniciar-viaje`;
+            method = "POST";
+            body = action.payload;
+            break;
+          default:
+            removeAction(action.id);
+            continue;
+        }
+
+        res = await fetch(url, {
+          method,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
       }
-
-      const res = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
 
       if (res.ok) {
         removeAction(action.id);

@@ -12,6 +12,7 @@ import {
   getQueue,
   syncQueue,
 } from "@/lib/offline-queue";
+import imageCompression from "browser-image-compression";
 import {
   FiNavigation,
   FiCheckCircle,
@@ -637,7 +638,7 @@ function PedidoCard({
           <span className="text-xs text-gray-400 hidden sm:inline">{pedido.distrito}</span>
           {/* Botón subir foto guía firmada — solo si Entregado */}
           {pedido.estado === "Entregado" && (
-            <SubirFotoGuiaButton pedidoId={pedido.id} />
+            <SubirFotoGuiaButton pedidoId={pedido.id} estado={pedido.estado} />
           )}
           <button
             onClick={(e) => { e.stopPropagation(); onRevertir(pedido.id); }}
@@ -1773,9 +1774,10 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 //  Botón: subir foto de guía firmada
 //  Aplica "No me hagas pensar": 1 toque → cámara → upload directo.
 // ════════════════════════════════════════════════════════════
-function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
+function SubirFotoGuiaButton({ pedidoId, estado }: { pedidoId: string; estado: string }) {
   const [uploading, setUploading] = useState(false);
   const [uploaded, setUploaded] = useState(false);
+  const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1784,21 +1786,79 @@ function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
     setError(null);
     setUploading(true);
     try {
+      // 1. Comprimir SIEMPRE antes de subir (las fotos de cámara pesan 3-8 MB y
+      //    el servidor las rechaza por tamaño). Si la compresión falla, va el original.
+      let archivo: File = file;
+      try {
+        archivo = await imageCompression(file, {
+          maxSizeMB: 0.6,
+          maxWidthOrHeight: 1600,
+          useWebWorker: true,
+          fileType: "image/jpeg",
+          initialQuality: 0.8,
+        });
+      } catch {
+        archivo = file;
+      }
+
+      const encolar = async (): Promise<boolean> => {
+        try {
+          const dataUrl = await imageCompression.getDataUrlFromFile(archivo);
+          enqueueAction({
+            type: "subir-foto",
+            pedidoId,
+            expectedEstado: estado,
+            payload: { dataUrl, mime: archivo.type || "image/jpeg" },
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      // 2. Sin señal → encolar para reintentar al recuperar la conexión.
+      if (!isOnline()) {
+        if (await encolar()) {
+          setQueued(true);
+          setTimeout(() => setQueued(false), 4000);
+        } else {
+          setError("Sin espacio. Intenta con señal.");
+          setTimeout(() => setError(null), 8000);
+        }
+        return;
+      }
+
+      // 3. Con señal → subir directo; si el fetch cae por red, encolar.
       const formData = new FormData();
-      formData.append("foto", file);
-      const res = await fetch(`/api/pedidos/${pedidoId}/guia-firmada`, {
-        method: "POST",
-        body: formData,
-      });
+      formData.append("foto", archivo, "orden-firmada.jpg");
+      let res: Response;
+      try {
+        res = await fetch(`/api/pedidos/${pedidoId}/guia-firmada`, {
+          method: "POST",
+          body: formData,
+        });
+      } catch {
+        if (await encolar()) {
+          setQueued(true);
+          setTimeout(() => setQueued(false), 4000);
+        } else {
+          setError("No se pudo subir ni guardar. Intenta con señal.");
+          setTimeout(() => setError(null), 8000);
+        }
+        return;
+      }
+
       if (!res.ok) {
-        const errBody = await res.json();
-        throw new Error(typeof errBody.error === "string" ? errBody.error : "Error al subir");
+        const errBody = await res.json().catch(() => null);
+        throw new Error(
+          errBody && typeof errBody.error === "string" ? errBody.error : "Error al subir"
+        );
       }
       setUploaded(true);
       setTimeout(() => setUploaded(false), 3000);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al subir");
-      setTimeout(() => setError(null), 4000);
+      setTimeout(() => setError(null), 8000);
     } finally {
       setUploading(false);
       // Reset input para permitir resubir
@@ -1811,6 +1871,8 @@ function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
       className={`relative cursor-pointer p-1.5 rounded-lg transition-colors flex-shrink-0 ${
         uploaded
           ? "text-green-600 bg-green-50"
+          : queued
+          ? "text-amber-600 bg-amber-50"
           : error
           ? "text-red-600 bg-red-50"
           : "text-gray-400 hover:text-blue-600 hover:bg-blue-50"
@@ -1818,6 +1880,8 @@ function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
       title={
         uploaded
           ? "✓ Subida"
+          : queued
+          ? "Se subirá al recuperar señal"
           : error
           ? error
           : "Subir foto de la orden firmada"
@@ -1836,8 +1900,15 @@ function SubirFotoGuiaButton({ pedidoId }: { pedidoId: string }) {
         <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
       ) : uploaded ? (
         <FiCheckCircle size={14} />
+      ) : queued ? (
+        <FiClock size={14} />
       ) : (
         <span style={{ fontSize: "14px" }}>📷</span>
+      )}
+      {error && (
+        <span className="absolute right-0 top-full mt-1 z-20 max-w-[180px] whitespace-normal rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold leading-tight text-white shadow-lg">
+          {error}
+        </span>
       )}
     </label>
   );
