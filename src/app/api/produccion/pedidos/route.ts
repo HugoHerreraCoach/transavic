@@ -4,7 +4,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
-import { derivarEInsertarItemsDesdeDetalle } from "@/lib/parse-detalle-pedido";
+import { reconciliarItemsDesdeDetalle } from "@/lib/parse-detalle-pedido";
 
 export const dynamic = "force-dynamic";
 
@@ -91,20 +91,26 @@ export async function GET(request: Request) {
       itemsPorPedido[pid].push(it);
     }
 
-    // ── Backfill lazy: un pedido SIN pedido_items no se puede pesar (modal vacío,
-    // S/ 0.00 — caso Manuel lince/Nikuya 11 jun 2026, creados por "Duplicar pedido"
-    // que solo copiaba el texto). Derivamos los ítems del texto del detalle, los
-    // persistimos y los servimos en esta misma respuesta. Idempotente: solo corre
-    // para pedidos con 0 ítems y detalle no vacío.
-    const sinItems = pedidos.filter(
-      (p) => !itemsPorPedido[p.id as string] && String(p.detalle || "").trim()
-    );
-    for (const p of sinItems) {
+    // ── Reconciliación lazy de ítems con el texto del detalle ──
+    // Cubre dos casos en una sola pasada (ver reconciliarItemsDesdeDetalle):
+    //  (a) Pedido SIN pedido_items → se derivan del detalle (caso histórico
+    //      "Duplicar pedido"/detalle a mano — Manuel lince/Nikuya, 11 jun 2026).
+    //  (b) Pedido con ítems FUSIONADOS (el mismo producto sumado en una sola fila
+    //      por el ProductSelector) y AÚN SIN PESAR → se separan según el detalle,
+    //      para que Producción pese cada línea (ej. 2 kg + 3 kg en bolsas separadas).
+    // El desglose real solo vive en el texto del detalle; pedido_items lo perdió al
+    // sumar. Idempotente y nunca toca pedidos ya pesados.
+    for (const p of pedidos) {
+      if (!String(p.detalle || "").trim()) continue;
+      const actuales = (itemsPorPedido[p.id as string] || []).map((it) => ({
+        cantidad_real: (it.cantidad_real as number | string | null) ?? null,
+      }));
       try {
-        const n = await derivarEInsertarItemsDesdeDetalle(
+        const n = await reconciliarItemsDesdeDetalle(
           sql,
           p.id as string,
-          p.detalle as string
+          p.detalle as string,
+          actuales
         );
         if (n > 0) {
           const nuevos = (await sql`
@@ -117,7 +123,7 @@ export async function GET(request: Request) {
           itemsPorPedido[p.id as string] = nuevos;
         }
       } catch (e) {
-        console.error(`Backfill de ítems falló para pedido ${p.id}:`, e);
+        console.error(`Reconciliación de ítems falló para pedido ${p.id}:`, e);
       }
     }
 
