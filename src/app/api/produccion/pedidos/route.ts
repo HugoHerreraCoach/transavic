@@ -75,7 +75,7 @@ export async function GET(request: Request) {
     let items: Array<Record<string, unknown>> = [];
     if (pedidoIds.length > 0) {
       items = (await sql`
-        SELECT id, pedido_id, producto_id, producto_nombre, cantidad, unidad,
+        SELECT id, pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido,
           precio_unitario, subtotal, cantidad_real, subtotal_real, notas
         FROM pedido_items
         WHERE pedido_id = ANY(${pedidoIds}::uuid[])
@@ -114,7 +114,7 @@ export async function GET(request: Request) {
         );
         if (n > 0) {
           const nuevos = (await sql`
-            SELECT id, pedido_id, producto_id, producto_nombre, cantidad, unidad,
+            SELECT id, pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido,
               precio_unitario, subtotal, cantidad_real, subtotal_real, notas
             FROM pedido_items
             WHERE pedido_id = ${p.id}::uuid

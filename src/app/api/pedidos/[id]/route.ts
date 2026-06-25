@@ -308,8 +308,8 @@ export async function PATCH(request: Request) {
             : null;
         await sql`
           INSERT INTO pedido_items
-            (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
-          VALUES (${id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${precioUnitario}, ${subtotal})
+            (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal)
+          VALUES (${id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precioUnitario}, ${subtotal})
         `;
       }
     }

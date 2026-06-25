@@ -97,8 +97,8 @@ async function insertarItemsParseados(
     const precio = prod?.precio_venta != null ? Number(prod.precio_venta) : null;
     const subtotal = precio !== null ? Number((precio * it.cantidad).toFixed(2)) : null;
     await sql`
-      INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
-      VALUES (${pedidoId}, ${prod?.id ?? null}, ${it.producto_nombre}, ${it.cantidad}, ${it.unidad}, ${precio}, ${subtotal})
+      INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal)
+      VALUES (${pedidoId}, ${prod?.id ?? null}, ${it.producto_nombre}, ${it.cantidad}, ${it.unidad}, ${it.unidad}, ${precio}, ${subtotal})
     `;
     insertados++;
   }

@@ -28,6 +28,9 @@ interface Item {
   producto_nombre: string;
   cantidad: number | string;
   unidad: string;
+  // Unidad DEL PEDIDO (lo que pidió el cliente). El `<select>` de abajo edita
+  // `unidad` (la de venta); "Pedido original" muestra `unidad_pedido`.
+  unidad_pedido?: string | null;
   precio_unitario: number | string | null;
   subtotal: number | string | null;
   cantidad_real: number | string | null;
@@ -570,7 +573,7 @@ function PesoModal({
                     </div>
                     <div className="text-xs text-gray-500 mt-0.5">
                       Pedido original:{" "}
-                      <strong>{toNumber(it.cantidad)} {it.unidad}</strong>
+                      <strong>{toNumber(it.cantidad)} {it.unidad_pedido ?? it.unidad}</strong>
                       {precioOriginal > 0 && <> · S/ {precioOriginal.toFixed(2)}</>}
                     </div>
                   </div>

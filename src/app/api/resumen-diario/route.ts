@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
     let items: ItemRow[] = [];
     if (pedidoIds.length > 0) {
       items = await sql`
-        SELECT pi.pedido_id, COALESCE(prod.nombre, pi.producto_nombre) as producto_nombre, pi.cantidad, pi.unidad
+        SELECT pi.pedido_id, COALESCE(prod.nombre, pi.producto_nombre) as producto_nombre, pi.cantidad, COALESCE(pi.unidad_pedido, pi.unidad) as unidad
         FROM pedido_items pi
         LEFT JOIN productos prod ON pi.producto_id = prod.id
         WHERE pi.pedido_id = ANY(${pedidoIds}::uuid[])
@@ -60,16 +60,18 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Totales por producto ──
+    // Usa la unidad DEL PEDIDO (unidad_pedido): el resumen muestra lo que pidió el
+    // cliente (ej. 64 uni), aunque Producción haya cambiado la unidad de venta a kg.
     const totalesPorProducto = await sql`
-      SELECT 
+      SELECT
         COALESCE(prod.nombre, pi.producto_nombre) as nombre,
-        pi.unidad,
+        COALESCE(pi.unidad_pedido, pi.unidad) as unidad,
         SUM(pi.cantidad) as total
       FROM pedido_items pi
       JOIN pedidos p ON pi.pedido_id = p.id
       LEFT JOIN productos prod ON pi.producto_id = prod.id
       WHERE p.fecha_pedido = ${fecha}::date
-      GROUP BY COALESCE(prod.nombre, pi.producto_nombre), pi.unidad
+      GROUP BY COALESCE(prod.nombre, pi.producto_nombre), COALESCE(pi.unidad_pedido, pi.unidad)
       ORDER BY COALESCE(prod.nombre, pi.producto_nombre) ASC
     `;
 
