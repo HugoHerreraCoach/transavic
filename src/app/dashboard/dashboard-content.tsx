@@ -2,9 +2,10 @@
 
 "use client";
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePollingVisible } from '@/lib/use-polling-visible';
 import { Pedido } from '@/lib/types';
 import Search from './search';
 import PedidosTable from './table';
@@ -104,9 +105,11 @@ function Dashboard({ session }: DashboardContentProps) {
   const searchParams = useSearchParams();
   const currentPage = Number(searchParams.get('page')) || 1;
 
-  useEffect(() => {
-    const fetchPedidos = async () => {
-      setCargando(true);
+  // Obtiene la página actual de pedidos. `silencioso` = para el refresco en vivo
+  // (no togglea "Cargando…" para no parpadear la tabla cada ciclo).
+  const fetchPedidos = useCallback(
+    async (silencioso = false) => {
+      if (!silencioso) setCargando(true);
       try {
         const params = new URLSearchParams(searchParams.toString());
         const response = await fetch(`/api/dashboard/pedidos?${params.toString()}`);
@@ -119,11 +122,25 @@ function Dashboard({ session }: DashboardContentProps) {
       } catch (error) {
         console.error(error);
       } finally {
-        setCargando(false);
+        if (!silencioso) setCargando(false);
       }
-    };
+    },
+    [searchParams]
+  );
+
+  // Carga inicial (y al cambiar de página/filtro).
+  useEffect(() => {
     fetchPedidos();
-  }, [searchParams]);
+  }, [fetchPedidos]);
+
+  // Refresco en vivo: trae cambios hechos desde otras pantallas/usuarios (ej. el
+  // repartidor sube la foto → aparece el ícono sin recargar). Pausado mientras hay
+  // un modal abierto (no pisar lo que el admin está editando) y, por el hook, cuando
+  // la pestaña está oculta (no despertar el cómputo de Neon).
+  usePollingVisible(() => fetchPedidos(true), 30_000, {
+    immediate: false,
+    enabled: !editingPedido && !sharingPedido && !printModalOpen,
+  });
 
   // Cargar lista de usuarios para admin (selector de quién entregó + asesoras para print)
   useEffect(() => {
