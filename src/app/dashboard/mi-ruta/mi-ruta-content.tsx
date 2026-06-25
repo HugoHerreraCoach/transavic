@@ -638,7 +638,11 @@ function PedidoCard({
           <span className="text-xs text-gray-400 hidden sm:inline">{pedido.distrito}</span>
           {/* Botón subir foto guía firmada — solo si Entregado */}
           {pedido.estado === "Entregado" && (
-            <SubirFotoGuiaButton pedidoId={pedido.id} estado={pedido.estado} />
+            <SubirFotoGuiaButton
+              pedidoId={pedido.id}
+              estado={pedido.estado}
+              guiaFirmadaAt={pedido.guia_firmada_at}
+            />
           )}
           <button
             onClick={(e) => { e.stopPropagation(); onRevertir(pedido.id); }}
@@ -1771,14 +1775,32 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  Botón: subir foto de guía firmada
-//  Aplica "No me hagas pensar": 1 toque → cámara → upload directo.
+//  Botón: subir foto de la orden firmada
+//  - Sin foto: 📷 abre el selector (cámara / galería / archivos).
+//  - Con foto: chip "✓ Foto" persistente con menú Ver / Cambiar.
+//  - Comprime antes de subir y usa la offline-queue si no hay señal.
 // ════════════════════════════════════════════════════════════
-function SubirFotoGuiaButton({ pedidoId, estado }: { pedidoId: string; estado: string }) {
+function SubirFotoGuiaButton({
+  pedidoId,
+  estado,
+  guiaFirmadaAt,
+}: {
+  pedidoId: string;
+  estado: string;
+  guiaFirmadaAt?: string | null;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
-  const [uploaded, setUploaded] = useState(false);
   const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Subida online confirmada en esta sesión (feedback inmediato). Junto con el
+  // prop guiaFirmadaAt (que llega del server y persiste tras recargar) decide
+  // si mostramos el estado "✓ Foto". Una subida OFFLINE encolada NO cuenta aquí
+  // (todavía no está en el server: no se puede ver).
+  const [subidaLocal, setSubidaLocal] = useState(false);
+  const [menuAbierto, setMenuAbierto] = useState(false);
+
+  const yaSubida = !!guiaFirmadaAt || subidaLocal;
 
   const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1854,62 +1876,93 @@ function SubirFotoGuiaButton({ pedidoId, estado }: { pedidoId: string; estado: s
           errBody && typeof errBody.error === "string" ? errBody.error : "Error al subir"
         );
       }
-      setUploaded(true);
-      setTimeout(() => setUploaded(false), 3000);
+      // Subida confirmada → feedback persistente "✓ Foto" (se puede ver/cambiar).
+      setSubidaLocal(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al subir");
       setTimeout(() => setError(null), 8000);
     } finally {
       setUploading(false);
-      // Reset input para permitir resubir
+      // Reset input para permitir resubir el mismo archivo.
       e.target.value = "";
     }
   };
 
   return (
-    <label
-      className={`relative cursor-pointer p-1.5 rounded-lg transition-colors flex-shrink-0 ${
-        uploaded
-          ? "text-green-600 bg-green-50"
-          : queued
-          ? "text-amber-600 bg-amber-50"
-          : error
-          ? "text-red-600 bg-red-50"
-          : "text-gray-400 hover:text-blue-600 hover:bg-blue-50"
-      }`}
-      title={
-        uploaded
-          ? "✓ Subida"
-          : queued
-          ? "Se subirá al recuperar señal"
-          : error
-          ? error
-          : "Subir foto de la orden firmada"
-      }
-      onClick={(e) => e.stopPropagation()}
-    >
+    <div className="relative flex-shrink-0" onClick={(e) => e.stopPropagation()}>
       <input
+        ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={onFileSelected}
         disabled={uploading}
       />
+
       {uploading ? (
-        <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-      ) : uploaded ? (
-        <FiCheckCircle size={14} />
+        <span className="p-1.5 inline-flex items-center justify-center" title="Subiendo…">
+          <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        </span>
       ) : queued ? (
-        <FiClock size={14} />
+        <span
+          className="px-2 py-1 inline-flex items-center gap-1 rounded-lg text-amber-600 bg-amber-50 text-[11px] font-semibold"
+          title="Se subirá al recuperar señal"
+        >
+          <FiClock size={13} /> En cola
+        </span>
+      ) : yaSubida ? (
+        <button
+          type="button"
+          onClick={() => setMenuAbierto((v) => !v)}
+          className="px-2 py-1 inline-flex items-center gap-1 rounded-lg text-green-700 bg-green-50 hover:bg-green-100 text-[11px] font-semibold transition-colors cursor-pointer"
+          title="Foto subida — ver o cambiar"
+        >
+          <FiCheckCircle size={13} /> Foto
+        </button>
       ) : (
-        <span style={{ fontSize: "14px" }}>📷</span>
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+          title="Subir foto de la orden firmada"
+        >
+          <span style={{ fontSize: "14px" }}>📷</span>
+        </button>
       )}
+
+      {/* Menú Ver / Cambiar — solo cuando ya hay foto */}
+      {menuAbierto && yaSubida && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setMenuAbierto(false)} />
+          <div className="absolute right-0 mt-1 w-40 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5">
+            <a
+              href={`/api/pedidos/${pedidoId}/guia-firmada`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMenuAbierto(false)}
+              className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50 rounded-lg"
+            >
+              <FiExternalLink size={13} className="text-green-500" /> Ver foto
+            </a>
+            <button
+              type="button"
+              onClick={() => {
+                setMenuAbierto(false);
+                inputRef.current?.click();
+              }}
+              className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 rounded-lg text-left"
+            >
+              <span style={{ fontSize: "13px" }}>📷</span> Cambiar foto
+            </button>
+          </div>
+        </>
+      )}
+
       {error && (
-        <span className="absolute right-0 top-full mt-1 z-20 max-w-[180px] whitespace-normal rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold leading-tight text-white shadow-lg">
+        <span className="absolute right-0 top-full mt-1 z-30 max-w-[180px] whitespace-normal rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold leading-tight text-white shadow-lg">
           {error}
         </span>
       )}
-    </label>
+    </div>
   );
 }

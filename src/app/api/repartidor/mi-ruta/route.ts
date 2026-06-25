@@ -22,6 +22,7 @@ export async function GET() {
         p.hora_entrega, p.hora_llegada_estimada, p.inicio_viaje_at,
         p.razon_fallo, p.detalle, p.notas,
         p.distancia_km, p.duracion_estimada_min,
+        p.guia_firmada_at,
         u.name AS asesor_name
       FROM pedidos p
       LEFT JOIN users u ON p.asesor_id = u.id

@@ -105,4 +105,5 @@ export type PedidoRuta = {
   distancia_km: number | null;
   duracion_estimada_min: number | null;
   asesor_name: string | null;
+  guia_firmada_at?: string | null;
 };
