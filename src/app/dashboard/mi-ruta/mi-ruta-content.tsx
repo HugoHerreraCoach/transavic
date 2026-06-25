@@ -1775,9 +1775,10 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  Botón: subir foto de la orden firmada
-//  - Sin foto: 📷 abre el selector (cámara / galería / archivos).
-//  - Con foto: chip "✓ Foto" persistente con menú Ver / Cambiar.
+//  Foto de la orden firmada (vista repartidor)
+//  - Control compacto en la fila: 📷 (sin foto) / "✓ Foto" (con foto).
+//  - Al tocar abre un modal que: MUESTRA la foto inline (para verificarla) y
+//    ofrece DOS fuentes claras — "Tomar foto" (cámara) y "Subir de galería".
 //  - Comprime antes de subir y usa la offline-queue si no hay señal.
 // ════════════════════════════════════════════════════════════
 function SubirFotoGuiaButton({
@@ -1789,16 +1790,20 @@ function SubirFotoGuiaButton({
   estado: string;
   guiaFirmadaAt?: string | null;
 }) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const camaraRef = useRef<HTMLInputElement>(null);
+  const galeriaRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Subida online confirmada en esta sesión (feedback inmediato). Junto con el
   // prop guiaFirmadaAt (que llega del server y persiste tras recargar) decide
-  // si mostramos el estado "✓ Foto". Una subida OFFLINE encolada NO cuenta aquí
-  // (todavía no está en el server: no se puede ver).
+  // si ya hay foto. Lo encolado OFFLINE NO cuenta (aún no está en el server).
   const [subidaLocal, setSubidaLocal] = useState(false);
-  const [menuAbierto, setMenuAbierto] = useState(false);
+  const [modalAbierto, setModalAbierto] = useState(false);
+  // Cache-bust: sube en cada subida para que el <img> recargue la foto nueva
+  // (el GET tiene Cache-Control max-age=3600).
+  const [recargas, setRecargas] = useState(0);
+  const [imgCargando, setImgCargando] = useState(true);
 
   const yaSubida = !!guiaFirmadaAt || subidaLocal;
 
@@ -1845,7 +1850,6 @@ function SubirFotoGuiaButton({
           setTimeout(() => setQueued(false), 4000);
         } else {
           setError("Sin espacio. Intenta con señal.");
-          setTimeout(() => setError(null), 8000);
         }
         return;
       }
@@ -1865,7 +1869,6 @@ function SubirFotoGuiaButton({
           setTimeout(() => setQueued(false), 4000);
         } else {
           setError("No se pudo subir ni guardar. Intenta con señal.");
-          setTimeout(() => setError(null), 8000);
         }
         return;
       }
@@ -1876,11 +1879,12 @@ function SubirFotoGuiaButton({
           errBody && typeof errBody.error === "string" ? errBody.error : "Error al subir"
         );
       }
-      // Subida confirmada → feedback persistente "✓ Foto" (se puede ver/cambiar).
+      // Subida confirmada → mostrar la foto nueva para verificar.
       setSubidaLocal(true);
+      setImgCargando(true);
+      setRecargas((r) => r + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error al subir");
-      setTimeout(() => setError(null), 8000);
     } finally {
       setUploading(false);
       // Reset input para permitir resubir el mismo archivo.
@@ -1888,10 +1892,26 @@ function SubirFotoGuiaButton({
     }
   };
 
+  const abrirModal = () => {
+    setError(null);
+    if (yaSubida) setImgCargando(true);
+    setModalAbierto(true);
+  };
+
   return (
-    <div className="relative flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+    <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+      {/* Inputs ocultos: cámara (capture) y galería (sin capture) */}
       <input
-        ref={inputRef}
+        ref={camaraRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={onFileSelected}
+        disabled={uploading}
+      />
+      <input
+        ref={galeriaRef}
         type="file"
         accept="image/*"
         className="hidden"
@@ -1899,7 +1919,8 @@ function SubirFotoGuiaButton({
         disabled={uploading}
       />
 
-      {uploading ? (
+      {/* Control compacto en la fila */}
+      {uploading && !modalAbierto ? (
         <span className="p-1.5 inline-flex items-center justify-center" title="Subiendo…">
           <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         </span>
@@ -1913,16 +1934,16 @@ function SubirFotoGuiaButton({
       ) : yaSubida ? (
         <button
           type="button"
-          onClick={() => setMenuAbierto((v) => !v)}
+          onClick={abrirModal}
           className="px-2 py-1 inline-flex items-center gap-1 rounded-lg text-green-700 bg-green-50 hover:bg-green-100 text-[11px] font-semibold transition-colors cursor-pointer"
-          title="Foto subida — ver o cambiar"
+          title="Ver o cambiar la foto"
         >
           <FiCheckCircle size={13} /> Foto
         </button>
       ) : (
         <button
           type="button"
-          onClick={() => inputRef.current?.click()}
+          onClick={abrirModal}
           className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
           title="Subir foto de la orden firmada"
         >
@@ -1930,38 +1951,92 @@ function SubirFotoGuiaButton({
         </button>
       )}
 
-      {/* Menú Ver / Cambiar — solo cuando ya hay foto */}
-      {menuAbierto && yaSubida && (
-        <>
-          <div className="fixed inset-0 z-10" onClick={() => setMenuAbierto(false)} />
-          <div className="absolute right-0 mt-1 w-40 rounded-xl border border-gray-100 bg-white p-1.5 shadow-xl z-20 flex flex-col gap-0.5">
-            <a
-              href={`/api/pedidos/${pedidoId}/guia-firmada`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => setMenuAbierto(false)}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-green-700 hover:bg-green-50 rounded-lg"
-            >
-              <FiExternalLink size={13} className="text-green-500" /> Ver foto
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                setMenuAbierto(false);
-                inputRef.current?.click();
-              }}
-              className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 rounded-lg text-left"
-            >
-              <span style={{ fontSize: "13px" }}>📷</span> Cambiar foto
-            </button>
-          </div>
-        </>
-      )}
+      {/* Modal: ver foto + dos fuentes (cámara / galería) */}
+      {modalAbierto && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setModalAbierto(false)} />
+          <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col">
+            {/* Header */}
+            <div className="px-4 py-3 border-b flex items-center justify-between">
+              <h3 className="font-bold text-gray-800">Foto de la orden firmada</h3>
+              <button
+                type="button"
+                onClick={() => setModalAbierto(false)}
+                className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 text-lg leading-none"
+                aria-label="Cerrar"
+              >
+                ✕
+              </button>
+            </div>
 
-      {error && (
-        <span className="absolute right-0 top-full mt-1 z-30 max-w-[180px] whitespace-normal rounded-md bg-red-600 px-2 py-1 text-[10px] font-semibold leading-tight text-white shadow-lg">
-          {error}
-        </span>
+            {/* Body */}
+            <div className="px-4 py-4 overflow-y-auto flex-1">
+              {queued ? (
+                <div className="text-center text-amber-700 bg-amber-50 rounded-lg p-4 text-sm font-semibold flex flex-col items-center gap-1">
+                  <FiClock size={20} /> Se subirá al recuperar señal
+                </div>
+              ) : yaSubida ? (
+                <div className="space-y-2">
+                  <div className="relative rounded-xl overflow-hidden bg-gray-100 flex items-center justify-center min-h-[180px]">
+                    {imgCargando && (
+                      <span className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+                        Cargando foto…
+                      </span>
+                    )}
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/pedidos/${pedidoId}/guia-firmada?v=${recargas}`}
+                      alt="Orden firmada"
+                      className="w-full max-h-[55vh] object-contain"
+                      onLoad={() => setImgCargando(false)}
+                      onError={() => setImgCargando(false)}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 text-center">
+                    Revisa que sea la correcta. Puedes cambiarla abajo.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-center text-gray-500 text-sm py-6">
+                  <span style={{ fontSize: 40 }}>📷</span>
+                  <p className="mt-2">Aún no subiste la foto de esta orden.</p>
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 text-center">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            {/* Footer: dos fuentes */}
+            <div className="px-4 py-3 border-t bg-gray-50 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={() => camaraRef.current?.click()}
+                className="px-3 py-3 rounded-xl bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-transform"
+              >
+                {uploading ? (
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <span style={{ fontSize: 16 }}>📷</span>
+                )}
+                {yaSubida ? "Tomar otra" : "Tomar foto"}
+              </button>
+              <button
+                type="button"
+                disabled={uploading}
+                onClick={() => galeriaRef.current?.click()}
+                className="px-3 py-3 rounded-xl bg-white border border-gray-300 text-gray-700 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-transform"
+              >
+                <span style={{ fontSize: 16 }}>🖼️</span>
+                {yaSubida ? "De galería" : "Subir de galería"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
