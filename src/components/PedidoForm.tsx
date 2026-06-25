@@ -60,13 +60,27 @@ type DuplicadoCliente = {
 const distritos = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
 
 
-export default function PedidoForm({ asesores }: { asesores: User[] }) {
+export default function PedidoForm({
+  asesores,
+  currentUser,
+}: {
+  asesores: User[];
+  currentUser: { id: string; name: string; role: string };
+}) {
+  // La asesora SIEMPRE crea a su propio nombre (evita el error de crear a nombre de
+  // otra). El admin sí elige de la lista. El backend además lo fuerza por seguridad.
+  const esAsesor = currentUser.role === 'asesor';
+  const asesorIdPorDefecto = esAsesor
+    ? currentUser.id
+    : asesores.length > 0
+      ? asesores[0].id
+      : '';
   const [appState, setAppState] = useState<AppState>('editing');
   const [successToast, setSuccessToast] = useState<string | null>(null);
   const [errorToast, setErrorToast] = useState<string | null>(null);
   const [formDatos, setFormDatos] = useState<TicketData>({
     ...datosIniciales,
-    asesorId: asesores.length > 0 ? asesores[0].id : ''
+    asesorId: asesorIdPorDefecto,
   });
   const [ticketDatos, setTicketDatos] = useState<TicketData>(datosIniciales);
   const [imagenUrl, setImagenUrl] = useState<string | null>(null);
@@ -581,7 +595,7 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
   const handleNuevoPedido = () => {
     const empresaActual = formDatos.empresa;
     const fechaActual = getTodayString();
-    const primerAsesorId = asesores.length > 0 ? asesores[0].id : '';
+    const primerAsesorId = asesorIdPorDefecto;
     const nuevoEstadoFormulario = {
       ...datosIniciales,
       empresa: empresaActual,
@@ -697,23 +711,30 @@ export default function PedidoForm({ asesores }: { asesores: User[] }) {
                 </div>
               </div>
 
-              {/* ✅ NUEVO CAMPO DE ASESOR */}
+              {/* CAMPO DE ASESOR — la asesora ve su nombre fijo (no puede elegir
+                  otra); el admin elige de la lista (crea a nombre de otras). */}
               <div>
                 <label htmlFor="asesorId" className="block text-sm font-medium text-gray-700 mb-1">Asesor:</label>
-                <select
-                  id="asesorId"
-                  name="asesorId"
-                  value={formDatos.asesorId}
-                  onChange={handleChange}
-                  className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"
-                  required
-                >
-                  {asesores.map((asesor) => (
-                    <option key={asesor.id} value={asesor.id}>
-                      {asesor.name}
-                    </option>
-                  ))}
-                </select>
+                {esAsesor ? (
+                  <div className="w-full p-3 border rounded-md bg-gray-100 text-gray-800 font-medium">
+                    {currentUser.name}
+                  </div>
+                ) : (
+                  <select
+                    id="asesorId"
+                    name="asesorId"
+                    value={formDatos.asesorId}
+                    onChange={handleChange}
+                    className="w-full p-3 border rounded-md bg-white text-black disabled:bg-gray-200"
+                    required
+                  >
+                    {asesores.map((asesor) => (
+                      <option key={asesor.id} value={asesor.id}>
+                        {asesor.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               {/* BLOQUE PARA LA FECHA */}

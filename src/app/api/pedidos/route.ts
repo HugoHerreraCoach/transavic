@@ -111,13 +111,18 @@ export async function POST(request: Request) {
       items,
     } = parsedData.data;
 
-    const fecha_pedido = fecha; 
+    // Seguridad: una asesora SIEMPRE crea a su propio nombre (no puede crear a
+    // nombre de otra aunque manipule el form). El admin sí respeta el asesor elegido.
+    const finalAsesorId =
+      session.user.role === "asesor" ? session.user.id : asesorId;
+
+    const fecha_pedido = fecha;
     const sql = neon(connectionString);
 
     // Insert the order and get it back
     const insertedPedido = await sql`
       INSERT INTO pedidos (cliente, cliente_id, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, detalle, hora_entrega, razon_social, ruc_dni, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
-      VALUES (${cliente}, ${clienteId ?? null}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${razonSocial}, ${rucDni}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${asesorId})
+      VALUES (${cliente}, ${clienteId ?? null}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${razonSocial}, ${rucDni}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${finalAsesorId})
       RETURNING id
     `;
 
@@ -138,8 +143,8 @@ export async function POST(request: Request) {
             : null;
 
         await sql`
-          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, precio_unitario, subtotal)
-          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${precio_unitario}, ${subtotal})
+          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal)
+          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precio_unitario}, ${subtotal})
         `;
       }
     } else if (insertedPedido[0]?.id && detalle) {

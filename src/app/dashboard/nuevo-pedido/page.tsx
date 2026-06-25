@@ -16,5 +16,14 @@ export default async function NuevoPedidoPage() {
 
   const asesores = await fetchAsesores();
 
-  return <PedidoForm asesores={asesores} />;
+  return (
+    <PedidoForm
+      asesores={asesores}
+      currentUser={{
+        id: session.user.id,
+        name: session.user.name ?? "",
+        role: session.user.role,
+      }}
+    />
+  );
 }
