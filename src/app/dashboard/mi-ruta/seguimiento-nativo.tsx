@@ -23,9 +23,10 @@
 // (la ruta sigue visible) y se reintenta enganchar el GPS hasta que reactive el permiso.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { registerPlugin, CapacitorHttp } from "@capacitor/core";
+import { registerPlugin, CapacitorHttp, type PluginListenerHandle } from "@capacitor/core";
 import type { BackgroundGeolocationPlugin } from "@capacitor-community/background-geolocation";
 import { LocalNotifications } from "@capacitor/local-notifications";
+import { App } from "@capacitor/app";
 import {
   FiMapPin,
   FiNavigation,
@@ -44,6 +45,10 @@ const CONSENT_KEY = "transavic_gps_consent_v1";
 const PENDIENTE_KEY = "transavic_gps_pendiente_v1"; // última posición sin confirmar (cola offline)
 const REINTENTO_PENDIENTE_MS = 30000; // reintento de la pendiente cuando no hubo movimiento
 const REINTENTO_PERMISO_MS = 45000; // si quedó sin permiso, reintenta enganchar el GPS
+
+const HEARTBEAT_MS = 90000; // latido cada 90 s si no hay movimiento
+const WATCHDOG_REINICIO_MS = 300000; // sanación ciega del watcher cada 5 minutos
+const SILENCIO_MAX_MS = 150000; // umbral de inactividad de 2.5 min para reiniciar al volver al primer plano
 
 type EstadoSeguimiento = "inactivo" | "iniciando" | "activo" | "sin-permiso" | "error";
 
@@ -123,6 +128,12 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
   const beaconEnviadoRef = useRef(false);
   // Espejo del estado: lo lee el setInterval de reintento sin re-suscribir el efecto.
   const estadoRef = useRef<EstadoSeguimiento>("inactivo");
+
+  // Refs de control para latido y watchdog
+  const ultimaPosicionRef = useRef<PayloadUbicacion | null>(null);
+  const ultimoCallbackRef = useRef<number>(Date.now());
+  const reiniciandoRef = useRef(false);
+
   useEffect(() => {
     estadoRef.current = estado;
   }, [estado]);
@@ -149,6 +160,23 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
     const intervalo = setInterval(() => {
       if (!cancelado) void flushPendiente();
     }, REINTENTO_PENDIENTE_MS);
+
+    // Latido (Heartbeat): reenvía la última ubicación conocida si el motorizado está quieto.
+    // CapturedAt fresco indica que la app y el dispositivo están vivos.
+    const heartbeatInterval = setInterval(() => {
+      if (cancelado || !activo || !ultimaPosicionRef.current) return;
+      const ahora = Date.now();
+      if (ahora - ultimoEnvioRef.current >= HEARTBEAT_MS) {
+        const payload: PayloadUbicacion = {
+          ...ultimaPosicionRef.current,
+          capturedAt: new Date().toISOString(),
+        };
+        ultimoEnvioRef.current = ahora;
+        void (async () => {
+          if (await enviarUbicacion(payload)) guardarPendiente(null);
+        })();
+      }
+    }, HEARTBEAT_MS);
 
     const removerWatcherActual = async () => {
       if (watcherId) {
@@ -183,7 +211,7 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
             backgroundMessage: "Compartiendo tu ubicación con la central mientras repartes.",
             requestPermissions: true,
             stale: false,
-            distanceFilter: 20, // metros: filtra micro-movimientos, ahorra datos y batería
+            distanceFilter: 15, // metros: filtra micro-movimientos, optimizado de 20 a 15
           },
           (location, error) => {
             if (error) {
@@ -203,6 +231,9 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
             if (!cancelado) setEstado("activo");
             beaconEnviadoRef.current = false; // recuperó la señal → rearmar el beacon
 
+            // Actualizar tiempo de último callback y última posición para el latido/watchdog
+            ultimoCallbackRef.current = Date.now();
+
             const payload: PayloadUbicacion = {
               lat: location.latitude,
               lng: location.longitude,
@@ -220,6 +251,8 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
               // El servidor decide qué hacer; acá solo lo reportamos con honestidad.
               simulated: location.simulated === true,
             };
+
+            ultimaPosicionRef.current = payload;
 
             // Guarda SIEMPRE la última posición como pendiente; se borra al
             // confirmarse el envío. Así nunca se pierde la más reciente.
@@ -246,6 +279,48 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
 
     void iniciar();
 
+    // Watchdog: reinicia ciegamente el watcher cada 5 minutos para rescatar bloqueos silenciosos del sistema operativo.
+    const watchdogInterval = setInterval(() => {
+      if (cancelado || estadoRef.current === "sin-permiso" || reiniciandoRef.current) return;
+      void (async () => {
+        reiniciandoRef.current = true;
+        await removerWatcherActual();
+        await iniciar();
+        reiniciandoRef.current = false;
+      })();
+    }, WATCHDOG_REINICIO_MS);
+
+    // Re-enganche al volver al primer plano (foreground)
+    let resumeHandle: PluginListenerHandle | null = null;
+    App.addListener("resume", () => {
+      if (cancelado) return;
+      void flushPendiente();
+      const ahora = Date.now();
+      if (
+        ahora - ultimoCallbackRef.current > SILENCIO_MAX_MS &&
+        estadoRef.current !== "sin-permiso" &&
+        !reiniciandoRef.current
+      ) {
+        // Silencio muy largo: forzar reinicio del watcher
+        void (async () => {
+          reiniciandoRef.current = true;
+          await removerWatcherActual();
+          await iniciar();
+          reiniciandoRef.current = false;
+        })();
+      }
+    }).then((h) => {
+      if (cancelado) h.remove();
+      else resumeHandle = h;
+    });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible" && !cancelado) {
+        void flushPendiente();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     // Reintento de permiso: si el motorizado revocó el permiso (o falló el arranque),
     // cada ~45s reiniciamos el watcher. Apenas reactive el permiso desde Ajustes, el
     // nuevo addWatcher engancha y el seguimiento vuelve solo, sin que tenga que hacer nada.
@@ -264,6 +339,10 @@ function useSeguimientoUbicacionNativo(activo: boolean): EstadoSeguimiento {
       cancelado = true;
       clearInterval(intervalo);
       clearInterval(reintentoPermiso);
+      clearInterval(heartbeatInterval);
+      clearInterval(watchdogInterval);
+      if (resumeHandle) resumeHandle.remove();
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (watcherId) void BackgroundGeolocation.removeWatcher({ id: watcherId });
     };
   }, [activo]);

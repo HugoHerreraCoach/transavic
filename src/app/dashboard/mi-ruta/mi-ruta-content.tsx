@@ -33,6 +33,10 @@ import {
   FiUser,
   FiHome,
   FiEdit2,
+  FiCamera,
+  FiImage,
+  FiSend,
+  FiX,
 } from "react-icons/fi";
 import { useJsApiLoader } from "@react-google-maps/api";
 import nextDynamic from "next/dynamic";
@@ -1781,6 +1785,8 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 //    ofrece DOS fuentes claras — "Tomar foto" (cámara) y "Subir de galería".
 //  - Comprime antes de subir y usa la offline-queue si no hay señal.
 // ════════════════════════════════════════════════════════════
+type FaseModal = "inicial" | "preview" | "subiendo" | "exito" | "encolado" | "error";
+
 function SubirFotoGuiaButton({
   pedidoId,
   estado,
@@ -1792,40 +1798,74 @@ function SubirFotoGuiaButton({
 }) {
   const camaraRef = useRef<HTMLInputElement>(null);
   const galeriaRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [queued, setQueued] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Subida online confirmada en esta sesión (feedback inmediato). Junto con el
-  // prop guiaFirmadaAt (que llega del server y persiste tras recargar) decide
-  // si ya hay foto. Lo encolado OFFLINE NO cuenta (aún no está en el server).
-  const [subidaLocal, setSubidaLocal] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
-  // Cache-bust: sube en cada subida para que el <img> recargue la foto nueva
-  // (el GET tiene Cache-Control max-age=3600).
+  const [subidaLocal, setSubidaLocal] = useState(false);
+  const [queued, setQueued] = useState(false);
   const [recargas, setRecargas] = useState(0);
   const [imgCargando, setImgCargando] = useState(true);
 
+  // Estados de la máquina del modal
+  const [fase, setFase] = useState<FaseModal>("inicial");
+  const [archivoPreview, setArchivoPreview] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [toastLocal, setToastLocal] = useState<{ type: "exito" | "encolado"; visible: boolean } | null>(null);
+
+  const enviandoRef = useRef(false);
   const yaSubida = !!guiaFirmadaAt || subidaLocal;
 
-  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Cleanup de previewUrl al desmontar
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  const liberarPreview = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    setArchivoPreview(null);
+  };
+
+  const onFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset del input para permitir seleccionar el mismo archivo de nuevo
+    e.target.value = "";
     if (!file) return;
-    setError(null);
-    setUploading(true);
+
+    liberarPreview();
+    setErrorMsg(null);
+
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    setArchivoPreview(file);
+    setFase("preview");
+    setModalAbierto(true);
+  };
+
+  const enviarFoto = async () => {
+    if (enviandoRef.current || !archivoPreview) return;
+    enviandoRef.current = true;
+    setFase("subiendo");
+    setErrorMsg(null);
+
     try {
-      // 1. Comprimir SIEMPRE antes de subir (las fotos de cámara pesan 3-8 MB y
-      //    el servidor las rechaza por tamaño). Si la compresión falla, va el original.
-      let archivo: File = file;
+      // 1. Comprimir antes de subir (las fotos de cámara pesan 3-8 MB y el servidor las rebota)
+      let archivo: File = archivoPreview;
       try {
-        archivo = await imageCompression(file, {
+        archivo = await imageCompression(archivoPreview, {
           maxSizeMB: 0.6,
           maxWidthOrHeight: 1600,
           useWebWorker: true,
           fileType: "image/jpeg",
           initialQuality: 0.8,
         });
-      } catch {
-        archivo = file;
+      } catch (err) {
+        console.warn("Fallo compresión local, intentando subir original:", err);
       }
 
       const encolar = async (): Promise<boolean> => {
@@ -1847,9 +1887,10 @@ function SubirFotoGuiaButton({
       if (!isOnline()) {
         if (await encolar()) {
           setQueued(true);
-          setTimeout(() => setQueued(false), 4000);
+          setFase("encolado");
         } else {
-          setError("Sin espacio. Intenta con señal.");
+          setErrorMsg("Sin espacio local para guardar la foto. Intenta con señal.");
+          setFase("error");
         }
         return;
       }
@@ -1863,12 +1904,14 @@ function SubirFotoGuiaButton({
           method: "POST",
           body: formData,
         });
-      } catch {
+      } catch (err) {
+        console.warn("Fallo de red, encolando foto:", err);
         if (await encolar()) {
           setQueued(true);
-          setTimeout(() => setQueued(false), 4000);
+          setFase("encolado");
         } else {
-          setError("No se pudo subir ni guardar. Intenta con señal.");
+          setErrorMsg("No se pudo subir ni guardar en cola. Intenta con señal.");
+          setFase("error");
         }
         return;
       }
@@ -1879,28 +1922,50 @@ function SubirFotoGuiaButton({
           errBody && typeof errBody.error === "string" ? errBody.error : "Error al subir"
         );
       }
-      // Subida confirmada → mostrar la foto nueva para verificar.
+
+      // Subida confirmada
       setSubidaLocal(true);
       setImgCargando(true);
       setRecargas((r) => r + 1);
+      setFase("exito");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error al subir");
+      setErrorMsg(e instanceof Error ? e.message : "Error al subir");
+      setFase("error");
     } finally {
-      setUploading(false);
-      // Reset input para permitir resubir el mismo archivo.
-      e.target.value = "";
+      enviandoRef.current = false;
     }
   };
 
+  const descartarPreview = () => {
+    liberarPreview();
+    setFase("inicial");
+  };
+
   const abrirModal = () => {
-    setError(null);
+    setErrorMsg(null);
     if (yaSubida) setImgCargando(true);
+    setFase("inicial");
     setModalAbierto(true);
+  };
+
+  const cerrar = () => {
+    if (fase === "subiendo") return; // modal no cerrable en subida
+    setModalAbierto(false);
+    liberarPreview();
+    setFase("inicial");
+  };
+
+  const finalizarFlujo = (faseExito: "exito" | "encolado") => {
+    setToastLocal({ type: faseExito, visible: true });
+    cerrar();
+    setTimeout(() => {
+      setToastLocal((prev) => (prev ? { ...prev, visible: false } : null));
+    }, 4000);
   };
 
   return (
     <div className="flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-      {/* Inputs ocultos: cámara (capture) y galería (sin capture) */}
+      {/* Inputs ocultos para Cámara y Galería */}
       <input
         ref={camaraRef}
         type="file"
@@ -1908,7 +1973,7 @@ function SubirFotoGuiaButton({
         capture="environment"
         className="hidden"
         onChange={onFileSelected}
-        disabled={uploading}
+        disabled={fase === "subiendo"}
       />
       <input
         ref={galeriaRef}
@@ -1916,11 +1981,11 @@ function SubirFotoGuiaButton({
         accept="image/*"
         className="hidden"
         onChange={onFileSelected}
-        disabled={uploading}
+        disabled={fase === "subiendo"}
       />
 
       {/* Control compacto en la fila */}
-      {uploading && !modalAbierto ? (
+      {fase === "subiendo" && !modalAbierto ? (
         <span className="p-1.5 inline-flex items-center justify-center" title="Subiendo…">
           <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         </span>
@@ -1951,89 +2016,234 @@ function SubirFotoGuiaButton({
         </button>
       )}
 
-      {/* Modal: ver foto + dos fuentes (cámara / galería) */}
+      {/* Toast flotante local al componente */}
+      {toastLocal?.visible && (
+        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[60] bg-gray-900 text-white px-4 py-2.5 rounded-xl shadow-xl flex items-center gap-2 text-xs font-semibold animate-bounce">
+          {toastLocal.type === "exito" ? (
+            <>
+              <FiCheckCircle className="text-emerald-400" size={14} />
+              <span>✓ Foto de orden guardada</span>
+            </>
+          ) : (
+            <>
+              <FiClock className="text-amber-400" size={14} />
+              <span>📷 Foto guardada — se enviará al volver la señal</span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Modal: ver foto / tomar / previsualizar / confirmación */}
       {modalAbierto && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setModalAbierto(false)} />
-          <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col">
+          <div
+            className="absolute inset-0 bg-black/60 transition-opacity"
+            onClick={fase !== "subiendo" ? cerrar : undefined}
+          />
+          <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[92vh] flex flex-col z-10 overflow-hidden anim-fade">
+            
             {/* Header */}
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <h3 className="font-bold text-gray-800">Foto de la orden firmada</h3>
-              <button
-                type="button"
-                onClick={() => setModalAbierto(false)}
-                className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 text-lg leading-none"
-                aria-label="Cerrar"
-              >
-                ✕
-              </button>
+            <div className="px-4 py-3.5 border-b flex items-center justify-between bg-white">
+              <h3 className="font-bold text-gray-800 text-sm">
+                {fase === "preview" ? "Vista previa de la firma" : "Foto de la orden firmada"}
+              </h3>
+              {fase !== "subiendo" && (
+                <button
+                  type="button"
+                  onClick={cerrar}
+                  className="p-1.5 rounded-full hover:bg-gray-100 text-gray-500 transition-colors"
+                  aria-label="Cerrar"
+                >
+                  <FiX size={16} />
+                </button>
+              )}
             </div>
 
             {/* Body */}
-            <div className="px-4 py-4 overflow-y-auto flex-1">
-              {queued ? (
-                <div className="text-center text-amber-700 bg-amber-50 rounded-lg p-4 text-sm font-semibold flex flex-col items-center gap-1">
-                  <FiClock size={20} /> Se subirá al recuperar señal
+            <div className="px-4 py-5 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-gray-50">
+              
+              {fase === "inicial" && (
+                <div className="w-full">
+                  {queued ? (
+                    <div className="text-center text-amber-700 bg-amber-50 border border-amber-100 rounded-2xl p-6 text-sm font-semibold flex flex-col items-center gap-2">
+                      <FiClock size={28} className="animate-pulse" />
+                      <p>Se subirá automáticamente al recuperar señal</p>
+                    </div>
+                  ) : yaSubida ? (
+                    <div className="space-y-3">
+                      <div className="relative rounded-2xl overflow-hidden bg-gray-200 border border-gray-300 flex items-center justify-center min-h-[220px] shadow-inner">
+                        {imgCargando && (
+                          <span className="absolute inset-0 flex items-center justify-center text-gray-400 text-xs font-medium">
+                            Cargando foto…
+                          </span>
+                        )}
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/pedidos/${pedidoId}/guia-firmada?v=${recargas}`}
+                          alt="Orden firmada"
+                          className="w-full max-h-[50vh] object-contain"
+                          onLoad={() => setImgCargando(false)}
+                          onError={() => setImgCargando(false)}
+                        />
+                      </div>
+                      <p className="text-[11px] text-gray-500 text-center leading-relaxed">
+                        Revisa que sea la correcta. Puedes cambiarla abajo si te equivocaste.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="text-center text-gray-400 text-sm py-10 flex flex-col items-center gap-2">
+                      <FiImage size={48} className="text-gray-300" />
+                      <p className="font-medium text-gray-500">Aún no subiste la foto de esta orden.</p>
+                      <p className="text-xs text-gray-400 max-w-[240px] leading-normal mx-auto">
+                        Toca el botón de abajo para capturar la orden firmada por el cliente.
+                      </p>
+                    </div>
+                  )}
                 </div>
-              ) : yaSubida ? (
-                <div className="space-y-2">
-                  <div className="relative rounded-xl overflow-hidden bg-gray-100 flex items-center justify-center min-h-[180px]">
-                    {imgCargando && (
-                      <span className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
-                        Cargando foto…
-                      </span>
-                    )}
+              )}
+
+              {fase === "preview" && previewUrl && (
+                <div className="w-full space-y-3">
+                  <div className="relative rounded-2xl overflow-hidden bg-black border border-gray-300 flex items-center justify-center min-h-[220px] shadow-lg">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={`/api/pedidos/${pedidoId}/guia-firmada?v=${recargas}`}
-                      alt="Orden firmada"
-                      className="w-full max-h-[55vh] object-contain"
-                      onLoad={() => setImgCargando(false)}
-                      onError={() => setImgCargando(false)}
+                      src={previewUrl}
+                      alt="Vista previa de firma"
+                      className="w-full max-h-[50vh] object-contain"
                     />
                   </div>
-                  <p className="text-xs text-gray-500 text-center">
-                    Revisa que sea la correcta. Puedes cambiarla abajo.
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-center">
+                    <p className="text-xs font-semibold text-blue-700 leading-normal">
+                      ¿Se ve bien? Revisa que la firma y los datos se lean claros.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {fase === "subiendo" && (
+                <div className="text-center py-10 flex flex-col items-center gap-3">
+                  <span className="inline-block w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                  <p className="font-bold text-gray-800 text-sm">Subiendo foto…</p>
+                  <p className="text-xs text-gray-400 leading-normal">No cierres esta ventana mientras se completa la subida.</p>
+                </div>
+              )}
+
+              {fase === "exito" && (
+                <div className="text-center py-8 flex flex-col items-center gap-2">
+                  <FiCheckCircle className="text-emerald-500" size={54} />
+                  <p className="font-bold text-gray-800 text-sm mt-2">Foto enviada correctamente</p>
+                  <p className="text-xs text-gray-400 leading-normal max-w-[200px]">La central ya puede verificar el documento firmado.</p>
+                </div>
+              )}
+
+              {fase === "encolado" && (
+                <div className="text-center py-8 flex flex-col items-center gap-2">
+                  <FiClock className="text-amber-500" size={54} />
+                  <p className="font-bold text-gray-800 text-sm mt-2">Foto guardada localmente</p>
+                  <p className="text-xs text-gray-400 leading-normal max-w-[220px]">
+                    No tienes buena señal. Se enviará automáticamente cuando el celular recupere la conexión.
                   </p>
                 </div>
-              ) : (
-                <div className="text-center text-gray-500 text-sm py-6">
-                  <span style={{ fontSize: 40 }}>📷</span>
-                  <p className="mt-2">Aún no subiste la foto de esta orden.</p>
+              )}
+
+              {fase === "error" && (
+                <div className="text-center py-6 w-full flex flex-col items-center gap-3">
+                  <FiAlertTriangle className="text-red-500 animate-bounce" size={48} />
+                  <p className="font-bold text-gray-800 text-sm">No se pudo subir la foto</p>
+                  <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl p-3 w-full text-center leading-normal">
+                    {errorMsg || "Ocurrió un error inesperado al subir."}
+                  </div>
                 </div>
               )}
 
-              {error && (
-                <div className="mt-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-2 text-center">
-                  {error}
-                </div>
-              )}
             </div>
 
-            {/* Footer: dos fuentes */}
-            <div className="px-4 py-3 border-t bg-gray-50 grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => camaraRef.current?.click()}
-                className="px-3 py-3 rounded-xl bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-transform"
-              >
-                {uploading ? (
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <span style={{ fontSize: 16 }}>📷</span>
-                )}
-                {yaSubida ? "Tomar otra" : "Tomar foto"}
-              </button>
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => galeriaRef.current?.click()}
-                className="px-3 py-3 rounded-xl bg-white border border-gray-300 text-gray-700 font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 transition-transform"
-              >
-                <span style={{ fontSize: 16 }}>🖼️</span>
-                {yaSubida ? "De galería" : "Subir de galería"}
-              </button>
+            {/* Footer interactivo */}
+            <div className="px-4 py-4 border-t bg-gray-50 flex flex-col gap-2">
+              
+              {fase === "inicial" && (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => camaraRef.current?.click()}
+                    className="px-3 py-3.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 active:scale-95 transition-all"
+                  >
+                    <FiCamera size={14} />
+                    <span>{yaSubida ? "Tomar otra" : "Tomar foto"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // reset galería para forzar onChange si elige la misma
+                      if (galeriaRef.current) galeriaRef.current.value = "";
+                      galeriaRef.current?.click();
+                    }}
+                    className="px-3 py-3.5 rounded-xl bg-white border border-gray-300 text-gray-700 font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-gray-50 active:scale-95 transition-all"
+                  >
+                    <FiImage size={14} />
+                    <span>{yaSubida ? "De galería" : "Subir de galería"}</span>
+                  </button>
+                </div>
+              )}
+
+              {fase === "preview" && (
+                <div className="flex flex-col gap-2 w-full">
+                  <button
+                    type="button"
+                    onClick={enviarFoto}
+                    className="px-4 py-3.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 active:scale-95 transition-all w-full"
+                  >
+                    <FiSend size={14} />
+                    <span>Enviar foto</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={descartarPreview}
+                    className="px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-700 font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-gray-50 active:scale-95 transition-all w-full"
+                  >
+                    <FiRotateCcw size={14} />
+                    <span>Tomar otra</span>
+                  </button>
+                </div>
+              )}
+
+              {fase === "subiendo" && (
+                <div className="h-10 flex items-center justify-center">
+                  <span className="text-[11px] text-gray-400 italic">Subiendo datos a la central…</span>
+                </div>
+              )}
+
+              {(fase === "exito" || fase === "encolado") && (
+                <button
+                  type="button"
+                  onClick={() => finalizarFlujo(fase)}
+                  className="px-4 py-3.5 rounded-xl bg-gray-900 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-black active:scale-95 transition-all w-full"
+                >
+                  Listo
+                </button>
+              )}
+
+              {fase === "error" && (
+                <div className="flex flex-col gap-2 w-full">
+                  <button
+                    type="button"
+                    onClick={enviarFoto}
+                    className="px-4 py-3.5 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-blue-700 active:scale-95 transition-all w-full"
+                  >
+                    <FiSend size={14} />
+                    <span>Reintentar</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={descartarPreview}
+                    className="px-4 py-3 rounded-xl bg-white border border-gray-300 text-gray-700 font-bold text-xs flex items-center justify-center gap-2 shadow-sm hover:bg-gray-50 active:scale-95 transition-all w-full"
+                  >
+                    <FiRotateCcw size={14} />
+                    <span>Tomar otra</span>
+                  </button>
+                </div>
+              )}
+
             </div>
           </div>
         </div>
