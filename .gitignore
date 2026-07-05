@@ -56,3 +56,6 @@ next-env.d.ts
 /scratch/
 /.tmp/
 /downloads/
+
+# Skills/agents locales de la máquina de desarrollo (no van al repo)
+.agents/
