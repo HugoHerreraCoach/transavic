@@ -92,7 +92,8 @@ export default function GuiaModulo({ modulo }: { modulo: string }) {
             ¡Entendido, continuar!
           </button>
           <p className="mt-2 text-[11px] text-gray-400 text-center">
-            Guía temporal de la fase de prueba — se quitará cuando el módulo quede aprobado.
+            &quot;Beta&quot; = módulo nuevo en fase de prueba, pero <strong className="text-gray-500">todo lo que registras se guarda de verdad</strong>.
+            Esta guía es temporal y se quitará cuando el módulo quede aprobado.
           </p>
         </div>
       )}
