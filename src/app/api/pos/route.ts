@@ -100,7 +100,7 @@ export async function POST(req: NextRequest) {
       sql`
         INSERT INTO pedidos (
           id, cliente, cliente_id, fecha_pedido, detalle, detalle_final, estado,
-          empresa, lat, lng, asesor_id, entregado_por, origen
+          empresa, asesor_id, entregado_por, origen
         )
         VALUES (
           ${pedido_id},
@@ -111,7 +111,6 @@ export async function POST(req: NextRequest) {
           ${detalleDerivado},
           'Entregado',
           ${empresa},
-          NULL, NULL,
           ${clientAsesorId},
           ${usuario_nombre},
           'pos_planta'
