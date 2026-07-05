@@ -135,7 +135,7 @@ export default function SearchableSelect({
           </div>
 
           {/* Options List */}
-          <div className="overflow-y-auto max-h-48 divide-y divide-gray-50">
+          <div className="overflow-y-auto max-h-48 divide-y divide-gray-50 scrollbar-visible">
             {filteredOptions.length > 0 ? (
               filteredOptions.map((opt) => (
                 <button

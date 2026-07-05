@@ -235,13 +235,21 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
 
   const total = cart.reduce((acc, item) => acc + (item.cantidad * item.precioUnitario), 0);
 
+  // Tras cada venta se vuelve al caso normal: Venta al Paso + Contado (decisión
+  // de Hugo, 5 jul 2026 — evita anotarle por descuido la venta al cliente anterior).
+  const resetVenta = () => {
+    setCart([]);
+    setNotasGenerales("");
+    setSelectedClienteId("");
+    setTipoPago("Contado");
+  };
+
   // Encola la venta en la cola offline compartida y limpia el carrito
   const guardarVentaPendiente = (payload: Record<string, unknown>) => {
     try {
       enqueueAction({ type: "pos-venta", payload });
       mostrarToast("Sin conexión: venta guardada para reintentar", "info");
-      setCart([]);
-      setNotasGenerales("");
+      resetVenta();
     } catch {
       // Cuota de localStorage excedida
       mostrarToast("No hay espacio para guardar la venta offline", "error");
@@ -285,8 +293,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
 
       if (res.ok) {
         mostrarToast("Venta registrada exitosamente", "exito");
-        setCart([]);
-        setNotasGenerales("");
+        resetVenta();
       } else {
         const error = await res.json().catch(() => null);
         mostrarToast(error?.error || "Error al procesar la venta", "error");
@@ -444,7 +451,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             </div>
           </div>
         </div>
-        <div className="p-4 flex-1 overflow-y-auto">
+        <div className="p-4 flex-1 overflow-y-auto scrollbar-visible">
           {/* Favoritos: siempre visibles, aunque haya búsqueda o filtro activo */}
           <div className="mb-6">
             <h3 className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -516,7 +523,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
           )}
         </div>
         
-        <div className="flex-1 min-h-[160px] overflow-y-auto p-4 space-y-3">
+        <div className="flex-1 min-h-[160px] overflow-y-auto p-4 space-y-3 scrollbar-visible">
           {cart.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-gray-400">
               <FiShoppingCart size={48} className="mb-4 opacity-50" />

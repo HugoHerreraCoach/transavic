@@ -205,3 +205,27 @@ summary {
 .medir-impresion .formato-ticket .grid {
   display: block;
 }
+
+/* === Barra de scroll SIEMPRE visible cuando hay contenido oculto ===
+   En Mac/celular la barra nativa se esconde y el usuario no sabe que hay más
+   elementos abajo (pedido de Hugo, 5 jul 2026). Al estilizar la barra en
+   WebKit, Chrome/Safari la pintan permanente mientras haya overflow. */
+.scrollbar-visible {
+  scrollbar-width: thin;               /* Firefox */
+  scrollbar-color: #cbd5e1 #f1f5f9;    /* thumb / track */
+}
+.scrollbar-visible::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-visible::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 8px;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 8px;
+}
+.scrollbar-visible::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
