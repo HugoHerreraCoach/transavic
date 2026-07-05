@@ -154,10 +154,14 @@ export async function POST(req: Request) {
         `,
         // El costo real de la última compra pasa a ser el costo del catálogo
         // (rentabilidad deja de depender de un precio_compra desactualizado).
-        sql`
-          UPDATE productos SET precio_compra = ${item.costo_unitario}
-          WHERE id = ${item.producto_id} AND ${item.costo_unitario} > 0
-        `,
+        // La condición costo>0 va en JS: como parámetro SQL comparado con 0,
+        // Postgres lo infería INTEGER y un costo con decimales rompía TODO el batch.
+        ...(item.costo_unitario > 0
+          ? [sql`
+              UPDATE productos SET precio_compra = ${item.costo_unitario}
+              WHERE id = ${item.producto_id}
+            `]
+          : []),
       ]),
       sql`
         INSERT INTO cuentas_por_pagar (proveedor_id, compra_id, monto_deuda, monto_pagado, estado, fecha_vencimiento)
