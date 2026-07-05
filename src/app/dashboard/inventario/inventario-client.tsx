@@ -34,7 +34,7 @@ const MOTIVOS_AJUSTE = [
 
 const ETIQUETAS_TIPO: Record<string, string> = {
   compra: "Compra",
-  venta_pos: "Venta POS",
+  venta_pos: "Venta Rápida",
   entrega: "Entrega pedido",
   reversion: "Reversión",
   ajuste: "Ajuste",

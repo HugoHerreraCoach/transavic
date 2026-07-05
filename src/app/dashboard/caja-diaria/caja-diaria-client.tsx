@@ -622,7 +622,7 @@ export default function CajaDiariaClient() {
                         <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
                           <FiList size={32} className="opacity-40 animate-pulse text-indigo-400" />
                           <span className="font-semibold text-gray-700 text-xs">No hay transacciones en este turno</span>
-                          <p className="text-[10px] text-gray-400 max-w-xs mx-auto">Los cobros del POS de planta y los gastos registrados aparecerán aquí en tiempo real.</p>
+                          <p className="text-[10px] text-gray-400 max-w-xs mx-auto">Los cobros de Venta Rápida y los gastos registrados aparecerán aquí en tiempo real.</p>
                         </div>
                       </td>
                     </tr>

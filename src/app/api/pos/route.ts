@@ -38,7 +38,7 @@ const PosSaleSchema = z.object({
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user || (session.user.role !== "admin" && session.user.role !== "produccion")) {
-    return NextResponse.json({ error: "No autorizado para Venta POS" }, { status: 403 });
+    return NextResponse.json({ error: "No autorizado para Venta Rápida" }, { status: 403 });
   }
 
   try {
@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
           RETURNING id
         )
         INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id)
-        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta POS - Pedido ' || ${pedido_id}, ${pedido_id}
+        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta Rápida - Pedido ' || ${pedido_id}, ${pedido_id}
         FROM update_cuenta
       `);
     } else {
@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
 
     await sql.transaction(queries);
 
-    return NextResponse.json({ message: "Venta POS registrada", pedido_id }, { status: 201 });
+    return NextResponse.json({ message: "Venta Rápida registrada", pedido_id }, { status: 201 });
   } catch (error) {
     console.error("Error al procesar Venta POS:", error);
     return NextResponse.json({ error: "Error de servidor" }, { status: 500 });

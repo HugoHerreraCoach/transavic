@@ -67,7 +67,7 @@ const navItems: NavItem[] = [
   
   // ── VENTAS & CRM ──
   { href: "/dashboard/nuevo-pedido", label: "Nuevo Pedido", icon: <FiPlus className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"], isPrimary: true },
-  { href: "/dashboard/pos-planta", label: "POS Venta Rápida", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isPrimary: true, isBeta: true },
+  { href: "/dashboard/pos-planta", label: "Venta Rápida", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isPrimary: true, isBeta: true },
   { href: "/dashboard", label: "Lista de Pedidos", icon: <FiList className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/clientes", label: "Clientes", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor", "produccion"] },
   { href: "/dashboard/crm-leads", label: "CRM Leads", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"], isBeta: true },

@@ -38,7 +38,7 @@ export default async function PosPlantaPage() {
   return (
     <main className="p-4 md:p-6 w-full max-w-7xl mx-auto flex flex-col h-[calc(100vh-88px)] lg:h-[calc(100vh-24px)] overflow-hidden">
       <div className="flex-shrink-0 mb-4">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Punto de Venta - Producción</h1>
+        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Venta Rápida — Planta</h1>
       </div>
       <PosClient productosInit={productos} />
     </main>

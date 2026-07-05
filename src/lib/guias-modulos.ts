@@ -35,7 +35,7 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
     ],
   },
   "pos-planta": {
-    nombre: "POS Venta Rápida",
+    nombre: "Venta Rápida",
     pasos: [
       { titulo: "Toca los productos para armar la venta", detalle: "marca con ★ tus más vendidos y quedan arriba" },
       { titulo: "Ajusta cantidad y precio en el carrito" },

@@ -193,7 +193,7 @@ export default function ConsolidadoClient() {
               </span>
             </div>
             <div className="bg-orange-50/40 p-4 rounded-2xl border border-orange-100/30">
-              <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider block">POS Planta (Mostrador)</span>
+              <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider block">Venta Rápida (Mostrador)</span>
               <span className="text-lg font-black text-orange-600 mt-1 block">
                 {formatSoles(data?.ventasHoy.ventas_pos || 0)}
               </span>
