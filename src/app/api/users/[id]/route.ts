@@ -18,6 +18,9 @@ const UpdateUserSchema = z.object({
   vehiculo_placa: z.string().trim().optional().nullable(),
   chofer_nombres: z.string().trim().optional().nullable(),
   chofer_apellidos: z.string().trim().optional().nullable(),
+  activo_rotacion: z.boolean().optional(),
+  orden_rotacion: z.number().int().optional(),
+  leads_recibidos_hoy: z.number().int().optional(),
 });
 
 /**
@@ -47,7 +50,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos } = parsedData.data;
+    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
     
     if (
       !name && 
@@ -57,7 +60,10 @@ export async function PATCH(request: NextRequest) {
       chofer_licencia === undefined && 
       vehiculo_placa === undefined &&
       chofer_nombres === undefined &&
-      chofer_apellidos === undefined
+      chofer_apellidos === undefined &&
+      activo_rotacion === undefined &&
+      orden_rotacion === undefined &&
+      leads_recibidos_hoy === undefined
     ) {
       return NextResponse.json({ error: "No se proporcionaron campos para actualizar." }, { status: 400 });
     }
@@ -69,7 +75,7 @@ export async function PATCH(request: NextRequest) {
     }
     const sql = neon(connectionString);
 
-    const updates: Record<string, string | null> = {};
+    const updates: Record<string, string | number | boolean | null> = {};
     if (name) updates.name = name;
     if (role) updates.role = role;
     if (password) {
@@ -80,12 +86,15 @@ export async function PATCH(request: NextRequest) {
     if (vehiculo_placa !== undefined) updates.vehiculo_placa = vehiculo_placa;
     if (chofer_nombres !== undefined) updates.chofer_nombres = chofer_nombres;
     if (chofer_apellidos !== undefined) updates.chofer_apellidos = chofer_apellidos;
+    if (activo_rotacion !== undefined) updates.activo_rotacion = activo_rotacion;
+    if (orden_rotacion !== undefined) updates.orden_rotacion = orden_rotacion;
+    if (leads_recibidos_hoy !== undefined) updates.leads_recibidos_hoy = leads_recibidos_hoy;
 
     const setClauses = Object.keys(updates).map((key, i) => `"${key}" = $${i + 1}`).join(', ');
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy`,
       [...values, id]
     );
 

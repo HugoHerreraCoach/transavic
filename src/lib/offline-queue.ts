@@ -4,9 +4,9 @@
 export interface QueuedAction {
   id: string;
   timestamp: number;
-  type: "entregar" | "fallido" | "iniciar-viaje" | "subir-foto";
-  pedidoId: string;
-  expectedEstado: string; // Estado esperado al momento de encolar (para detección de conflictos)
+  type: "entregar" | "fallido" | "iniciar-viaje" | "subir-foto" | "pos-venta";
+  pedidoId?: string; // Opcional porque pos-venta no tiene pedidoId aún
+  expectedEstado?: string;
   payload: Record<string, unknown>;
   retries: number;
 }
@@ -110,6 +110,11 @@ export async function syncQueue(): Promise<SyncResult> {
             method = "POST";
             body = action.payload;
             break;
+          case "pos-venta":
+            url = `/api/pos`;
+            method = "POST";
+            body = action.payload;
+            break;
           default:
             removeAction(action.id);
             continue;
@@ -128,7 +133,9 @@ export async function syncQueue(): Promise<SyncResult> {
       } else if (res.status === 400 || res.status === 409) {
         // Conflict or validation error — discard the action
         removeAction(action.id);
-        result.conflicts.push(action.pedidoId);
+        if (action.pedidoId) {
+          result.conflicts.push(action.pedidoId);
+        }
       } else {
         // Server error — retry later
         action.retries++;

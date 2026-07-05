@@ -9,6 +9,7 @@ export type SelectedItem = {
   nombre: string;
   cantidad: number;
   unidad: string;
+  notas?: string;
 };
 
 // ── Inline SVG Icons ──
@@ -74,7 +75,13 @@ export default function ProductSelector({ onChange, initialItems, empresa }: Pro
 
   useEffect(() => {
     const detalleText = items
-      .map(item => `${item.cantidad} ${item.unidad} - ${item.nombre}`)
+      .map(item => {
+        let text = `${item.cantidad} ${item.unidad} - ${item.nombre}`;
+        if (item.notas && item.notas.trim() !== '') {
+          text += ` (${item.notas.trim()})`;
+        }
+        return text;
+      })
       .join('\n');
     onChange(items, detalleText);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,6 +129,10 @@ export default function ProductSelector({ onChange, initialItems, empresa }: Pro
 
   const setUnit = (productoId: string, unidad: string) => {
     setItems(prev => prev.map(i => i.productoId === productoId ? { ...i, unidad } : i));
+  };
+
+  const setNota = (productoId: string, notas: string) => {
+    setItems(prev => prev.map(i => i.productoId === productoId ? { ...i, notas } : i));
   };
 
   const removeItem = (productoId: string) => {
@@ -274,6 +285,22 @@ export default function ProductSelector({ onChange, initialItems, empresa }: Pro
                   onMouseOver={e => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.backgroundColor = '#fef2f2'; }}
                   onMouseOut={e => { e.currentTarget.style.color = '#d1d5db'; e.currentTarget.style.backgroundColor = 'transparent'; }}
                   ><IconX /></button>
+                  {/* Row 2: Notas (if selected) */}
+                  <div style={{ width: '100%', marginTop: 4 }}>
+                    <input
+                      type="text"
+                      placeholder="Nota de prep. (Ej: deshuesado, en mitades...)"
+                      value={item.notas || ''}
+                      onChange={e => setNota(item.productoId, e.target.value)}
+                      style={{
+                        width: '100%', padding: '6px 8px', fontSize: 12, border: '1px solid #e5e7eb',
+                        borderRadius: 6, backgroundColor: '#f9fafb', color: '#374151', outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                      onFocus={e => { e.currentTarget.style.borderColor = focusBorder; e.currentTarget.style.backgroundColor = 'white'; }}
+                      onBlur={e => { e.currentTarget.style.borderColor = '#e5e7eb'; e.currentTarget.style.backgroundColor = '#f9fafb'; }}
+                    />
+                  </div>
                 </div>
               );
             })}

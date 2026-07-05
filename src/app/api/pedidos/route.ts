@@ -30,6 +30,7 @@ const PedidoSchema = z.object({
     nombre: z.string(),
     cantidad: z.number().positive(),
     unidad: z.string(),
+    notas: z.string().optional().nullable(),
   })).optional(),
 });
 
@@ -137,14 +138,16 @@ export async function POST(request: Request) {
         const precio_unitario = productoRow[0]?.precio_venta
           ? Number(productoRow[0].precio_venta)
           : null;
-        const subtotal =
-          precio_unitario !== null
-            ? Number((precio_unitario * item.cantidad).toFixed(2))
-            : null;
+        
+        // Se permite precio nulo o 0 si el producto es un regalo o no tiene precio en catálogo.
+        // La responsabilidad recae en la asesora de revisar sus metas, o en Producción de pesar y cobrar.
+        const subtotal = precio_unitario !== null 
+          ? Number((precio_unitario * item.cantidad).toFixed(2))
+          : null;
 
         await sql`
-          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal)
-          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precio_unitario}, ${subtotal})
+          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal, notas)
+          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precio_unitario}, ${subtotal}, ${item.notas || null})
         `;
       }
     } else if (insertedPedido[0]?.id && detalle) {

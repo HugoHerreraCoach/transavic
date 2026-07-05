@@ -25,6 +25,7 @@ export type Pedido = {
   fecha_pedido: string;
   detalle_final: string | null;
   created_at: Date;
+  origen?: string | null;
   latitude: number | null;
   longitude: number | null;
   // --- Campos de despacho ---
@@ -60,6 +61,9 @@ export type User = {
   vehiculo_placa?: string | null;
   chofer_nombres?: string | null;
   chofer_apellidos?: string | null;
+  activo_rotacion?: boolean;
+  orden_rotacion?: number;
+  leads_recibidos_hoy?: number;
 };
 
 export type Producto = {
@@ -107,3 +111,34 @@ export type PedidoRuta = {
   asesor_name: string | null;
   guia_firmada_at?: string | null;
 };
+
+export type LeadEstado = 'Nuevo' | 'Contactado' | 'Calificado' | 'Propuesta' | 'Cerrado' | 'Perdido';
+
+export type Lead = {
+  id: string;
+  nombre: string;
+  telefono: string;
+  negocio: string | null;
+  ciudad: string | null;
+  origen: string;
+  empresa: string;
+  estado: LeadEstado;
+  vendedor_id: string | null;
+  vendedor_name?: string | null;
+  chatbot_activo: boolean;
+  notas: string | null;
+  tags?: string[] | null;
+  unread_count?: number;
+  created_at: Date;
+  updated_at: Date;
+};
+
+export type LeadMensaje = {
+  id: string;
+  lead_id: string;
+  sender: 'cliente' | 'bot' | 'asesora' | string;
+  body: string;
+  type: string;
+  created_at: Date;
+};
+

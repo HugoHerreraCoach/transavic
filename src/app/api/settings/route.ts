@@ -29,14 +29,18 @@ export async function GET() {
   }
 }
 
-const BaseLocationSchema = z.object({
-  key: z.literal("base_location"),
-  value: z.object({
-    lat: z.number().min(-90).max(90),
-    lng: z.number().min(-180).max(180),
-    address: z.string().min(1),
-    name: z.string().min(1),
-  }),
+const SettingSchema = z.object({
+  key: z.enum([
+    "base_location",
+    "despacho_rutas_bloqueadas",
+    "incentivos_config",
+    "crm_quick_replies",
+    "crm_whatsapp_templates",
+    "crm_tags",
+    "crm_welcome_bot",
+    "crm_lead_distribution"
+  ]),
+  value: z.any(),
 });
 
 export async function POST(request: Request) {
@@ -47,7 +51,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const parsed = BaseLocationSchema.safeParse(body);
+    const parsed = SettingSchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 });
@@ -55,6 +59,7 @@ export async function POST(request: Request) {
 
     const { key, value } = parsed.data;
     const sql = neon(process.env.DATABASE_URL!);
+
 
     await sql`
       INSERT INTO settings (key, value, updated_at) 

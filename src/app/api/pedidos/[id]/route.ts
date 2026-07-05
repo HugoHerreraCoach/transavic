@@ -41,6 +41,7 @@ const UpdateSchema = z.object({
         nombre: z.string().min(1),
         cantidad: z.number().positive(),
         unidad: z.string().min(1),
+        notas: z.string().optional().nullable(),
       })
     )
     .optional(),
@@ -308,8 +309,8 @@ export async function PATCH(request: Request) {
             : null;
         await sql`
           INSERT INTO pedido_items
-            (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal)
-          VALUES (${id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precioUnitario}, ${subtotal})
+            (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal, notas)
+          VALUES (${id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precioUnitario}, ${subtotal}, ${item.notas || null})
         `;
       }
     }

@@ -33,17 +33,21 @@ export async function GET(req: NextRequest) {
   }
 
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
+  const empresa = req.nextUrl.searchParams.get("empresa") || undefined;
+  
   // Cache scope: el admin tiene un namespace global, cada asesora el suyo.
-  const cacheScope = role === "admin" ? "admin" : `asesor-${session.user.id}`;
+  let cacheScope = role === "admin" ? "admin" : `asesor-${session.user.id}`;
+  if (empresa) cacheScope += `-${empresa}`;
+  
   if (refresh) await clearInsightsCacheFor(cacheScope);
 
   try {
     if (role === "admin") {
       const [productos, clientes, asesoras, dia] = await Promise.all([
-        cached(`${cacheScope}-productos`, insightProductosEnAlza, refresh),
-        cached(`${cacheScope}-clientes`, insightClientesEnRiesgo, refresh),
-        cached(`${cacheScope}-asesoras`, insightAsesoraTop, refresh),
-        cached(`${cacheScope}-dia`, insightRecomendacionDia, refresh),
+        cached(`${cacheScope}-productos`, () => insightProductosEnAlza(empresa), refresh),
+        cached(`${cacheScope}-clientes`, () => insightClientesEnRiesgo(empresa), refresh),
+        cached(`${cacheScope}-asesoras`, () => insightAsesoraTop(empresa), refresh),
+        cached(`${cacheScope}-dia`, () => insightRecomendacionDia(empresa), refresh),
       ]);
       return NextResponse.json({
         role: "admin",

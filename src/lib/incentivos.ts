@@ -1,14 +1,14 @@
 // src/lib/incentivos.ts
 // Sistema de incentivos: configuración (en tabla settings, JSONB) + cálculos de
-// meta de equipo semanal y ranking mensual. Desde jun 2026 las cifras de venta
-// salen de lo FACTURADO (vista `ventas_facturadas` — comprobantes emitidos, NC
-// restando), no de pedidos/pedido_items (que daban S/0 por falta de precios).
+// meta de equipo semanal y ranking mensual. Desde jul 2026 las cifras de venta
+// salen de PEDIDOS (monto de pedido_items por fecha de registro, sin POS) — la
+// regla y sus variantes viven en lib/ventas-metricas.ts (única fuente, la misma
+// que usa lib/metas.ts para que todas las pantallas midan igual).
 import { neon } from "@neondatabase/serverless";
 import { ventasMesActual } from "@/lib/metas";
+import { contarPedidosAsesora, ventasEquipo } from "@/lib/ventas-metricas";
 
-// Cómo se mide un incentivo: por facturación (S/) o por N° de comprobantes de venta
-// (facturas + boletas emitidas). El valor "pedidos" se mantiene por compatibilidad
-// con la config guardada, pero hoy cuenta comprobantes, no pedidos.
+// Cómo se mide un incentivo: por monto vendido (S/) o por N° de pedidos.
 export type Criterio = "monto" | "pedidos";
 export type CriterioRanking = Criterio; // alias por compatibilidad
 
@@ -104,33 +104,23 @@ function lunesISO(): string {
   ).padStart(2, "0")}`;
 }
 
+/** Hoy en formato YYYY-MM-DD (fecha local del server, igual que lunesISO). */
+function hoyISO(): string {
+  const x = new Date();
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(
+    x.getDate()
+  ).padStart(2, "0")}`;
+}
+
 /**
- * Avance del equipo en la semana actual (lun→hoy), medido por lo FACTURADO (fecha de
- * emisión del comprobante, zona Lima — no por pedido ni por entrega). Según `criterio`:
- * monto facturado (S/, con IGV, NC restan) o N° de comprobantes de venta de TODO el
- * equipo. Solo cuenta comprobantes atribuibles a una asesora (`asesora_id IS NOT NULL`)
- * para que el total del equipo cuadre con la suma del ranking. Fuente: vista
- * `ventas_facturadas`.
+ * Avance del equipo en la semana actual (lun→hoy), medido por PEDIDOS registrados
+ * por las asesoras (variante "vigentes": cuenta salvo Fallido, sin POS). Según
+ * `criterio`: monto vendido (S/) o N° de pedidos de TODO el equipo. Solo pedidos
+ * de usuarias con rol asesor, para que el total cuadre con la suma del ranking.
+ * Fuente única: lib/ventas-metricas.ts.
  */
 export async function getVendidoEquipoSemana(criterio: Criterio = "monto"): Promise<number> {
-  const sql = neon(process.env.DATABASE_URL!);
-  const desde = lunesISO();
-  if (criterio === "pedidos") {
-    const r = (await sql`
-      SELECT COALESCE(SUM(es_venta), 0)::int AS total
-      FROM ventas_facturadas
-      WHERE asesora_id IS NOT NULL
-        AND fecha BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
-    `) as Array<{ total: number }>;
-    return Number(r[0]?.total ?? 0);
-  }
-  const r = (await sql`
-    SELECT COALESCE(SUM(monto_neto), 0)::numeric AS total
-    FROM ventas_facturadas
-    WHERE asesora_id IS NOT NULL
-      AND fecha BETWEEN ${desde}::date AND (NOW() AT TIME ZONE 'America/Lima')::date
-  `) as Array<{ total: string | number }>;
-  return Number(r[0]?.total ?? 0);
+  return ventasEquipo(lunesISO(), hoyISO(), "vigentes", criterio);
 }
 
 export interface RankingRow {
@@ -140,29 +130,27 @@ export interface RankingRow {
   puesto: number;
 }
 
-/** Ranking mensual de asesoras según el criterio configurado, medido por lo
- * FACTURADO en el mes (comprobantes emitidos, por fecha de emisión; monto con IGV y
- * NC restando, o N° de comprobantes de venta). Fuente: vista `ventas_facturadas`. */
+/** Ranking mensual de asesoras según el criterio configurado, medido por PEDIDOS
+ * del mes actual (variante "entregadas": solo pedidos ya Entregados — la misma
+ * cifra confirmada que ven las metas individuales). `monto` = S/ vendido,
+ * `pedidos` = N° de pedidos. Fuente única: lib/ventas-metricas.ts. */
 export async function getRankingMensual(criterio: CriterioRanking): Promise<RankingRow[]> {
   const sql = neon(process.env.DATABASE_URL!);
   const asesores = (await sql`
     SELECT id, name FROM users WHERE role = 'asesor' ORDER BY name
   `) as Array<{ id: string; name: string }>;
 
+  const now = new Date();
+  const mesIniIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+  const hoyIso = hoyISO();
+
   const filas: Array<Omit<RankingRow, "puesto">> = [];
   for (const a of asesores) {
     let valor = 0;
     if (criterio === "pedidos") {
-      const r = (await sql`
-        SELECT COALESCE(SUM(es_venta), 0)::int AS n
-        FROM ventas_facturadas
-        WHERE asesora_id = ${a.id}
-          AND DATE_TRUNC('month', fecha)
-              = DATE_TRUNC('month', (NOW() AT TIME ZONE 'America/Lima')::date)
-      `) as Array<{ n: number }>;
-      valor = Number(r[0]?.n ?? 0);
+      valor = await contarPedidosAsesora(a.id, mesIniIso, hoyIso, "entregadas");
     } else {
-      valor = await ventasMesActual(a.id); // "monto" facturado (vista)
+      valor = await ventasMesActual(a.id); // "monto" vendido (misma regla que Mis Metas)
     }
     filas.push({ asesorId: a.id, nombre: (a.name || "").trim(), valor });
   }

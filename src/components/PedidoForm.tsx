@@ -828,10 +828,13 @@ export default function PedidoForm({
                   }}
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Detalle del Pedido (auto-generado o manual)</label>
-                <textarea name="detalle" value={formDatos.detalle} placeholder="Detalle del Pedido (Ej: 2 pollos enteros...)" rows={4} onChange={handleChange} className={`w-full p-3 border rounded-md text-gray-900 font-medium placeholder:text-gray-400 placeholder:font-normal disabled:bg-gray-200 ${errors.detalle ? 'border-red-500' : 'border-gray-300'}`}></textarea>
-                {errors.detalle && <p className="text-red-500 text-sm mt-1">{errors.detalle}</p>}
+              {/* Detalle del Pedido (Solo lectura, auto-generado desde los ítems) */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Resumen del Pedido (Para Producción)</label>
+                <div className={`w-full p-3 border rounded-md bg-gray-50 text-gray-700 whitespace-pre-wrap min-h-[4rem] ${errors.detalle ? 'border-red-500' : 'border-gray-200'}`}>
+                  {formDatos.detalle || <span className="text-gray-400 italic">Selecciona productos arriba para generar el resumen...</span>}
+                </div>
+                {errors.detalle && <p className="text-red-500 text-xs mt-1">{errors.detalle}</p>}
               </div>
               <TimeRangePicker
                 value={formDatos.horaEntrega}

@@ -154,6 +154,7 @@ export async function obtenerReporteVentas(
      ${MONTO_POR_PEDIDO}
      JOIN users u ON p.asesor_id = u.id
      WHERE p.fecha_pedido >= $1::date AND p.fecha_pedido <= $2::date
+       AND (p.origen IS NULL OR p.origen != 'pos_planta')
      GROUP BY u.id, u.name
      ORDER BY facturado DESC, total_pedidos DESC`,
     [desde, hasta]

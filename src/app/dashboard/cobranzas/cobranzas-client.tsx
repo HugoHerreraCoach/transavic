@@ -25,6 +25,7 @@ import {
   FiUser,
 } from "react-icons/fi";
 import imageCompression from "browser-image-compression";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 
 interface Factura {
   id: string;
@@ -118,6 +119,10 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtroEstado]);
+
+  // Refresco automático cada 60 s, solo con la pestaña visible (immediate: false
+  // porque el fetch inicial y el cambio de filtro ya los cubre el useEffect de arriba).
+  usePollingVisible(fetchData, 60_000, { immediate: false });
 
   // Stats agregadas
   const pendientes = useMemo(

@@ -28,7 +28,9 @@ export type TipoNotificacion =
   | "pedido_llegado"
   // Motorizado con pedidos activos que dejó de transmitir su ubicación
   // (revocó el permiso, GPS simulado o sin señal sostenida). Avisa al admin.
-  | "repartidor_oscuro";
+  | "repartidor_oscuro"
+  // CRM y Chatbot: Handoff de IA a asesora
+  | "lead_handoff";
 
 export interface CrearNotificacionParams {
   userId: string;

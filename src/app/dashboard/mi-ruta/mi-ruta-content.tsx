@@ -1243,7 +1243,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
 
   const refreshQueueState = useCallback(() => {
     setQueueCount(getQueueCount());
-    const ids = new Set(getQueue().map((a) => a.pedidoId));
+    const ids = new Set(getQueue().map((a) => a.pedidoId).filter((id): id is string => id !== undefined));
     setQueuedPedidoIds(ids);
   }, []);
 

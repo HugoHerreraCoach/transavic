@@ -47,7 +47,7 @@ export async function GET(request: Request) {
     // ── Autocomplete (búsqueda rápida para nuevo-pedido) ──
     if (q && q.trim()) {
       let clientes;
-      if (userRole === "admin") {
+      if (userRole === "admin" || userRole === "produccion") {
         clientes = await sql`
           SELECT c.*, u.name as asesor_name
           FROM clientes c
@@ -91,7 +91,7 @@ export async function GET(request: Request) {
     // Condiciones base: scoping por rol + búsqueda de texto
     const baseC: string[] = [];
     const baseP: unknown[] = [];
-    if (userRole !== "admin") {
+    if (userRole !== "admin" && userRole !== "produccion") {
       baseC.push(`c.asesor_id = $${baseP.length + 1}`);
       baseP.push(userId);
     }

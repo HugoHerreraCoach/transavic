@@ -17,6 +17,9 @@ const CreateUserSchema = z.object({
   vehiculo_placa: z.string().trim().optional().nullable(),
   chofer_nombres: z.string().trim().optional().nullable(),
   chofer_apellidos: z.string().trim().optional().nullable(),
+  activo_rotacion: z.boolean().default(true),
+  orden_rotacion: z.number().int().default(1),
+  leads_recibidos_hoy: z.number().int().default(0),
 });
 
 // Función para obtener usuarios
@@ -41,7 +44,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
       const users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users WHERE role = ${roleFilter} ORDER BY name ASC
       `;
       return NextResponse.json(users);
     }
@@ -50,11 +53,11 @@ export async function GET(request: Request) {
     let users;
     if (roleFilter) {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users WHERE role = ${roleFilter} ORDER BY name ASC
       `;
     } else {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos FROM users ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users ORDER BY name ASC
       `;
     }
 
@@ -83,7 +86,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
 
-    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos } = parsedData.data;
+    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
 
     const connectionString = process.env.DATABASE_URL!;
     const sql = neon(connectionString);
@@ -97,9 +100,9 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [newUser] = await sql`
-      INSERT INTO users (name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos)
-      VALUES (${name}, ${hashedPassword}, ${role}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null})
-      RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos
+      INSERT INTO users (name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy)
+      VALUES (${name}, ${hashedPassword}, ${role}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null}, ${activo_rotacion}, ${orden_rotacion}, ${leads_recibidos_hoy})
+      RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy
     `;
 
     return NextResponse.json(newUser, { status: 201 });

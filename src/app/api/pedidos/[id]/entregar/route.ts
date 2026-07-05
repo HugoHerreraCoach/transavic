@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { crearNotificacion } from "@/lib/notificaciones";
 import { calcularMetaDiaria, ventasHoy } from "@/lib/metas";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
+import { descontarInventarioPedido, reponerInventarioPedido } from "@/lib/inventario";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,11 @@ export async function POST(request: Request) {
     // para cobrar hay que emitir la boleta/factura (decisión de Antonio, jun 2026).
     // Acá queda únicamente la auto-emisión SUNAT (apagada por defecto).
     if (resultado === "Entregado") {
+      // Descuento de inventario al ENTREGAR (política 5 jul 2026). Idempotente:
+      // la offline-queue puede repetir este POST y no descuenta dos veces.
+      // No bloqueante: la entrega jamás falla por el inventario.
+      await descontarInventarioPedido(sql, id, session.user.id ?? null);
+
       // AUTO-EMISIÓN DE COMPROBANTE SUNAT (configurable, no bloqueante).
       // Se activa con AUTO_EMITIR_COMPROBANTE=true en .env. Por defecto OFF para
       // que Antonio decida cuándo facturar cada pedido. Si lo activa:
@@ -322,6 +328,10 @@ export async function PATCH(request: Request) {
           notificado_llegada = FALSE
       WHERE id = ${id}
     `;
+
+    // Reponer el inventario descontado por la entrega (si la hubo). Idempotente
+    // por el mismo guard `inventario_descontado`; no bloqueante.
+    await reponerInventarioPedido(sql, id, session.user.id ?? null);
 
     return NextResponse.json({
       message: "Entrega revertida. El pedido vuelve a Asignado.",

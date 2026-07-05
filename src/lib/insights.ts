@@ -24,7 +24,7 @@ interface ProductoCambio {
   porcentaje_cambio: number;
 }
 
-async function queryProductosCambio(): Promise<ProductoCambio[]> {
+async function queryProductosCambio(empresa?: string): Promise<ProductoCambio[]> {
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
     WITH ventas_mensuales AS (
@@ -36,6 +36,7 @@ async function queryProductosCambio(): Promise<ProductoCambio[]> {
       JOIN pedidos p ON p.id = pi.pedido_id
       WHERE p.estado = 'Entregado'
         AND p.fecha_pedido >= ((NOW() AT TIME ZONE 'America/Lima')::date - INTERVAL '2 months')
+        AND (${empresa || null}::text IS NULL OR p.empresa = ${empresa || null}::text)
       GROUP BY pi.producto_nombre, mes
     ),
     pivoteado AS (
@@ -87,7 +88,7 @@ interface ClienteRiesgo {
   pedidos_total: number;
 }
 
-async function queryClientesEnRiesgo(): Promise<ClienteRiesgo[]> {
+async function queryClientesEnRiesgo(empresa?: string): Promise<ClienteRiesgo[]> {
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
     WITH cliente_stats AS (
@@ -103,6 +104,8 @@ async function queryClientesEnRiesgo(): Promise<ClienteRiesgo[]> {
       FROM pedidos p
       WHERE p.estado = 'Entregado'
         AND p.cliente_id IS NOT NULL
+        AND (${empresa || null}::text IS NULL OR p.empresa = ${empresa || null}::text)
+        AND (p.origen IS NULL OR p.origen != 'pos_planta')
       GROUP BY p.cliente_id, p.cliente
       HAVING COUNT(*) >= 3  -- clientes recurrentes (3+ pedidos históricos)
     )
@@ -144,7 +147,7 @@ interface AsesoraStats {
   ticket_promedio: number;
 }
 
-async function queryAsesoraTopMes(): Promise<AsesoraStats[]> {
+async function queryAsesoraTopMes(empresa?: string): Promise<AsesoraStats[]> {
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
     SELECT
@@ -165,7 +168,9 @@ async function queryAsesoraTopMes(): Promise<AsesoraStats[]> {
     LEFT JOIN pedidos p ON p.asesor_id = u.id
       AND p.estado = 'Entregado'
       AND p.fecha_pedido >= DATE_TRUNC('month', (NOW() AT TIME ZONE 'America/Lima'))::date
-    WHERE u.role = 'asesor'
+      AND (${empresa || null}::text IS NULL OR p.empresa = ${empresa || null}::text)
+      AND (p.origen IS NULL OR p.origen != 'pos_planta')
+    WHERE u.role IN ('asesor', 'admin')
     GROUP BY u.id, u.name
     ORDER BY total_ventas_mes DESC
   `) as Array<{
@@ -194,7 +199,7 @@ interface ResumenDia {
   ticket_promedio: number;
 }
 
-async function queryResumenAyer(): Promise<ResumenDia> {
+async function queryResumenAyer(empresa?: string): Promise<ResumenDia> {
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
     SELECT
@@ -210,6 +215,7 @@ async function queryResumenAyer(): Promise<ResumenDia> {
       ), 0) AS ventas_total
     FROM pedidos
     WHERE fecha_pedido = ((NOW() AT TIME ZONE 'America/Lima')::date - INTERVAL '1 day')
+      AND (${empresa || null}::text IS NULL OR empresa = ${empresa || null}::text)
   `) as Array<{
     fecha: string;
     pedidos_total: string | number;
@@ -243,8 +249,8 @@ export interface InsightProducto {
   productosDown: ProductoCambio[];
 }
 
-export async function insightProductosEnAlza(): Promise<InsightProducto> {
-  const cambios = await queryProductosCambio();
+export async function insightProductosEnAlza(empresa?: string): Promise<InsightProducto> {
+  const cambios = await queryProductosCambio(empresa);
   const productosUp = cambios.filter((c) => c.diferencia > 0).slice(0, 4);
   const productosDown = cambios.filter((c) => c.diferencia < 0).slice(0, 3);
 
@@ -284,8 +290,8 @@ export interface InsightClientes {
   clientes: ClienteRiesgo[];
 }
 
-export async function insightClientesEnRiesgo(): Promise<InsightClientes> {
-  const clientes = await queryClientesEnRiesgo();
+export async function insightClientesEnRiesgo(empresa?: string): Promise<InsightClientes> {
+  const clientes = await queryClientesEnRiesgo(empresa);
 
   if (clientes.length === 0) {
     return {
@@ -326,8 +332,8 @@ export interface InsightAsesora {
   asesoras: AsesoraStats[];
 }
 
-export async function insightAsesoraTop(): Promise<InsightAsesora> {
-  const asesoras = await queryAsesoraTopMes();
+export async function insightAsesoraTop(empresa?: string): Promise<InsightAsesora> {
+  const asesoras = await queryAsesoraTopMes(empresa);
   if (asesoras.length === 0 || asesoras[0].total_ventas_mes === 0) {
     return {
       texto: "Todavía no hay ventas registradas este mes. Las recomendaciones aparecen apenas las asesoras entreguen sus primeros pedidos.",
@@ -358,8 +364,8 @@ export interface InsightDia {
   resumen: ResumenDia;
 }
 
-export async function insightRecomendacionDia(): Promise<InsightDia> {
-  const resumen = await queryResumenAyer();
+export async function insightRecomendacionDia(empresa?: string): Promise<InsightDia> {
+  const resumen = await queryResumenAyer(empresa);
   if (resumen.pedidos_total === 0) {
     return {
       texto: "No hubo pedidos entregados ayer. ¿Fue feriado o día libre del equipo? Si fue laboral, vale la pena revisar por qué.",

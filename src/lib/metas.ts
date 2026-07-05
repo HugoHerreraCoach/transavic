@@ -2,12 +2,12 @@
 // Cálculo de meta diaria/mensual por asesora.
 // Fórmula: meta_mensual = ventas_mes_anterior × 1.15 (override manual posible en tabla metas_asesoras)
 // meta_diaria = meta_mensual / días_hábiles_del_mes (lunes a sábado)
-// IMPORTANTE (jun 2026): "ventas" = lo que la asesora FACTURÓ (facturas + boletas
-// aceptadas/observadas, menos Notas de Crédito), por fecha de emisión y zona Lima.
-// Antes se medía por pedidos registrados, pero como la mayoría de productos no tiene
-// precio cargado, los pedidos daban S/0. La atribución a la asesora y el signo de las
-// NC viven en la vista `ventas_facturadas` (scripts/migrate-ventas-facturadas-view.sql).
+// IMPORTANTE (jul 2026): "ventas" = PEDIDOS de la asesora (monto de pedido_items),
+// por fecha de REGISTRO del pedido y zona Lima, excluyendo el POS de planta.
+// La regla completa y sus dos variantes (entregadas/vigentes) viven en
+// lib/ventas-metricas.ts — ÚNICA fuente; no dupliques la query aquí.
 import { neon } from "@neondatabase/serverless";
+import { sumarVentasAsesora, ventasPorDiaAsesora } from "@/lib/ventas-metricas";
 
 const FACTOR_CRECIMIENTO = 1.15; // +15% sobre mes anterior (decisión Antonio)
 
@@ -21,30 +21,15 @@ export interface MetaResult {
 }
 
 /**
- * Suma del MONTO FACTURADO por la asesora en un rango, medido por la fecha de
- * EMISIÓN del comprobante (`created_at` del comprobante, zona Lima).
- *
- * Decisión de negocio (jun 2026): el desempeño de la asesora se mide por lo que
- * realmente FACTURÓ (facturas 01 + boletas 03 aceptadas/observadas), no por los
- * pedidos registrados — porque la mayoría de productos no tiene precio cargado y
- * los pedidos daban S/0. Se cuenta el monto CON IGV (`monto_total`) y las Notas de
- * Crédito RESTAN. Toda la lógica de atribución (a quién se le cuenta) y del signo
- * de las NC vive en la vista `ventas_facturadas` (ver
- * scripts/migrate-ventas-facturadas-view.sql). Ver CLAUDE.md §"Sistema de Incentivos".
+ * Suma del MONTO VENDIDO por la asesora en un rango (variante "entregadas":
+ * solo pedidos ya Entregados — cifra confirmada). Ver lib/ventas-metricas.ts.
  */
 async function sumarVentasCreadas(
   asesorId: string,
   desdeIso: string,
   hastaIso: string
 ): Promise<number> {
-  const sql = neon(process.env.DATABASE_URL!);
-  const row = (await sql`
-    SELECT COALESCE(SUM(monto_neto), 0)::numeric AS total
-    FROM ventas_facturadas
-    WHERE asesora_id = ${asesorId}
-      AND fecha BETWEEN ${desdeIso}::date AND ${hastaIso}::date
-  `) as Array<{ total: string | number }>;
-  return Number(row[0]?.total ?? 0);
+  return sumarVentasAsesora(asesorId, desdeIso, hastaIso, "entregadas");
 }
 
 /**
@@ -209,21 +194,17 @@ export async function ventasSemana(asesorId: string): Promise<number> {
 export async function rachaDiaria(asesorId: string): Promise<number> {
   const { metaDiaria } = await calcularMetaDiaria(asesorId);
   if (metaDiaria <= 0) return 0;
-  const sql = neon(process.env.DATABASE_URL!);
-  const rows = (await sql`
-    SELECT fecha AS dia,
-           COALESCE(SUM(monto_neto), 0)::numeric AS total
-    FROM ventas_facturadas
-    WHERE asesora_id = ${asesorId}
-      AND fecha >= (NOW() AT TIME ZONE 'America/Lima')::date - INTERVAL '40 days'
-    GROUP BY fecha
-  `) as Array<{ dia: string | Date; total: string | number }>;
-  const porDia = new Map<string, number>(
-    rows.map((r) => [
-      (typeof r.dia === "string" ? r.dia : r.dia.toISOString()).slice(0, 10),
-      Number(r.total),
-    ])
+  // Variante "vigentes": lo registrado cuenta de inmediato (deja de contar solo
+  // si termina Fallido) — la mayoría de pedidos se entrega días después.
+  const hace40 = new Date();
+  hace40.setDate(hace40.getDate() - 40);
+  const rows = await ventasPorDiaAsesora(
+    asesorId,
+    toIsoDate(hace40),
+    toIsoDate(new Date()),
+    "vigentes"
   );
+  const porDia = new Map<string, number>(rows.map((r) => [r.dia, r.monto]));
   let racha = 0;
   const cur = new Date();
   // Si hoy todavía no cumplió, arrancar a contar desde ayer.
@@ -249,8 +230,8 @@ export interface DiaRacha {
   fechaIso: string;
   label: string; // "L" "M" "X" "J" "V" "S"
   nombre: string; // "Lunes" …
-  monto: number; // S/ facturado ese día
-  pedidos: number; // N° de pedidos entregados ese día
+  monto: number; // S/ vendido ese día (pedidos registrados, no fallidos)
+  pedidos: number; // N° de pedidos registrados ese día (no fallidos)
   cumplido: boolean;
   esFuturo: boolean;
   esHoy: boolean;
@@ -287,22 +268,16 @@ export async function getRachaSemanal(
   const finSemana = new Date(lunes);
   finSemana.setDate(lunes.getDate() + (finIdx - 1));
 
-  const sql = neon(process.env.DATABASE_URL!);
-  // Monto facturado y N° de comprobantes de venta por día (vista ventas_facturadas).
-  const rows = (await sql`
-    SELECT fecha AS dia,
-           COALESCE(SUM(monto_neto), 0)::numeric AS monto,
-           COALESCE(SUM(es_venta), 0)::int AS pedidos
-    FROM ventas_facturadas
-    WHERE asesora_id = ${asesorId}
-      AND fecha BETWEEN ${toIsoDate(lunes)}::date AND ${toIsoDate(finSemana)}::date
-    GROUP BY fecha
-  `) as Array<{ dia: string | Date; monto: string | number; pedidos: number }>;
+  // Monto y N° de pedidos por día de registro (variante "vigentes": cuenta lo
+  // registrado salvo que termine Fallido). Fuente única: lib/ventas-metricas.ts.
+  const rows = await ventasPorDiaAsesora(
+    asesorId,
+    toIsoDate(lunes),
+    toIsoDate(finSemana),
+    "vigentes"
+  );
   const porDia = new Map<string, { monto: number; pedidos: number }>(
-    rows.map((r) => [
-      (typeof r.dia === "string" ? r.dia : r.dia.toISOString()).slice(0, 10),
-      { monto: Number(r.monto), pedidos: Number(r.pedidos) },
-    ])
+    rows.map((r) => [r.dia, { monto: r.monto, pedidos: r.pedidos }])
   );
 
   const LABELS = ["L", "M", "X", "J", "V", "S"];
