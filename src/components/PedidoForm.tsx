@@ -440,7 +440,8 @@ export default function PedidoForm({
       }
       if (res.ok) {
         setShowGuardarCliente(false);
-        alert('✅ Cliente guardado como frecuente');
+        setSuccessToast('✅ Cliente guardado como frecuente');
+        setTimeout(() => setSuccessToast(null), 4000);
       } else if (res.status === 409) {
         // Cliente duplicado (RUC/DNI o WhatsApp ya registrados).
         const err = await res.json().catch(() => null);
@@ -449,10 +450,12 @@ export default function PedidoForm({
           // Propio: no insistir — ya existe en su cartera. Marcamos el id para
           // que la oferta de guardar no vuelva a aparecer.
           if (err.cliente_id) setClienteGuardadoId(err.cliente_id);
-          alert('Ya está guardado en tus clientes.');
+          setSuccessToast('Ya está guardado en tus clientes.');
+          setTimeout(() => setSuccessToast(null), 4000);
         } else if (err?.error === 'cliente_duplicado') {
           // De otra asesora: aviso claro y se oculta la oferta de guardar.
-          alert(err?.mensaje || `Cliente ya registrado · Ejecutiva responsable: ${err?.asesora_nombre || 'otra asesora'}.`);
+          setErrorToast(err?.mensaje || `Cliente ya registrado · Ejecutiva responsable: ${err?.asesora_nombre || 'otra asesora'}.`);
+          setTimeout(() => setErrorToast(null), 6000);
           setDupFrecuente({
             match: err?.campo === 'whatsapp' ? 'whatsapp' : 'ruc_dni',
             exacto: true,
@@ -462,13 +465,16 @@ export default function PedidoForm({
             cliente_nombre: null,
           });
         } else {
-          alert('Error al guardar cliente');
+          setErrorToast('Error al guardar cliente');
+          setTimeout(() => setErrorToast(null), 6000);
         }
       } else {
-        alert('Error al guardar cliente');
+        setErrorToast('Error al guardar cliente');
+        setTimeout(() => setErrorToast(null), 6000);
       }
     } catch {
-      alert('Error al guardar cliente');
+      setErrorToast('Error al guardar cliente');
+      setTimeout(() => setErrorToast(null), 6000);
     } finally {
       setGuardandoCliente(false);
     }

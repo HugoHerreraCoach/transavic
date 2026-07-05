@@ -2260,6 +2260,13 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
     referenciaMontoTotal: string | number | null;
   } | null>(null);
   const [showEmitirGuiaDirecta, setShowEmitirGuiaDirecta] = useState(false);
+  // Detalle del mensaje SUNAT (clic en el "⚠ …" bajo el chip de estado): en modal
+  // con texto seleccionable, no en alert() nativo.
+  const [modalMensajeSunat, setModalMensajeSunat] = useState<{
+    serieNumero: string;
+    amigable: string;
+    tecnico: string;
+  } | null>(null);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
   const [modalExcel, setModalExcel] = useState(false);
@@ -2492,7 +2499,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // Reintenta enviar a SUNAT un comprobante en error/rechazado (reusa el mismo
   // correlativo). Las guías (09) tienen su propio endpoint que reusa el MISMO número.
   const reintentarEnvio = async (c: Comprobante) => {
+    // Anti doble-clic: si ya hay un reintento corriendo para esta fila, no disparar otro.
+    if (accionEnProgreso === c.id + "-retry") return;
     setAccionEnProgreso(c.id + "-retry");
+    // Feedback inmediato: el reintento contra SUNAT puede tardar 10-60s.
+    setToast({ tipo: "ok", msg: "Reintentando envío a SUNAT… puede tardar hasta 1 minuto." });
     try {
       const endpoint = c.tipo === "09"
         ? `/api/guias/${c.id}/reintentar`
@@ -3253,11 +3264,11 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                           {msg && (
                             <button
                               onClick={() =>
-                                alert(
-                                  msg.amigable === msg.tecnico
-                                    ? msg.amigable
-                                    : `${msg.amigable}\n\nDetalle técnico: ${msg.tecnico}`
-                                )
+                                setModalMensajeSunat({
+                                  serieNumero: c.serie_numero,
+                                  amigable: msg.amigable,
+                                  tecnico: msg.tecnico,
+                                })
                               }
                               title="Haz clic para ver el detalle completo"
                               className="mt-1 block w-full max-w-[230px] mx-auto text-left text-[10px] leading-snug text-red-600 hover:underline cursor-pointer"
@@ -3561,17 +3572,61 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                         <FiUser className="h-4 w-4 text-indigo-600 flex-shrink-0" /> Cambiar asesora
                       </button>
                     )}
-                    {puedeReintentar(c) && (
-                      <button onClick={() => { setMenuAcciones(null); reintentarEnvio(c); }} className={`${itemCls} text-indigo-700 font-medium`}>
-                        <FiSend className="h-4 w-4 flex-shrink-0" />
-                        {esGuia ? "Reintentar emisión (mismo número)" : "Reintentar envío"}
-                      </button>
-                    )}
+                    {puedeReintentar(c) && (() => {
+                      const reintentando = accionEnProgreso === c.id + "-retry";
+                      return (
+                        <button
+                          onClick={() => { setMenuAcciones(null); reintentarEnvio(c); }}
+                          disabled={reintentando}
+                          className={`${itemCls} text-indigo-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {reintentando ? (
+                            <FiRefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" />
+                          ) : (
+                            <FiSend className="h-4 w-4 flex-shrink-0" />
+                          )}
+                          {reintentando
+                            ? "Reintentando envío…"
+                            : esGuia ? "Reintentar emisión (mismo número)" : "Reintentar envío"}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </>
               );
             })()}
         </div>
+      )}
+
+      {/* Modal: detalle del mensaje SUNAT (texto seleccionable, reemplaza al alert()) */}
+      {modalMensajeSunat && (
+        <ModalShell onClose={() => setModalMensajeSunat(null)}>
+          <div className="px-6 pb-6">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3">
+              <FiAlertTriangle className="text-red-600 flex-shrink-0" />
+              Detalle SUNAT · {modalMensajeSunat.serieNumero}
+            </h3>
+            <p className="text-sm text-gray-700">{modalMensajeSunat.amigable}</p>
+            {modalMensajeSunat.tecnico !== modalMensajeSunat.amigable && (
+              <div className="mt-4">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">
+                  Detalle técnico
+                </p>
+                <pre className="text-xs text-gray-600 bg-gray-100 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap break-words select-text">
+                  {modalMensajeSunat.tecnico}
+                </pre>
+              </div>
+            )}
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={() => setModalMensajeSunat(null)}
+                className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-medium hover:bg-gray-200 transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </ModalShell>
       )}
 
       {/* Modal de envío email */}

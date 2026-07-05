@@ -215,6 +215,10 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
       precioUnitario: Number(prod.precio_venta),
     };
     setCart([newItem, ...cart]);
+    // En pantallas < lg el carrito queda debajo del catálogo: confirmar el agregado con un toast
+    if (!window.matchMedia("(min-width: 1024px)").matches) {
+      mostrarToast(`Agregado: ${prod.nombre}`, "exito");
+    }
   };
 
   const removeFromCart = (cartId: string) => {
@@ -701,6 +705,18 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
           >
             {loading ? "Procesando..." : <><FiCheck className="mr-1.5" size={16} /> Confirmar Cobro</>}
           </button>
+
+          {/* Motivo por el que el botón está deshabilitado (mismas condiciones del disabled) */}
+          {!loading && tipoPago === "Contado" && !selectedCuenta && (
+            <p className="text-[10px] text-amber-700 font-semibold text-center">
+              Selecciona la cuenta de cobro
+            </p>
+          )}
+          {!loading && tipoPago === "Credito" && !selectedClienteId && (
+            <p className="text-[10px] text-amber-700 font-semibold text-center">
+              Para crédito, selecciona un cliente registrado
+            </p>
+          )}
         </div>
       </div>
       </div>

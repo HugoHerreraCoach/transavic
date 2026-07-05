@@ -33,6 +33,7 @@ export default function SearchableSelect({
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   // Cerrar al hacer clic fuera del componente
   useEffect(() => {
@@ -78,6 +79,7 @@ export default function SearchableSelect({
 
       {/* Trigger Button */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setIsOpen(!isOpen)}
         className="flex w-full items-center justify-between rounded-xl border border-gray-300 bg-gray-50 py-2.5 px-3.5 text-left text-xs text-gray-900 shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
@@ -101,6 +103,23 @@ export default function SearchableSelect({
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter NO debe enviar el <form> padre: selecciona la primera opción filtrada.
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (filteredOptions.length > 0) {
+                    onChange(filteredOptions[0].id);
+                    setIsOpen(false);
+                    triggerRef.current?.focus();
+                  }
+                } else if (e.key === "Escape") {
+                  // Escape cierra SOLO el dropdown (no el modal padre) y devuelve el foco al trigger.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsOpen(false);
+                  triggerRef.current?.focus();
+                }
+              }}
               placeholder={searchPlaceholder}
               className="flex-1 bg-transparent border-0 py-1.5 px-2.5 text-xs text-gray-900 focus:outline-none focus:ring-0 placeholder-gray-400"
             />

@@ -5,7 +5,7 @@
 //   - Stats arriba: total pendiente, vencido, pagado este mes.
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import {
   FiDollarSign,
   FiAlertCircle,
@@ -165,6 +165,9 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
 
   // M4 — Modal "Registrar / Editar pago": método + nota + nro operación + capturas.
   const [modalPago, setModalPago] = useState<Factura | null>(null);
+  // Guarda anti-cierre accidental del modal de pago: solo cierra si el mousedown Y el
+  // click cayeron en el overlay (mismo patrón que ModalNotaCredito en comprobantes).
+  const pagoMouseDownInside = useRef(true);
   const [modoEdicion, setModoEdicion] = useState(false);
   const [pagoMetodo, setPagoMetodo] = useState<string>("efectivo");
   const [pagoNota, setPagoNota] = useState("");       // notas generales
@@ -1291,7 +1294,19 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
       {modalPago && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-          onClick={() => setModalPago(null)}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) {
+              pagoMouseDownInside.current = false;
+            } else {
+              pagoMouseDownInside.current = true;
+            }
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !pagoMouseDownInside.current) {
+              setModalPago(null);
+            }
+            pagoMouseDownInside.current = true;
+          }}
         >
           <div
             className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden max-h-[90vh] overflow-y-auto"

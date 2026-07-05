@@ -1,7 +1,7 @@
 // src/app/dashboard/clientes/clientes-client.tsx
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { FiSearch, FiEdit2, FiTrash2, FiSave, FiX, FiPlus, FiUsers, FiPhone, FiMapPin, FiMap, FiClock, FiInfo, FiTruck, FiClipboard, FiChevronUp, FiRepeat, FiUser, FiMoreVertical, FiMessageCircle, FiTag, FiAlertCircle } from 'react-icons/fi';
 import MapInput from '@/components/MapInput';
@@ -85,7 +85,7 @@ interface ClientesClientProps {
 }
 
 // Extracted as a top-level component to prevent remounting on every keystroke
-function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: ClienteForm; setForm: React.Dispatch<React.SetStateAction<ClienteForm>>; asesoras: Asesora[]; userRole: string }) {
+function ClienteFormFields({ form, setForm, asesoras, userRole, autoFocusNombre = false, nombreError = null, nombreRef }: { form: ClienteForm; setForm: React.Dispatch<React.SetStateAction<ClienteForm>>; asesoras: Asesora[]; userRole: string; autoFocusNombre?: boolean; nombreError?: string | null; nombreRef?: React.Ref<HTMLInputElement> }) {
   // Use functional updater to avoid stale closures (critical for MapInput)
   const updateField = (field: string, value: unknown) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -135,7 +135,8 @@ function ClienteFormFields({ form, setForm, asesoras, userRole }: { form: Client
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1">Nombre *</label>
-          <input value={form.nombre ?? ''} onChange={e => updateField('nombre', e.target.value)} className="w-full p-2.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500" placeholder="Nombre del cliente" />
+          <input ref={nombreRef} autoFocus={autoFocusNombre} value={form.nombre ?? ''} onChange={e => updateField('nombre', e.target.value)} aria-invalid={!!nombreError} className={`w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 ${nombreError ? 'border-red-500 bg-red-50' : 'border-gray-300'}`} placeholder="Nombre del cliente" />
+          {nombreError && <p className="text-[11px] text-red-600 mt-1">{nombreError}</p>}
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 mb-1">Razón Social</label>
@@ -243,6 +244,12 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState<ClienteForm>({ distrito: 'La Victoria', tipo_cliente: 'Frecuente', empresa: 'Transavic', asesor_id: userId });
   const [creating, setCreating] = useState(false);
+  // Validación inline del campo Nombre en el modal de crear (reemplaza al alert()).
+  const [createNombreError, setCreateNombreError] = useState<string | null>(null);
+  const nombreCreateRef = useRef<HTMLInputElement>(null);
+  // Mini-modal de confirmación para eliminar cliente (reemplaza al window.confirm()).
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; nombre: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   // Duplicado detectado en vivo mientras se escribe RUC/DNI o WhatsApp en el
   // form de crear. Si es de OTRA asesora, bloquea el guardar (la vía legítima
   // es pedir la transferencia a un admin). Si es propio, solo informa.
@@ -288,6 +295,11 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
   // sobre RUC/DNI y WhatsApp → GET /api/clientes/verificar. Solo consideramos
   // matches EXACTOS de esos 2 campos; el match por nombre es blando y aquí no
   // se usa. Prioriza el duplicado de OTRA asesora (es el que bloquea).
+  // Limpiar el error inline de Nombre cuando el usuario escribe o cierra el modal.
+  useEffect(() => {
+    if (!showCreateForm || createForm.nombre?.trim()) setCreateNombreError(null);
+  }, [showCreateForm, createForm.nombre]);
+
   useEffect(() => {
     if (!showCreateForm) {
       setDupCreate(null);
@@ -431,26 +443,35 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
     }
   };
 
-  const handleDelete = async (id: string, nombre: string) => {
-    if (!window.confirm(`¿Eliminar al cliente "${nombre}"? Esta acción no se puede deshacer.`)) return;
+  // Ejecuta la eliminación confirmada desde el mini-modal (deleteTarget).
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      const res = await fetch(`/api/clientes/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/clientes/${deleteTarget.id}`, { method: 'DELETE' });
       if (res.ok) {
-        setClientes(prev => prev.filter(c => c.id !== id));
+        setClientes(prev => prev.filter(c => c.id !== deleteTarget.id));
+        setDeleteTarget(null);
       } else {
         const err = await res.json();
         alert(err.error || 'Error al eliminar');
       }
     } catch {
       alert('Error de conexión');
+    } finally {
+      setDeleting(false);
     }
   };
 
   const handleCreate = async () => {
     if (!createForm.nombre?.trim()) {
-      alert('El nombre del cliente es obligatorio');
+      // Inline (borde rojo + texto bajo el campo) en vez de alert(): el usuario
+      // ve exactamente cuál campo falta y queda enfocado ahí.
+      setCreateNombreError('El nombre del cliente es obligatorio');
+      nombreCreateRef.current?.focus();
       return;
     }
+    setCreateNombreError(null);
     setCreating(true);
     try {
       const enviar = (permitirDuplicado: boolean) => fetch('/api/clientes', {
@@ -818,6 +839,13 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
           <FiUsers className="mx-auto text-gray-300 mb-3" size={48} />
           <p className="text-gray-500">{search ? 'No se encontraron clientes' : 'Aún no hay clientes guardados'}</p>
           <p className="text-gray-400 text-sm mt-1">Usa el botón &quot;Nuevo Cliente&quot; para agregar uno, o guárdalos desde el formulario de pedidos</p>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="mt-4 inline-flex items-center justify-center gap-2 px-5 py-3 bg-red-600 text-white font-semibold rounded-xl hover:bg-red-700 transition-colors shadow-sm"
+          >
+            <FiPlus size={18} />
+            Nuevo Cliente
+          </button>
         </div>
       ) : (
         <div className="space-y-5">
@@ -920,7 +948,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                               <FiRepeat size={15} className="text-purple-600 flex-shrink-0" /> Transferir a otra asesora
                             </button>
                             <div className="my-1 border-t border-gray-100" />
-                            <button onClick={() => { setMenuAbiertoId(null); handleDelete(c.id, c.nombre); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-red-50 text-left text-red-600">
+                            <button onClick={() => { setMenuAbiertoId(null); setDeleteTarget({ id: c.id, nombre: c.nombre }); }} className="w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-red-50 text-left text-red-600">
                               <FiTrash2 size={15} className="flex-shrink-0" /> Eliminar cliente
                             </button>
                           </div>
@@ -1007,7 +1035,7 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
               </button>
             </div>
             <div className="p-6">
-              <ClienteFormFields form={createForm} setForm={setCreateForm} asesoras={asesoras} userRole={userRole} />
+              <ClienteFormFields form={createForm} setForm={setCreateForm} asesoras={asesoras} userRole={userRole} autoFocusNombre nombreError={createNombreError} nombreRef={nombreCreateRef} />
               {/* Aviso anti-duplicados en vivo (RUC/DNI o WhatsApp ya registrados) */}
               {dupCreate && (
                 dupCreate.es_mio ? (
@@ -1102,6 +1130,41 @@ export default function ClientesClient({ userId, userName, userRole }: ClientesC
                 <button
                   onClick={() => setTransferClienteId(null)}
                   className="px-4 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Modal: Confirmar eliminación (reemplaza al window.confirm nativo) */}
+      {deleteTarget && (
+        <>
+          <div className="fixed inset-0 bg-black/40 z-50 print:hidden" onClick={() => !deleting && setDeleteTarget(null)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none print:hidden">
+            <div className="bg-white rounded-xl shadow-xl border border-gray-200 p-6 w-full max-w-sm pointer-events-auto">
+              <h3 className="text-lg font-bold text-gray-800 mb-1 flex items-center gap-2">
+                <FiTrash2 className="text-red-600" size={20} />
+                Eliminar cliente
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                ¿Eliminar al cliente <strong>{deleteTarget.nombre}</strong>? Esta acción no se puede deshacer.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 transition-colors text-sm disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  <FiTrash2 size={14} />
+                  {deleting ? 'Eliminando…' : 'Eliminar'}
+                </button>
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleting}
+                  className="px-4 py-2.5 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition-colors text-sm disabled:opacity-50"
                 >
                   Cancelar
                 </button>

@@ -48,6 +48,7 @@ export default function PrestamosClient() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [kardexOpen, setKardexOpen] = useState(false);
+  const [kardexLoading, setKardexLoading] = useState(false);
   const [transacciones, setTransacciones] = useState<Transaccion[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -114,6 +115,8 @@ export default function PrestamosClient() {
   };
 
   const openKardex = async (proveedorId: string) => {
+    setTransacciones([]);
+    setKardexLoading(true);
     setKardexOpen(true);
     try {
       const res = await fetch(`/api/prestamos/transacciones?proveedorId=${proveedorId}`);
@@ -121,6 +124,8 @@ export default function PrestamosClient() {
       setTransacciones(data.transacciones || []);
     } catch (err) {
       console.error(err);
+    } finally {
+      setKardexLoading(false);
     }
   };
 
@@ -290,7 +295,7 @@ export default function PrestamosClient() {
                         </button>
                         <button
                           onClick={() => openKardex(s.proveedor_id)}
-                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer active:scale-95"
+                          className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1 transition-colors cursor-pointer active:scale-95"
                         >
                           <FiList /> Ver Kardex
                         </button>
@@ -431,11 +436,17 @@ export default function PrestamosClient() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {transacciones.length === 0 ? (
+                  {kardexLoading ? (
+                    <tr>
+                      <td colSpan={6} className="py-12 px-4 text-center">
+                        <p className="text-sm text-gray-400 animate-pulse">Cargando movimientos...</p>
+                      </td>
+                    </tr>
+                  ) : transacciones.length === 0 ? (
                     <tr>
                       <td colSpan={6} className="py-12 px-4 text-center">
                         <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
-                          <FiList size={32} className="opacity-40 text-indigo-400 animate-pulse" />
+                          <FiList size={32} className="opacity-40 text-indigo-400" />
                           <span className="font-semibold text-gray-700 text-xs">Historial de Kardex vacío</span>
                           <p className="text-[10px] text-gray-400 max-w-xs mx-auto">No se han registrado movimientos de préstamos ni devoluciones para este proveedor.</p>
                         </div>
@@ -457,6 +468,15 @@ export default function PrestamosClient() {
                   ))}
                 </tbody>
               </table>
+            </div>
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setKardexOpen(false)}
+                className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-xl font-medium transition-colors cursor-pointer active:scale-95 border border-gray-200 bg-white"
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

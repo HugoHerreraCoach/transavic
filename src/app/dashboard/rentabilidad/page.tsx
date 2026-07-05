@@ -2,6 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { FiCalendar, FiTrendingUp, FiAlertTriangle, FiDollarSign, FiPercent, FiTrendingDown, FiLoader } from "react-icons/fi";
 import GuiaModulo from "@/components/GuiaModulo";
 
@@ -57,6 +58,7 @@ export default function RentabilidadPage() {
   } | null>(null);
 
   const [activePreset, setActivePreset] = useState("30"); // "7", "30", "month"
+  const [errorCarga, setErrorCarga] = useState(false);
 
   const fetchRentabilidad = async (start: string, end: string) => {
     setLoading(true);
@@ -65,9 +67,13 @@ export default function RentabilidadPage() {
       if (res.ok) {
         const json = await res.json();
         setData(json);
+        setErrorCarga(false);
+      } else {
+        setErrorCarga(true);
       }
     } catch (e) {
       console.error(e);
+      setErrorCarga(true);
     } finally {
       setLoading(false);
     }
@@ -183,6 +189,22 @@ export default function RentabilidadPage() {
         </div>
       ) : resumen ? (
         <div className="space-y-6">
+          {/* Aviso: el refetch del período falló y se muestran los datos anteriores */}
+          {errorCarga && (
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-amber-50 border border-amber-200 text-amber-800 p-4 rounded-2xl">
+              <div className="flex items-start gap-2 text-sm">
+                <FiAlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                <span>No se pudo actualizar el período. Se muestran los datos del período anterior.</span>
+              </div>
+              <button
+                onClick={() => fetchRentabilidad(fechaInicio, fechaFin)}
+                className="px-4 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer"
+              >
+                Reintentar
+              </button>
+            </div>
+          )}
+
           {/* Tarjeta destacada: Ventas de hoy vs ayer (por fecha de registro, zona Lima) */}
           {comparativo && (
             <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm relative overflow-hidden">
@@ -394,7 +416,10 @@ export default function RentabilidadPage() {
             <div className="overflow-x-auto">
               {data.mermasDiarias.length === 0 ? (
                 <div className="p-8 text-center text-gray-500 text-sm">
-                  No se registraron mermas ni procesos en este período. Registra procesos en la <span className="font-semibold text-indigo-600">Calculadora de Mermas</span>.
+                  No se registraron mermas ni procesos en este período. Registra procesos en la{" "}
+                  <Link href="/dashboard/produccion/mermas" className="font-semibold text-indigo-600 hover:underline">
+                    Calculadora de Mermas
+                  </Link>.
                 </div>
               ) : (
                 <table className="w-full text-left text-sm text-gray-700">
@@ -442,7 +467,13 @@ export default function RentabilidadPage() {
         </div>
       ) : (
         <div className="bg-white rounded-2xl p-8 border border-gray-100 text-center text-gray-500">
-          Error al cargar los datos de rentabilidad. Inténtalo de nuevo.
+          <p>Error al cargar los datos de rentabilidad. Inténtalo de nuevo.</p>
+          <button
+            onClick={() => fetchRentabilidad(fechaInicio, fechaFin)}
+            className="mt-4 px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold rounded-lg transition-colors cursor-pointer"
+          >
+            Reintentar
+          </button>
         </div>
       )}
     </div>

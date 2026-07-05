@@ -153,6 +153,22 @@ export default function DashboardLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const isCrm = pathname === "/dashboard/crm-leads";
 
+  // El botón flotante del Asistente IA solo aparece en vistas de ANÁLISIS
+  // (donde sus insights aportan algo), no en pantallas operativas como el POS,
+  // caja o formularios — pedido de Hugo (5 jul 2026).
+  const RUTAS_CON_ASISTENTE = [
+    "/dashboard/mi-dia",
+    "/dashboard/reportes",
+    "/dashboard/mis-metas",
+    "/dashboard/analytics",
+    "/dashboard/panel-gerencial",
+    "/dashboard/rentabilidad",
+    "/dashboard/consolidado",
+  ];
+  const mostrarAsistente =
+    pathname === "/dashboard" ||
+    RUTAS_CON_ASISTENTE.some((r) => pathname.startsWith(r));
+
   useEffect(() => {
     const handleToggleMobile = () => setMobileOpen(true);
     window.addEventListener("toggle-mobile-sidebar", handleToggleMobile);
@@ -499,12 +515,14 @@ export default function DashboardLayout({
       )}
 
       {/* Main content - transition smooth para el width del sidebar */}
-      <main className={`transition-all duration-300 ease-in-out ${isCrm ? "lg:pl-0 pt-0 pb-0 h-screen overflow-hidden" : isSidebarCollapsed ? "lg:pl-16 pt-16 lg:pt-0 min-h-screen pb-24" : "lg:pl-64 pt-16 lg:pt-0 min-h-screen pb-24"}`}>
+      {/* El pb-24 solo hace falta como espacio para el botón flotante del Asistente IA;
+          en vistas operativas (POS, caja…) ese aire abajo era espacio muerto. */}
+      <main className={`transition-all duration-300 ease-in-out ${isCrm ? "lg:pl-0 pt-0 pb-0 h-screen overflow-hidden" : `${isSidebarCollapsed ? "lg:pl-16" : "lg:pl-64"} pt-16 lg:pt-0 min-h-screen ${mostrarAsistente ? "pb-24" : "pb-6"}`}`}>
         {children}
       </main>
 
       {/* Botón flotante de IA */}
-      {!isCrm && <FloatingAssistant role={userRole} />}
+      {mostrarAsistente && <FloatingAssistant role={userRole} />}
 
       {/* Búsqueda global Cmd+K */}
       {!isCrm && (userRole === "admin" || userRole === "asesor") && <CmdKModal />}

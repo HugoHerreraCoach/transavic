@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
 
@@ -47,6 +47,7 @@ export default function MermasClient() {
   const [cargasHoy, setCargasHoy] = useState<CargaDelDia[]>([]);
   const [compraId, setCompraId] = useState<string>("");
   const { mostrarToast, toasts } = useToast();
+  const pesoBrutoRef = useRef<HTMLInputElement>(null);
 
   const fetchHistorial = async () => {
     try {
@@ -135,6 +136,7 @@ export default function MermasClient() {
         setPesoLimpio("");
         setPesoMenudencia("");
         setCompraId("");
+        pesoBrutoRef.current?.focus();
         fetchHistorial();
       } else {
         const error = await res.json();
@@ -181,6 +183,8 @@ export default function MermasClient() {
               <label className="block text-sm font-semibold text-gray-700 mb-2">Peso Bruto (Jaba)</label>
               <div className="relative">
                 <input
+                  ref={pesoBrutoRef}
+                  autoFocus
                   type="number"
                   step="0.01"
                   value={pesoBruto}

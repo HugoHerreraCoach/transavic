@@ -84,7 +84,12 @@ export default function CajaDiariaClient() {
   const [gastoCuentaId, setGastoCuentaId] = useState<string>("");
 
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
+  const [aperturaLoading, setAperturaLoading] = useState(false);
+  const [gastoLoading, setGastoLoading] = useState(false);
+  const [cierreLoading, setCierreLoading] = useState(false);
+
+  // Mini-modal de confirmación del cierre de caja (acción irreversible)
+  const [confirmarCierre, setConfirmarCierre] = useState(false);
 
   // Arqueo por denominaciones
   const [contarDenominaciones, setContarDenominaciones] = useState(false);
@@ -156,7 +161,7 @@ export default function CajaDiariaClient() {
     e.preventDefault();
     if (!montoApertura || Number(montoApertura) < 0) return mostrarToast("Ingresa un monto de apertura válido", "error");
 
-    setActionLoading(true);
+    setAperturaLoading(true);
     try {
       const res = await fetch("/api/caja-diaria", {
         method: "POST",
@@ -175,23 +180,24 @@ export default function CajaDiariaClient() {
     } catch {
       mostrarToast("Error de red", "error");
     } finally {
-      setActionLoading(false);
+      setAperturaLoading(false);
     }
   };
 
-  const handleCierre = async (e: React.FormEvent) => {
+  const handleCierre = (e: React.FormEvent) => {
     e.preventDefault();
     const montoFinal = contarDenominaciones ? totalDenominaciones : Number(montoCierreReal);
     if (!Number.isFinite(montoFinal) || montoFinal < 0 || (!contarDenominaciones && montoCierreReal === "")) {
       return mostrarToast("Ingresa un monto de arqueo real válido", "error");
     }
 
-    const diferencia = Math.round((montoFinal - estimado) * 100) / 100;
-    if (!confirm(
-      `¿Cerrar la caja del día?\n\nCalculado S/ ${estimado.toFixed(2)} · Contado S/ ${montoFinal.toFixed(2)} · Diferencia S/ ${diferencia.toFixed(2)}\n\nEsta acción no se puede deshacer.`
-    )) return;
+    setConfirmarCierre(true);
+  };
 
-    setActionLoading(true);
+  const ejecutarCierre = async () => {
+    const montoFinal = contarDenominaciones ? totalDenominaciones : Number(montoCierreReal);
+
+    setCierreLoading(true);
     try {
       const res = await fetch("/api/caja-diaria", {
         method: "PUT",
@@ -208,6 +214,7 @@ export default function CajaDiariaClient() {
         setMontoCierreReal("");
         setDenomCantidades({});
         setContarDenominaciones(false);
+        setConfirmarCierre(false);
         fetchCajaData();
       } else {
         const err = await res.json();
@@ -216,7 +223,7 @@ export default function CajaDiariaClient() {
     } catch {
       mostrarToast("Error de red", "error");
     } finally {
-      setActionLoading(false);
+      setCierreLoading(false);
     }
   };
 
@@ -225,7 +232,7 @@ export default function CajaDiariaClient() {
     if (!gastoMonto || Number(gastoMonto) <= 0) return mostrarToast("Ingresa un monto de gasto válido", "error");
     if (!gastoCuentaId) return mostrarToast("Selecciona la caja/cuenta de origen para el pago", "error");
 
-    setActionLoading(true);
+    setGastoLoading(true);
     try {
       const res = await fetch("/api/gastos", {
         method: "POST",
@@ -251,7 +258,7 @@ export default function CajaDiariaClient() {
     } catch {
       mostrarToast("Error de red", "error");
     } finally {
-      setActionLoading(false);
+      setGastoLoading(false);
     }
   };
 
@@ -329,6 +336,7 @@ export default function CajaDiariaClient() {
                   step="0.01"
                   min="0"
                   required
+                  autoFocus
                   value={montoApertura}
                   onChange={(e) => setMontoApertura(e.target.value)}
                   placeholder="0.00"
@@ -339,10 +347,10 @@ export default function CajaDiariaClient() {
 
             <button
               type="submit"
-              disabled={actionLoading}
+              disabled={aperturaLoading}
               className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl py-3 font-bold text-sm shadow-md transition-colors active:scale-98"
             >
-              {actionLoading ? "Abriendo..." : "Abrir Caja"}
+              {aperturaLoading ? "Abriendo..." : "Abrir Caja"}
             </button>
           </form>
         </div>
@@ -460,10 +468,10 @@ export default function CajaDiariaClient() {
 
                 <button
                   type="submit"
-                  disabled={actionLoading}
+                  disabled={gastoLoading}
                   className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl py-3 font-bold text-xs shadow-md transition-all active:scale-98"
                 >
-                  {actionLoading ? "Registrando..." : "Registrar Gasto"}
+                  {gastoLoading ? "Registrando..." : "Registrar Gasto"}
                 </button>
               </form>
             </div>
@@ -555,10 +563,10 @@ export default function CajaDiariaClient() {
 
                 <button
                   type="submit"
-                  disabled={actionLoading}
+                  disabled={cierreLoading}
                   className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl py-3.5 font-bold text-xs shadow-md transition-all active:scale-98"
                 >
-                  {actionLoading ? "Cerrando..." : "Confirmar Cierre de Caja"}
+                  {cierreLoading ? "Cerrando..." : "Confirmar Cierre de Caja"}
                 </button>
               </form>
             </div>
@@ -697,6 +705,62 @@ export default function CajaDiariaClient() {
           </table>
         </div>
       </div>
+
+      {/* Mini-modal de confirmación del cierre de caja */}
+      {confirmarCierre && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 print:hidden"
+          onClick={() => !cierreLoading && setConfirmarCierre(false)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <FiLock className="text-red-500" /> ¿Cerrar la caja del día?
+            </h3>
+
+            <div className="rounded-xl border border-gray-200 bg-gray-50/60 divide-y divide-gray-200 text-sm">
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-gray-600">Calculado</span>
+                <span className="font-bold text-gray-900">S/ {estimado.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-gray-600">Contado</span>
+                <span className="font-bold text-gray-900">S/ {montoContado.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-gray-600">Diferencia</span>
+                <span className={`flex items-center gap-1.5 font-bold ${cuadra ? "text-green-600" : "text-red-600"}`}>
+                  {cuadra ? <FiCheckCircle size={14} className="shrink-0" /> : <FiAlertCircle size={14} className="shrink-0" />}
+                  S/ {diferenciaVivo > 0 ? "+" : ""}{diferenciaVivo.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            <p className="text-xs text-gray-500">Esta acción no se puede deshacer.</p>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmarCierre(false)}
+                disabled={cierreLoading}
+                className="w-full bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-gray-700 rounded-xl py-3 font-bold text-sm transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={ejecutarCierre}
+                disabled={cierreLoading}
+                className="w-full bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl py-3 font-bold text-sm shadow-md transition-colors"
+              >
+                {cierreLoading ? "Cerrando..." : "Sí, cerrar caja"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ToastContainer toasts={toasts} />
     </div>

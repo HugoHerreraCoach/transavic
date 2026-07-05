@@ -84,7 +84,14 @@ export default function GuiaModulo({ modulo }: { modulo: string }) {
               💡 {guia.nota}
             </p>
           )}
-          <p className="mt-2 text-[11px] text-gray-400">
+          <button
+            type="button"
+            onClick={() => setAbierta(false)}
+            className="mt-3 w-full py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            ¡Entendido, continuar!
+          </button>
+          <p className="mt-2 text-[11px] text-gray-400 text-center">
             Guía temporal de la fase de prueba — se quitará cuando el módulo quede aprobado.
           </p>
         </div>

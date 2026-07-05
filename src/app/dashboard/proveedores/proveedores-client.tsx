@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { FiSearch, FiPlus, FiEdit2, FiTrash2, FiUsers, FiX, FiPhone, FiMapPin, FiFileText } from "react-icons/fi";
+import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
 
 interface Proveedor {
@@ -22,6 +23,9 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
   const [searchTerm, setSearchTerm] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProveedor, setEditingProveedor] = useState<Proveedor | null>(null);
+  const [proveedorAEliminar, setProveedorAEliminar] = useState<Proveedor | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { mostrarToast, toasts } = useToast();
 
   // Form State
   const [form, setForm] = useState({
@@ -71,22 +75,26 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
     setModalOpen(true);
   };
 
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`¿Está seguro de que desea eliminar al proveedor "${name}"?`)) return;
+  const handleDelete = async () => {
+    if (!proveedorAEliminar) return;
+    setDeleting(true);
 
     try {
-      const res = await fetch(`/api/proveedores/${id}`, { method: "DELETE" });
+      const res = await fetch(`/api/proveedores/${proveedorAEliminar.id}`, { method: "DELETE" });
       const result = await res.json();
 
       if (!res.ok) {
         throw new Error(result.error || "Error al eliminar");
       }
 
-      alert("Proveedor eliminado con éxito.");
+      mostrarToast("Proveedor eliminado con éxito", "exito");
+      setProveedorAEliminar(null);
       fetchProveedores();
     } catch (error: unknown) {
       console.error(error);
-      alert(error instanceof Error ? error.message : "Error al eliminar proveedor");
+      mostrarToast(error instanceof Error ? error.message : "Error al eliminar proveedor", "error");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -111,6 +119,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
       }
 
       setModalOpen(false);
+      mostrarToast("Proveedor guardado correctamente", "exito");
       fetchProveedores();
     } catch (error: unknown) {
       console.error(error);
@@ -164,6 +173,21 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
           <FiUsers className="w-12 h-12 text-gray-300 mx-auto mb-3" />
           <p className="text-gray-500 text-lg font-medium">No se encontraron proveedores.</p>
           <p className="text-gray-400 text-sm mt-1">Prueba con otra búsqueda o agrega un nuevo proveedor.</p>
+          {searchTerm ? (
+            <button
+              onClick={() => setSearchTerm("")}
+              className="mt-4 px-5 py-2.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 rounded-xl font-semibold transition-colors cursor-pointer"
+            >
+              Limpiar búsqueda
+            </button>
+          ) : (
+            <button
+              onClick={handleOpenCreate}
+              className="mt-4 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-semibold shadow-md transition-colors cursor-pointer inline-flex items-center gap-2"
+            >
+              <FiPlus className="w-4 h-4" /> Agregar Proveedor
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -205,8 +229,8 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
                           <FiEdit2 className="w-4 h-4" />
                         </button>
                         {userRole === "admin" && (
-                          <button 
-                            onClick={() => handleDelete(p.id, p.razon_social)}
+                          <button
+                            onClick={() => setProveedorAEliminar(p)}
                             className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                             title="Eliminar Proveedor"
                           >
@@ -313,6 +337,44 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
           </div>
         </div>
       )}
+
+      {/* MODAL CONFIRMAR ELIMINACIÓN */}
+      {proveedorAEliminar && (
+        <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4 print:hidden">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="bg-gray-50 px-6 py-4 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Eliminar proveedor</h2>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                ¿Seguro que quieres eliminar al proveedor{" "}
+                <span className="font-semibold text-gray-900">&quot;{proveedorAEliminar.razon_social}&quot;</span>?
+                Esta acción no se puede deshacer.
+              </p>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setProveedorAEliminar(null)}
+                  disabled={deleting}
+                  className="px-5 py-2.5 text-gray-600 hover:bg-gray-100 rounded-xl font-semibold transition-colors disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-semibold shadow-md transition-colors disabled:opacity-50"
+                >
+                  {deleting ? "Eliminando..." : "Eliminar"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

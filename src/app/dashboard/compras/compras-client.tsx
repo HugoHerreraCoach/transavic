@@ -520,7 +520,16 @@ export default function ComprasClient() {
         /* Historial de Compras */
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           {compras.length === 0 ? (
-            <div className="text-center py-12 text-gray-500 font-medium">No se han registrado compras aún.</div>
+            <div className="text-center py-12 space-y-4">
+              <p className="text-gray-500 font-medium">No se han registrado compras aún.</p>
+              <button
+                type="button"
+                onClick={() => setActiveTab("nuevo")}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm cursor-pointer active:scale-95"
+              >
+                + Registrar primera compra
+              </button>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">

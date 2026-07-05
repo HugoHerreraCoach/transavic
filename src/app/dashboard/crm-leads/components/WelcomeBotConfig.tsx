@@ -112,7 +112,28 @@ export default function WelcomeBotConfig({ onClose }: WelcomeBotConfigProps) {
     handleChange("workingDays", newDays);
   };
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs select-none">
+        <div className="bg-white rounded-3xl border border-gray-100 shadow-2xl w-full max-w-lg h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+          {/* Header */}
+          <div className="flex justify-between items-center p-5 border-b border-gray-100 bg-gray-50/50 shrink-0">
+            <h3 className="font-bold text-gray-900 flex items-center gap-1.5">
+              🤖 Configurar Bot de Bienvenida
+            </h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 cursor-pointer">
+              <FiX size={20} />
+            </button>
+          </div>
+          {/* Spinner mientras carga la configuración */}
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 text-gray-400">
+            <div className="w-8 h-8 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs">Cargando configuración...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs select-none">

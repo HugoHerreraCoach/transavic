@@ -32,6 +32,8 @@ export default function TagManager({ isOpen, onClose }: TagManagerProps) {
   const [editingTag, setEditingTag] = useState<Tag | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Form State
   const [name, setName] = useState("");
@@ -53,6 +55,7 @@ export default function TagManager({ isOpen, onClose }: TagManagerProps) {
 
   useEffect(() => {
     if (isOpen) {
+      setConfirmDeleteId(null);
       fetchTags();
     }
   }, [isOpen]);
@@ -120,8 +123,9 @@ export default function TagManager({ isOpen, onClose }: TagManagerProps) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta etiqueta?")) return;
+    if (deletingId) return;
 
+    setDeletingId(id);
     try {
       const updatedTags = tags.filter((t) => t.id !== id);
       const res = await fetch("/api/settings", {
@@ -135,9 +139,12 @@ export default function TagManager({ isOpen, onClose }: TagManagerProps) {
 
       if (!res.ok) throw new Error("Error en servidor");
       setTags(updatedTags);
+      setConfirmDeleteId(null);
     } catch (e) {
       console.error(e);
       alert("Error al eliminar.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -192,24 +199,51 @@ export default function TagManager({ isOpen, onClose }: TagManagerProps) {
                     <span className="font-semibold text-xs text-gray-700 truncate">{tag.name}</span>
                   </div>
                   <div className="flex gap-1 shrink-0">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEdit(tag);
-                      }}
-                      className="p-1 text-gray-400 hover:text-indigo-600 rounded-md hover:bg-white"
-                    >
-                      <FiEdit2 size={11} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(tag.id);
-                      }}
-                      className="p-1 text-gray-400 hover:text-red-600 rounded-md hover:bg-white"
-                    >
-                      <FiTrash2 size={11} />
-                    </button>
+                    {confirmDeleteId === tag.id ? (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(tag.id);
+                          }}
+                          disabled={deletingId === tag.id}
+                          className="px-2 py-1 text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-md cursor-pointer disabled:opacity-50"
+                        >
+                          {deletingId === tag.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(null);
+                          }}
+                          disabled={deletingId === tag.id}
+                          className="px-2 py-1 text-[10px] font-bold text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 rounded-md cursor-pointer disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(tag);
+                          }}
+                          className="p-1 text-gray-400 hover:text-indigo-600 rounded-md hover:bg-white"
+                        >
+                          <FiEdit2 size={11} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(tag.id);
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-600 rounded-md hover:bg-white"
+                        >
+                          <FiTrash2 size={11} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))

@@ -23,6 +23,8 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
   const [editingReply, setEditingReply] = useState<QuickReply | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Form State
   const [shortcut, setShortcut] = useState("");
@@ -48,6 +50,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
 
   useEffect(() => {
     if (isOpen) {
+      setConfirmDeleteId(null);
       fetchSettings();
     }
   }, [isOpen]);
@@ -155,8 +158,9 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta respuesta rápida?")) return;
+    if (deletingId) return;
 
+    setDeletingId(id);
     try {
       const updatedReplies = replies.filter((r) => r.id !== id);
       const res = await fetch("/api/settings", {
@@ -170,9 +174,12 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
 
       if (!res.ok) throw new Error("Error en servidor");
       setReplies(updatedReplies);
+      setConfirmDeleteId(null);
     } catch (e) {
       console.error(e);
       alert("Error al eliminar.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -232,24 +239,51 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
                     )}
                   </div>
                   <div className="flex gap-1">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEdit(reply);
-                      }}
-                      className="p-1 text-gray-400 hover:text-indigo-600 rounded-md hover:bg-white"
-                    >
-                      <FiEdit2 size={12} />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(reply.id);
-                      }}
-                      className="p-1 text-gray-400 hover:text-red-600 rounded-md hover:bg-white"
-                    >
-                      <FiTrash2 size={12} />
-                    </button>
+                    {confirmDeleteId === reply.id ? (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(reply.id);
+                          }}
+                          disabled={deletingId === reply.id}
+                          className="px-2 py-1 text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-md cursor-pointer disabled:opacity-50"
+                        >
+                          {deletingId === reply.id ? "Eliminando..." : "Eliminar"}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(null);
+                          }}
+                          disabled={deletingId === reply.id}
+                          className="px-2 py-1 text-[10px] font-bold text-gray-500 bg-white border border-gray-200 hover:bg-gray-50 rounded-md cursor-pointer disabled:opacity-50"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(reply);
+                          }}
+                          className="p-1 text-gray-400 hover:text-indigo-600 rounded-md hover:bg-white"
+                        >
+                          <FiEdit2 size={12} />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(reply.id);
+                          }}
+                          className="p-1 text-gray-400 hover:text-red-600 rounded-md hover:bg-white"
+                        >
+                          <FiTrash2 size={12} />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               ))

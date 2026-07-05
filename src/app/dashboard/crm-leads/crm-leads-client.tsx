@@ -52,6 +52,7 @@ import TemplateModal from "./components/TemplateModal";
 import RotationConfig from "./components/RotationConfig";
 import PedidoForm from "@/components/PedidoForm";
 import GuiaModulo from "@/components/GuiaModulo";
+import { useToast, ToastContainer } from "@/components/Toast";
 import imageCompression from "browser-image-compression";
 
 // Columnas fijas del Kanban
@@ -703,7 +704,37 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             {/* Listado de Chats */}
             <div className="flex-1 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/40">
               {filteredLeads.length === 0 ? (
-                <div className="text-center py-20 text-xs text-gray-400 dark:text-gray-500 italic">No se encontraron prospectos.</div>
+                <div className="text-center py-20 px-4 text-xs text-gray-400 dark:text-gray-500">
+                  <p className="italic">No se encontraron prospectos.</p>
+                  <div className="mt-3 flex flex-col items-center gap-2">
+                    <button
+                      onClick={() => setShowCreateModal(true)}
+                      className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <FiPlus size={12} /> Nuevo Prospecto
+                    </button>
+                    {(searchQuery ||
+                      activeChatTab !== "todos" ||
+                      selectedAsesor !== "todos" ||
+                      selectedEmpresa !== "todas" ||
+                      selectedChatbot !== "todos" ||
+                      selectedEstadoFilter !== "todos") && (
+                      <button
+                        onClick={() => {
+                          setSearchQuery("");
+                          setActiveChatTab("todos");
+                          setSelectedAsesor("todos");
+                          setSelectedEmpresa("todas");
+                          setSelectedChatbot("todos");
+                          setSelectedEstadoFilter("todos");
+                        }}
+                        className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold cursor-pointer"
+                      >
+                        Limpiar filtros
+                      </button>
+                    )}
+                  </div>
+                </div>
               ) : (
                 filteredLeads.map((lead) => {
                   const isActive = activeLeadId === lead.id;
@@ -1112,6 +1143,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                   <input
                     type="text"
                     required
+                    autoFocus
                     value={createForm.nombre}
                     onChange={(e) => setCreateForm({ ...createForm, nombre: e.target.value })}
                     placeholder="ej. Juan Restobar"
@@ -1254,6 +1286,17 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                 }}
               />
             </div>
+
+            {/* Pie del modal: salida visible (además de la X del header) */}
+            <div className="flex justify-end pt-4 mt-4 border-t border-gray-150 dark:border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowOrderModal(false)}
+                className="px-4 py-2 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                Cerrar y volver al chat
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1303,6 +1346,9 @@ function ChatPane({
 
   // Ficha derecha states
   const [editingNotes, setEditingNotes] = useState(false);
+  const [guardandoFicha, setGuardandoFicha] = useState(false);
+  const [togglingChatbot, setTogglingChatbot] = useState(false);
+  const { mostrarToast, toasts } = useToast();
   const [notesTemp, setNotesTemp] = useState("");
   const [negocioTemp, setNegocioTemp] = useState("");
   const [ciudadTemp, setCiudadTemp] = useState("");
@@ -1494,7 +1540,8 @@ function ChatPane({
 
   // Cambiar chatbot activo
   const handleToggleChatbot = async (active: boolean) => {
-    if (!lead) return;
+    if (!lead || togglingChatbot) return;
+    setTogglingChatbot(true);
     try {
       const res = await fetch(`/api/crm/leads/${leadId}`, {
         method: "PATCH",
@@ -1505,9 +1552,14 @@ function ChatPane({
       if (res.ok) {
         setLead({ ...lead, chatbot_activo: active });
         onRefreshLeads();
+      } else {
+        mostrarToast(`No se pudo cambiar a modo ${active ? "IA" : "Humano"}. Intenta de nuevo.`, "error");
       }
     } catch (e) {
       console.error(e);
+      mostrarToast(`Sin conexión: no se pudo cambiar a modo ${active ? "IA" : "Humano"}.`, "error");
+    } finally {
+      setTogglingChatbot(false);
     }
   };
 
@@ -1532,7 +1584,8 @@ function ChatPane({
 
   // Guardar ficha derecha (Notas, Negocio, Ciudad)
   const handleSaveDetails = async () => {
-    if (!lead) return;
+    if (!lead || guardandoFicha) return;
+    setGuardandoFicha(true);
     try {
       const res = await fetch(`/api/crm/leads/${leadId}`, {
         method: "PATCH",
@@ -1551,7 +1604,17 @@ function ChatPane({
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setGuardandoFicha(false);
     }
+  };
+
+  // Descartar cambios de la ficha y salir del modo edición
+  const handleCancelDetails = () => {
+    setNotesTemp(lead?.notas || "");
+    setNegocioTemp(lead?.negocio || "");
+    setCiudadTemp(lead?.ciudad || "");
+    setEditingNotes(false);
   };
 
   // Guardar etiquetas asociadas al lead
@@ -1648,7 +1711,8 @@ function ChatPane({
               <button
                 type="button"
                 onClick={() => handleToggleChatbot(true)}
-                className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer ${
+                disabled={togglingChatbot}
+                className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait ${
                   lead?.chatbot_activo ? "bg-purple-600 text-white shadow-2xs" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-250"
                 }`}
               >
@@ -1657,7 +1721,8 @@ function ChatPane({
               <button
                 type="button"
                 onClick={() => handleToggleChatbot(false)}
-                className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer ${
+                disabled={togglingChatbot}
+                className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait ${
                   !lead?.chatbot_activo ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-2xs" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-250"
                 }`}
               >
@@ -1685,6 +1750,13 @@ function ChatPane({
             <div className="h-full flex flex-col items-center justify-center text-gray-400 text-xs py-20 bg-white/70 backdrop-blur-2xs rounded-3xl p-6 border border-gray-150/40">
               <FiMessageSquare size={36} className="mb-2 opacity-30" />
               <p>No hay mensajes. Saluda al cliente o dispara una plantilla.</p>
+              <button
+                type="button"
+                onClick={() => setShowTemplateModal(true)}
+                className="mt-3 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <FiBookOpen size={12} /> Enviar Plantilla
+              </button>
             </div>
           ) : (
             mensajes.map((m, idx, arr) => {
@@ -1961,12 +2033,22 @@ function ChatPane({
                   Notas Internas:
                 </span>
                 {editingNotes ? (
-                  <button
-                    onClick={handleSaveDetails}
-                    className="text-[9px] text-emerald-600 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
-                  >
-                    Guardar
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCancelDetails}
+                      disabled={guardandoFicha}
+                      className="text-[9px] text-gray-400 font-bold hover:underline cursor-pointer disabled:opacity-50"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleSaveDetails}
+                      disabled={guardandoFicha}
+                      className="text-[9px] text-emerald-600 font-bold hover:underline cursor-pointer flex items-center gap-0.5 disabled:opacity-50"
+                    >
+                      {guardandoFicha ? "Guardando..." : "Guardar"}
+                    </button>
+                  </div>
                 ) : (
                   <button
                     onClick={() => setEditingNotes(true)}
@@ -2019,6 +2101,9 @@ function ChatPane({
           userName={sessionUser.name || ""}
         />
       )}
+
+      {/* Toasts de feedback (fixed → print:hidden ya incluido en el componente) */}
+      <ToastContainer toasts={toasts} />
     </div>
   );
 }

@@ -197,6 +197,13 @@ export default function InventarioClient() {
                   </td>
                 </tr>
               ))}
+              {items.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                    Aún no hay productos con inventario registrado
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

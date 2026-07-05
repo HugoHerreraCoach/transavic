@@ -1,17 +1,19 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { 
-  FiTrendingUp, 
-  FiBriefcase, 
-  FiDollarSign, 
-  FiArrowUpRight, 
-  FiArrowDownRight, 
-  FiPercent, 
-  FiList, 
-  FiRefreshCw, 
+import Link from "next/link";
+import {
+  FiTrendingUp,
+  FiBriefcase,
+  FiDollarSign,
+  FiArrowUpRight,
+  FiArrowDownRight,
+  FiPercent,
+  FiList,
+  FiRefreshCw,
   FiUser,
-  FiActivity
+  FiActivity,
+  FiAlertTriangle
 } from "react-icons/fi";
 import GuiaModulo from "@/components/GuiaModulo";
 
@@ -64,9 +66,11 @@ export default function ConsolidadoClient() {
   const [comparativo, setComparativo] = useState<Comparativo | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errorCarga, setErrorCarga] = useState(false);
 
   const fetchAllData = async () => {
     setRefreshing(true);
+    setErrorCarga(false);
     try {
       const today = new Date();
       const lastMonth = new Date();
@@ -82,14 +86,19 @@ export default function ConsolidadoClient() {
       if (conRes.ok) {
         const conData = await conRes.json();
         setData(conData);
+      } else {
+        setErrorCarga(true);
       }
       if (rentRes.ok) {
         const rentData = await rentRes.json();
         setRentabilidad(rentData.resumen);
         setComparativo(rentData.comparativo ?? null);
+      } else {
+        setErrorCarga(true);
       }
     } catch (err) {
       console.error("Error al cargar consolidado:", err);
+      setErrorCarga(true);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -148,6 +157,25 @@ export default function ConsolidadoClient() {
       </div>
 
       <GuiaModulo modulo="consolidado" />
+
+      {/* Aviso de error de carga: evita que los ceros se lean como cifras reales */}
+      {errorCarga && (
+        <div className="flex flex-wrap items-center justify-between gap-3 bg-red-50 border border-red-100 text-red-700 p-4 rounded-2xl">
+          <div className="flex items-start gap-2 text-sm">
+            <FiAlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <span className="font-semibold">
+              No se pudieron cargar los datos. Las cifras mostradas pueden estar incompletas o en cero.
+            </span>
+          </div>
+          <button
+            onClick={fetchAllData}
+            disabled={refreshing}
+            className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {refreshing ? "Reintentando..." : "Reintentar"}
+          </button>
+        </div>
+      )}
 
       {/* Grid Principal Superior: Ventas de Hoy & Liquidez */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -221,7 +249,7 @@ export default function ConsolidadoClient() {
           })()}
 
           <div className="text-[10px] text-gray-400 leading-relaxed bg-gray-50 p-3.5 rounded-xl border border-gray-100/50">
-            * Se consideran únicamente pedidos en estado **Entregado** cuya fecha programada de entrega coincide con el día de hoy, utilizando pesos y subtotales definitivos.
+            * Se consideran únicamente pedidos en estado <strong>Entregado</strong> cuya fecha programada de entrega coincide con el día de hoy, utilizando pesos y subtotales definitivos.
           </div>
         </div>
 
@@ -236,17 +264,29 @@ export default function ConsolidadoClient() {
             </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[120px] overflow-y-auto pr-1">
-            {data?.cuentas.map(c => (
-              <div key={c.id} className="flex items-center justify-between p-3 bg-gray-50/70 border border-gray-100/50 rounded-xl hover:bg-gray-50 transition-colors">
-                <div>
-                  <span className="font-bold text-gray-800 text-xs block">{c.nombre}</span>
-                  <span className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mt-0.5 block">{c.tipo}</span>
+          {data?.cuentas && data.cuentas.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-h-[120px] overflow-y-auto pr-1">
+              {data.cuentas.map(c => (
+                <div key={c.id} className="flex items-center justify-between p-3 bg-gray-50/70 border border-gray-100/50 rounded-xl hover:bg-gray-50 transition-colors">
+                  <div>
+                    <span className="font-bold text-gray-800 text-xs block">{c.nombre}</span>
+                    <span className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold mt-0.5 block">{c.tipo}</span>
+                  </div>
+                  <span className="font-extrabold text-xs text-gray-900">{formatSoles(c.saldo)}</span>
                 </div>
-                <span className="font-extrabold text-xs text-gray-900">{formatSoles(c.saldo)}</span>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <p className="text-xs text-gray-400">Aún no tienes cuentas registradas.</p>
+              <Link
+                href="/dashboard/cuentas"
+                className="inline-block mt-2 text-xs font-bold text-indigo-600 hover:underline"
+              >
+                + Crear cuenta
+              </Link>
+            </div>
+          )}
         </div>
       </div>
 
@@ -357,6 +397,14 @@ export default function ConsolidadoClient() {
                 <tr>
                   <td colSpan={6} className="py-12 px-6 text-center text-gray-400 italic">
                     No se han registrado transacciones financieras en las cuentas aún.
+                    <div className="mt-3 not-italic">
+                      <Link
+                        href="/dashboard/cuentas"
+                        className="inline-block px-4 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 text-xs font-bold rounded-lg transition-colors"
+                      >
+                        Registrar un movimiento en Cuentas
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ) : (

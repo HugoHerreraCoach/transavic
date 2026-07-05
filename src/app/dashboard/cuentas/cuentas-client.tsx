@@ -80,6 +80,16 @@ export default function CuentasClient() {
 
       {loading ? (
         <div className="text-center py-10 text-gray-500">Cargando cuentas...</div>
+      ) : cuentas.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 text-center space-y-4">
+          <p className="text-gray-500 font-medium">Aún no hay cuentas registradas</p>
+          <button
+            onClick={() => setShowModal(true)}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl inline-flex items-center font-medium shadow-sm transition-colors"
+          >
+            <FiPlus className="mr-2" /> Crear primera cuenta
+          </button>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {cuentas.map((c) => (

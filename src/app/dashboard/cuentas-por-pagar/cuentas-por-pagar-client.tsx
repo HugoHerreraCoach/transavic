@@ -13,6 +13,7 @@ import {
   FiFilter,
   FiX
 } from "react-icons/fi";
+import Link from "next/link";
 import SearchableSelect from "@/components/SearchableSelect";
 import GuiaModulo from "@/components/GuiaModulo";
 
@@ -54,6 +55,7 @@ export default function CuentasPorPagarClient() {
   const [fechaPago, setFechaPago] = useState(() => new Date().toISOString().split("T")[0]);
   const [notas, setNotas] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [errorPago, setErrorPago] = useState<string | null>(null);
 
   // Alertas
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -144,6 +146,7 @@ export default function CuentasPorPagarClient() {
     const restante = deuda.monto_deuda - deuda.monto_pagado;
     setMontoPago(restante.toFixed(2));
     setNotas("");
+    setErrorPago(null);
     setFechaPago(new Date().toISOString().split("T")[0]);
     if (cuentas.length > 0) {
       setCuentaBancariaId(cuentas[0].id);
@@ -152,6 +155,7 @@ export default function CuentasPorPagarClient() {
 
   const handleClosePago = () => {
     setSelectedDeuda(null);
+    setErrorPago(null);
   };
 
   const handleRegistrarPago = async (e: React.FormEvent) => {
@@ -178,6 +182,7 @@ export default function CuentasPorPagarClient() {
     setActionLoading(true);
     setSuccessMsg(null);
     setErrorMsg(null);
+    setErrorPago(null);
 
     try {
       const res = await fetch("/api/cuentas-por-pagar", {
@@ -201,7 +206,8 @@ export default function CuentasPorPagarClient() {
       fetchCuentas();
     } catch (err: unknown) {
       console.error(err);
-      setErrorMsg(err instanceof Error ? err.message : "Error al registrar el pago.");
+      // El modal sigue abierto: el error se muestra DENTRO del modal, no en el banner de la página.
+      setErrorPago(err instanceof Error ? err.message : "Error al registrar el pago.");
     } finally {
       setActionLoading(false);
     }
@@ -501,6 +507,12 @@ export default function CuentasPorPagarClient() {
                     El saldo de esta cuenta se reducirá automáticamente al confirmar el pago.
                   </span>
                 )}
+                {cuentas.length === 0 && (
+                  <span className="block text-[10px] text-red-600 font-semibold mt-1">
+                    No hay cuentas disponibles. Primero crea una cuenta en el módulo{" "}
+                    <Link href="/dashboard/cuentas" className="underline hover:text-red-700">Cuentas</Link>.
+                  </span>
+                )}
               </div>
 
               {/* Monto del Pago */}
@@ -547,6 +559,13 @@ export default function CuentasPorPagarClient() {
                 />
               </div>
 
+              {/* Error del pago (dentro del modal, visible sobre los botones) */}
+              {errorPago && (
+                <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-xl flex items-center gap-2 text-xs font-semibold">
+                  <FiAlertCircle size={14} className="shrink-0" /> {errorPago}
+                </div>
+              )}
+
               {/* Botones de acción */}
               <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
                 <button
@@ -558,7 +577,7 @@ export default function CuentasPorPagarClient() {
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading}
+                  disabled={actionLoading || cuentas.length === 0}
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
                 >
                   {actionLoading ? "Registrando..." : "Registrar Pago"}

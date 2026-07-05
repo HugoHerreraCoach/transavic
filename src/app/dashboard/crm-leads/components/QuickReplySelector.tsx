@@ -1,6 +1,6 @@
 // src/app/dashboard/crm-leads/components/QuickReplySelector.tsx
 import React from "react";
-import { FiImage, FiVideo, FiFileText, FiZap } from "react-icons/fi";
+import { FiImage, FiVideo, FiFileText, FiZap, FiX } from "react-icons/fi";
 
 interface QuickReply {
   id: string;
@@ -42,17 +42,25 @@ export default function QuickReplySelector({
   if (filtered.length === 0) return null;
 
   return (
-    <div className="fixed bottom-[64px] left-0 right-0 z-40 bg-slate-900 border-t border-slate-700 sm:absolute sm:bottom-full sm:left-0 sm:right-auto sm:mb-2 sm:rounded-xl sm:shadow-2xl sm:w-[500px] sm:bg-slate-900 sm:border sm:border-slate-700 flex flex-row overflow-x-auto sm:flex-col sm:overflow-y-auto sm:max-h-80 select-none">
-      <div className="hidden sm:flex items-center justify-between p-2.5 bg-slate-800 border-b border-slate-700 sticky top-0">
+    <div className="fixed bottom-[64px] left-0 right-0 z-40 bg-slate-900 border-t border-slate-700 sm:absolute sm:bottom-full sm:left-0 sm:right-auto sm:mb-2 sm:rounded-xl sm:shadow-2xl sm:w-[500px] sm:bg-slate-900 sm:border sm:border-slate-700 flex flex-col sm:overflow-y-auto sm:max-h-80 select-none">
+      <div className="flex items-center justify-between p-2.5 bg-slate-800 border-b border-slate-700 sticky top-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-indigo-400 flex items-center gap-1">
             <FiZap size={12} className="fill-current" /> Respuestas Rápidas
           </span>
           <span className="text-[10px] text-slate-400">{filtered.length} coincidencias</span>
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Cerrar respuestas rápidas"
+          className="p-1 text-slate-400 hover:text-white rounded-md hover:bg-slate-700 cursor-pointer"
+        >
+          <FiX size={14} />
+        </button>
       </div>
 
-      <div className="p-2 sm:p-1 flex sm:block gap-2 min-w-max sm:min-w-0">
+      <div className="p-2 sm:p-1 flex sm:block gap-2 overflow-x-auto sm:overflow-visible sm:min-w-0">
         {filtered.map((reply, index) => (
           <button
             key={reply.id}
