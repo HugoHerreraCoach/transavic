@@ -349,8 +349,8 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
     if (sincronizadas > 0) {
       mostrarToast(
         restantes > 0
-          ? `${sincronizadas} venta(s) sincronizada(s); quedan ${restantes} pendiente(s)`
-          : `${sincronizadas} venta(s) sincronizada(s)`,
+          ? `${sincronizadas} venta(s) enviada(s); quedan ${restantes} pendiente(s)`
+          : `${sincronizadas} venta(s) enviada(s)`,
         "exito"
       );
     }
@@ -358,7 +358,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
       mostrarToast(`${rechazadas} venta(s) rechazada(s) por el servidor y descartada(s)`, "error");
     }
     if (sincronizadas === 0 && rechazadas === 0) {
-      mostrarToast("No se pudo sincronizar. Revisa la conexión.", "error");
+      mostrarToast("No se pudieron enviar las ventas. Revisa la conexión.", "error");
     }
   };
 
@@ -523,7 +523,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
           </h2>
           {isOffline && (
             <span className="flex items-center text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded-full">
-              <FiWifiOff className="mr-1" /> Offline
+              <FiWifiOff className="mr-1" /> Sin conexión
             </span>
           )}
         </div>
@@ -655,7 +655,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
               ) : (
                 <div className="h-full flex items-center">
                   <div className="p-1 px-2 bg-indigo-50 border border-indigo-100 rounded-lg text-[9px] text-indigo-700 font-medium leading-tight">
-                    Pendiente en cartera del cliente.
+                    Quedará como deuda del cliente (por cobrar).
                   </div>
                 </div>
               )}
@@ -738,7 +738,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
         <div className="fixed bottom-4 right-4 z-[90] print:hidden flex items-center gap-2 bg-amber-100 border border-amber-300 text-amber-800 rounded-full pl-4 pr-1.5 py-1.5 shadow-lg">
           <FiWifiOff size={14} className="shrink-0" />
           <span className="text-xs font-bold whitespace-nowrap">
-            {pendientes} venta{pendientes > 1 ? "s" : ""} sin sincronizar
+            {pendientes} venta{pendientes > 1 ? "s" : ""} por enviar
           </span>
           <button
             type="button"
@@ -747,7 +747,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             className="bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white rounded-full px-4 py-3 text-xs font-bold cursor-pointer flex items-center gap-1.5 active:scale-95 transition-all"
           >
             <FiRefreshCw size={13} className={sincronizando ? "animate-spin" : ""} />
-            {sincronizando ? "Sincronizando..." : "Reintentar"}
+            {sincronizando ? "Enviando..." : "Reintentar"}
           </button>
         </div>
       )}

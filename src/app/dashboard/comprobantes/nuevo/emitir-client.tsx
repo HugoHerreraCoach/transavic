@@ -847,7 +847,7 @@ export default function EmitirComprobanteClient({
     setErrorMsg(null);
     setResultado(null);
     if (tipo === "01" && !docEsRuc) {
-      setErrorMsg("Para FACTURA el receptor debe tener RUC (11 dígitos). Para personas naturales emite BOLETA.");
+      setErrorMsg("Para FACTURA el cliente debe tener RUC (11 dígitos). Para personas naturales emite BOLETA.");
       return;
     }
     setEmitiendo(true);

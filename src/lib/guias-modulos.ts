@@ -51,7 +51,7 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
       { titulo: "Registra cada gasto en el momento en que sale dinero", detalle: "por defecto sale de la caja de efectivo" },
       { titulo: "Al cerrar, usa \"Contar billetes y monedas\" y confirma", detalle: "el sistema compara lo contado contra lo esperado" },
     ],
-    nota: "El arqueo cuenta SOLO el efectivo de la caja de planta. Los cobros por Yape, Plin o banco no entran al conteo de billetes.",
+    nota: "El cuadre de caja cuenta SOLO el efectivo de la caja de planta. Los cobros por Yape, Plin o banco no entran al conteo de billetes.",
   },
   inventario: {
     nombre: "Inventario",

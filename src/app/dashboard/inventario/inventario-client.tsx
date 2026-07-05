@@ -36,7 +36,7 @@ const ETIQUETAS_TIPO: Record<string, string> = {
   compra: "Compra",
   venta_pos: "Venta Rápida",
   entrega: "Entrega pedido",
-  reversion: "Reversión",
+  reversion: "Entrega anulada",
   ajuste: "Ajuste",
 };
 
@@ -214,7 +214,7 @@ export default function InventarioClient() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-900">Ajustar: {selectedItem.producto_nombre}</h2>
-              <p className="text-sm text-gray-500 mt-1">Stock actual: {selectedItem.cantidad} kg</p>
+              <p className="text-sm text-gray-500 mt-1">Cantidad actual: {selectedItem.cantidad} kg</p>
             </div>
             <form onSubmit={handleAdjust} className="p-6 space-y-4">
               <div>
@@ -238,7 +238,7 @@ export default function InventarioClient() {
 
               {quedaNegativo && (
                 <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-xl px-4 py-3">
-                  El stock quedará en {stockProyectado.toFixed(2)} kg. ¿Confirmas?
+                  La cantidad quedará en {stockProyectado.toFixed(2)} kg. ¿Confirmas?
                 </div>
               )}
 

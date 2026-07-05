@@ -115,7 +115,7 @@ export default function RentabilidadPage() {
           <span className="bg-indigo-700/50 border border-indigo-500/30 text-indigo-200 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
             Fase 2: Control Comercial (Beta)
           </span>
-          <h1 className="text-3xl font-extrabold mt-2 tracking-tight">Análisis de Costeo y Rentabilidad</h1>
+          <h1 className="text-3xl font-extrabold mt-2 tracking-tight">Análisis de Costos y Rentabilidad</h1>
           <p className="text-indigo-200 text-sm mt-1">
             Cruza costos de compra, mermas de procesamiento en planta y precios reales de venta.
           </p>
@@ -269,7 +269,7 @@ export default function RentabilidadPage() {
               <div className="absolute top-0 right-0 p-3 text-orange-100 group-hover:text-orange-200 transition-colors">
                 <FiPercent className="h-16 w-16" />
               </div>
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Rendimiento (Yield)</span>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Rendimiento</span>
               <div className="text-3xl font-extrabold text-orange-600 mt-2">
                 {resumen.rendimientoPorcentaje.toFixed(1)}%
                 <span className="text-xs text-gray-500 font-semibold block mt-1">
@@ -368,9 +368,9 @@ export default function RentabilidadPage() {
                   <div 
                     style={{ width: `${(resumen.costoCompraPorKg / resumen.precioVentaPromedio) * 100}%` }}
                     className="bg-indigo-600 flex items-center justify-center"
-                    title={`Costo MP: S/ ${resumen.costoCompraPorKg.toFixed(2)}`}
+                    title={`Costo de compra: S/ ${resumen.costoCompraPorKg.toFixed(2)}`}
                   >
-                    <span>Costo MP (S/ {resumen.costoCompraPorKg.toFixed(2)})</span>
+                    <span>Costo de compra (S/ {resumen.costoCompraPorKg.toFixed(2)})</span>
                   </div>
                   {/* Costo Merma */}
                   <div 

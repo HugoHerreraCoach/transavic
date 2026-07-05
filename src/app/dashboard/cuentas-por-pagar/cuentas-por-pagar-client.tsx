@@ -253,7 +253,7 @@ export default function CuentasPorPagarClient() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <FiFileText className="text-red-500" /> Cuentas por Pagar
           </h1>
-          <p className="text-xs text-gray-500 mt-1">Control de facturas comerciales a proveedores y amortizaciones.</p>
+          <p className="text-xs text-gray-500 mt-1">Control de facturas de proveedores y pagos parciales.</p>
         </div>
       </div>
 
@@ -326,7 +326,7 @@ export default function CuentasPorPagarClient() {
           >
             <option value="todos">Todos los estados</option>
             <option value="pendiente">Pendiente</option>
-            <option value="parcial">Parcial (Amortizada)</option>
+            <option value="parcial">Pago parcial</option>
             <option value="pagado">Pagada</option>
             <option value="vencido">Vencida (Expirada)</option>
           </select>
@@ -417,7 +417,7 @@ export default function CuentasPorPagarClient() {
                           </span>
                         ) : d.estado === "Parcial" ? (
                           <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-amber-50 text-amber-700 border border-amber-100 flex items-center gap-1 w-max">
-                            <FiClock size={10} /> Amortizada
+                            <FiClock size={10} /> Pago parcial
                           </span>
                         ) : (
                           <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold flex items-center gap-1 w-max ${

@@ -1318,7 +1318,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
         if (result.synced > 0) {
           setSyncMessage({
             type: result.failed > 0 ? "warning" : "success",
-            text: `✅ ${result.synced} acción(es) sincronizada(s)${result.failed > 0 ? ` · ⚠️ ${result.failed} falló` : ""}`,
+            text: `✅ ${result.synced} acción(es) enviada(s)${result.failed > 0 ? ` · ⚠️ ${result.failed} falló` : ""}`,
           });
           setTimeout(() => setSyncMessage(null), 4000);
           await fetchRuta();
@@ -1687,7 +1687,7 @@ export default function MiRutaContent({ session }: MiRutaContentProps) {
                 {queuedPedidoIds.has(pedido.id) && (
                   <div className="mt-1 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-700 font-medium flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                    ⏳ Sin sincronizar — se enviará al reconectar
+                    ⏳ Pendiente de envío — se enviará cuando vuelva la señal
                   </div>
                 )}
               </div>

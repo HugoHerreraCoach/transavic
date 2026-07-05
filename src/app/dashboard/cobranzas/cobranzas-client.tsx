@@ -880,7 +880,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
                     ) : f.estado !== "Pagada" ? (
                       <button
                         onClick={() => setEditandoVenc(f.id)}
-                        title="Tocá para cambiar la fecha de vencimiento"
+                        title="Toca para cambiar la fecha de vencimiento"
                         className="group inline-flex flex-col items-center rounded px-1.5 py-0.5 hover:bg-white/70 transition-colors cursor-pointer"
                       >
                         <span className="font-medium inline-flex items-center gap-1 tabular-nums">
@@ -1247,7 +1247,7 @@ export default function CobranzasClient({ userRole }: { userRole: string }) {
               onChange={(e) => setAnularMotivo(e.target.value)}
               rows={3}
               autoFocus
-              placeholder="Ej: cobranza duplicada / creada por error / factura anulada con NC"
+              placeholder="Ej: cobranza duplicada / creada por error / factura anulada con Nota de Crédito"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-400 focus:outline-none resize-none"
             />
 

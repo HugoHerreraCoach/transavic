@@ -1308,7 +1308,7 @@ function ModalComunicacionBaja({
       } else {
         setResultado({ ticket: j.ticket ?? null, mensaje: j.mensaje });
         onResuelto(
-          `Baja enviada para ${comprobante.serie_numero}${j.ticket ? ` — ticket ${j.ticket}` : ""}`
+          `Baja enviada para ${comprobante.serie_numero}${j.ticket ? ` — trámite SUNAT ${j.ticket}` : ""}`
         );
       }
     } catch {
@@ -1403,7 +1403,7 @@ function ModalComunicacionBaja({
                 {resultado.mensaje || "Baja enviada a SUNAT."}
                 {resultado.ticket && (
                   <div className="mt-1 text-xs text-green-700">
-                    Ticket: <span className="font-mono">{resultado.ticket}</span>
+                    Trámite SUNAT: <span className="font-mono">{resultado.ticket}</span>
                   </div>
                 )}
               </div>
@@ -1418,7 +1418,7 @@ function ModalComunicacionBaja({
                   ) : (
                     <FiSearch className="h-4 w-4" />
                   )}
-                  Consultar estado del ticket
+                  Consultar estado del trámite en SUNAT
                 </button>
               )}
               {consulta && (
@@ -1920,7 +1920,7 @@ function ModalResumenDiario({
                         Consultar
                       </button>
                     ) : (
-                      <span className="text-gray-400">sin ticket</span>
+                      <span className="text-gray-400">sin número de trámite</span>
                     )}
                   </div>
                 ))}
@@ -1936,7 +1936,7 @@ function ModalResumenDiario({
                 {resultado.mensaje || "Resumen procesado."}
                 {resultado.ticket && (
                   <div className="mt-1 text-xs text-green-700">
-                    Ticket: <span className="font-mono">{resultado.ticket}</span>
+                    Trámite SUNAT: <span className="font-mono">{resultado.ticket}</span>
                   </div>
                 )}
               </div>
@@ -1951,7 +1951,7 @@ function ModalResumenDiario({
                   ) : (
                     <FiSearch className="h-4 w-4" />
                   )}
-                  Consultar estado del ticket
+                  Consultar estado del trámite en SUNAT
                 </button>
               )}
               {consulta && (
@@ -2488,7 +2488,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
       }
       const blob = await res.blob();
       downloadBlob(blob, `R-${c.serie_numero}.zip`);
-      setToast({ tipo: "ok", msg: `CDR descargado: R-${c.serie_numero}.zip` });
+      setToast({ tipo: "ok", msg: `Constancia de SUNAT (CDR) descargada: R-${c.serie_numero}.zip` });
     } catch (err) {
       setToast({ tipo: "error", msg: (err as Error).message });
     } finally {
@@ -3398,7 +3398,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     </button>
                     {tieneCdr && (
                       <button onClick={() => { setMenuAcciones(null); descargarCDR(c); }} className={itemCls}>
-                        <FiCheckCircle className="h-4 w-4 text-teal-600 flex-shrink-0" /> Descargar CDR
+                        <FiCheckCircle className="h-4 w-4 text-teal-600 flex-shrink-0" /> Descargar constancia de SUNAT (CDR)
                       </button>
                     )}
                     {esGuia && (

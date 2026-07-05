@@ -230,7 +230,7 @@ export default function ComprasClient() {
         throw new Error(result.error || "Error al registrar la compra.");
       }
 
-      mostrarToast("Compra registrada. Inventario actualizado y Cuenta por Pagar generada.", "exito");
+      mostrarToast("Compra registrada. Inventario actualizado y deuda al proveedor anotada.", "exito");
 
       // Recordar el proveedor para la próxima carga
       if (proveedorId) localStorage.setItem(CLAVE_ULTIMO_PROVEEDOR, proveedorId);
@@ -549,7 +549,7 @@ export default function ComprasClient() {
                     <th className="p-4 font-semibold text-gray-600">Fecha</th>
                     <th className="p-4 font-semibold text-gray-600">Proveedor</th>
                     <th className="p-4 font-semibold text-gray-600">Documento</th>
-                    <th className="p-4 font-semibold text-gray-600 text-right">Items</th>
+                    <th className="p-4 font-semibold text-gray-600 text-right">Productos</th>
                     <th className="p-4 font-semibold text-gray-600 text-right">Total (Con IGV)</th>
                     <th className="p-4 font-semibold text-gray-600">Registrado por</th>
                   </tr>

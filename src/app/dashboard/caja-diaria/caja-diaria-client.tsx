@@ -194,7 +194,7 @@ export default function CajaDiariaClient() {
     e.preventDefault();
     const montoFinal = contarDenominaciones ? totalDenominaciones : Number(montoCierreReal);
     if (!Number.isFinite(montoFinal) || montoFinal < 0 || (!contarDenominaciones && montoCierreReal === "")) {
-      return mostrarToast("Ingresa un monto de arqueo real válido", "error");
+      return mostrarToast("Ingresa el monto contado en el cuadre de caja", "error");
     }
 
     setConfirmarCierre(true);
@@ -306,7 +306,7 @@ export default function CajaDiariaClient() {
         <div>
           <h1 className="text-2xl font-black text-gray-900 tracking-tight">Caja Diaria</h1>
           <p className="text-sm text-gray-500">
-            Control de efectivo de mostrador, arqueos y egresos manuales de la planta.
+            Control del efectivo de mostrador: apertura, gastos y cuadre de caja al cierre.
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs font-bold text-gray-600 bg-gray-100 p-2 rounded-xl border border-gray-200">
@@ -503,15 +503,15 @@ export default function CajaDiariaClient() {
             {/* Cierre de Caja */}
             <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
               <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <FiLock className="text-red-500" /> Cierre Ciego de Caja (Arqueo)
+                <FiLock className="text-red-500" /> Cierre y Cuadre de Caja
               </h3>
               
               <p className="text-xs text-gray-500 leading-relaxed">
-                Digite el monto total de dinero físico (efectivo) que cuenta realmente en la caja de mostrador al final del día. El sistema guardará el arqueo e informará al administrador de cualquier cuadre o descuadre de dinero.
+                Cuenta el dinero físico (efectivo) que hay realmente en la caja al final del día. El sistema compara lo contado contra lo esperado y avisa si cuadra o si hay diferencia.
               </p>
 
               <form onSubmit={handleCierre} className="space-y-4">
-                {/* Toggle de arqueo por denominaciones */}
+                {/* Toggle de cuadre por denominaciones */}
                 <label className="flex items-center gap-2 cursor-pointer select-none w-fit">
                   <input
                     type="checkbox"
@@ -600,7 +600,7 @@ export default function CajaDiariaClient() {
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
             <div className="p-4 border-b border-gray-100 flex items-center justify-between">
               <h3 className="font-bold text-gray-900 flex items-center gap-2">
-                <FiList className="text-indigo-600" /> Transacciones del Turno Activo
+                <FiList className="text-indigo-600" /> Movimientos del Turno Activo
               </h3>
             </div>
             
@@ -645,7 +645,7 @@ export default function CajaDiariaClient() {
                       <td colSpan={5} className="py-12 px-4 text-center">
                         <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
                           <FiList size={32} className="opacity-40 animate-pulse text-indigo-400" />
-                          <span className="font-semibold text-gray-700 text-xs">No hay transacciones en este turno</span>
+                          <span className="font-semibold text-gray-700 text-xs">No hay movimientos en este turno</span>
                           <p className="text-[10px] text-gray-400 max-w-xs mx-auto">Los cobros de Venta Rápida y los gastos registrados aparecerán aquí en tiempo real.</p>
                         </div>
                       </td>
@@ -662,7 +662,7 @@ export default function CajaDiariaClient() {
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100">
           <h3 className="font-bold text-gray-900 flex items-center gap-2">
-            <FiLock className="text-gray-400" /> Historial de Arqueos y Cierres
+            <FiLock className="text-gray-400" /> Historial de Cierres de Caja
           </h3>
         </div>
 
@@ -675,7 +675,7 @@ export default function CajaDiariaClient() {
                 <th className="py-3 px-4">Ingresos (Efectivo)</th>
                 <th className="py-3 px-4">Egresos (Efectivo)</th>
                 <th className="py-3 px-4 text-right">Calculado</th>
-                <th className="py-3 px-4 text-right">Real (Arqueo)</th>
+                <th className="py-3 px-4 text-right">Contado (Real)</th>
                 <th className="py-3 px-4 text-right">Diferencia</th>
                 <th className="py-3 px-4">Responsable</th>
               </tr>
@@ -720,7 +720,7 @@ export default function CajaDiariaClient() {
                     <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
                       <FiLock size={32} className="opacity-40 text-gray-400" />
                       <span className="font-semibold text-gray-700 text-xs">Historial de cierres vacío</span>
-                      <p className="text-[10px] text-gray-400 max-w-xs mx-auto">Los arqueos y cierres ciegos de días anteriores se archivarán en esta sección.</p>
+                      <p className="text-[10px] text-gray-400 max-w-xs mx-auto">Los cierres de caja de días anteriores se guardarán en esta sección.</p>
                     </div>
                   </td>
                 </tr>

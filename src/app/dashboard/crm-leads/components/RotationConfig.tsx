@@ -96,7 +96,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
         .filter((n) => !isNaN(n) && n > 0);
 
       if (pattern.length === 0) {
-        showToast("error", "La secuencia debe contener al menos un número de Tier válido (ej: 1, 2).");
+        showToast("error", "La secuencia debe contener al menos un número de Nivel válido (ej: 1, 2).");
         setSavingSettings(false);
         return;
       }
@@ -222,7 +222,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
       <div className="flex justify-between items-center pb-5 border-b border-gray-200/60 dark:border-slate-800 shrink-0">
         <div>
           <h1 className="text-xl font-black text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <span className="text-indigo-600 dark:text-indigo-400">🎫</span> Rotación de Leads (Hits)
+            <span className="text-indigo-600 dark:text-indigo-400">🎫</span> Reparto Automático de Leads
           </h1>
           <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
             Distribuye de forma automática y equitativa los prospectos entrantes de WhatsApp entre las asesoras comerciales.
@@ -338,9 +338,9 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                               }
                               className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-150 rounded-lg p-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                             >
-                              <option value={1}>Tier 1 (Alta)</option>
-                              <option value={2}>Tier 2 (Media)</option>
-                              <option value={3}>Tier 3 (Baja)</option>
+                              <option value={1}>Nivel 1 (Alta)</option>
+                              <option value={2}>Nivel 2 (Media)</option>
+                              <option value={3}>Nivel 3 (Baja)</option>
                             </select>
                           </div>
 
@@ -390,13 +390,13 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
               </h4>
               <ul className="text-[11px] text-gray-500 dark:text-gray-450 mt-2 space-y-1.5 list-disc pl-4">
                 <li>
-                  <strong>Tiers de Prioridad</strong>: En cada asignación, el sistema consulta el patrón configurado para saber qué Tier le toca recibir el prospecto.
+                  <strong>Niveles de Prioridad</strong>: En cada asignación, el sistema consulta el patrón configurado para saber qué Nivel le toca recibir el lead.
                 </li>
                 <li>
-                  <strong>Equidad de Carga</strong>: Dentro del Tier seleccionado, el lead se le asigna a la asesora activa con **menor número de prospectos recibidos hoy**.
+                  <strong>Equidad de Carga</strong>: Dentro del Nivel seleccionado, el lead se le asigna a la asesora activa con **menor número de prospectos recibidos hoy**.
                 </li>
                 <li>
-                  <strong>Toggles de Ausencia</strong>: Si una asesora está de vacaciones o enferma, puedes desactivar su switch de rotación para que no reciba prospectos.
+                  <strong>Botón de Ausencia</strong>: Si una asesora está de vacaciones o enferma, puedes apagar su rotación para que no reciba leads.
                 </li>
                 <li>
                   <strong>Reinicio Diario</strong>: A las 8:00 AM de cada día (hora de Lima), los contadores se restablecen automáticamente a 0 y la secuencia vuelve a empezar.
@@ -416,7 +416,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                 {/* Patrón de secuencia */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">
-                    Patrón de Prioridad (Tiers)
+                    Patrón de Prioridad (Niveles)
                   </label>
                   <input
                     type="text"
@@ -426,7 +426,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     className="w-full px-3 py-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                   <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-1">
-                    Ingresa números de Tier separados por comas. El sistema ciclará por este patrón. (Ej. 1,1,2 = dos leads al Tier 1 por cada lead al Tier 2).
+                    Ingresa números de Nivel separados por comas. El sistema ciclará por este patrón. (Ej. 1,1,2 = dos leads al Nivel 1 por cada lead al Nivel 2).
                   </span>
                 </div>
 
@@ -447,7 +447,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     ))}
                   </select>
                   <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-1">
-                    Hora en la que se limpian los leads de hoy y se resetea la secuencia.
+                    Hora en la que se limpian los leads de hoy y se reinicia la secuencia.
                   </span>
                 </div>
 
@@ -478,14 +478,14 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400 dark:text-gray-500">Próximo Tier:</span>
+                  <span className="text-gray-400 dark:text-gray-500">Próximo Nivel:</span>
                   <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-bold text-[10px]">
-                    Tier {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}
+                    Nivel {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400 dark:text-gray-500">Último Reset:</span>
+                  <span className="text-gray-400 dark:text-gray-500">Último Reinicio:</span>
                   <span className="font-bold text-gray-800 dark:text-gray-150">
                     {config.lastResetDate || "Nunca"}
                   </span>

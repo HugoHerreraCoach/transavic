@@ -23,7 +23,7 @@ export default async function CuentasPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Cuentas Bancarias</h1>
           <p className="text-gray-500 mt-1 text-sm md:text-base">
-            Gestiona las cuentas y cajas para registrar ingresos del POS y otras ventas.
+            Gestiona las cuentas y cajas para registrar ingresos de Venta Rápida y otras ventas.
           </p>
         </div>
       </div>

@@ -144,7 +144,7 @@ export default function ConsolidadoClient() {
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <FiActivity className="text-indigo-600 animate-pulse" /> Consolidado Gerencial
           </h1>
-          <p className="text-xs text-gray-500 mt-1">Resumen en tiempo real del flujo financiero, liquidez y márgenes.</p>
+          <p className="text-xs text-gray-500 mt-1">Resumen en tiempo real del flujo financiero, dinero disponible y márgenes.</p>
         </div>
         <button
           onClick={fetchAllData}
@@ -257,7 +257,7 @@ export default function ConsolidadoClient() {
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5">
           <div className="flex justify-between items-center border-b border-gray-50 pb-3">
             <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
-              <FiBriefcase className="text-emerald-500" /> Caja & Bancos (Liquidez Disponible)
+              <FiBriefcase className="text-emerald-500" /> Caja y Bancos (Dinero Disponible)
             </h3>
             <span className="text-base font-black text-emerald-600">
               {formatSoles(totalLiquidez)}
@@ -295,7 +295,7 @@ export default function ConsolidadoClient() {
         {/* Neteo Comercial (Cobrar vs Pagar) */}
         <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-5 lg:col-span-2">
           <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2 border-b border-gray-50 pb-3">
-            <FiDollarSign className="text-amber-500" /> Neteo Comercial de Cartera
+            <FiDollarSign className="text-amber-500" /> Lo que te deben vs. lo que debes
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -316,7 +316,7 @@ export default function ConsolidadoClient() {
                   {formatSoles(data?.totalPagar || 0)}
                 </span>
               </div>
-              <span className="text-[9px] text-gray-400 mt-3 block">Pasivos de compra pendientes</span>
+              <span className="text-[9px] text-gray-400 mt-3 block">Deudas por compras pendientes</span>
             </div>
 
             <div className={`p-4 rounded-2xl flex flex-col justify-between border ${
@@ -331,7 +331,7 @@ export default function ConsolidadoClient() {
                 </span>
               </div>
               <span className="text-[9px] text-gray-400 mt-3 block">
-                {balanceNeto >= 0 ? "Neto a Favor (Acreedor)" : "Neto en Deuda (Deudor)"}
+                {balanceNeto >= 0 ? "Saldo a tu favor (te deben más)" : "Saldo en contra (debes más)"}
               </span>
             </div>
           </div>
@@ -350,7 +350,7 @@ export default function ConsolidadoClient() {
                 <span className="font-bold text-gray-800">{formatSoles(rentabilidad.costoCompraPorKg)} / Kg</span>
               </div>
               <div className="flex justify-between text-xs">
-                <span className="text-gray-500">Rendimiento Promedio (Yield):</span>
+                <span className="text-gray-500">Rendimiento Promedio:</span>
                 <span className="font-extrabold text-emerald-600">{rentabilidad.rendimientoPorcentaje.toFixed(1)}%</span>
               </div>
               <div className="flex justify-between text-xs border-t border-gray-50 pt-2 font-semibold">
@@ -376,7 +376,7 @@ export default function ConsolidadoClient() {
       <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
         <div className="p-5 border-b border-gray-50">
           <h3 className="font-bold text-gray-800 text-sm flex items-center gap-2">
-            <FiList className="text-indigo-600" /> Bitácora de Transacciones Financieras Recientes
+            <FiList className="text-indigo-600" /> Últimos movimientos de dinero
           </h3>
         </div>
 

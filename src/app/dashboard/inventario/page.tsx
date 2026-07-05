@@ -22,7 +22,7 @@ export default async function InventarioPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Inventario de Mercadería</h1>
         <p className="text-gray-500 mt-1 text-sm md:text-base">
-          Vista de saldos y stock por producto. Puede ser negativo (modelo flexible).
+          Cuánto queda de cada producto. Puede quedar en negativo: el sistema no bloquea la venta.
         </p>
       </div>
       <InventarioClient />

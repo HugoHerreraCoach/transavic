@@ -662,9 +662,9 @@ export default function MapaDespacho({ pendientes, repartidores, baseLocation }:
                   {(() => {
                     const motivoDeliberado =
                       r.ubicacion?.gpsStatus === "permiso_revocado"
-                        ? "revocó el permiso"
+                        ? "quitó el permiso de ubicación en su celular"
                         : r.ubicacion?.simulated || r.ubicacion?.gpsStatus === "mock"
-                          ? "GPS simulado"
+                          ? "usó una app de ubicación falsa"
                           : "apagó su ubicación";
                     if (r.alerta === "deliberado") {
                       return (

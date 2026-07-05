@@ -182,7 +182,7 @@ export default function WelcomeBotConfig({ onClose }: WelcomeBotConfigProps) {
           {/* Horario de Atención */}
           <div className="p-3 bg-gray-50 rounded-2xl space-y-3">
             <span className="font-bold text-gray-700 flex items-center gap-1">
-              <FiClock /> Horario Comercial (Timezone Lima)
+              <FiClock /> Horario Comercial (hora de Lima)
             </span>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
@@ -281,7 +281,7 @@ export default function WelcomeBotConfig({ onClose }: WelcomeBotConfigProps) {
 
           {/* Mensaje de Handoff (IA) */}
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Mensaje al Transferir a Asesora (Handoff)</label>
+            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Mensaje al Transferir a Asesora</label>
             <textarea
               value={settings.fallbackMessage}
               onChange={(e) => handleChange("fallbackMessage", e.target.value)}

@@ -103,7 +103,7 @@ const navItems: NavItem[] = [
   { href: "/dashboard/users", label: "Usuarios", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
 ];
 
-const GROUP_ORDER = ["Ventas & CRM", "Producción & Compras", "Finanzas", "Reportes & Analytics", "Configuración"];
+const GROUP_ORDER = ["Ventas & CRM", "Producción & Compras", "Finanzas", "Reportes & Análisis", "Configuración"];
 
 const GROUP_BY_HREF: Record<string, string> = {
   // Primary actions no necesitan grupo si van sueltos, pero se los dejamos
@@ -127,10 +127,10 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/cuentas-por-pagar": "Finanzas",
   "/dashboard/cuentas": "Finanzas",
 
-  "/dashboard/mis-metas": "Reportes & Analytics",
-  "/dashboard/reportes": "Reportes & Analytics",
-  "/dashboard/rentabilidad": "Reportes & Analytics",
-  "/dashboard/consolidado": "Reportes & Analytics",
+  "/dashboard/mis-metas": "Reportes & Análisis",
+  "/dashboard/reportes": "Reportes & Análisis",
+  "/dashboard/rentabilidad": "Reportes & Análisis",
+  "/dashboard/consolidado": "Reportes & Análisis",
 
   "/dashboard/catalogo": "Configuración",
   "/dashboard/autorizaciones": "Configuración",

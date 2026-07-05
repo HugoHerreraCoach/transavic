@@ -234,7 +234,7 @@ export default function PrestamosClient() {
             <FiAlertCircle size={32} />
           </div>
           <h3 className="font-bold text-gray-800 text-base">No hay saldos de préstamos</h3>
-          <p className="text-xs text-gray-500 max-w-sm mx-auto">Todos los préstamos y devoluciones en especie con los proveedores se encuentran saldados actualmente.</p>
+          <p className="text-xs text-gray-500 max-w-sm mx-auto">Todos los préstamos y devoluciones de mercadería con los proveedores están al día.</p>
         </div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -297,7 +297,7 @@ export default function PrestamosClient() {
                           onClick={() => openKardex(s.proveedor_id)}
                           className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1 transition-colors cursor-pointer active:scale-95"
                         >
-                          <FiList /> Ver Kardex
+                          <FiList /> Ver movimientos
                         </button>
                       </div>
                     </td>
@@ -420,7 +420,7 @@ export default function PrestamosClient() {
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
           <div className="bg-white rounded-3xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[85vh]">
             <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-xl font-bold text-gray-900">Kardex Físico del Proveedor</h2>
+              <h2 className="text-xl font-bold text-gray-900">Historial de movimientos con el proveedor</h2>
               <button onClick={() => setKardexOpen(false)} className="text-gray-400 hover:text-gray-600 p-2 cursor-pointer transition-colors">✕</button>
             </div>
             <div className="p-0 overflow-y-auto">
@@ -447,7 +447,7 @@ export default function PrestamosClient() {
                       <td colSpan={6} className="py-12 px-4 text-center">
                         <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
                           <FiList size={32} className="opacity-40 text-indigo-400" />
-                          <span className="font-semibold text-gray-700 text-xs">Historial de Kardex vacío</span>
+                          <span className="font-semibold text-gray-700 text-xs">Sin movimientos registrados</span>
                           <p className="text-[10px] text-gray-400 max-w-xs mx-auto">No se han registrado movimientos de préstamos ni devoluciones para este proveedor.</p>
                         </div>
                       </td>
@@ -458,7 +458,7 @@ export default function PrestamosClient() {
                         {new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(t.fecha))}
                       </td>
                       <td className="p-3 font-medium text-gray-900 text-xs">
-                        {t.tipo_movimiento.replace('_', ' ')}
+                        {ETIQUETA_TIPO[t.tipo_movimiento] ?? t.tipo_movimiento.replace('_', ' ')}
                       </td>
                       <td className="p-3 text-gray-600">{t.producto_nombre}</td>
                       <td className="p-3 text-gray-900 text-right">{t.jabas}</td>

@@ -417,7 +417,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                   (viewMode as string) === "chat" ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-sm" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 }`}
               >
-                <FiMessageSquare size={13} /> Chat Inbox
+                <FiMessageSquare size={13} /> Bandeja de Chats
               </button>
               <button
                 onClick={() => setViewMode("kanban")}
@@ -425,7 +425,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                   (viewMode as string) === "kanban" ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-sm" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 }`}
               >
-                <FiCheckSquare size={13} /> Kanban
+                <FiCheckSquare size={13} /> Tablero
               </button>
             </div>
 
@@ -469,7 +469,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                 <button
                   type="button"
                   onClick={() => setViewMode("kanban")}
-                  title="Ver Tablero Kanban"
+                  title="Ver Tablero"
                   className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-400 transition-colors flex items-center justify-center cursor-pointer"
                 >
                   <FiCheckSquare size={16} />
@@ -480,7 +480,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                     <button
                       type="button"
                       onClick={() => setViewMode("rotacion")}
-                      title="Configurar Rotación de Leads"
+                      title="Configurar Reparto de Leads"
                       className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-pink-600 dark:text-pink-400 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <FiRefreshCw size={14} className={(viewMode as string) === "rotacion" ? "animate-spin" : ""} />

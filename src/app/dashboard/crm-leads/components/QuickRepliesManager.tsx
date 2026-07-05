@@ -17,6 +17,13 @@ interface QuickRepliesManagerProps {
   onClose: () => void;
 }
 
+// Etiquetas en español para mostrar el tipo de adjunto (el valor interno no cambia)
+const ETIQUETAS_TIPO_ADJUNTO: Record<string, string> = {
+  image: "imagen",
+  video: "video",
+  document: "documento",
+};
+
 export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesManagerProps) {
   const [replies, setReplies] = useState<QuickReply[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,7 +241,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
                     <p className="text-[11px] text-gray-500 truncate mt-0.5">{reply.text}</p>
                     {reply.mediaType && (
                       <span className="inline-flex items-center gap-0.5 text-[9px] bg-purple-50 border border-purple-100 text-purple-600 px-1.5 py-0.2 rounded mt-1 font-bold">
-                        📎 {reply.mediaType}
+                        📎 {ETIQUETAS_TIPO_ADJUNTO[reply.mediaType] ?? reply.mediaType}
                       </span>
                     )}
                   </div>
@@ -343,7 +350,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
                       )}
                       <div className="min-w-0 flex-1">
                         <span className="text-[10px] text-purple-700 font-bold block truncate">{mediaName}</span>
-                        <span className="text-[9px] text-purple-400 block capitalize">{mediaType}</span>
+                        <span className="text-[9px] text-purple-400 block capitalize">{mediaType ? ETIQUETAS_TIPO_ADJUNTO[mediaType] ?? mediaType : null}</span>
                       </div>
                       <button
                         onClick={() => {
