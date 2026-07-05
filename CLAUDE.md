@@ -2,7 +2,7 @@
 
 Contexto del proyecto para agentes de IA. Léeme **antes** de tocar código.
 
-> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (6 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y". Las **crónicas completas** de cada cambio (PRs, data-ops, diagnósticos) viven en [`docs/historial-cambios-2026.md`](./docs/historial-cambios-2026.md).
+> **📚 Para profundizar en cualquier área:** ver `docs/arquitectura/` (18 documentos temáticos verificados contra código). Empezar por [`docs/arquitectura/README.md`](./docs/arquitectura/README.md) que tiene un mapa "si vas a tocar X, lee Y". Las **crónicas completas** de cada cambio (PRs, data-ops, diagnósticos) viven en [`docs/historial-cambios-2026.md`](./docs/historial-cambios-2026.md).
 > **📐 Regla:** este archivo guarda SOLO reglas operativas breves con punteros — el detalle SIEMPRE va a `docs/` (ver §14.6).
 
 ---
@@ -93,6 +93,7 @@ Definidas en `.env` (no comiteado). Las críticas:
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP para enviar comprobantes por correo (Gmail con app password, SendGrid, Mailgun, etc.) |
 | `SMTP_FROM_NAME`, `SMTP_FROM_EMAIL` | Override de remitente del correo (default name="Transavic", email=SMTP_USER) |
 | `APISPERU_TOKEN` | Token de apisperu.com (cuenta `transavicdev@gmail.com`) para consultar RUC/DNI y auto-llenar datos del cliente (form de clientes, módulo emitir comprobante). Solo server-side vía `/api/consulta-documento`. **Configurar también en Vercel.** |
+| `META_VERIFY_TOKEN`, `META_APP_SECRET` | Webhook de WhatsApp Cloud API del CRM (expansión ERP, aún NO en producción). `META_VERIFY_TOKEN` es OBLIGATORIA (sin ella `/api/webhooks/meta` responde 503 — no hay fallback en código); `META_APP_SECRET` verifica la firma de los POST (sin ella se aceptan sin verificar, solo para pruebas locales). Checklist pre-activación: [doc 15 §5](./docs/arquitectura/15-asistente-ia.md). |
 | `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` | Brevo (correos transaccionales, free 300/día). Si `BREVO_API_KEY` está, `lib/email.ts` usa la API de Brevo (preferida); si no, cae a SMTP/nodemailer. El sender debe estar verificado en Brevo (hoy `transavicdev@gmail.com`, activo). **Configurar también en Vercel.** |
 | `CRON_SECRET` | Secreto que protege los **5 cron jobs** de Vercel (`/api/cron/facturas-vencidas`, `/recordatorios-asesoras`, `/resumen-diario-sunat`, `/daily-digest-admin`, `/repartidores-oscuros`). Sin él, esos endpoints devuelven **503**. Vercel lo manda como `Authorization: Bearer <CRON_SECRET>`. **Obligatorio en Vercel** para que los crons corran. **Ojo con el límite de Vercel: Hobby permite solo 2 crons (1×/día); Pro permite 40.** Por eso las tareas de mantenimiento (ej. purga de notificaciones viejas) se enganchan a un cron existente en vez de crear uno nuevo. (`repartidores-oscuros` SÍ es dedicado: corre cada 5 min, una frecuencia que ningún cron diario podía hostear — gotcha #40.) |
 | `AUTO_EMITIR_COMPROBANTE` | Flag opcional (`"true"`) para emitir el comprobante automáticamente al cerrar un pedido. Si no está o es falso, la emisión es manual desde `/dashboard/comprobantes`. |
@@ -346,7 +347,7 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 1 Pesos digitales/producción · 2 Orden de pedido + foto firmada · 3 App motorizado GPS · 4 Notificaciones · 5 Dashboard comercial/metas · 6 Cobranzas · 7 SUNAT 2 RUCs (CPE + GRE) · 8 IA comercial (Gemini + respaldo Groq).
 
 ### Reglas de negocio VIGENTES (decisiones de Antonio, may–jun 2026)
-- **Metas/incentivos de asesoras se miden por COMPROBANTES emitidos** — vista SQL `ventas_facturadas` (01+03 aceptado/observado; la NC 07 RESTA en su período; atribución `emitido_por`→`pedido.asesor_id`). Los reportes de admin miden pedidos ENTREGADOS. Catálogo: **74/90 productos ya tienen `precio_venta`** en prod (11 jun 2026; antes 0 — los overrides de `metas_asesoras` siguen disponibles).
+- **Metas/incentivos de asesoras se miden por PEDIDOS** (regla NUEVA ratificada por Hugo el 5 jul 2026; reemplaza la medición por comprobantes/`ventas_facturadas`): monto = `pedido_items.cantidad × precio_unitario`, atribuido a la fecha de REGISTRO del pedido (zona Lima), excluyendo el POS de planta. Fuente ÚNICA: **`src/lib/ventas-metricas.ts`** (variantes "entregadas" para metas/ranking y "vigentes" para rachas/meta de equipo) — la usan `lib/metas.ts` y `lib/incentivos.ts`; NUNCA dupliques esa query. La vista `ventas_facturadas` queda solo para facturación/reportes. Detalle: [doc 14](./docs/arquitectura/14-metas-incentivos.md).
 - **Comprobantes scoped por asesora**: cada una ve SOLO los suyos (`lib/comprobante-scope.ts`: sus pedidos o emitidos por ella); admin todo. "Cambiar asesora" (admin) reescribe `emitido_por` y PREGUNTA si mueve también la cobranza vinculada; en Cobranzas el admin reasigna la asesora de una cobranza (`PATCH /api/facturas/[id]/asesor`, con sugerencia automática pedido→cartera para huérfanas y opción de mover el comprobante). "Vincular a pedido" liga standalone ↔ pedido.
 - **TODA venta crea cobranza** (factura o boleta, contado o crédito, sin excepción ni opt-out); si ya pagó, se marca "pagada" a mano. **Un pedido = una cobranza**: la crea SOLO la emisión del comprobante (entregar NO crea). Anular cobranza = soft (`Anulada`, auditada), no exige NC; la NC auto-anula su cobranza.
 - **Boletas**: < S/700 sin doc válido → a NOMBRE del cliente si lo escribió (si no, "CLIENTES VARIOS"); ≥ S/700 exigen DNI/RUC. Se rechazan DNI de 8 dígitos iguales y RUC sin dígito verificador; anti-duplicado (409 + confirmación) y anti doble-NC. El RUC/DNI consultado se guarda en la ficha del cliente.
@@ -355,20 +356,27 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 - **Incentivos** configurables en `settings.incentivos_config` (racha semanal, meta de equipo, ranking, metas individuales — cada uno con on/off); overrides mensuales + bono en `metas_asesoras`.
 - **IA**: caché PERSISTENTE en Postgres (`ia_insights_cache`, TTL 1h por scope) + respaldo Groq en `callIA()` — 429 de Gemini resuelto.
 
+### 🚧 Expansión ERP 2026 — EN DESARROLLO LOCAL, NO en producción (jul 2026)
+- **Módulos nuevos (untracked, solo local)**: compras/proveedores, cuentas por pagar, gastos, caja diaria, cuentas bancarias, transacciones, inventario flexible, mermas, préstamos de mercadería, POS planta, rentabilidad, consolidado, CRM leads + webhook Meta + chatbot (Gemini/Groq). Roadmap y estado real: [doc 18](./docs/arquitectura/18-plan-implementacion-maestro.md); arquitectura: [doc 19](./docs/arquitectura/19-arquitectura-modular-transavic.md).
+- **DB**: producción (`ep-cool-sound`) NO tiene NINGUNA tabla nueva (verificado por SQL el 5 jul 2026); `dev-hugo` tiene las 15. Al pasar a producción: aplicar `scripts/migrate-produccion-fase-2-3-consolidado.sql` + `migrate-crm*.sql` + `migrate-caja-unica-abierta.sql` por **psql ANTES del deploy** (gotcha #13/#17) — el código nuevo consulta `pedidos.origen` y explota sin la migración (rompería Mis Metas y Asistente IA). Procedimiento: [doc 20](./docs/arquitectura/20-migracion-produccion.md); tablas: [doc 02 §5](./docs/arquitectura/02-modelo-datos.md).
+- **Patrones nuevos obligatorios**: escrituras multi-tabla de POS/compras/caja van en `sql.transaction([...])` (batch atómico del driver Neon; los ids se generan con `crypto.randomUUID()` porque el batch no encadena RETURNING); una sola caja abierta la garantiza el índice único parcial `ux_caja_diaria_unica_abierta` (el POST devuelve 409 en conflicto).
+- **Política de inventario (5 jul 2026)**: el stock lo mueven compras (+), POS (−), ajustes con motivo OBLIGATORIO (±) y los pedidos normales al pasar a **Entregado** (− cantidades reales; se repone al revertir). Todo queda en el kardex `inventario_movimientos`. La lógica vive en **`src/lib/inventario.ts`** con guard de idempotencia `pedidos.inventario_descontado` (la offline-queue repite el POST /entregar — NUNCA quitar el guard) y es no-bloqueante (la entrega jamás falla por inventario). Las mermas NO descuentan stock (informativas, pendiente decidir con Antonio). Los cobros de cobranzas NO pasan por caja (van por transferencia/Yape — decisión de Hugo). Detalle: [doc 09](./docs/arquitectura/09-compras-inventario-mermas.md) y [doc 10](./docs/arquitectura/10-pos-caja-tesoreria.md).
+- **Antes de conectar el número real de WhatsApp**: checklist de seguridad en [doc 15 §5](./docs/arquitectura/15-asistente-ia.md) (`META_VERIFY_TOKEN` obligatoria — sin ella el webhook responde 503; `META_APP_SECRET` para verificar firma; el envío saliente hoy es MOCK).
+
 ### Dónde está el detalle
-- **Mapa "si tocas X lee Y"**: [docs/arquitectura/README.md](./docs/arquitectura/README.md) (01 visión · 02 datos · 03 roles · 04 flujos · 05 APIs · 06 GRE).
+- **Mapa "si tocas X lee Y"**: [docs/arquitectura/README.md](./docs/arquitectura/README.md) (01-08 core · 11-16 SUNAT/cobranzas/metas/IA · 17-20 expansión ERP).
 - **Crónicas completas** de cada cambio/PR/data-op/diagnóstico: [docs/historial-cambios-2026.md](./docs/historial-cambios-2026.md).
 - Branch Neon de pruebas: `dev-hugo` (`br-tiny-frost-aduw14pu`, endpoint `ep-super-violet-adyp68ne`); prod = `ep-cool-sound-adxrsjt5`.
 
 ### Próximas fases (no cotizadas)
-- CRM con WhatsApp Business API (postpuesto por Antonio) · App iOS del repartidor (todos usan Android).
+- App iOS del repartidor (todos usan Android). El CRM con WhatsApp Business API dejó de estar postpuesto: está en desarrollo dentro de la expansión ERP (ver arriba).
 
 
 ## 14. Para el próximo agente (tú, IA futura)
 
 Antes de empezar cualquier tarea:
 
-0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 6 documentos temáticos tienen verificación contra código real.
+0. **Lee primero [`docs/arquitectura/README.md`](./docs/arquitectura/README.md)** — tiene un mapa "si vas a tocar X, lee Y" que te ahorra tiempo. Los 18 documentos temáticos tienen verificación contra código real.
 1. **Si vas a modificar el flujo de estados del pedido**, lee `§8` de este archivo + `docs/arquitectura/04-flujos-de-negocio.md` § 3 (máquina de estados completa con diagrama Mermaid).
 2. **Si vas a agregar una nueva tabla o columna**, crea un nuevo `scripts/migrate-<feature>.mjs` siguiendo el patrón. NO modifiques migraciones existentes ni el `seed.mjs`.
 3. **Si vas a agregar una nueva API**, valida con zod, chequea sesión, scopea por rol, devuelve errores con status correcto. Usa `lib/data.ts:fetchFilteredPedidos` como referencia de cómo se filtra por rol.
