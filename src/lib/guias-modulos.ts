@@ -47,10 +47,11 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
   "caja-diaria": {
     nombre: "Caja Diaria",
     pasos: [
-      { titulo: "Abre la caja con el efectivo inicial del día" },
-      { titulo: "Registra cada gasto en el momento en que sale dinero" },
+      { titulo: "Abre la caja ANTES de la primera venta del día", detalle: "cuenta el efectivo físico e ingrésalo como monto inicial" },
+      { titulo: "Registra cada gasto en el momento en que sale dinero", detalle: "por defecto sale de la caja de efectivo" },
       { titulo: "Al cerrar, usa \"Contar billetes y monedas\" y confirma", detalle: "el sistema compara lo contado contra lo esperado" },
     ],
+    nota: "El arqueo cuenta SOLO el efectivo de la caja de planta. Los cobros por Yape, Plin o banco no entran al conteo de billetes.",
   },
   inventario: {
     nombre: "Inventario",

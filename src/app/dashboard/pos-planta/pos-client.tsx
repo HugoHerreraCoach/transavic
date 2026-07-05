@@ -28,6 +28,7 @@ type CartItem = {
 type Cuenta = {
   id: string;
   nombre: string;
+  tipo?: string;
 };
 
 type Cliente = {
@@ -158,7 +159,11 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
       .then(data => {
         if (Array.isArray(data)) {
           setCuentas(data);
-          if (data.length > 0) setSelectedCuenta(data[0].id);
+          if (data.length > 0) {
+            // Preseleccionar la caja de EFECTIVO: es el caso normal del mostrador.
+            const efectivo = (data as Cuenta[]).find((c) => c.tipo === "efectivo");
+            setSelectedCuenta((efectivo ?? data[0]).id);
+          }
         }
       });
 

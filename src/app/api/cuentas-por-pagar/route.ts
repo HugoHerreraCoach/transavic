@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
 
     // 3. Ejecutar la actualización atómica con el CTE encadenado
     const docLabel = deuda.compra_nro_doc ? `Doc: ${deuda.compra_nro_doc}` : "Sin Doc";
-    const concepto = `Pago a Proveedor: ${deuda.proveedor_nombre} (${docLabel}) - ${notas || "Sin notas"}`;
+    const concepto = `Pago a Proveedor: ${deuda.proveedor_nombre} (${docLabel})${notas ? ` - ${notas}` : ""}`;
 
     const res = await sql`
       WITH update_pagar AS (

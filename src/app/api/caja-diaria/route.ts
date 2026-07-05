@@ -29,7 +29,7 @@ export async function GET() {
   try {
     // 1. Buscar caja abierta
     const activeBoxes = await sql`
-      SELECT id, fecha, monto_apertura, estado, abierta_por, abierta_at
+      SELECT id, fecha, monto_apertura, estado, abierta_por, abierta_at, cuenta_id
       FROM caja_diaria
       WHERE estado = 'Abierta'
       LIMIT 1
@@ -41,11 +41,15 @@ export async function GET() {
       const box = activeBoxes[0];
       const abiertaAt = box.abierta_at;
 
-      // Obtener el ID de la cuenta de efectivo
-      const cashAccounts = await sql`
-        SELECT id FROM cuentas_bancarias WHERE nombre = 'Caja Efectivo Planta' LIMIT 1
-      `;
-      const cashAccountId = cashAccounts[0]?.id;
+      // La cuenta de la caja: la fijada al abrir (cuenta_id); fallback por nombre
+      // para cajas abiertas antes de la migración migrate-caja-cuenta-id.sql.
+      let cashAccountId = box.cuenta_id as string | null;
+      if (!cashAccountId) {
+        const cashAccounts = await sql`
+          SELECT id FROM cuentas_bancarias WHERE nombre = 'Caja Efectivo Planta' LIMIT 1
+        `;
+        cashAccountId = cashAccounts[0]?.id ?? null;
+      }
 
       let ingresos = 0;
       let egresos = 0;
@@ -92,6 +96,7 @@ export async function GET() {
         monto_estimado: Number(box.monto_apertura) + ingresos - egresos,
         estado: box.estado,
         abierta_at: box.abierta_at,
+        cuenta_id: cashAccountId,
         transacciones
       };
     }
@@ -175,13 +180,14 @@ export async function POST(req: NextRequest) {
     // garantiza una sola caja abierta aunque dos requests lleguen a la vez.
     await sql.transaction([
       sql`
-        INSERT INTO caja_diaria (fecha, monto_apertura, estado, abierta_por, abierta_at)
+        INSERT INTO caja_diaria (fecha, monto_apertura, estado, abierta_por, abierta_at, cuenta_id)
         VALUES (
           (NOW() AT TIME ZONE 'America/Lima')::date,
           ${monto_apertura},
           'Abierta',
           ${session.user.id},
-          (NOW() AT TIME ZONE 'America/Lima')
+          (NOW() AT TIME ZONE 'America/Lima'),
+          ${cashAccountId}
         )
       `,
       sql`
@@ -228,7 +234,7 @@ export async function PUT(req: NextRequest) {
 
     // Obtener caja abierta activa
     const openBoxes = await sql`
-      SELECT id, monto_apertura, abierta_at
+      SELECT id, monto_apertura, abierta_at, cuenta_id
       FROM caja_diaria
       WHERE estado = 'Abierta'
       LIMIT 1
@@ -241,11 +247,14 @@ export async function PUT(req: NextRequest) {
     const abiertaAt = activeBox.abierta_at;
     const montoApertura = Number(activeBox.monto_apertura);
 
-    // Obtener ID de la cuenta de efectivo
-    const cashAccounts = await sql`
-      SELECT id FROM cuentas_bancarias WHERE nombre = 'Caja Efectivo Planta' LIMIT 1
-    `;
-    const cashAccountId = cashAccounts[0]?.id;
+    // La cuenta fijada al abrir; fallback por nombre para cajas pre-migración.
+    let cashAccountId = activeBox.cuenta_id as string | null;
+    if (!cashAccountId) {
+      const cashAccounts = await sql`
+        SELECT id FROM cuentas_bancarias WHERE nombre = 'Caja Efectivo Planta' LIMIT 1
+      `;
+      cashAccountId = cashAccounts[0]?.id ?? null;
+    }
 
     let ingresos = 0;
     let egresos = 0;

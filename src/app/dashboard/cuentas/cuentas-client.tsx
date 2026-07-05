@@ -7,7 +7,7 @@ import GuiaModulo from "@/components/GuiaModulo";
 type Cuenta = {
   id: string;
   nombre: string;
-  tipo: "banco" | "efectivo";
+  tipo: "banco" | "efectivo" | "billetera";
   saldo: number;
   activa: boolean;
 };
@@ -19,7 +19,7 @@ export default function CuentasClient() {
   // Modal states
   const [showModal, setShowModal] = useState(false);
   const [nombre, setNombre] = useState("");
-  const [tipo, setTipo] = useState<"banco" | "efectivo">("banco");
+  const [tipo, setTipo] = useState<"banco" | "efectivo" | "billetera">("banco");
   const [saving, setSaving] = useState(false);
 
   const fetchCuentas = async () => {
@@ -138,10 +138,11 @@ export default function CuentasClient() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Tipo</label>
                 <select
                   value={tipo}
-                  onChange={(e) => setTipo(e.target.value as "banco" | "efectivo")}
+                  onChange={(e) => setTipo(e.target.value as "banco" | "efectivo" | "billetera")}
                   className="w-full border border-gray-300 rounded-xl px-4 py-2 focus:ring-2 focus:ring-indigo-500 outline-none"
                 >
-                  <option value="banco">Banco / Billetera Digital</option>
+                  <option value="banco">Banco</option>
+                  <option value="billetera">Billetera Digital (Yape / Plin)</option>
                   <option value="efectivo">Caja Efectivo</option>
                 </select>
               </div>

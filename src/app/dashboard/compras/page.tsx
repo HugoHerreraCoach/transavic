@@ -27,7 +27,7 @@ export default async function ComprasPage() {
           Ingreso de Mercadería (Compras)
         </h1>
         <p className="mt-2 text-sm text-gray-600">
-          Registra el pollo vivo o procesado que ingresa a planta y calcula las mermas automáticamente.
+          Registra la mercadería que ingresa a planta (jabas, peso bruto y tara) — el neto y la deuda al proveedor se calculan solos.
         </p>
       </div>
 

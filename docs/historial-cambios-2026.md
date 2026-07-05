@@ -575,3 +575,26 @@ Si vuelve a aparecer un problema con los importes de un comprobante (PDF ≠ SUN
 - *SUNAT rechaza un total recién cambiado* → re-validar en beta con la receta de arriba ANTES de tocar el cálculo (la tolerancia del IGV por línea se confirmó así).
 
 **Respaldo de la corrección de datos:** `scratch/backup-comprobantes-2026-06-18.csv` y `scratch/backup-facturas-2026-06-18.csv` (gitignored; estado previo al backfill, por si hay que revertir un valor puntual).
+
+---
+
+## 2026-07-05 — QA integral de los módulos beta + correcciones (sesión de prueba en navegador)
+
+**Contexto:** tras el deploy de la expansión ERP (beta), se probó TODO el flujo real contra la branch `dev-hugo` con un usuario admin de QA (`ClaudeQA`): proveedor → compra → merma → venta rápida → caja (apertura/gasto/arqueo/cierre) → inventario/kardex → préstamo → pago CxP → rentabilidad → consolidado → CRM.
+
+### Bugs críticos encontrados y corregidos (ambos estaban ROTOS en producción)
+1. **Compras no registraba nada** (`api/compras`): el guard SQL `AND ${costo} > 0` hacía que Postgres infiriera INTEGER para el parámetro → cualquier costo con decimales (S/ 8.50) reventaba el batch atómico completo (`invalid input syntax for type integer`). Fix: la condición vive en JS y la query de `precio_compra` solo se incluye si costo > 0. Commit `7d2df25`.
+2. **Venta Rápida fallaba SIEMPRE** (`api/pos`): el INSERT usaba columnas `lat, lng` que NO existen en `pedidos` (usa `latitude/longitude`); como siempre eran NULL, se eliminaron del INSERT. Bug heredado del código original del módulo. Commit `d3266a9`.
+
+> Lección: el build compilaba verde con ambos bugs. Los flujos nuevos deben probarse E2E en navegador antes de darse por buenos.
+
+### Mejoras aplicadas tras el QA (decisiones de Hugo: "aplica todo, documenta")
+- **Caja↔cuenta por id** (`migrate-caja-cuenta-id.sql`, aplicada a dev y PROD): la caja fija `cuenta_id` al abrirse; GET/PUT la usan con fallback al nombre `'Caja Efectivo Planta'` (cajas pre-migración). Antes, renombrar la cuenta rompía el arqueo en silencio.
+- **Apertura pisa saldo → ahora es VISIBLE**: se mantiene la semántica "la apertura sincroniza el saldo al conteo físico" (es un arqueo inicial), pero la pantalla de apertura AVISA si la cuenta ya tiene saldo registrado, y la guía instruye "abre la caja ANTES de la primera venta". Si esto no basta en la práctica, la alternativa es registrar una transacción de regularización (pendiente de evaluar con datos reales).
+- **Regla documentada del arqueo**: cuenta SOLO el efectivo de la cuenta de la caja; Yape/Plin/banco no entran al conteo (nota agregada a la guía del módulo).
+- Gasto de caja: cuenta por defecto = efectivo (antes caía en Yape). POS: cuenta de cobro preseleccionada (efectivo). Compras: las filas vacías ya no bloquean el registro (se ignoran); subtítulo corregido (no hay "pollo vivo"). CxP: concepto sin sufijo "- Sin notas". Cuentas: tipo `billetera` habilitado en UI y zod.
+
+### Pendientes que dejó el QA (revisar más adelante)
+- Evaluar si la apertura debe registrar una transacción de regularización cuando pisa un saldo previo ≠ 0.
+- El aviso de saldo previo usa el saldo de `/api/cuentas` al montar; si otra persona vende mientras la pantalla está abierta, puede quedar desfasado hasta el siguiente fetch.
+- Datos de prueba en `dev-hugo` etiquetados "PRUEBA QA" (proveedor, compra, merma, venta, caja del 5 jul, préstamo, lead) + usuario `ClaudeQA` (admin) — limpiar cuando estorben.

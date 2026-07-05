@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 const CuentaSchema = z.object({
   nombre: z.string().trim().min(1, "El nombre es obligatorio"),
-  tipo: z.enum(["banco", "efectivo"]),
+  tipo: z.enum(["banco", "efectivo", "billetera"]),
 });
 
 export async function GET() {

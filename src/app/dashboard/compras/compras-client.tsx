@@ -186,8 +186,19 @@ export default function ComprasClient() {
     e.preventDefault();
     setSubmitting(true);
 
+    // Ignorar renglones totalmente vacíos (ej. la fila extra que deja Enter):
+    // una fila sin producto ni datos no debe bloquear el registro.
+    const itemsValidos = items.filter(
+      (it) => it.producto_id || it.peso_bruto > 0 || it.peso_tara > 0 || it.jabas > 0 || it.costo_unitario > 0
+    );
+    if (itemsValidos.length === 0) {
+      mostrarToast("Agrega al menos un producto a la carga.", "error");
+      setSubmitting(false);
+      return;
+    }
+
     // Validar items
-    for (const item of items) {
+    for (const item of itemsValidos) {
       if (!item.producto_id) {
         mostrarToast("Debes seleccionar un producto para todos los renglones.", "error");
         setSubmitting(false);
@@ -209,7 +220,7 @@ export default function ComprasClient() {
           fecha,
           tipo_doc: tipoDoc,
           nro_doc: nroDoc,
-          items
+          items: itemsValidos
         })
       });
 

@@ -73,6 +73,8 @@ FROM update_cuenta
 
 La caja es el **efectivo físico de la planta**. Su ciclo diario tiene 3 verbos (GET estado, POST apertura, PUT cierre), todos sobre la cuenta de tesorería **"Caja Efectivo Planta"** (`cuentas_bancarias.tipo='efectivo'`, sembrada por la migración; el POST la crea si faltara). Roles: `GET` con sesión; `POST`/`PUT` solo `admin`/`produccion`.
 
+> **Actualización (QA 5 jul 2026):** desde `migrate-caja-cuenta-id.sql`, la caja **fija `caja_diaria.cuenta_id` al abrirse** y el GET/PUT operan sobre ESA cuenta (fallback al nombre `'Caja Efectivo Planta'` solo para cajas pre-migración). Renombrar la cuenta ya no rompe el arqueo. Reglas operativas: (1) la apertura SINCRONIZA el saldo de la cuenta al conteo físico — la UI avisa si había saldo previo ≠ 0 y la guía instruye abrir la caja ANTES de la primera venta; (2) el arqueo cuenta SOLO el efectivo de la cuenta de la caja — los cobros por Yape/Plin/banco no entran al conteo de billetes.
+
 ### 3.1 Apertura atómica + garantía de UNA sola caja abierta
 
 La apertura ejecuta 3 queries en un `sql.transaction`: `INSERT` en `caja_diaria` (estado `'Abierta'`, fecha hoy Lima) + fija el saldo de la cuenta efectivo **al monto de apertura** (`SET saldo = X`, no suma) + registra la transacción `'Apertura de Caja'`.

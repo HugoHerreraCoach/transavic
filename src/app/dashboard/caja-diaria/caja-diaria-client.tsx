@@ -50,6 +50,8 @@ type ClosedBox = {
 type Account = {
   id: string;
   nombre: string;
+  tipo?: string;
+  saldo?: number | string;
 };
 
 // Denominaciones vigentes en Perú para el arqueo físico de caja
@@ -135,8 +137,11 @@ export default function CajaDiariaClient() {
         const data = await res.json();
         if (Array.isArray(data)) {
           setCuentas(data);
-          // Seleccionar por defecto la Caja Efectivo Planta si existe
-          const cashAcc = data.find(c => c.nombre === "Caja Efectivo Planta");
+          // Por defecto el gasto sale del EFECTIVO de planta (el caso normal):
+          // primero la cuenta oficial, si no cualquier cuenta tipo efectivo.
+          const cashAcc =
+            data.find(c => c.nombre === "Caja Efectivo Planta") ??
+            data.find(c => c.tipo === "efectivo");
           if (cashAcc) {
             setGastoCuentaId(cashAcc.id);
           } else if (data.length > 0) {
@@ -173,6 +178,7 @@ export default function CajaDiariaClient() {
         mostrarToast("Caja abierta exitosamente", "exito");
         setMontoApertura("");
         fetchCajaData();
+        fetchCuentas(); // la apertura puede crear/sincronizar la cuenta de efectivo
       } else {
         const err = await res.json();
         mostrarToast(err.error || "Error al abrir la caja", "error");
@@ -320,9 +326,27 @@ export default function CajaDiariaClient() {
             </div>
             <h2 className="text-xl font-bold text-gray-900">Apertura de Caja Chica</h2>
             <p className="text-xs text-gray-500">
-              La caja se encuentra actualmente cerrada. Inicie la jornada ingresando el efectivo físico inicial.
+              La caja está cerrada. Cuenta el efectivo físico e ingrésalo para iniciar la jornada —
+              <strong className="text-gray-600"> abre la caja ANTES de la primera venta del día</strong>.
             </p>
           </div>
+
+          {(() => {
+            // Si la cuenta de efectivo ya tiene saldo registrado, avisar que la
+            // apertura lo reemplaza por el conteo físico (evita "perder" ventas
+            // hechas antes de abrir la caja sin que nadie lo note).
+            const ctaEfectivo =
+              cuentas.find((c) => c.nombre === "Caja Efectivo Planta") ??
+              cuentas.find((c) => c.tipo === "efectivo");
+            const saldoPrevio = Number(ctaEfectivo?.saldo ?? 0);
+            if (!ctaEfectivo || saldoPrevio === 0) return null;
+            return (
+              <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-800">
+                ⚠️ La cuenta <strong>{ctaEfectivo.nombre}</strong> tiene S/ {saldoPrevio.toFixed(2)} registrados.
+                Al abrir, el saldo se ajustará a tu conteo físico: verifica que ese dinero esté incluido en lo que vas a contar.
+              </div>
+            );
+          })()}
 
           <form onSubmit={handleApertura} className="space-y-4">
             <div className="space-y-1">
