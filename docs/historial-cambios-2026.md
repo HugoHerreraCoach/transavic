@@ -632,3 +632,33 @@ La app del motorizado (Capacitor thin-shell, Google Play) tiene HORNEADO `server
 - Google Maps: verificar en Google Cloud Console (cuenta `hugoherreradeveloper@gmail.com`) que la key `NEXT_PUBLIC_MAPS_API_KEY`, si tiene restricción por referrer, incluya `https://app.transavic.com/*` (agregar SIN quitar `*.vercel.app`).
 
 **Rollback:** Fase 1 = re-crear `AUTH_URL` + redeploy (2 min). Fase 4 = desactivar el redirect en el panel (instantáneo). El dominio viejo funciona indefinidamente hasta que se active el redirect — no hay reloj corriendo si un rider tarda en actualizar.
+
+### ✅ ESTADO AL CIERRE DEL 6 JUL 2026 (todo verificado en vivo)
+
+**Aclaración clave (pregunta de Hugo):** ambos dominios son DOS PUERTAS A LA MISMA APP — mismo proyecto Vercel, mismo deploy, misma DB Neon (`ep-cool-sound`). Lo único per-dominio: cookies de sesión (re-login una vez al cambiar) y el `localStorage` del navegador (cola offline, guías vistas).
+
+| Paso | Estado | Evidencia |
+|---|---|---|
+| DNS Hostinger (CNAME `app` → `cname.vercel-dns.com`, SIN tocar nameservers) | ✅ | Vercel "Valid Configuration" + SSL |
+| Código dual-domain (`trustHost`, commits `9cc64af` + `4b1ed3c`) | ✅ | deploy Ready |
+| `AUTH_URL` ELIMINADA de Vercel (3 entornos, por CLI) | ✅ | `vercel env ls` sin AUTH_URL; cada dominio sirve su propio login sin rebote (curl verificado) |
+| Mapa Google en dominio nuevo | ✅ | La key (cuenta `hugoherreradeveloper@gmail.com`, proyecto "My First Project" `helpful-skyline-466916-i1`, key "Maps Platform API Key") tenía referrer restriction sin el dominio nuevo → se agregó `https://app.transavic.com/*` (manteniendo vercel.app y localhost). ⚠️ El form nuevo de Google OBLIGÓ a restringir APIs: quedó limitada a 5 (Maps JavaScript, Places, Places New, Geocoding, Directions). Si a futuro algo de Maps falla con "ApiNotActivated/denied", revisar esa lista. Verificado: mapa de despacho carga con motos en vivo |
+| AAB v1.0.2 (versionCode 3, apunta a `app.transavic.com`, allowNavigation ambos dominios, firmado SHA1 49:51:0D…) | ✅ subido a Play (Prueba interna) por Hugo | `jar verified` + config dentro del AAB inspeccionada |
+| Política de privacidad en Play → `https://app.transavic.com/privacidad` | ✅ actualizada por Hugo | — |
+
+### ⏳ LO QUE FALTA (en orden — para retomar en cualquier sesión futura)
+
+1. **Avisar a los motorizados** (grupo WhatsApp, fuera de horario): "actualicen Transavic Reparto desde Play Store (v1.0.2); les pedirá iniciar sesión una vez". **Protocolo de actualización (clave):** actualizar al INICIO de la jornada, CON señal y con la cola offline VACÍA (todos sus pedidos del día anterior ya en Entregado/Fallido en el sistema) — el `localStorage` (cola offline con entregas/fotos sin sincronizar, punto de partida, consentimiento GPS) NO migra al nuevo origin; con la cola drenada, la pérdida es cero.
+2. **Confirmar que los 6 están en v1.0.2** — señal fiable: sus pings de GPS (`POST /api/repartidor/ubicacion`) llegan por el host `app.transavic.com` en los logs de Vercel (la app vieja pega por transavic.vercel.app). Alternativa: Play Console → versiones instaladas.
+3. **SOLO ENTONCES → activar el redirect**: Vercel → proyecto transavic → Settings → Domains → `transavic.vercel.app` → Edit → "Redirect to Another Domain" → `https://app.transavic.com`, código **307**. ⚠️ Activarlo ANTES rompe la app vieja de los riders (v1.0.1 sin allowNavigation → el WebView los expulsa a Chrome → sin GPS). Rollback: desactivar el redirect (instantáneo, sin deploy).
+4. **Tras 1 semana estable**: cambiar 307 → **308** (permanente).
+5. **Limpieza final**: quitar los curls del dominio viejo de `.claude/settings.local.json` (líneas 15-19; agregar equivalentes con el dominio nuevo — un intento previo fue bloqueado por permisos del clasificador, hacerlo con el usuario); opcional en un futuro build nativo, retirar `transavic.vercel.app` de `allowNavigation`.
+6. ✅ **Auditoría pre-redirect COMPLETADA** (6 jul, workflow con 3 auditores + síntesis). **Veredicto: CERO bloqueantes de código** — +50 fetch verificados todos relativos, logos/PDF/tickets con rutas relativas, next.config/middleware neutros, SUNAT/Brevo/apisperu/Gemini/crons sin dependencia de dominio, `seguimiento-nativo` usa `window.location.origin` (dinámico, correcto). Riesgos operativos y mitigaciones:
+   - **Cola offline** (`transavic_offline_queue` + fotos base64): se pierde AL ACTUALIZAR la app (cambio de origin), no al activar el redirect → mitigado con el protocolo del punto 1.
+   - **Asesoras en PC** el día del redirect: re-login una vez + pierden favoritos del POS y último proveedor de compras (cosmético, se regenera). Avisar por WhatsApp.
+   - **No deployar a main el día que se active el redirect** (evita un race teórico del VersionChecker con reload).
+   - Activar el redirect de madrugada (~6:00 AM), sin emisiones SUNAT/GRE en curso, y vigilar el mapa de despacho la primera hora (los 6 GPS deben seguir transmitiendo).
+   - NO agregar google.com/waze/whatsapp a `allowNavigation`: que abran fuera del WebView es el comportamiento actual y correcto (el GPS de fondo sigue corriendo).
+   - Mejora opcional recomendada antes del redirect: persistir el `host` del request en `rider_locations` (columna aditiva + 1 línea en `/api/repartidor/ubicacion`) para confirmar v1.0.1 vs v1.0.2 por rider con un SELECT, sin depender de logs de Vercel/Play Console.
+
+**Reglas permanentes post-migración:** NO re-crear `AUTH_URL` en Vercel (fijaría un solo dominio y rompería el otro). La raíz `transavic.com` queda RESERVADA para la futura web pública — no conectarla al ERP.
