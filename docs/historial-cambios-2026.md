@@ -598,3 +598,37 @@ Si vuelve a aparecer un problema con los importes de un comprobante (PDF ≠ SUN
 - Evaluar si la apertura debe registrar una transacción de regularización cuando pisa un saldo previo ≠ 0.
 - El aviso de saldo previo usa el saldo de `/api/cuentas` al montar; si otra persona vende mientras la pantalla está abierta, puede quedar desfasado hasta el siguiente fetch.
 - Datos de prueba en `dev-hugo` etiquetados "PRUEBA QA" (proveedor, compra, merma, venta, caja del 5 jul, préstamo, lead) + usuario `ClaudeQA` (admin) — limpiar cuando estorben.
+
+---
+
+## 2026-07-06 — Migración de dominio: transavic.vercel.app → app.transavic.com
+
+**Contexto:** Hugo compró `transavic.com` (Hostinger). Decisión: el ERP vive en el subdominio **`app.transavic.com`** y la raíz `transavic.com` queda RESERVADA para una futura web pública de la marca (patrón `app.conexipema.com`). DNS: un solo CNAME en Hostinger (`app` → `cname.vercel-dns.com`), sin tocar nameservers. Vercel validó y emitió SSL el mismo día.
+
+### Problema encontrado
+Con el dominio ya "Valid Configuration", entrar por `app.transavic.com` **rebotaba a `transavic.vercel.app`**: la env `AUTH_URL=https://transavic.vercel.app` en Vercel hacía que NextAuth fijara callback-url y redirects al dominio viejo (verificado con `curl -sI`: `set-cookie __Secure-authjs.callback-url=https%3A%2F%2Ftransavic.vercel.app`).
+
+### Restricción crítica (por qué NO se fijó AUTH_URL al dominio nuevo)
+La app del motorizado (Capacitor thin-shell, Google Play) tiene HORNEADO `server.url=https://transavic.vercel.app` en el AAB (v1.0.1/versionCode 2). Capacitor solo permite navegar dentro del host de `server.url`: si NextAuth rebotara al rider hacia `app.transavic.com`, el WebView lo expulsaría a Chrome y **mataría el GPS en background** de los 6 motorizados. Solución: **dual-domain durante la transición**.
+
+### Cambios aplicados (código)
+- `src/auth.ts`: **`trustHost: true`** — NextAuth deriva la URL base del host de CADA request (`x-forwarded-host` de Vercel). Ambos dominios sirven auth de forma independiente. Seguro: Vercel solo enruta dominios configurados del proyecto.
+- **Vercel: se ELIMINÓ `AUTH_URL`** (no se reemplazó — re-crearla fijaría un dominio único y rompería al otro).
+- `package.json` (`app:build:prod`): hornea `CAP_SERVER_URL=https://app.transavic.com`.
+- `android/app/build.gradle`: `versionCode 3`, `versionName "1.0.2"`.
+- `capacitor.config.ts`: `allowNavigation: ["transavic.vercel.app", "app.transavic.com"]` (red de seguridad: el WebView puede saltar entre ambos hosts sin expulsar al rider a Chrome).
+- Docs actualizados: CLAUDE.md §13, AGENTS.md, arquitectura README + 08, guía de build, play-store doc (política de privacidad → `https://app.transavic.com/privacidad`), comentarios en `privacidad/page.tsx` y `network_security_config.xml`.
+
+### Secuencia de despliegue (el ORDEN importa)
+1. **Fase 1 (hecha hoy):** deploy con `trustHost` + borrar `AUTH_URL` en Vercel + redeploy → dual-domain activo. Asesoras migran a `app.transavic.com` (re-login una vez; cookies son por dominio).
+2. **Fase 2:** AAB v1.0.2 (apunta al dominio nuevo) → Play Internal Testing → riders actualizan (re-login una vez). Actualizar URL de política de privacidad en Play Console.
+3. **Fase 4 (⚠️ SOLO tras confirmar que los 6 riders están en v1.0.2):** Vercel → Domains → `transavic.vercel.app` → "Redirect to Another Domain" → `https://app.transavic.com` (307 primero, 308 tras una semana estable). **Activarlo antes de tiempo rompe la app vieja de los riders** (redirect a host fuera de `server.url` sin `allowNavigation` → Chrome externo → sin GPS). Señal de confirmación: los pings de ubicación llegan vía el dominio nuevo en los logs de Vercel.
+4. Los crons de `vercel.json` NO pasan por el redirect (invocación interna por path). El webhook de Meta aún no está conectado; cuando se conecte, usar directamente el dominio nuevo.
+
+### Verificaciones
+- `curl -sI https://app.transavic.com/api/auth/csrf` → callback-url en el dominio NUEVO; el dominio viejo mantiene el suyo (dual OK).
+- Login real en ambos dominios → `/dashboard/nuevo-pedido` sin rebote.
+- AAB: `android/app/src/main/assets/capacitor.config.json` con url nueva + `cleartext: false` + AAB firmado, ANTES de subir a Play.
+- Google Maps: verificar en Google Cloud Console (cuenta `hugoherreradeveloper@gmail.com`) que la key `NEXT_PUBLIC_MAPS_API_KEY`, si tiene restricción por referrer, incluya `https://app.transavic.com/*` (agregar SIN quitar `*.vercel.app`).
+
+**Rollback:** Fase 1 = re-crear `AUTH_URL` + redeploy (2 min). Fase 4 = desactivar el redirect en el panel (instantáneo). El dominio viejo funciona indefinidamente hasta que se active el redirect — no hay reloj corriendo si un rider tarda en actualizar.

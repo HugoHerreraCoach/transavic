@@ -123,7 +123,7 @@ ahí se sube. Orden:
    - Mergear el código a `main` → Vercel deploya solo.
 2. **Construir el artefacto de producción** (apuntando a la web real):
    ```bash
-   npm run app:build:prod   # hornea CAP_SERVER_URL=https://transavic.vercel.app + genera el AAB (bundleRelease)
+   npm run app:build:prod   # hornea CAP_SERVER_URL=https://app.transavic.com + genera el AAB (bundleRelease)
    ```
    (Con https NO se usa cleartext; la red queda segura.)
    ⚠️ OJO: `npm run app:build` —**sin** `:prod`— genera un APK **debug**, solo para la prueba

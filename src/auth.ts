@@ -19,6 +19,11 @@ async function getUser(name: string) {
 
 export const { auth, signIn, signOut: authSignOut } = NextAuth({
   ...authConfig,
+  // Multi-dominio (app.transavic.com + transavic.vercel.app durante la transición):
+  // NextAuth deriva la URL base del host de CADA request (x-forwarded-host de Vercel)
+  // en vez de una AUTH_URL fija. Por eso AUTH_URL ya NO se define en Vercel.
+  // Seguro en Vercel: solo enruta dominios configurados del proyecto.
+  trustHost: true,
   providers: [
     Credentials({
       async authorize(credentials) {

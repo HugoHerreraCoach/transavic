@@ -22,7 +22,7 @@ Ubicada en `/dashboard/mi-ruta`, está diseñada bajo el principio **mobile-firs
 
 Dado que iOS y Android restringen drásticamente el uso de sensores de GPS en segundo plano a las aplicaciones web progresivas (PWA), la interfaz de `/mi-ruta` se envuelve en una aplicación nativa Android mediante **Capacitor** (carpeta `/android/`).
 
-- **Funcionamiento cascarón:** La app nativa carga la URL de producción (`server.url=https://transavic.vercel.app`) y actúa como contenedor.
+- **Funcionamiento cascarón:** La app nativa carga la URL de producción (`server.url=https://app.transavic.com` desde v1.0.2/versionCode 3; las versiones ≤1.0.1 apuntan a `transavic.vercel.app` — por eso el redirect del dominio viejo solo se activa cuando TODOS los riders actualizaron) y actúa como contenedor. `allowNavigation` permite ambos dominios como red de seguridad.
 - **Rastreo en background:** Capacitor aporta un servicio en primer plano (*foreground service*) mediante el plugin `BackgroundGeolocation`. Este servicio corre en segundo plano en el sistema operativo y reporta la posición GPS cada ~12 segundos a `POST /api/repartidor/ubicacion`, incluso con el teléfono bloqueado y la pantalla apagada.
 
 ---

@@ -1,5 +1,5 @@
 // Política de privacidad pública (sin auth) — requerida por Google Play porque
-// la app del motorizado usa la ubicación. URL: https://transavic.vercel.app/privacidad
+// la app del motorizado usa la ubicación. URL: https://app.transavic.com/privacidad
 export const metadata = {
   title: "Política de Privacidad — Transavic Reparto",
   description:

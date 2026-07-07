@@ -2,7 +2,7 @@
 
 > **Última actualización:** 2026-07-05
 > **Commit base:** `9f29f5a` (post-mejoras GPS e inconsistencias corregidas; + expansión ERP 2026 en desarrollo local)
-> **Estado:** Proyecto **EN PRODUCCIÓN** desde el 30 may 2026 (`transavic.vercel.app`)
+> **Estado:** Proyecto **EN PRODUCCIÓN** desde el 30 may 2026 — dominio `app.transavic.com` desde el 6 jul 2026 (`transavic.vercel.app` redirige)
 
 Esta carpeta contiene la **referencia técnica y de negocio de verdad** del sistema Transavic, estructurada de forma quirúrgica en pequeños documentos granulares para facilitar la contextualización de desarrolladores e inteligencias artificiales (IAs).
 

@@ -338,7 +338,7 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 ## 13. Estado del proyecto (resumen — crónicas completas en [docs/historial-cambios-2026.md](./docs/historial-cambios-2026.md))
 
 ### 🚀 EN PRODUCCIÓN desde el 30 may 2026
-- `main` → Vercel (`transavic.vercel.app`, proyecto `hugoherrerateam/transavic`, plan **Pro**). DB prod Neon `ep-cool-sound`. Las migraciones se aplican por **psql ANTES del deploy** (gotcha #13/#17); probar primero en la branch `dev-hugo` (`.env.local`, SUNAT beta).
+- `main` → Vercel (**dominio de producción: `app.transavic.com`** desde el 6 jul 2026; `transavic.vercel.app` sigue vivo durante la transición y luego REDIRIGE — la raíz `transavic.com` queda RESERVADA para futura web pública, no conectarla al ERP; proyecto `hugoherrerateam/transavic`, plan **Pro**). Auth multi-dominio: `trustHost:true` en `src/auth.ts` y **AUTH_URL ya NO se define en Vercel** (no re-crearla — fijaría un solo dominio y rompería al otro). DB prod Neon `ep-cool-sound`. Las migraciones se aplican por **psql ANTES del deploy** (gotcha #13/#17); probar primero en la branch `dev-hugo` (`.env.local`, SUNAT beta).
 - **SUNAT real operando**: facturas/boletas/NC (ambas empresas) emitiéndose a diario; **GRE validada end-to-end contra SUNAT real** (T002-00000010 ACEPTADA el 10 jun 2026; funciona de día y de noche).
 - **App repartidor** (Capacitor) publicada en Google Play (prueba interna); GPS en vivo por polling (`rider_locations` → mapa de despacho). Sin Pusher.
 - Las 24 env vars reales viven SOLO en Vercel + archivos gitignored (`.env.local`, `CREDENCIALES-PRODUCCION.local.md`).
