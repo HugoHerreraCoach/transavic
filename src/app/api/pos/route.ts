@@ -16,22 +16,26 @@ const PosItemSchema = z.object({
 });
 
 const PosSaleSchema = z.object({
+  // id del pedido generado por el CLIENTE (idempotencia: el replay de la cola
+  // offline reusa el mismo id y colisiona en PK en vez de duplicar la venta).
+  id: z.string().uuid().optional(),
   empresa: z.enum(["Transavic", "Avícola de Tony"]),
   items: z.array(PosItemSchema).min(1),
   tipo_pago: z.enum(["Contado", "Credito"]),
   cuenta_id: z.string().uuid().optional().nullable(),
-  cliente_id: z.string().uuid().optional().nullable(),
+  // Cliente de PLANTA (tabla propia clientes_planta), NO el de ejecutivas.
+  cliente_planta_id: z.string().uuid().optional().nullable(),
   notas_generales: z.string().optional().nullable(),
 }).refine((data) => {
   if (data.tipo_pago === "Contado" && !data.cuenta_id) {
     return false;
   }
-  if (data.tipo_pago === "Credito" && !data.cliente_id) {
+  if (data.tipo_pago === "Credito" && !data.cliente_planta_id) {
     return false;
   }
   return true;
 }, {
-  message: "Debe seleccionar una cuenta bancaria/caja para pagos al Contado, o un cliente registrado para ventas al Crédito.",
+  message: "Debe seleccionar una cuenta bancaria/caja para pagos al Contado, o un cliente de planta registrado para ventas al Crédito.",
   path: ["cuenta_id"]
 });
 
@@ -52,7 +56,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { empresa, items, tipo_pago, cuenta_id, cliente_id, notas_generales } = result.data;
+    const { id: bodyId, empresa, items, tipo_pago, cuenta_id, cliente_planta_id, notas_generales } = result.data;
     const usuario_id = session.user.id;
     const usuario_nombre = session.user.name || "POS Usuario";
 
@@ -62,22 +66,35 @@ export async function POST(req: NextRequest) {
     }
     const sql = neon(connectionString);
 
-    // Obtener información del cliente si existe
-    let clienteNombre = "Venta Rápida (POS)";
-    let plazoPagoDias = 0;
-    let clientAsesorId = usuario_id;
+    // Idempotencia: id del pedido generado por el cliente (o fallback server-side).
+    const pedido_id = bodyId ?? crypto.randomUUID();
+    const yaExiste = await sql`SELECT id FROM pedidos WHERE id = ${pedido_id}`;
+    if (yaExiste.length > 0) {
+      // Replay de la cola offline: la venta ya se registró, no duplicar.
+      return NextResponse.json({ message: "Venta ya registrada", pedido_id }, { status: 200 });
+    }
 
-    if (cliente_id) {
+    // Cliente de PLANTA (opcional para contado; obligatorio para crédito).
+    // Se denormalizan razon_social/ruc_dni al pedido para poder facturar a RUC
+    // (el comprobante lee esos campos del pedido, no de clientes).
+    let clienteNombre = "Venta Rápida (POS)";
+    let razonSocial: string | null = null;
+    let rucDni: string | null = null;
+    let plazoPagoDias = 0;
+
+    if (cliente_planta_id) {
       const clientRows = await sql`
-        SELECT nombre, plazo_pago_dias, asesor_id
-        FROM clientes
-        WHERE id = ${cliente_id}
+        SELECT nombre, razon_social, ruc_dni, plazo_pago_dias
+        FROM clientes_planta
+        WHERE id = ${cliente_planta_id}
       `;
-      if (clientRows.length > 0) {
-        clienteNombre = clientRows[0].nombre;
-        plazoPagoDias = Number(clientRows[0].plazo_pago_dias) || 0;
-        clientAsesorId = clientRows[0].asesor_id || usuario_id;
+      if (clientRows.length === 0) {
+        return NextResponse.json({ error: "Cliente de planta no encontrado" }, { status: 404 });
       }
+      clienteNombre = clientRows[0].nombre;
+      razonSocial = clientRows[0].razon_social;
+      rucDni = clientRows[0].ruc_dni;
+      plazoPagoDias = Number(clientRows[0].plazo_pago_dias) || 0;
     }
 
     // Calcular totales
@@ -91,27 +108,28 @@ export async function POST(req: NextRequest) {
 
     // Venta COMPLETA en una sola transacción: pedido + items + inventario + cobro/deuda.
     // Un fallo a mitad no puede dejar un pedido sin stock descontado ni una venta sin
-    // cobro/cobranza. El id del pedido se genera aquí porque la transacción batch del
-    // driver HTTP de Neon no permite usar el RETURNING de una query en las siguientes.
-    const pedido_id = crypto.randomUUID();
-
+    // cobro/cobranza. El pedido de planta va con cliente_id=NULL (la FK apunta a la
+    // tabla `clientes` de ejecutivas; el cliente de planta vive en cobranzas_planta),
+    // pero denormaliza razon_social/ruc_dni para el comprobante.
     const queries = [
       // 1. Crear el Pedido (origen = pos_planta, estado = Entregado)
       sql`
         INSERT INTO pedidos (
-          id, cliente, cliente_id, fecha_pedido, detalle, detalle_final, estado,
+          id, cliente, cliente_id, razon_social, ruc_dni, fecha_pedido, detalle, detalle_final, estado,
           empresa, asesor_id, entregado_por, origen
         )
         VALUES (
           ${pedido_id},
           ${clienteNombre},
-          ${cliente_id || null},
+          NULL,
+          ${razonSocial},
+          ${rucDni},
           (NOW() AT TIME ZONE 'America/Lima')::date,
           ${detalleDerivado},
           ${detalleDerivado},
           'Entregado',
           ${empresa},
-          ${clientAsesorId},
+          ${usuario_id},
           ${usuario_nombre},
           'pos_planta'
         )
@@ -159,22 +177,34 @@ export async function POST(req: NextRequest) {
         FROM update_cuenta
       `);
     } else {
-      const fechaVence = new Date(Date.now() + plazoPagoDias * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+      // Crédito de planta → cobranza PROPIA (cobranzas_planta), aislada de `facturas`
+      // de ejecutivas. La fecha de vencimiento se calcula en SQL (zona Lima, gotcha #30).
+      const cobranza_id = crypto.randomUUID();
       queries.push(sql`
-        INSERT INTO facturas (
-          pedido_id, cliente_id, cliente_nombre, asesor_id,
+        INSERT INTO cobranzas_planta (
+          id, pedido_id, cliente_planta_id, cliente_nombre,
           monto, plazo_dias, fecha_emision, fecha_vencimiento,
-          estado, numero_comprobante, notas
+          estado, empresa, notas, creado_por
         )
         VALUES (
-          ${pedido_id}, ${cliente_id}, ${clienteNombre}, ${clientAsesorId},
+          ${cobranza_id}, ${pedido_id}, ${cliente_planta_id}, ${clienteNombre},
           ${total_venta}, ${plazoPagoDias}, (NOW() AT TIME ZONE 'America/Lima')::date,
-          ${fechaVence}::date, 'Pendiente', 'POS-CREDITO', ${notas_generales || null}
+          (NOW() AT TIME ZONE 'America/Lima')::date + ${plazoPagoDias}::int,
+          'Pendiente', ${empresa}, ${notas_generales || null}, ${usuario_id}
         )
       `);
     }
 
-    await sql.transaction(queries);
+    try {
+      await sql.transaction(queries);
+    } catch (error: unknown) {
+      // Carrera de doble-tap / replay offline: el pedido ya existe (unique violation).
+      const code = (error as { code?: string })?.code;
+      if (code === "23505") {
+        return NextResponse.json({ message: "Venta ya registrada", pedido_id }, { status: 200 });
+      }
+      throw error;
+    }
 
     return NextResponse.json({ message: "Venta Rápida registrada", pedido_id }, { status: 201 });
   } catch (error) {

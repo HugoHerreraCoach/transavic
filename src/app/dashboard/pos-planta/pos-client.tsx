@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { FiTrash2, FiShoppingCart, FiWifiOff, FiCheck, FiUser, FiFileText, FiSearch, FiX, FiStar, FiRefreshCw } from "react-icons/fi";
+import { FiTrash2, FiShoppingCart, FiWifiOff, FiCheck, FiUser, FiFileText, FiSearch, FiX, FiStar, FiRefreshCw, FiPrinter, FiPlus } from "react-icons/fi";
 import { enqueueAction, getQueue, removeAction } from "@/lib/offline-queue";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
@@ -62,14 +62,14 @@ function TarjetaProducto({
       <button
         type="button"
         onClick={() => onAdd(producto)}
-        className="w-full bg-gray-50 border border-gray-200 rounded-2xl p-4 text-left hover:bg-indigo-50 hover:border-indigo-200 transition-colors active:scale-95 flex flex-col justify-between aspect-square cursor-pointer"
+        className="w-full min-h-[76px] bg-gray-50 border border-gray-200 rounded-2xl p-2.5 sm:p-3 text-left hover:bg-indigo-50 hover:border-indigo-200 transition-colors active:scale-95 flex flex-col justify-between gap-1.5 cursor-pointer"
       >
         <div>
-          <span className="text-xs font-semibold text-gray-500 mb-1 block pr-8">{producto.categoria}</span>
-          <span className="font-bold text-gray-900 leading-tight">{producto.nombre}</span>
+          <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wide block pr-6 leading-none">{producto.categoria}</span>
+          <span className="font-bold text-gray-900 text-sm leading-tight line-clamp-2 mt-0.5">{producto.nombre}</span>
         </div>
-        <div className="mt-2 text-indigo-600 font-extrabold text-lg">
-          S/ {Number(producto.precio_venta).toFixed(2)} <span className="text-sm font-medium text-gray-500">/{producto.unidades}</span>
+        <div className="text-indigo-600 font-extrabold text-sm sm:text-base leading-none">
+          S/ {Number(producto.precio_venta).toFixed(2)} <span className="text-[11px] font-medium text-gray-500">/{producto.unidades}</span>
         </div>
       </button>
       <button
@@ -77,17 +77,25 @@ function TarjetaProducto({
         onClick={() => onToggleFavorito(producto.id)}
         aria-label={esFavorito ? "Quitar de favoritos" : "Agregar a favoritos"}
         title={esFavorito ? "Quitar de favoritos" : "Agregar a favoritos"}
-        className="absolute top-2 right-2 p-2 rounded-full bg-white/90 border border-gray-200 shadow-sm cursor-pointer active:scale-90 transition-transform hover:border-amber-300"
+        className="absolute top-1.5 right-1.5 p-1.5 rounded-full bg-white/90 border border-gray-200 shadow-sm cursor-pointer active:scale-90 transition-transform hover:border-amber-300"
       >
-        <FiStar size={16} className={esFavorito ? "fill-amber-400 text-amber-500" : "text-gray-400"} />
+        <FiStar size={13} className={esFavorito ? "fill-amber-400 text-amber-500" : "text-gray-400"} />
       </button>
     </div>
   );
 }
 
-export default function PosClient({ productosInit }: { productosInit: Producto[] }) {
+export default function PosClient({
+  productosInit,
+  userRole,
+}: {
+  productosInit: Producto[];
+  userRole?: string;
+}) {
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [empresa, setEmpresa] = useState<"Transavic" | "Avícola de Tony">("Transavic");
+  // Por defecto Avícola de Tony (RUC 10): así lo pidió Antonio — la mayoría de ventas
+  // rápidas van a RUC 10; el selector deja cambiar a Transavic cuando corresponde.
+  const [empresa, setEmpresa] = useState<"Transavic" | "Avícola de Tony">("Avícola de Tony");
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [selectedCuenta, setSelectedCuenta] = useState<string>("");
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -100,7 +108,70 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
   const [favoritos, setFavoritos] = useState<string[]>([]);
   const [pendientes, setPendientes] = useState(0);
   const [sincronizando, setSincronizando] = useState(false);
+  // pedido_id de la venta recién registrada → panel post-venta (imprimir orden /
+  // emitir comprobante). Las ventas encoladas offline NO pasan por aquí (sin id).
+  const [ventaExitosa, setVentaExitosa] = useState<string | null>(null);
+  // Alta rápida de cliente de planta (crédito): modal inline.
+  const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false);
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre: "", telefono: "", ruc_dni: "", plazo_pago_dias: "0" });
+  const [guardandoCliente, setGuardandoCliente] = useState(false);
+  // En celular el carrito es una hoja deslizable (bottom sheet); en desktop es la
+  // columna derecha fija. Este estado solo controla la hoja móvil.
+  const [carritoAbierto, setCarritoAbierto] = useState(false);
   const { mostrarToast, toasts } = useToast();
+
+  // Recarga el directorio de clientes de planta tras crear uno.
+  const recargarClientesPlanta = async () => {
+    try {
+      const res = await fetch("/api/clientes-planta");
+      const data = await res.json();
+      if (data && Array.isArray(data.clientes)) setClientes(data.clientes);
+    } catch {
+      // sin conexión
+    }
+  };
+
+  // Crea un cliente de planta al vuelo (requiere conexión) y lo deja seleccionado.
+  const crearClientePlanta = async () => {
+    if (!nuevoCliente.nombre.trim()) {
+      mostrarToast("El nombre es obligatorio", "error");
+      return;
+    }
+    if (isOffline || !navigator.onLine) {
+      mostrarToast("Necesitas conexión para crear un cliente nuevo", "error");
+      return;
+    }
+    setGuardandoCliente(true);
+    const id = crypto.randomUUID();
+    try {
+      const res = await fetch("/api/clientes-planta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id,
+          nombre: nuevoCliente.nombre.trim(),
+          telefono: nuevoCliente.telefono.trim() || null,
+          ruc_dni: nuevoCliente.ruc_dni.trim() || null,
+          plazo_pago_dias: Number(nuevoCliente.plazo_pago_dias) || 0,
+          empresa,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        mostrarToast(err?.error || "No se pudo crear el cliente", "error");
+        return;
+      }
+      await recargarClientesPlanta();
+      setSelectedClienteId(id);
+      setMostrarNuevoCliente(false);
+      setNuevoCliente({ nombre: "", telefono: "", ruc_dni: "", plazo_pago_dias: "0" });
+      mostrarToast("Cliente de planta creado", "exito");
+    } catch {
+      mostrarToast("Sin conexión: no se pudo crear el cliente", "error");
+    } finally {
+      setGuardandoCliente(false);
+    }
+  };
 
   // Filtros de Catálogo
   const [searchQuery, setSearchQuery] = useState("");
@@ -167,16 +238,15 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
         }
       });
 
-    // Cargar clientes recurrentes
-    fetch("/api/clientes?limit=500")
+    // Cargar clientes de PLANTA (directorio propio del POS, aislado de ejecutivas)
+    fetch("/api/clientes-planta")
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) {
-          setClientes(data);
-        } else if (data && Array.isArray(data.data)) {
-          setClientes(data.data);
+        if (data && Array.isArray(data.clientes)) {
+          setClientes(data.clientes);
         }
-      });
+      })
+      .catch(() => { /* sin conexión: el selector queda vacío hasta reconectar */ });
 
     return () => {
       window.removeEventListener("online", handleOnline);
@@ -247,6 +317,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
     setNotasGenerales("");
     setSelectedClienteId("");
     setTipoPago("Contado");
+    setCarritoAbierto(false);
   };
 
   // Encola la venta en la cola offline compartida y limpia el carrito
@@ -265,13 +336,16 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
   const handleCheckout = async () => {
     if (cart.length === 0) return mostrarToast("El carrito está vacío", "error");
     if (tipoPago === "Contado" && !selectedCuenta) return mostrarToast("Selecciona una cuenta bancaria/caja", "error");
-    if (tipoPago === "Credito" && !selectedClienteId) return mostrarToast("Selecciona un cliente registrado para ventas al crédito", "error");
+    if (tipoPago === "Credito" && !selectedClienteId) return mostrarToast("Selecciona un cliente de planta para ventas al crédito", "error");
 
     const payload = {
+      // id del pedido generado aquí: si la venta se encola offline y se reintenta,
+      // reusa el mismo id → el server no la duplica (idempotencia).
+      id: crypto.randomUUID(),
       empresa,
       tipo_pago: tipoPago,
       cuenta_id: tipoPago === "Contado" ? selectedCuenta : null,
-      cliente_id: selectedClienteId || null,
+      cliente_planta_id: selectedClienteId || null,
       items: cart.map(i => ({
         productoId: i.productoId,
         nombre: i.nombre,
@@ -297,8 +371,15 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
       });
 
       if (res.ok) {
-        mostrarToast("Venta registrada exitosamente", "exito");
+        // El POST devuelve el pedido_id: con él ofrecemos imprimir la orden o
+        // emitir el comprobante sin salir del POS (pedido de Antonio, jul 2026).
+        const data = await res.json().catch(() => null);
         resetVenta();
+        if (data?.pedido_id) {
+          setVentaExitosa(data.pedido_id as string);
+        } else {
+          mostrarToast("Venta registrada exitosamente", "exito");
+        }
       } else {
         const error = await res.json().catch(() => null);
         mostrarToast(error?.error || "Error al procesar la venta", "error");
@@ -365,6 +446,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
   // Preparar opciones de clientes para el SearchableSelect
   const clienteOptions = [
     { id: "", nombre: "Venta al Paso (Anónimo)", subtext: "Sin deuda" },
+    { id: "__nuevo__", nombre: "＋ Nuevo cliente de planta", subtext: "Crear al vuelo" },
     ...clientes.map(c => ({
       id: c.id,
       nombre: c.nombre,
@@ -372,12 +454,21 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
     }))
   ];
 
+  // El SearchableSelect devuelve un id; "__nuevo__" abre el alta rápida en vez de seleccionar.
+  const onSelectCliente = (id: string) => {
+    if (id === "__nuevo__") {
+      setMostrarNuevoCliente(true);
+      return;
+    }
+    setSelectedClienteId(id);
+  };
+
   return (
-    <div className="flex flex-col h-full flex-1 min-h-0">
+    <div className="flex flex-col lg:h-full flex-1 min-h-0">
       <GuiaModulo modulo="pos-planta" />
-      <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
+      <div className="flex flex-col lg:flex-row gap-6 lg:flex-1 lg:min-h-0">
       {/* Catálogo Left Panel */}
-      <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+      <div className="lg:flex-1 bg-white rounded-3xl shadow-sm border border-gray-100 lg:overflow-hidden flex flex-col">
         <div className="p-4 border-b border-gray-100 space-y-3 flex-shrink-0 bg-white">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <h2 className="font-bold text-gray-800 text-lg">Catálogo</h2>
@@ -456,9 +547,9 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             </div>
           </div>
         </div>
-        <div className="p-4 flex-1 overflow-y-auto scrollbar-visible">
+        <div className="p-4 pb-28 lg:pb-4 lg:flex-1 lg:overflow-y-auto scrollbar-visible">
           {/* Favoritos: siempre visibles, aunque haya búsqueda o filtro activo */}
-          <div className="mb-6">
+          <div className="mb-4">
             <h3 className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <FiStar size={12} className="fill-amber-400 text-amber-500" /> Favoritos
             </h3>
@@ -467,7 +558,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
                 Toca la estrella de un producto para tenerlo siempre a la mano aquí.
               </p>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
                 {productosFavoritos.map(p => (
                   <TarjetaProducto
                     key={`fav-${p.id}`}
@@ -500,7 +591,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-3 sm:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3">
               {productosFiltrados.map(p => (
                 <TarjetaProducto
                   key={p.id}
@@ -515,80 +606,116 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
         </div>
       </div>
 
-      {/* Cart Right Panel */}
-      <div className="w-full lg:w-[400px] bg-white rounded-3xl shadow-sm border border-gray-100 flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
+      {/* Fondo oscuro de la hoja móvil (solo celular, al abrir el carrito) */}
+      {carritoAbierto && (
+        <div
+          className="lg:hidden fixed inset-0 z-[94] bg-black/40 animate-in fade-in duration-150"
+          onClick={() => setCarritoAbierto(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/*
+        Panel "Venta Actual": en desktop es la columna derecha fija; en celular es
+        una hoja deslizable desde abajo (bottom sheet) que se abre con la barra de
+        cobro. Las clases lg: fuerzan la columna sin importar el estado de la hoja.
+      */}
+      <div
+        className={`bg-white border border-gray-100 flex-col lg:flex lg:static lg:inset-auto lg:z-auto lg:max-h-none lg:w-[400px] lg:rounded-3xl lg:shadow-sm lg:flex-shrink-0 ${
+          carritoAbierto
+            ? "flex fixed inset-x-0 bottom-0 z-[95] max-h-[88vh] rounded-t-3xl shadow-2xl"
+            : "hidden"
+        }`}
+      >
+        {/* Agarradera de la hoja (solo celular) */}
+        <div className="lg:hidden mx-auto mt-2 h-1.5 w-10 rounded-full bg-gray-300 flex-shrink-0" />
+        <div className="p-4 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
           <h2 className="font-bold text-gray-800 text-lg flex items-center">
             <FiShoppingCart className="mr-2" /> Venta Actual
           </h2>
-          {isOffline && (
-            <span className="flex items-center text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded-full">
-              <FiWifiOff className="mr-1" /> Sin conexión
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {isOffline && (
+              <span className="flex items-center text-xs font-bold text-orange-600 bg-orange-100 px-2 py-1 rounded-full">
+                <FiWifiOff className="mr-1" /> Sin conexión
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setCarritoAbierto(false)}
+              aria-label="Seguir agregando productos"
+              className="lg:hidden p-2 -mr-1 rounded-lg text-gray-400 hover:bg-gray-100 active:scale-95 transition"
+            >
+              <FiX size={20} />
+            </button>
+          </div>
         </div>
         
-        <div className="flex-1 min-h-[160px] overflow-y-auto p-4 space-y-3 scrollbar-visible">
+        {/* Área desplazable única: ítems (principal) + ajustes de la venta */}
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-visible">
+          <div className="p-4 space-y-2.5 min-h-[180px] flex flex-col">
           {cart.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-gray-400">
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
               <FiShoppingCart size={48} className="mb-4 opacity-50" />
               <p>Seleccione productos</p>
             </div>
           ) : (
             cart.map(item => (
-              <div key={item.cartId} className="flex flex-col bg-gray-50 rounded-2xl p-3 border border-gray-100">
-                <div className="flex justify-between items-start mb-2">
-                  <span className="font-bold text-gray-900 leading-tight flex-1 pr-2">{item.nombre}</span>
-                  <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500">
-                    <FiTrash2 />
+              <div key={item.cartId} className="rounded-2xl bg-gray-50 border border-gray-100 p-3">
+                {/* Nombre + eliminar */}
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-semibold text-sm text-gray-900 leading-snug line-clamp-2">{item.nombre}</span>
+                  <button
+                    onClick={() => removeFromCart(item.cartId)}
+                    aria-label="Quitar producto"
+                    className="flex-shrink-0 -mt-1 -mr-1 p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition"
+                  >
+                    <FiTrash2 size={16} />
                   </button>
                 </div>
-                <div className="flex items-center justify-between mt-2 gap-1.5 border-t border-gray-100 pt-2 text-xs">
-                  {/* Cantidad */}
-                  <div className="flex items-center gap-1">
+
+                {/* Controles + subtotal */}
+                <div className="mt-2.5 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    {/* Cantidad */}
                     <input
                       type="number"
                       step="0.01"
                       min="0.01"
                       value={item.cantidad || ""}
                       onChange={(e) => updateQuantity(item.cartId, e.target.value)}
-                      className="w-16 text-center border border-gray-300 rounded-lg py-3 px-1 font-semibold outline-none focus:ring-1 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-base animate-none"
-                      placeholder="Cant"
+                      className="w-14 h-11 text-center rounded-lg border border-gray-300 bg-white text-sm font-semibold tabular-nums outline-none focus:ring-1 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      placeholder="0"
                     />
-                    <span className="text-gray-500 text-[10px]">{item.unidad}</span>
+                    <span className="text-[11px] text-gray-500 font-medium flex-shrink-0">{item.unidad}</span>
+                    <span className="text-gray-300 text-xs font-bold flex-shrink-0">×</span>
+                    {/* Precio unitario */}
+                    <div className="relative">
+                      <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 pointer-events-none">S/</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        value={item.precioUnitario || ""}
+                        onChange={(e) => updatePrice(item.cartId, e.target.value)}
+                        className="w-[4.75rem] h-11 text-right pl-6 pr-2 rounded-lg border border-gray-300 bg-white text-sm font-semibold text-indigo-700 tabular-nums outline-none focus:ring-1 focus:ring-indigo-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        placeholder="0.00"
+                      />
+                    </div>
                   </div>
 
-                  <span className="text-gray-400 text-[10px] font-bold">×</span>
-
-                  {/* Precio Unitario */}
-                  <div className="flex items-center gap-1">
-                    <span className="text-gray-400 text-[10px]">S/</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      value={item.precioUnitario || ""}
-                      onChange={(e) => updatePrice(item.cartId, e.target.value)}
-                      className="w-20 text-center border border-gray-300 rounded-lg py-3 px-1 font-extrabold text-indigo-700 outline-none focus:ring-1 focus:ring-indigo-500 bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none text-base"
-                      placeholder="Precio"
-                    />
-                  </div>
-
-                  {/* Subtotal */}
-                  <div className="text-right flex-1 min-w-[70px]">
-                    <span className="font-extrabold text-gray-900 text-xs">
-                      S/ {(item.cantidad * item.precioUnitario).toFixed(2)}
-                    </span>
-                  </div>
+                  {/* Subtotal (número prominente del renglón) */}
+                  <span className="text-base font-black text-gray-900 tabular-nums whitespace-nowrap">
+                    S/ {(item.cantidad * item.precioUnitario).toFixed(2)}
+                  </span>
                 </div>
               </div>
             ))
           )}
-        </div>
+          </div>
 
-        {/* Checkout Panel */}
-        <div className="p-4 border-t border-gray-100 bg-gray-50 rounded-b-3xl space-y-3 flex-shrink-0">
-          
+          {/* Ajustes de la venta — dentro del scroll, debajo de los ítems */}
+          <div className="p-4 pt-0 space-y-3">
+
           {/* Cliente selector */}
           <div className="space-y-1">
             <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
@@ -596,7 +723,7 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             </label>
             <SearchableSelect
               value={selectedClienteId}
-              onChange={setSelectedClienteId}
+              onChange={onSelectCliente}
               options={clienteOptions}
               placeholder="Seleccione Cliente..."
               searchPlaceholder="Buscar cliente..."
@@ -700,9 +827,14 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             )}
           </div>
           
-          <div className="flex items-end justify-between pt-2 border-t border-gray-200/60">
+          </div>{/* fin ajustes de la venta */}
+        </div>{/* fin área desplazable */}
+
+        {/* Footer anclado: Total + Confirmar — nunca se aplastan ni se cortan */}
+        <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))] lg:pb-4 border-t border-gray-100 bg-gray-50 lg:rounded-b-3xl space-y-2.5 flex-shrink-0">
+          <div className="flex items-end justify-between">
             <span className="text-gray-500 text-xs font-semibold">Total a Cobrar</span>
-            <span className="text-xl font-black text-indigo-600 tracking-tight">S/ {total.toFixed(2)}</span>
+            <span className="text-2xl font-black text-indigo-600 tracking-tight tabular-nums">S/ {total.toFixed(2)}</span>
           </div>
 
           <button
@@ -733,9 +865,35 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
       </div>
       </div>
 
+      {/* Barra de cobro (solo celular): siempre visible mientras se eligen productos.
+          Muestra el total al instante y abre la hoja del carrito con un toque. */}
+      {cart.length > 0 && !carritoAbierto && (
+        <button
+          type="button"
+          onClick={() => setCarritoAbierto(true)}
+          className="lg:hidden fixed inset-x-0 bottom-0 z-[85] print:hidden flex items-center justify-between gap-3 bg-indigo-600 text-white px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] shadow-[0_-4px_20px_rgba(0,0,0,0.18)] active:bg-indigo-700 cursor-pointer animate-in slide-in-from-bottom duration-200"
+        >
+          <span className="flex items-center gap-2.5 min-w-0">
+            <span className="relative flex-shrink-0">
+              <FiShoppingCart size={22} />
+              <span className="absolute -top-2 -right-2 bg-white text-indigo-700 text-[10px] font-black h-4 min-w-[16px] px-1 rounded-full flex items-center justify-center">
+                {cart.length}
+              </span>
+            </span>
+            <span className="text-sm font-bold truncate">Ver venta</span>
+          </span>
+          <span className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-lg font-black tracking-tight">S/ {total.toFixed(2)}</span>
+            <span className="flex items-center gap-1 bg-white/20 rounded-lg px-2.5 py-1.5 text-xs font-bold">
+              Cobrar <FiCheck size={14} />
+            </span>
+          </span>
+        </button>
+      )}
+
       {/* Chip de ventas offline pendientes (fixed bajo DashboardLayout → print:hidden, gotcha #26) */}
       {pendientes > 0 && (
-        <div className="fixed bottom-4 right-4 z-[90] print:hidden flex items-center gap-2 bg-amber-100 border border-amber-300 text-amber-800 rounded-full pl-4 pr-1.5 py-1.5 shadow-lg">
+        <div className="fixed bottom-24 lg:bottom-4 right-4 z-[90] print:hidden flex items-center gap-2 bg-amber-100 border border-amber-300 text-amber-800 rounded-full pl-4 pr-1.5 py-1.5 shadow-lg">
           <FiWifiOff size={14} className="shrink-0" />
           <span className="text-xs font-bold whitespace-nowrap">
             {pendientes} venta{pendientes > 1 ? "s" : ""} por enviar
@@ -749,6 +907,120 @@ export default function PosClient({ productosInit }: { productosInit: Producto[]
             <FiRefreshCw size={13} className={sincronizando ? "animate-spin" : ""} />
             {sincronizando ? "Enviando..." : "Reintentar"}
           </button>
+        </div>
+      )}
+      {/* Panel post-venta: imprimir la orden o emitir el comprobante sin salir del POS */}
+      {ventaExitosa && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 print:hidden">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-6 flex flex-col items-center gap-4">
+            <div className="h-14 w-14 rounded-full bg-emerald-100 flex items-center justify-center">
+              <FiCheck className="h-8 w-8 text-emerald-600" />
+            </div>
+            <div className="text-center">
+              <p className="text-xl font-black text-gray-900">Venta registrada</p>
+              <p className="text-sm text-gray-500 mt-1">¿Qué quieres hacer ahora?</p>
+            </div>
+            <div className="w-full flex flex-col gap-2">
+              <a
+                href={`/pedidos/${ventaExitosa}/guia`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-gray-900 text-white font-bold active:scale-95 transition"
+              >
+                <FiPrinter className="h-5 w-5" />
+                Imprimir orden
+              </a>
+              {(userRole === "admin" || userRole === "asesor") && (
+                <a
+                  href={`/dashboard/comprobantes/nuevo?pedido=${ventaExitosa}`}
+                  className="flex items-center justify-center gap-2 w-full h-12 rounded-xl bg-indigo-600 text-white font-bold active:scale-95 transition"
+                >
+                  <FiFileText className="h-5 w-5" />
+                  Emitir comprobante
+                </a>
+              )}
+              <button
+                type="button"
+                onClick={() => setVentaExitosa(null)}
+                className="flex items-center justify-center gap-2 w-full h-12 rounded-xl border border-gray-300 text-gray-700 font-bold active:scale-95 transition"
+              >
+                <FiPlus className="h-5 w-5" />
+                Nueva venta
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Alta rápida de cliente de planta (para ventas a crédito) */}
+      {mostrarNuevoCliente && (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4 print:hidden">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-6 flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-black text-gray-900">Nuevo cliente de planta</h2>
+              <button
+                type="button"
+                onClick={() => setMostrarNuevoCliente(false)}
+                className="p-2 rounded-lg text-gray-400 hover:bg-gray-100"
+                aria-label="Cerrar"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Nombre</label>
+              <input
+                autoFocus
+                type="text"
+                value={nuevoCliente.nombre}
+                onChange={(e) => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })}
+                className="w-full rounded-xl border border-gray-200 p-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="Ej: Puesto Doña Rosa"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Teléfono</label>
+                <input
+                  type="tel"
+                  inputMode="tel"
+                  value={nuevoCliente.telefono}
+                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, telefono: e.target.value })}
+                  className="w-full rounded-xl border border-gray-200 p-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Opcional"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">RUC / DNI</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={nuevoCliente.ruc_dni}
+                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, ruc_dni: e.target.value.replace(/\D/g, "") })}
+                  className="w-full rounded-xl border border-gray-200 p-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="Opcional"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Días de plazo de pago</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={nuevoCliente.plazo_pago_dias}
+                onChange={(e) => setNuevoCliente({ ...nuevoCliente, plazo_pago_dias: e.target.value.replace(/\D/g, "") })}
+                className="w-full rounded-xl border border-gray-200 p-3 text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                placeholder="0"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={crearClientePlanta}
+              disabled={guardandoCliente}
+              className="w-full h-12 rounded-xl bg-indigo-600 text-white font-bold active:scale-95 transition disabled:opacity-50"
+            >
+              {guardandoCliente ? "Guardando..." : "Crear y seleccionar"}
+            </button>
+          </div>
         </div>
       )}
       <ToastContainer toasts={toasts} />

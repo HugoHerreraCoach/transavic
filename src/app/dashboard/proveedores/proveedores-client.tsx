@@ -7,10 +7,11 @@ import GuiaModulo from "@/components/GuiaModulo";
 
 interface Proveedor {
   id: string;
-  ruc: string;
+  ruc: string | null;
   razon_social: string;
   direccion: string | null;
   telefono: string | null;
+  tipo: "principal" | "secundario";
 }
 
 interface ProveedoresClientProps {
@@ -32,7 +33,8 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
     ruc: "",
     razon_social: "",
     direccion: "",
-    telefono: ""
+    telefono: "",
+    tipo: "principal" as "principal" | "secundario"
   });
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -58,7 +60,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
 
   const handleOpenCreate = () => {
     setEditingProveedor(null);
-    setForm({ ruc: "", razon_social: "", direccion: "", telefono: "" });
+    setForm({ ruc: "", razon_social: "", direccion: "", telefono: "", tipo: "principal" });
     setFormError(null);
     setModalOpen(true);
   };
@@ -66,10 +68,11 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
   const handleOpenEdit = (p: Proveedor) => {
     setEditingProveedor(p);
     setForm({
-      ruc: p.ruc,
+      ruc: p.ruc || "",
       razon_social: p.razon_social,
       direccion: p.direccion || "",
-      telefono: p.telefono || ""
+      telefono: p.telefono || "",
+      tipo: p.tipo || "principal"
     });
     setFormError(null);
     setModalOpen(true);
@@ -132,7 +135,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
   const filtered = proveedores.filter(
     (p) =>
       p.razon_social.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.ruc.includes(searchTerm)
+      (p.ruc ?? "").includes(searchTerm)
   );
 
   return (
@@ -159,7 +162,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
         <FiSearch className="text-gray-400 w-5 h-5 ml-3" />
         <input 
           type="text" 
-          placeholder="Buscar por Razón Social o RUC..."
+          placeholder="Buscar por nombre o RUC..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full pl-3 pr-4 py-2 bg-transparent text-gray-900 focus:outline-none placeholder-gray-400"
@@ -195,8 +198,9 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
             <table className="w-full text-left">
               <thead className="bg-gray-50 border-b border-gray-100">
                 <tr>
+                  <th className="p-4 font-semibold text-gray-600">Nombre</th>
+                  <th className="p-4 font-semibold text-gray-600">Tipo</th>
                   <th className="p-4 font-semibold text-gray-600">RUC</th>
-                  <th className="p-4 font-semibold text-gray-600">Razón Social</th>
                   <th className="p-4 font-semibold text-gray-600">Dirección</th>
                   <th className="p-4 font-semibold text-gray-600">Teléfono</th>
                   <th className="p-4 font-semibold text-gray-600 text-right">Acciones</th>
@@ -205,10 +209,23 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
               <tbody className="divide-y divide-gray-50">
                 {filtered.map((p) => (
                   <tr key={p.id} className="hover:bg-gray-50 transition-colors group">
-                    <td className="p-4 font-medium text-gray-900 flex items-center gap-2">
-                      <FiFileText className="text-gray-400" /> {p.ruc}
-                    </td>
                     <td className="p-4 text-gray-900 font-semibold">{p.razon_social}</td>
+                    <td className="p-4">
+                      <span
+                        className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                          p.tipo === "secundario"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {p.tipo === "secundario" ? "Secundario" : "Principal"}
+                      </span>
+                    </td>
+                    <td className="p-4 font-medium text-gray-900">
+                      <span className="flex items-center gap-2">
+                        <FiFileText className="text-gray-400" /> {p.ruc || "—"}
+                      </span>
+                    </td>
                     <td className="p-4 text-gray-500 max-w-xs truncate">
                       {p.direccion ? (
                         <span className="flex items-center gap-1"><FiMapPin className="text-gray-400 flex-shrink-0" /> {p.direccion}</span>
@@ -271,49 +288,76 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
               )}
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">RUC (11 dígitos)</label>
-                <input 
-                  required 
-                  type="text" 
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Nombre del proveedor</label>
+                <input
+                  required
+                  type="text"
+                  value={form.razon_social}
+                  onChange={(e) => setForm({ ...form, razon_social: e.target.value })}
+                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50"
+                  placeholder="Ej: Granja San Fernando o Don Julio"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Teléfono de contacto</label>
+                <input
+                  required
+                  type="tel"
+                  inputMode="tel"
+                  value={form.telefono}
+                  onChange={(e) => setForm({ ...form, telefono: e.target.value })}
+                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50"
+                  placeholder="Ej: 987654321"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Tipo de proveedor</label>
+                <div className="flex gap-2">
+                  {(["principal", "secundario"] as const).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setForm({ ...form, tipo: t })}
+                      className={`flex-1 py-2.5 rounded-xl font-semibold border transition-colors ${
+                        form.tipo === t
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"
+                      }`}
+                    >
+                      {t === "principal" ? "Principal" : "Secundario"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  RUC <span className="text-gray-400 font-normal">(opcional)</span>
+                </label>
+                <input
+                  type="text"
                   maxLength={11}
-                  value={form.ruc} 
-                  onChange={(e) => setForm({ ...form, ruc: e.target.value.replace(/\D/g, "") })} 
-                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50" 
-                  placeholder="Ej: 20123456789" 
+                  inputMode="numeric"
+                  value={form.ruc}
+                  onChange={(e) => setForm({ ...form, ruc: e.target.value.replace(/\D/g, "") })}
+                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50"
+                  placeholder="Ej: 20123456789 (si lo tiene)"
                 />
+                <p className="text-xs text-gray-400 mt-1">Déjalo vacío si el proveedor es informal y no tiene RUC.</p>
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Razón Social</label>
-                <input 
-                  required 
-                  type="text" 
-                  value={form.razon_social} 
-                  onChange={(e) => setForm({ ...form, razon_social: e.target.value })} 
-                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50" 
-                  placeholder="Ej: Granja San Fernando S.A." 
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Dirección Fiscal / Granja</label>
-                <input 
-                  type="text" 
-                  value={form.direccion} 
-                  onChange={(e) => setForm({ ...form, direccion: e.target.value })} 
-                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50" 
-                  placeholder="Ej: Km 45 Panamericana Norte, Chancay" 
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Teléfono de Contacto</label>
-                <input 
-                  type="text" 
-                  value={form.telefono} 
-                  onChange={(e) => setForm({ ...form, telefono: e.target.value })} 
-                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50" 
-                  placeholder="Ej: 987654321 o (01) 456-7890" 
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  Dirección <span className="text-gray-400 font-normal">(opcional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={form.direccion}
+                  onChange={(e) => setForm({ ...form, direccion: e.target.value })}
+                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50"
+                  placeholder="Ej: Km 45 Panamericana Norte, Chancay"
                 />
               </div>
 

@@ -76,6 +76,15 @@ export default function CajaDiariaClient() {
   const [caja, setCaja] = useState<ActiveBox | null>(null);
   const [historial, setHistorial] = useState<ClosedBox[]>([]);
   const [cuentas, setCuentas] = useState<Account[]>([]);
+
+  // Operación de la caja: PLANTA (mostrador) o CAMPO (reparto/ruta). Cada una
+  // abre/cierra por separado. Default 'planta' (comportamiento previo), persistida
+  // en localStorage. La hidratación desde localStorage va en un efecto (evita
+  // desajuste de hidratación SSR).
+  // Solo caja de PLANTA (decisión de Antonio 8 jul: el campo usa su reporte de
+  // liquidación como cierre, no una caja formal con arqueo). El esquema y la API
+  // soportan 'campo' si algún día se quiere activar (basta reponer el selector).
+  const operacion = "planta" as const;
   
   // Form states
   const [montoApertura, setMontoApertura] = useState<string>("");
@@ -99,6 +108,10 @@ export default function CajaDiariaClient() {
 
   const { mostrarToast, toasts } = useToast();
 
+  // Derivados de la operación elegida (rótulo visible y cuenta de efectivo a usar)
+  const rotulo = "Caja de Planta";
+  const nombreCuentaEfectivo = "Caja Efectivo Planta";
+
   // Total contado en vivo a partir de las denominaciones (redondeado para evitar flotantes)
   const totalDenominaciones = Math.round(
     [...BILLETES, ...MONEDAS].reduce((acc, d) => {
@@ -116,7 +129,7 @@ export default function CajaDiariaClient() {
 
   const fetchCajaData = async () => {
     try {
-      const res = await fetch("/api/caja-diaria");
+      const res = await fetch(`/api/caja-diaria?operacion=${operacion}`);
       if (res.ok) {
         const data = await res.json();
         setActive(data.active);
@@ -137,10 +150,10 @@ export default function CajaDiariaClient() {
         const data = await res.json();
         if (Array.isArray(data)) {
           setCuentas(data);
-          // Por defecto el gasto sale del EFECTIVO de planta (el caso normal):
-          // primero la cuenta oficial, si no cualquier cuenta tipo efectivo.
+          // Por defecto el gasto sale del EFECTIVO de la operación elegida (el caso
+          // normal): primero la cuenta oficial de esa caja, si no cualquier efectivo.
           const cashAcc =
-            data.find(c => c.nombre === "Caja Efectivo Planta") ??
+            data.find(c => c.nombre === nombreCuentaEfectivo) ??
             data.find(c => c.tipo === "efectivo");
           if (cashAcc) {
             setGastoCuentaId(cashAcc.id);
@@ -171,7 +184,7 @@ export default function CajaDiariaClient() {
       const res = await fetch("/api/caja-diaria", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ monto_apertura: Number(montoApertura) }),
+        body: JSON.stringify({ monto_apertura: Number(montoApertura), operacion }),
       });
 
       if (res.ok) {
@@ -208,7 +221,7 @@ export default function CajaDiariaClient() {
       const res = await fetch("/api/caja-diaria", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ monto_cierre_real: montoFinal }),
+        body: JSON.stringify({ monto_cierre_real: montoFinal, operacion }),
       });
 
       if (res.ok) {
@@ -304,9 +317,9 @@ export default function CajaDiariaClient() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Caja Diaria</h1>
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight">{rotulo}</h1>
           <p className="text-sm text-gray-500">
-            Control del efectivo de mostrador: apertura, gastos y cuadre de caja al cierre.
+            Control del efectivo del mostrador de planta: apertura, gastos y cuadre de caja al cierre.
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs font-bold text-gray-600 bg-gray-100 p-2 rounded-xl border border-gray-200">
@@ -336,7 +349,7 @@ export default function CajaDiariaClient() {
             // apertura lo reemplaza por el conteo físico (evita "perder" ventas
             // hechas antes de abrir la caja sin que nadie lo note).
             const ctaEfectivo =
-              cuentas.find((c) => c.nombre === "Caja Efectivo Planta") ??
+              cuentas.find((c) => c.nombre === nombreCuentaEfectivo) ??
               cuentas.find((c) => c.tipo === "efectivo");
             const saldoPrevio = Number(ctaEfectivo?.saldo ?? 0);
             if (!ctaEfectivo || saldoPrevio === 0) return null;

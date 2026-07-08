@@ -113,7 +113,7 @@ export async function POST(request: Request) {
 
     // Cargar pedido + verificar ownership
     const pedidoRows = (await sql`
-      SELECT cliente_id, cliente, razon_social, ruc_dni, empresa, asesor_id
+      SELECT cliente_id, cliente, razon_social, ruc_dni, empresa, asesor_id, origen
       FROM pedidos WHERE id = ${parsed.data.pedido_id}
     `) as Array<{
       cliente_id: string | null;
@@ -122,6 +122,7 @@ export async function POST(request: Request) {
       ruc_dni: string | null;
       empresa: string;
       asesor_id: string | null;
+      origen: string | null;
     }>;
 
     if (pedidoRows.length === 0) {
@@ -415,7 +416,12 @@ export async function POST(request: Request) {
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
       resultado.estado === EstadoSunat.PENDIENTE;
     const esCredito = parsed.data.formaPago === "Credito";
-    const debeCrearCobranza = !!resultado.serieNumero && emisionOk;
+    // El POS de planta lleva su PROPIA cobranza (cobranzas_planta para el crédito; el
+    // contado ya se cobró en caja). NO crear cobranza en `facturas` para un pedido POS:
+    // duplicaría la deuda y la reinyectaría en la cartera de ejecutivas (el comprobante
+    // SUNAT igual se emite; solo se omite esta cobranza-fantasma).
+    const esPos = pedido.origen === "pos_planta";
+    const debeCrearCobranza = !!resultado.serieNumero && emisionOk && !esPos;
 
     if (debeCrearCobranza) {
       // Si la empresa emisora seleccionada en UI difiere de la del pedido, la sincronizamos en DB

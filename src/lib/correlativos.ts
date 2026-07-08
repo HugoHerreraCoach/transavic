@@ -8,7 +8,9 @@ import { neon } from "@neondatabase/serverless";
 // `comprobantes_contador` (T001/T002) y la orden de pedido interna usa
 // `orden_pedido`. Ya nada consume `guia_remision`; se conserva el tipo por si
 // hay datos históricos. Ver scripts/migrate-guias-numeracion-2026-06-10.sql.
-export type TipoCorrelativo = "guia_remision" | "orden_pedido";
+// `guia_avicola` — guía de venta interna del módulo Clientes Avícola (venta en
+// campo del Gerente General). Documento informal, NO es la GRE legal de SUNAT.
+export type TipoCorrelativo = "guia_remision" | "orden_pedido" | "guia_avicola";
 
 /**
  * Reserva atómicamente el siguiente número correlativo del tipo dado.

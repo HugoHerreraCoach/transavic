@@ -662,3 +662,157 @@ La app del motorizado (Capacitor thin-shell, Google Play) tiene HORNEADO `server
    - Mejora opcional recomendada antes del redirect: persistir el `host` del request en `rider_locations` (columna aditiva + 1 línea en `/api/repartidor/ubicacion`) para confirmar v1.0.1 vs v1.0.2 por rider con un SELECT, sin depender de logs de Vercel/Play Console.
 
 **Reglas permanentes post-migración:** NO re-crear `AUTH_URL` en Vercel (fijaría un solo dominio y rompería el otro). La raíz `transavic.com` queda RESERVADA para la futura web pública — no conectarla al ERP.
+
+## 2026-07-07 — Módulo "Clientes Avícola" (venta en campo del GG) + panel post-venta del POS
+
+**Origen:** Antonio/Nelita mandaron por WhatsApp el docx "Requerimiento de Implementación — Módulo
+Clientes Avícola" (14 puntos). Antonio además definió la **estructura de 3 operaciones de venta**:
+(1) venta en campo con cobranza y guía inmediata — el módulo nuevo; (2) ejecutivas → negocios vía
+CRM — ya existía; (3) venta rápida en planta (POS) que "debe permitir emitir la guía o comprobante"
+— tenía una brecha que se cerró en esta misma tanda. Documento técnico completo del módulo:
+[docs/arquitectura/21-clientes-avicola.md](./arquitectura/21-clientes-avicola.md).
+
+**Qué se construyó (módulo 100% independiente — NO toca pedidos/clientes/facturas):**
+- Migración `scripts/migrate-clientes-avicola-2026-07-07.sql` (aplicada en `dev-hugo` el 7 jul):
+  `clientes_avicola` (con `saldo_anterior` = deuda pre-sistema y `empresa` para el logo),
+  `ventas_avicola` (+`venta_avicola_items` peso×precio/kg) y `abonos_avicola` (medio de pago
+  efectivo/transferencia/yape/plin/otro + foto webp base64). Anulación soft con motivo en ventas
+  y abonos. PK de venta/abono la genera el FRONTEND (idempotencia contra doble-tap en campo:
+  pre-check + catch 23505 → 200 con el mismo número de guía).
+- Saldo SIEMPRE calculado al vuelo (`src/lib/avicola/saldos.ts`, única fuente):
+  `saldo_anterior + Σ ventas − Σ abonos`. La guía reimprimible ancla su estado de cuenta al
+  `created_at` de la venta (reimpresión estable, sin doble conteo de abonos del día).
+- 11 endpoints admin-only bajo `/api/avicola/*` (clientes, ventas con `sql.transaction` patrón POS
+  + correlativo nuevo `guia_avicola`, abonos con 409 blando de sobrepago, liquidación del día,
+  dashboard gerencial con rankings y clientes sin comprar 7/15/30 días).
+- UI mobile-first bajo `/dashboard/clientes-avicola`: lista con búsqueda client-side y botones
+  Vender/Abonar por tarjeta; venta rápida con **último precio por cliente+producto** precargado;
+  guía por WhatsApp como JPEG (`html-to-image` + `navigator.share`, clon de ticket-share-modal) con
+  toggle "Con precio por kilo | Solo peso y total" (localStorage); ficha 360 con historial y
+  reenviar guía; estado de cuenta con PDF (`pdf-estado-cuenta-avicola.ts`); liquidación y panel.
+  Sidebar: entrada admin-only Primary+Beta en Ventas & CRM + guía `GuiaModulo`.
+- **Decisiones con Hugo:** v1 sin descuento de inventario (confirmar con Antonio cómo carga el
+  camión — los kg/día quedan registrados para activarlo luego); solo admin; empresa por cliente;
+  sin SUNAT (guía interna); abonos no tocan caja/cuentas; "cotizaciones" del CRM NO se construyen
+  hasta confirmar con Antonio.
+- **POS planta (brecha op. 3):** el POST /api/pos ya devolvía `pedido_id` pero la UI lo descartaba.
+  Ahora tras cobrar aparece un panel "Venta registrada" con: **Imprimir orden** (abre
+  `/pedidos/{id}/guia`), **Emitir comprobante** (link a `/dashboard/comprobantes/nuevo?pedido={id}`,
+  solo roles admin/asesor) y **Nueva venta**. El camino offline conserva el toast (sin id).
+- Construcción orquestada con workflow de 11 agentes en 2 olas; `lint` y `build` limpios.
+
+### Fase 1 de la separación de las 3 operaciones (7 jul, noche — feedback de Antonio probando)
+Antonio precisó que el sistema debe reflejar **3 operaciones de venta separadas, cada una un sistema
+propio** (🏪 Campo · 🛵 Ejecutivas · 🏭 Planta), **cada una con su propia base de clientes, cobranzas
+y cierre**. Empresa: ambas opciones, **por defecto Avícola de Tony (RUC 10)**. Caja: campo sí, planta
+sí (maneja efectivo/vuelto), ejecutivas no (cobran por transferencia/Yape). Detalle y fases en el plan.
+Cambios de la Fase 1 (bajo riesgo, ya aplicados en `dev-hugo`):
+- **Bug POS en celular:** `pos-planta/page.tsx` encerraba todo en `h-[calc(100vh-88px)] overflow-hidden`;
+  en móvil el layout apilado recortaba el botón "Confirmar Cobro" sin scroll. Fix: la jaula de alto
+  fijo + `overflow-hidden` + scrolls internos ahora aplican **solo en `lg:`+**; en celular la página
+  fluye con scroll natural (`pos-client.tsx` líneas del contenedor, catálogo y carrito).
+- **Empresa por defecto → Avícola de Tony** en el form de cliente de campo y en el POS (ambos mantienen
+  el selector con las 2 empresas).
+- **POS fuera de la Lista de Pedidos:** `src/lib/data.ts:fetchFilteredPedidos` excluye
+  `COALESCE(origen,'asesor') <> 'pos_planta'` (Antonio vio una venta de planta figurar como "entregado"
+  en la lista de ejecutivas). El tablero de Despacho ya lo excluía por estado/repartidor.
+- **Proveedores** (`migrate-proveedores-tipo-ruc-opcional-2026-07-07.sql` + API + `proveedores-client.tsx`):
+  solo **nombre y teléfono obligatorios**; **RUC opcional** (índice UNIQUE parcial `WHERE ruc IS NOT NULL
+  AND ruc <> ''` para permitir varios informales sin RUC); columna **`tipo` (principal/secundario)** con
+  selector en el form y badge en la tabla. Verificado en dev: dos sin RUC coexisten, mismo RUC choca.
+- **Pendiente Fase 2** (refactor mayor): POS con su propia base de clientes + cobranzas separadas de
+  ejecutivas + su caja; caja/cierre de campo; menú en 3 bloques. Y confirmar con Antonio si el cierre
+  de campo necesita apertura/arqueo formal o basta el reporte de liquidación.
+
+### E2E del módulo de campo en navegador (7 jul) — 2 bugs cazados y corregidos
+Verificación E2E completa en `dev-hugo` con Chrome (sesión de Antonio/admin): crear cliente
+(saldo 1250) → venta 2 ítems (960) → guía → abono 500 yape → anular → liquidación → panel. **Todo
+cuadró** (saldo 2210 → 1710 → 2210; guía N.º 00000001 con "AVÍCOLA DE TONY" y estado de cuenta
+correcto; toggle "Solo peso y total" oculta la columna Precio/kg; liquidación y panel exactos). Dos
+bugs encontrados y arreglados en el acto:
+1. **Crash en la pantalla de venta** (`[id]/venta/venta-client.tsx` + `page.tsx`): algunos productos
+   tienen `precio_venta = NULL` → `(ultimo ?? producto.precio_venta).toFixed(2)` reventaba con
+   "Cannot read properties of null". Fix: guardas `?? 0` en las dos lecturas del precio + tipo
+   `precio_venta: number | null` + `COALESCE(precio_venta, 0)` en la query del server.
+2. **Ticket "Mercado Mercado Central"** (`ticket-guia-avicola.tsx`): la etiqueta "Mercado " se
+   anteponía al nombre del mercado, duplicando la palabra cuando el mercado ya se llama "Mercado X".
+   Fix: mostrar el nombre del mercado directo, sin el prefijo.
+Verificado también en el DOM servido que el fix del POS móvil quedó bien aplicado (el `<main>` del POS
+usa `lg:h-[...] lg:overflow-hidden`, sin `overflow-hidden` incondicional). `build` limpio tras los fixes.
+
+### Fase 2 — Separación real de las 3 operaciones (8 jul 2026)
+Enfoque decidido tras 2 diseños en paralelo: el POS **sigue escribiendo la venta en `pedidos`** (conserva
+GRATIS la orden imprimible y el comprobante SUNAT, que leen de `pedidos`/`pedido_items`) — NO se
+reconstruyó como subsistema propio porque eso obligaría a bifurcar el motor SUNAT (gotchas #18-35) y
+partir el histórico fiscal. Se separó SOLO lo que se mezclaba: **clientes y cobranzas de planta**
+(tablas propias) + **caja por operación**.
+- **Tablas nuevas** (`migrate-planta-clientes-cobranzas-2026-07-08.sql`, en `dev-hugo`): `clientes_planta`
+  (directorio propio del POS, sin scoping de asesora), `cobranzas_planta` (deuda por venta a crédito,
+  aislada de `facturas`), `abonos_planta` (pagos PARCIALES del "saldito"). Ids client-side (idempotencia),
+  anulación soft. Saldo al vuelo en `src/lib/planta/saldos.ts`.
+- **El POS a crédito** (`api/pos/route.ts`) dejó de escribir en `facturas`: ahora inserta en
+  `cobranzas_planta`, con `pedidos.cliente_id=NULL` + `razon_social`/`ruc_dni` denormalizados desde
+  `clientes_planta` (para el comprobante), e **idempotencia por `pedido_id` client-side** (la cola offline
+  ya no duplica). Selector de cliente del POS → `/api/clientes-planta` con alta rápida inline.
+  Como TODOS los consumidores de cobranzas leen de `facturas`, la deuda de planta desaparece de las
+  cobranzas/reportes de ejecutivas **sin tocar sus 20+ consumidores**.
+- **APIs nuevas**: `/api/clientes-planta` (+[id]), `/api/cobranzas-planta` (+[id]/abono, /anular,
+  abonos/[id]/anular, abonos/[id]/comprobante). **Páginas nuevas**: `/dashboard/clientes-planta` y
+  `/dashboard/cobranzas-planta` (clones del patrón campo). **Consolidado**: 2ª línea `carteraPlanta`
+  separada de la cartera de ejecutivas.
+- **Caja por operación** (`migrate-caja-operacion-2026-07-08.sql`): columna `operacion` (planta|campo) en
+  `caja_diaria`; se reemplazaron los dos candados (`caja_diaria_fecha_key` + `ux_caja_diaria_unica_abierta`)
+  por `ux_caja_diaria_fecha_operacion` + `ux_caja_diaria_unica_abierta_op` → planta y campo abren/cierran
+  su propia caja el MISMO día. `api/caja-diaria` acepta `?operacion=` (default planta). **Decisión final de Antonio (8 jul): el CAMPO NO
+  lleva caja formal** — su cierre es el REPORTE de liquidación del día (ya construido), no un arqueo de
+  efectivo. Por eso el selector Planta/Campo se retiró del UI y `caja-diaria-client.tsx` queda fijo en
+  'planta'. El esquema (`operacion` + índices por operación) y la API se conservan por si algún día se
+  activa la caja de campo (bastaría reponer el selector). Ejecutivas tampoco tiene caja.
+- **Navegación en 3 bloques** (`DashboardLayout.tsx`, rediseñada con la skill de diseño): 🛵 Ventas
+  Ejecutivas · 🏪 Venta en Campo · 🏭 Venta en Planta + Producción/Compras + Finanzas + Reportes +
+  Configuración. **Cada bloque de operación EMPIEZA con su acción de vender** (botón rojo "lead" DENTRO
+  del bloque, ya no suelto arriba): Nuevo Pedido / **Vender en Campo** / Venta Rápida. Así los 3 sistemas
+  quedan auto-contenidos y simétricos (`[Vender] → vistas de apoyo`), y queda obvio dónde registrar cada
+  venta (antes "Vender en Campo" no existía como entrada). Cobranzas de ejecutivas se movió a su bloque
+  (ya no en Finanzas). Los `isPrimary` se renderizan como primer ítem de su grupo, no en un bloque aparte.
+- **POS en celular — menos scroll de productos** (`pos-client.tsx`, feedback Hugo 8 jul): la
+  `TarjetaProducto` dejó de ser `aspect-square` (cuadrada/alta) y pasó a compacta (`min-h-[76px]`,
+  padding/tipografía menores, nombre con `line-clamp-2`); los grids pasaron de `grid-cols-2 gap-4` a
+  `grid-cols-3 gap-2` en celular → ~3× más productos por pantalla, mucho menos scroll (desktop igual o
+  más denso). Solo estilos, sin tocar la lógica del POS.
+- **POS en celular — barra de cobro + hoja del carrito** (`pos-client.tsx`, `/mejora-diseño para celular`,
+  8 jul): la fricción real no era la densidad sino que en celular el carrito y el botón "Confirmar Cobro"
+  quedaban SEPULTADOS debajo de todo el catálogo — se elegían productos sin ver el total y para cobrar
+  había que scrollear toda la lista. Patrón mobile-first estándar de POS: (a) **barra de cobro fija abajo**
+  (`lg:hidden fixed bottom-0`, solo cuando el carrito tiene ítems) con contador de productos + total en
+  vivo + botón "Cobrar" — el total es visible en todo momento mientras se elige; (b) tocarla abre el
+  carrito como **hoja deslizable** (bottom sheet: fondo oscuro, agarradera, "Venta Actual" + X "seguir
+  agregando", ítems con scroll interno y checkout completo fijo al pie). **Un solo panel** reposicionado
+  por breakpoint (las clases `lg:` lo fuerzan a la columna derecha en desktop; en celular es `hidden` o la
+  hoja `fixed` según `carritoAbierto`) → cero duplicación de JSX y **desktop no cambia**. Detalles: padding
+  inferior del catálogo (`pb-28 lg:pb-4`) para que la barra no tape productos; `safe-area-inset-bottom` en
+  la barra y el botón de cobro (notch/home indicator); el chip de "ventas por enviar" sube a `bottom-24` en
+  celular para no chocar con la barra. Solo UI, sin tocar lógica de venta/cobro/offline. Verificado con
+  capturas reales a ancho de celular (barra + hoja) y desktop (dos columnas intactas); `tsc` limpio.
+- **POS — ítems del carrito aplastados en desktop** (`pos-client.tsx`, `/mejora-diseño` + panel de jueces
+  ultracode, 8 jul): al quitar el `min-h-[160px]` en el rediseño móvil, la lista de ítems colapsaba en
+  desktop (solo se veía el título del 1er producto, cantidad/precio cortados) porque el checkout
+  (`flex-shrink-0`, ~320px: cliente+método+cuenta+notas+total+botón) se comía la columna (altura tope =
+  viewport). **Fix estructural (causa raíz):** el panel pasa a 3 zonas hermanas — header fijo · **un único
+  scroll** (`flex-1 min-h-0`) que contiene la lista de ítems (sub-div con **piso** `min-h-[180px]`) **y** los
+  ajustes (cliente/método/cuenta/notas, movidos aquí tal cual, sin tocar lógica) · **footer anclado**
+  (`flex-shrink-0`, ~110px) con SOLO Total + Confirmar Cobro. Como el footer es hermano pequeño del scroll
+  (no hijo), el botón **nunca** se aplasta ni se corta, ni en desktop con viewport corto ni en la hoja móvil
+  (88vh) — el mismo apretón afectaba un poco al móvil. **Renglón de ítem** rediseñado (mejor propuesta del
+  panel): tarjeta de dos pisos, nombre `line-clamp-2` (aguanta "Pechuga de pollo sin hueso deshuesada"),
+  inputs `h-11` (44px táctil), y el **subtotal como número prominente** (`text-base font-black tabular-nums`);
+  `tabular-nums` en cantidad/precio/subtotal/Total. Ganador = P1 (reparto de espacio) + renglón injertado de
+  P2, elegido por un panel de 4 propuestas + juez. Solo UI. Verificado con capturas reales en desktop (ítems
+  con aire + Confirmar siempre visible) y en la hoja móvil (mismo renglón, legible); `tsc`/`eslint` limpios.
+- **Ejecutivas (op2) intactas**: `clientes`/`facturas`/comprobantes/despacho sin cambios; sin caja.
+- **E2E verificado en `dev-hugo`** (navegador logueado): venta a crédito de planta → cobranza en
+  `cobranzas_planta` (0 en facturas) → abono parcial S/10 → estado Parcial, saldo S/21.90 → **NO aparece
+  en Cobranzas de ejecutivas** → consolidado con `carteraPlanta` separada → caja planta+campo abiertas el
+  mismo día (dos de la misma operación siguen bloqueadas). Bug cazado y corregido: `date + unknown` en el
+  INSERT de cobranza (faltaba `::int` al plazo). `build` limpio. Datos de prueba eliminados. Nada en producción.
+

@@ -30,6 +30,7 @@ import {
   FiChevronDown,
   FiChevronRight,
   FiChevronLeft,
+  FiShoppingBag,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
 import NotificationBell from "./NotificationBell";
@@ -58,20 +59,32 @@ const ChipBeta = () => (
   </span>
 );
 
-// Orden = flujo del negocio. Cada ítem se muestra solo a los roles indicados.
+// Orden = por OPERACIÓN de venta. Cada bloque EMPIEZA con su acción de vender
+// (isPrimary = botón rojo, la "lead" del bloque) y sigue con sus vistas de apoyo.
+// Así los 3 sistemas quedan auto-contenidos y simétricos. Filtrado por rol.
 const navItems: NavItem[] = [
-  // Mi Ruta: única vista del repartidor (suelta).
+  // Repartidor: su única vista (suelta, sin grupo).
   { href: "/dashboard/mi-ruta", label: "Mi Ruta", icon: <FiNavigation className="h-5 w-5 flex-shrink-0" />, roles: ["repartidor"] },
-  // Mi Día: resumen diario para asesoras/admin
-  { href: "/dashboard/mi-dia", label: "Mi Día", icon: <FiSun className="h-5 w-5 flex-shrink-0" />, roles: ["asesor", "admin"] },
-  
-  // ── VENTAS & CRM ──
+
+  // ── 🛵 VENTAS EJECUTIVAS (el sistema original) ──
   { href: "/dashboard/nuevo-pedido", label: "Nuevo Pedido", icon: <FiPlus className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"], isPrimary: true },
-  { href: "/dashboard/pos-planta", label: "Venta Rápida", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isPrimary: true, isBeta: true },
   { href: "/dashboard", label: "Lista de Pedidos", icon: <FiList className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
+  { href: "/dashboard/mi-dia", label: "Mi Día", icon: <FiSun className="h-5 w-5 flex-shrink-0" />, roles: ["asesor", "admin"] },
   { href: "/dashboard/clientes", label: "Clientes", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor", "produccion"] },
   { href: "/dashboard/crm-leads", label: "CRM Leads", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"], isBeta: true },
   { href: "/dashboard/despacho", label: "Despacho", icon: <FiTruck className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
+  { href: "/dashboard/cobranzas", label: "Cobranzas", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
+
+  // ── 🏪 VENTA EN CAMPO (Avícola de Tony) ──
+  // La lead: se entra aquí, se elige el cliente y se toca "Vender" (venta + cobranza + guía en una página).
+  { href: "/dashboard/clientes-avicola", label: "Vender en Campo", icon: <FiShoppingBag className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isPrimary: true, isBeta: true },
+  { href: "/dashboard/clientes-avicola/liquidacion", label: "Liquidación del día", icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
+  { href: "/dashboard/clientes-avicola/panel", label: "Panel Campo", icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
+
+  // ── 🏭 VENTA EN PLANTA (POS) ──
+  { href: "/dashboard/pos-planta", label: "Venta Rápida", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isPrimary: true, isBeta: true },
+  { href: "/dashboard/clientes-planta", label: "Clientes Planta", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
+  { href: "/dashboard/cobranzas-planta", label: "Cobranzas Planta", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
   // ── PRODUCCIÓN & COMPRAS ──
   { href: "/dashboard/resumen", label: "Resumen a Preparar", icon: <FiBox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"] },
@@ -82,9 +95,8 @@ const navItems: NavItem[] = [
   { href: "/dashboard/proveedores", label: "Proveedores", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/prestamos", label: "Préstamos", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
-  // ── FINANZAS ──
+  // ── FINANZAS ── (Cobranzas de ejecutivas vive en su bloque 🛵)
   { href: "/dashboard/caja-diaria", label: "Caja Diaria", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
-  { href: "/dashboard/cobranzas", label: "Cobranzas", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/comprobantes", label: "Comprobantes", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/cuentas-por-pagar", label: "Cuentas por Pagar", icon: <FiList className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/cuentas", label: "Cuentas Bancarias", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
@@ -103,15 +115,36 @@ const navItems: NavItem[] = [
   { href: "/dashboard/users", label: "Usuarios", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
 ];
 
-const GROUP_ORDER = ["Ventas & CRM", "Producción & Compras", "Finanzas", "Reportes & Análisis", "Configuración"];
+// Grupos por OPERACIÓN de venta (decisión de Antonio, jul 2026: 3 sistemas separados).
+const GROUP_ORDER = [
+  "🛵 Ventas Ejecutivas",
+  "🏪 Venta en Campo",
+  "🏭 Venta en Planta",
+  "Producción & Compras",
+  "Finanzas",
+  "Reportes & Análisis",
+  "Configuración",
+];
 
 const GROUP_BY_HREF: Record<string, string> = {
-  // Primary actions no necesitan grupo si van sueltos, pero se los dejamos
-  // por si acaso, aunque los omitiremos usando isPrimary.
-  "/dashboard": "Ventas & CRM",
-  "/dashboard/clientes": "Ventas & CRM",
-  "/dashboard/crm-leads": "Ventas & CRM",
-  "/dashboard/despacho": "Ventas & CRM",
+  // 🛵 Ventas Ejecutivas (el sistema original: pedidos, CRM, despacho, cobranzas de ejecutivas)
+  "/dashboard/nuevo-pedido": "🛵 Ventas Ejecutivas",
+  "/dashboard": "🛵 Ventas Ejecutivas",
+  "/dashboard/mi-dia": "🛵 Ventas Ejecutivas",
+  "/dashboard/clientes": "🛵 Ventas Ejecutivas",
+  "/dashboard/crm-leads": "🛵 Ventas Ejecutivas",
+  "/dashboard/despacho": "🛵 Ventas Ejecutivas",
+  "/dashboard/cobranzas": "🛵 Ventas Ejecutivas",
+
+  // 🏪 Venta en Campo (Avícola de Tony): vender + liquidación + panel
+  "/dashboard/clientes-avicola": "🏪 Venta en Campo",
+  "/dashboard/clientes-avicola/liquidacion": "🏪 Venta en Campo",
+  "/dashboard/clientes-avicola/panel": "🏪 Venta en Campo",
+
+  // 🏭 Venta en Planta (POS: vender + clientes y cobranzas propios)
+  "/dashboard/pos-planta": "🏭 Venta en Planta",
+  "/dashboard/clientes-planta": "🏭 Venta en Planta",
+  "/dashboard/cobranzas-planta": "🏭 Venta en Planta",
 
   "/dashboard/resumen": "Producción & Compras",
   "/dashboard/produccion": "Producción & Compras",
@@ -121,8 +154,8 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/proveedores": "Producción & Compras",
   "/dashboard/prestamos": "Producción & Compras",
 
+  // Finanzas transversales (caja con selector Planta/Campo, facturación electrónica compartida)
   "/dashboard/caja-diaria": "Finanzas",
-  "/dashboard/cobranzas": "Finanzas",
   "/dashboard/comprobantes": "Finanzas",
   "/dashboard/cuentas-por-pagar": "Finanzas",
   "/dashboard/cuentas": "Finanzas",
@@ -217,14 +250,13 @@ export default function DashboardLayout({
     return true;
   });
 
-  // Separar los primary actions para hacer el Bento Box Layout Superior
-  const primaryActions = filteredNavItems.filter(i => i.isPrimary);
-  const normalItems = filteredNavItems.filter(i => !i.isPrimary);
-
-  const sinGrupo = normalItems.filter((i) => !GROUP_BY_HREF[i.href]);
+  // Las acciones de vender (isPrimary) YA NO van sueltas arriba: van como PRIMER
+  // ítem de su bloque de operación (el orden de navItems las pone primeras). Solo
+  // quedan "sueltos" los ítems sin grupo (ej. Mi Ruta del repartidor).
+  const sinGrupo = filteredNavItems.filter((i) => !GROUP_BY_HREF[i.href]);
   const grupos = GROUP_ORDER.map((nombre) => ({
     nombre,
-    items: normalItems.filter((i) => GROUP_BY_HREF[i.href] === nombre),
+    items: filteredNavItems.filter((i) => GROUP_BY_HREF[i.href] === nombre),
   })).filter((g) => g.items.length > 0);
 
   const isItemActive = (href: string) => {
@@ -289,14 +321,14 @@ export default function DashboardLayout({
         title={isSidebarCollapsed ? item.label : undefined}
         className={`
           flex items-center gap-3 px-3 py-2.5 rounded-xl font-medium transition-all duration-200 cursor-pointer overflow-hidden
-          ${isPrimary ? 'mb-2 justify-center lg:justify-start' : ''}
+          ${isPrimary ? 'mb-1 font-semibold' : ''}
           ${
             active && isPrimary
-              ? "bg-red-700 text-white shadow-md"
+              ? "bg-red-700 text-white shadow-sm"
               : active
               ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 font-semibold"
               : isPrimary
-              ? "bg-red-600 text-white hover:bg-red-700 shadow-md hover:shadow-lg hover:-translate-y-0.5"
+              ? "bg-red-600 text-white hover:bg-red-700 shadow-sm"
               : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
           }
           ${isSidebarCollapsed && isPrimary ? "w-10 h-10 p-0 mx-auto justify-center" : ""}
@@ -371,8 +403,6 @@ export default function DashboardLayout({
           </div>
 
           <nav className="flex-1 px-4 py-6 space-y-2 overflow-y-auto">
-            {primaryActions.map(mobileLink)}
-            <div className="my-4 border-t border-gray-100" />
             {sinGrupo.map(mobileLink)}
             {grupos.map((g) => (
               <div key={g.nombre} className="pt-2">
@@ -427,20 +457,14 @@ export default function DashboardLayout({
 
             {/* Navigation */}
             <nav className="flex-1 min-h-0 px-3 py-6 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent">
-              {/* Primary Actions (Bento Box / CTAs) */}
-              <div className="mb-6 space-y-2">
-                {primaryActions.map(desktopLink)}
-              </div>
-              
-              {/* Separador */}
-              {primaryActions.length > 0 && <div className="h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent mb-6 opacity-60" />}
+              {/* Sueltos (sin grupo: p. ej. Mi Ruta del repartidor) */}
+              {sinGrupo.length > 0 && (
+                <div className="space-y-1 mb-4">
+                  {sinGrupo.map(desktopLink)}
+                </div>
+              )}
 
-              {/* Sueltos */}
-              <div className="space-y-1 mb-4">
-                {sinGrupo.map(desktopLink)}
-              </div>
-
-              {/* Grupos colapsables */}
+              {/* Grupos por operación: cada uno abre con su acción de vender (lead) */}
               <div className="space-y-1">
                 {grupos.map((g) => {
                   const isExpanded = expandedGroups[g.nombre];

@@ -16,6 +16,33 @@ export interface GuiaModuloDef {
 }
 
 export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
+  "clientes-avicola": {
+    nombre: "Clientes Avícola",
+    pasos: [
+      { titulo: "Busca al cliente por nombre o toca su mercado", detalle: "también puedes buscar por puesto o teléfono" },
+      { titulo: "Toca Vender, elige los productos e ingresa el peso", detalle: "el precio sale solo del último que le cobraste; tócalo si cambió" },
+      { titulo: "Toca Guardar y enviar guía y mándala por WhatsApp", detalle: "la guía muestra el saldo actualizado del cliente" },
+      { titulo: "Los pagos se registran con Abonar", detalle: "el saldo se actualiza solo" },
+    ],
+    nota: "Al final del día, toca Liquidación para ver todo lo vendido y cobrado.",
+  },
+  "clientes-planta": {
+    nombre: "Clientes de Planta",
+    pasos: [
+      { titulo: "Registra aquí a los clientes que compran en la planta a crédito", detalle: "solo el nombre es obligatorio" },
+      { titulo: "Desde Venta Rápida, elige el cliente y cobra al Contado o al Crédito", detalle: "también puedes crear el cliente al vuelo desde el POS" },
+      { titulo: "Las deudas a crédito van a Cobranzas Planta", detalle: "separadas de las cobranzas de las ejecutivas" },
+    ],
+    nota: "Estos clientes son SOLO de la planta; no se mezclan con los de las ejecutivas ni los del campo.",
+  },
+  "cobranzas-planta": {
+    nombre: "Cobranzas de Planta",
+    pasos: [
+      { titulo: "Aquí ves solo las deudas de las ventas a crédito de la planta" },
+      { titulo: "Toca Registrar abono para cobrar por partes ('saldito')", detalle: "el saldo se actualiza solo" },
+      { titulo: "Puedes anular una deuda o un abono con un motivo" },
+    ],
+  },
   compras: {
     nombre: "Compras",
     pasos: [
@@ -72,7 +99,8 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
   proveedores: {
     nombre: "Proveedores",
     pasos: [
-      { titulo: "Registra aquí a cada proveedor con su RUC" },
+      { titulo: "Registra a cada proveedor: solo el nombre y el teléfono son obligatorios", detalle: "el RUC es opcional — déjalo vacío si es informal" },
+      { titulo: "Marca si es principal o secundario" },
       { titulo: "Sus datos se usan en Compras y en Cuentas por Pagar", detalle: "regístralo una sola vez" },
     ],
   },

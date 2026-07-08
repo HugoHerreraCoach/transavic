@@ -32,6 +32,7 @@ Esta carpeta contiene la **referencia técnica y de negocio de verdad** del sist
 | 18 | **[18-plan-implementacion-maestro.md](./18-plan-implementacion-maestro.md)** | Vas a trabajar en la expansión ERP 2026 (compras, POS, caja, CRM, gerencial): fases, reglas de negocio y estado real de la auditoría. |
 | 19 | **[19-arquitectura-modular-transavic.md](./19-arquitectura-modular-transavic.md)** | Vas a agregar módulos nuevos sin romper el core de pedidos: patrón de aislamiento y estrategia de despliegue seguro. |
 | 20 | **[20-migracion-produccion.md](./20-migracion-produccion.md)** | Guía de migración técnica consolidada de las Fases 2 y 3 para su despliegue seguro a producción. |
+| 21 | **[21-clientes-avicola.md](./21-clientes-avicola.md)** | Vas a tocar la venta en campo del Gerente General (clientes de mercados, saldos/abonos, guía por WhatsApp, liquidación del día). |
 
 ---
 
@@ -55,6 +56,7 @@ Esta carpeta contiene la **referencia técnica y de negocio de verdad** del sist
 | **Tocar el CRM de leads o el chatbot de WhatsApp** | 18 $\rightarrow$ 15 (checklist de seguridad del bot) $\rightarrow$ 02 §5 |
 | **Tocar el consolidado gerencial o rentabilidad** | 18 $\rightarrow$ 14 (métrica de ventas) |
 | **Desplegar los módulos nuevos a producción** | 20 $\rightarrow$ 19 (aislamiento) $\rightarrow$ 02 §5 (tablas faltantes) |
+| **Tocar la venta en campo (Clientes Avícola)** | **21** $\rightarrow$ 01 (operativa del negocio) |
 
 ---
 

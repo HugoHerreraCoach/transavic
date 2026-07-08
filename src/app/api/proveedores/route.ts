@@ -6,11 +6,19 @@ import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
+// Antonio (7 jul 2026): solo nombre (razon_social) y teléfono obligatorios.
+// El RUC es OPCIONAL (proveedores secundarios informales); si viene, 11 dígitos.
 const ProveedorSchema = z.object({
-  ruc: z.string().length(11, { message: "El RUC debe tener exactamente 11 dígitos" }).regex(/^\d+$/, { message: "El RUC solo debe contener números" }),
-  razon_social: z.string().min(3, { message: "La razón social debe tener al menos 3 caracteres" }),
+  ruc: z
+    .string()
+    .regex(/^\d{11}$/, { message: "El RUC debe tener exactamente 11 dígitos" })
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  razon_social: z.string().min(3, { message: "El nombre debe tener al menos 3 caracteres" }),
+  telefono: z.string().min(6, { message: "El teléfono es obligatorio" }),
   direccion: z.string().optional().nullable(),
-  telefono: z.string().optional().nullable(),
+  tipo: z.enum(["principal", "secundario"]).default("principal"),
 });
 
 export async function GET() {
@@ -22,7 +30,7 @@ export async function GET() {
   try {
     const sql = neon(process.env.DATABASE_URL!);
     const proveedores = await sql`
-      SELECT id, ruc, razon_social, direccion, telefono, created_at
+      SELECT id, ruc, razon_social, direccion, telefono, tipo, created_at
       FROM proveedores
       ORDER BY razon_social ASC
     `;
@@ -50,22 +58,23 @@ export async function POST(req: Request) {
       );
     }
 
-    const { ruc, razon_social, direccion, telefono } = result.data;
+    const { razon_social, direccion, telefono, tipo } = result.data;
+    // RUC vacío o ausente → NULL (proveedor informal sin RUC).
+    const ruc = result.data.ruc && result.data.ruc.trim() !== "" ? result.data.ruc : null;
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Validar si ya existe el RUC
-    const existe = await sql`
-      SELECT id FROM proveedores WHERE ruc = ${ruc}
-    `;
-
-    if (existe.length > 0) {
-      return NextResponse.json({ error: "Ya existe un proveedor registrado con este RUC" }, { status: 409 });
+    // El anti-duplicado por RUC solo aplica cuando SÍ hay RUC.
+    if (ruc) {
+      const existe = await sql`SELECT id FROM proveedores WHERE ruc = ${ruc}`;
+      if (existe.length > 0) {
+        return NextResponse.json({ error: "Ya existe un proveedor registrado con este RUC" }, { status: 409 });
+      }
     }
 
     const nuevo = await sql`
-      INSERT INTO proveedores (ruc, razon_social, direccion, telefono)
-      VALUES (${ruc}, ${razon_social}, ${direccion || null}, ${telefono || null})
-      RETURNING id, ruc, razon_social, direccion, telefono
+      INSERT INTO proveedores (ruc, razon_social, direccion, telefono, tipo)
+      VALUES (${ruc}, ${razon_social}, ${direccion || null}, ${telefono || null}, ${tipo})
+      RETURNING id, ruc, razon_social, direccion, telefono, tipo
     `;
 
     return NextResponse.json(nuevo[0], { status: 201 });

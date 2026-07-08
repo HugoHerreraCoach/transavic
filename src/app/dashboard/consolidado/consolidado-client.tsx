@@ -37,7 +37,8 @@ type Transaccion = {
 
 type ConsolidadoData = {
   cuentas: Cuenta[];
-  totalCobrar: number;
+  totalCobrar: number; // cartera de ejecutivas (facturas)
+  carteraPlanta: number; // cartera de planta (POS)
   totalPagar: number;
   transacciones: Transaccion[];
   ventasHoy: {
@@ -115,11 +116,17 @@ export default function ConsolidadoClient() {
     return data.cuentas.reduce((acc, c) => acc + c.saldo, 0);
   }, [data]);
 
-  // Balance Neto Comercial (Cuentas por Cobrar - Cuentas por Pagar)
+  // Cartera total por cobrar = ejecutivas (facturas) + planta (POS).
+  const carteraTotal = useMemo(() => {
+    if (!data) return 0;
+    return (data.totalCobrar || 0) + (data.carteraPlanta || 0);
+  }, [data]);
+
+  // Balance Neto Comercial (Lo que te deben en total - Cuentas por Pagar)
   const balanceNeto = useMemo(() => {
     if (!data) return 0;
-    return data.totalCobrar - data.totalPagar;
-  }, [data]);
+    return carteraTotal - data.totalPagar;
+  }, [data, carteraTotal]);
 
   // Formateador de moneda defensivo
   const formatSoles = (val: number | null | undefined) => {
@@ -303,10 +310,20 @@ export default function ConsolidadoClient() {
               <div>
                 <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider block">Por Cobrar (Clientes)</span>
                 <span className="text-lg font-black text-emerald-700 mt-1 block">
-                  {formatSoles(data?.totalCobrar || 0)}
+                  {formatSoles(carteraTotal)}
                 </span>
+                <div className="mt-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-gray-500 font-semibold">Cartera ejecutivas</span>
+                    <span className="font-bold text-gray-700">{formatSoles(data?.totalCobrar || 0)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-gray-500 font-semibold">Cartera planta (POS)</span>
+                    <span className="font-bold text-gray-700">{formatSoles(data?.carteraPlanta || 0)}</span>
+                  </div>
+                </div>
               </div>
-              <span className="text-[9px] text-gray-400 mt-3 block">Facturas activas pendientes</span>
+              <span className="text-[9px] text-gray-400 mt-3 block">Facturas de ejecutivas + saldos de planta</span>
             </div>
 
             <div className="bg-red-50/30 p-4 rounded-2xl border border-red-100/30 flex flex-col justify-between">

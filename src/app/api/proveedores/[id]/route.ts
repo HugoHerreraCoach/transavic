@@ -5,10 +5,16 @@ import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
 
 const ProveedorEditSchema = z.object({
-  ruc: z.string().length(11, { message: "El RUC debe tener exactamente 11 dígitos" }).regex(/^\d+$/, { message: "El RUC solo debe contener números" }),
-  razon_social: z.string().min(3, { message: "La razón social debe tener al menos 3 caracteres" }),
+  ruc: z
+    .string()
+    .regex(/^\d{11}$/, { message: "El RUC debe tener exactamente 11 dígitos" })
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  razon_social: z.string().min(3, { message: "El nombre debe tener al menos 3 caracteres" }),
+  telefono: z.string().min(6, { message: "El teléfono es obligatorio" }),
   direccion: z.string().optional().nullable(),
-  telefono: z.string().optional().nullable(),
+  tipo: z.enum(["principal", "secundario"]).default("principal"),
 });
 
 export async function PUT(req: Request, props: { params: Promise<{ id: string }> }) {
@@ -31,16 +37,18 @@ export async function PUT(req: Request, props: { params: Promise<{ id: string }>
       );
     }
 
-    const { ruc, razon_social, direccion, telefono } = result.data;
+    const { razon_social, direccion, telefono, tipo } = result.data;
+    const ruc = result.data.ruc && result.data.ruc.trim() !== "" ? result.data.ruc : null;
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Validar si el RUC ya pertenece a otro proveedor
-    const existe = await sql`
-      SELECT id FROM proveedores WHERE ruc = ${ruc} AND id <> ${id}
-    `;
-
-    if (existe.length > 0) {
-      return NextResponse.json({ error: "Ya existe otro proveedor registrado con este RUC" }, { status: 409 });
+    // El anti-duplicado por RUC solo aplica cuando SÍ hay RUC.
+    if (ruc) {
+      const existe = await sql`
+        SELECT id FROM proveedores WHERE ruc = ${ruc} AND id <> ${id}
+      `;
+      if (existe.length > 0) {
+        return NextResponse.json({ error: "Ya existe otro proveedor registrado con este RUC" }, { status: 409 });
+      }
     }
 
     const actualizado = await sql`
@@ -49,9 +57,10 @@ export async function PUT(req: Request, props: { params: Promise<{ id: string }>
           razon_social = ${razon_social},
           direccion = ${direccion || null},
           telefono = ${telefono || null},
+          tipo = ${tipo},
           updated_at = NOW()
       WHERE id = ${id}
-      RETURNING id, ruc, razon_social, direccion, telefono
+      RETURNING id, ruc, razon_social, direccion, telefono, tipo
     `;
 
     if (actualizado.length === 0) {

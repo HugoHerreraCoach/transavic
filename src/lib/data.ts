@@ -64,6 +64,11 @@ export async function fetchFilteredPedidos(
       paramIndex++;
     }
 
+    // La venta en planta (POS) NO es un pedido de ejecutivas ni se reparte: no debe
+    // figurar en la Lista de Pedidos. Es una operación separada (decisión de Antonio,
+    // jul 2026). Mismo criterio que ventas-metricas.ts / datos-ventas.ts.
+    whereClauses.push(`COALESCE(p.origen, 'asesor') <> 'pos_planta'`);
+
     const whereString =
       whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 

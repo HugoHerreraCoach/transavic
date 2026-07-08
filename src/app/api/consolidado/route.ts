@@ -2,6 +2,10 @@
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
+import {
+  listaClientesPlantaConSaldo,
+  UMBRAL_DEUDA_PLANTA,
+} from "@/lib/planta/saldos";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +36,17 @@ export async function GET() {
       WHERE estado IN ('Pendiente', 'Vencida')
     `;
     const totalCobrar = cobrarRows[0]?.total_cobrar || 0;
+
+    // 2b. Cartera por Cobrar de PLANTA (POS) — aislada de `facturas`.
+    //     Desde que el POS dejó de escribir en `facturas`, su deuda no aparecía
+    //     en la cartera de ejecutivas. La recuperamos por separado reutilizando
+    //     la aritmética central de saldos (NO duplicar): saldo = monto − Σ abonos
+    //     de cobranzas no anuladas; solo cuenta el saldo positivo (> umbral).
+    const clientesPlanta = await listaClientesPlantaConSaldo(sql);
+    const carteraPlanta = clientesPlanta.reduce(
+      (acc, c) => acc + (c.saldo_actual > UMBRAL_DEUDA_PLANTA ? c.saldo_actual : 0),
+      0
+    );
 
     // 3. Cuentas por Pagar (Pasivos a proveedores)
     const pagarRows = await sql`
@@ -78,7 +93,8 @@ export async function GET() {
 
     return NextResponse.json({
       cuentas,
-      totalCobrar,
+      totalCobrar, // cartera de ejecutivas (facturas Pendiente/Vencida)
+      carteraPlanta, // cartera de planta (POS): saldos de cobranzas_planta
       totalPagar,
       transacciones,
       ventasHoy
