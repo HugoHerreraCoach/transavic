@@ -816,3 +816,62 @@ partir el histórico fiscal. Se separó SOLO lo que se mezclaba: **clientes y co
   mismo día (dos de la misma operación siguen bloqueadas). Bug cazado y corregido: `date + unknown` en el
   INSERT de cobranza (faltaba `::int` al plazo). `build` limpio. Datos de prueba eliminados. Nada en producción.
 
+### 🚀 Despliegue a PRODUCCIÓN — 8 jul 2026 (Clientes Avícola + separación 3 operaciones + fixes + rediseño POS)
+Commit `5eb7398` a `main` (cuenta HugoHerreraCoach) → Vercel. Todo lo anterior (Fase 1 + Fase 2 + rediseño
+POS) pasó de `dev-hugo` a **producción** en un solo lote, con la disciplina de gotcha #17 (migraciones por
+psql ANTES del deploy). buildId prod resultante: `ePiVPwx-J1RWAF2uZL31c`.
+
+**🔴 Bug bloqueante cazado ANTES de subir (revisión adversarial con agente Plan) — el más importante de
+recordar:** al emitir un comprobante SUNAT **desde una venta del POS** (panel post-venta →
+`/dashboard/comprobantes/nuevo?pedido=…` → `/api/comprobantes/emitir`), el endpoint creaba SIEMPRE una
+cobranza en `facturas` (`emitir/route.ts:418 debeCrearCobranza`, sin filtrar `origen`; llama a
+`vincularCobranzaAComprobante` → `crearFacturaStandalone` → INSERT en `facturas`, que acepta `cliente_id=NULL`).
+Como el POS nuevo escribe su deuda en `cobranzas_planta`, esto **DUPLICABA** la deuda (planta + ejecutivas) y
+la reinyectaba en la cartera de ejecutivas → rompía el objetivo mismo del deploy (para contado, además, creaba
+una factura `Pendiente` fantasma de algo ya cobrado en caja). **Fix:** se añadió `origen` al SELECT
+(`emitir/route.ts:116`) y `const esPos = pedido.origen === "pos_planta"` → `debeCrearCobranza = … && !esPos`
+(`:423-424`). El comprobante SUNAT se sigue emitiendo; solo se omite la cobranza-fantasma. **Invariante a
+preservar (ver gotcha #42):** ningún camino debe crear cobranza en `facturas` para un pedido `origen='pos_planta'`.
+Follow-up opcional pendiente: enlazar el `comprobante_id` emitido a la fila de `cobranzas_planta` (la columna ya
+existe) para trazar comprobante↔deuda de planta.
+
+**Runbook ejecutado (plantilla para el próximo deploy grande):**
+1. **Fix bloqueante** aplicado + `tsc` limpio.
+2. **Gate de build:** se detuvo el dev/preview server (comparten `.next`) y `npm run build` en verde (TS strict
+   + ESLint; Vercel falla el deploy ante cualquier error, y la working copy combinada nunca se había compilado
+   junta). Se reinició el dev después.
+3. **Pre-flight solo lectura en prod** (`psql "$DATABASE_URL_UNPOOLED"` desde **`.env.production.local`** —
+   host `ep-cool-sound-adxrsjt5`; OJO: `.env.local` apunta a dev-hugo `ep-super-violet`, NO usarla):
+   - Confirmado que estábamos en prod (`neondb`) y que `clientes_avicola`/`clientes_planta` NO existían aún.
+   - `proveedores`: el UNIQUE de `ruc` se llamaba `proveedores_ruc_key` (lo que la migración esperaba dropear).
+   - `caja_diaria`: 0 duplicados por fecha, 0 abiertas, sin columna `operacion` → swap de índices seguro.
+   - `facturas WHERE numero_comprobante='POS-CREDITO'` = **0 filas** → NO hubo data-op (mejor caso; si hubiera
+     habido crédito POS viejo vivo, se DEJA en `facturas` y la asesora lo cobra por ejecutivas — migrarlo exige
+     mapear a `clientes_planta`, trabajo frágil que no va en la ventana del deploy).
+4. **Migraciones a prod** con `psql "$PROD_UNPOOLED" -1 -v ON_ERROR_STOP=1 -f …` (cada archivo en UNA
+   transacción → el swap de índices de caja es atómico), en orden: `migrate-clientes-avicola-2026-07-07` →
+   `migrate-proveedores-tipo-ruc-opcional-2026-07-07` → `migrate-planta-clientes-cobranzas-2026-07-08` →
+   `migrate-caja-operacion-2026-07-08`. Las 4 son idempotentes/aditivas y **inertes para el código viejo**
+   (tablas nuevas que no toca; `proveedores`/`caja_diaria` con defaults; la caja no usa `ON CONFLICT` por
+   nombre, así que dropear `caja_diaria_fecha_key`/`ux_caja_diaria_unica_abierta` y recrear los índices por
+   operación preserva el invariante mientras el código viejo escribe siempre `operacion='planta'`).
+5. **Verificación de esquema** (con el código viejo aún activo, debe seguir sano): 7 tablas nuevas presentes;
+   `proveedores.ruc` nullable + columna `tipo` + `ux_proveedores_ruc` (viejo `proveedores_ruc_key` fuera);
+   `caja_diaria.operacion` default 'planta' + `ux_caja_diaria_fecha_operacion`/`ux_caja_diaria_unica_abierta_op`
+   (viejos fuera).
+6. **Push** `2aea7a1..5eb7398` (70 archivos; verificado que NO se stageó ningún `.env`/credencial) → Vercel.
+7. **Verificación post-deploy (automatizada, sin crear datos):** rutas nuevas 401 (existen, protegidas, no
+   404); páginas nuevas 307 (redirigen a login, no 404/500); `/api/version` 200 con buildId nuevo. El deploy
+   quedó vivo ~32 s tras el push.
+
+**Rollback disponible:** Vercel → Redeploy del deployment previo (`2aea7a1`). La BD **NO se revierte** (todo
+aditivo; dropear perdería datos de planta/avícola creados post-deploy) — las migraciones son inertes para el
+código viejo, así que revertir SOLO código funciona sobre la BD ya migrada.
+
+**Pendiente de validar por Hugo con una transacción REAL en prod** (no se hizo automáticamente porque crea
+datos reales / emite comprobantes SUNAT de verdad): (1) 🔴 venta POS a crédito + emitir comprobante → deuda
+SOLO en Cobranzas Planta, 0 filas en `facturas` por ese `pedido_id` (prueba del fix); (2) POS contado + panel
+post-venta; (3) Clientes Avícola alta→venta→abono→estado de cuenta; (4) proveedor sin RUC; (5) regresión
+ejecutivas: emitir comprobante de pedido normal SÍ crea su cobranza en `facturas`. Si alguna falla, el punto de
+partida para depurar es el guard `esPos` en `emitir/route.ts` y las tablas `cobranzas_planta`/`clientes_planta`.
+
