@@ -24,6 +24,8 @@ import {
   FiLoader,
   FiCalendar,
   FiEdit2,
+  FiSearch,
+  FiX,
 } from "react-icons/fi";
 
 /** Producto del catálogo tal como lo precarga page.tsx (precio ya numérico). */
@@ -126,6 +128,7 @@ export default function VentaAvicolaClient({
     [fecha]
   );
   const [guardando, setGuardando] = useState(false);
+  const [busqueda, setBusqueda] = useState("");
   const [errorEnvio, setErrorEnvio] = useState<ErrorEnvio | null>(null);
   const [guia, setGuia] = useState<GuiaAvicolaData | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -206,6 +209,17 @@ export default function VentaAvicolaClient({
 
   const saldoProyectado = round2(cliente.saldo_actual - totalOriginal + analisis.total);
   const tieneDeuda = cliente.saldo_actual > UMBRAL_DEUDA;
+
+  // Buscador del catálogo: filtra por nombre o categoría para no scrollear ~90 ítems.
+  const productosFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return productos;
+    return productos.filter(
+      (p) =>
+        p.nombre.toLowerCase().includes(q) ||
+        p.categoria.toLowerCase().includes(q)
+    );
+  }, [productos, busqueda]);
 
   const agregarProducto = (producto: ProductoVentaAvicola) => {
     const existente = lineas.find((l) => l.producto_id === producto.id);
@@ -317,7 +331,8 @@ export default function VentaAvicolaClient({
     <div className="mx-auto w-full max-w-lg px-4">
       {/* Header fino sticky: volver + cliente + saldo. En móvil queda debajo
           del header fijo del DashboardLayout (64px), en desktop pega arriba. */}
-      <header className="sticky top-16 lg:top-0 z-30 -mx-4 flex items-center gap-2 border-b border-gray-200 bg-white px-4 py-2">
+      <header className="sticky top-16 lg:top-0 z-30 -mx-4 space-y-2 border-b border-gray-200 bg-white px-4 py-2">
+        <div className="flex items-center gap-2">
         <Link
           href={`/dashboard/clientes-avicola/${cliente.id}`}
           aria-label="Volver a la ficha del cliente"
@@ -372,6 +387,33 @@ export default function VentaAvicolaClient({
             </button>
           )}
         </div>
+        </div>
+
+        {/* Buscador de productos: filtra el catálogo (queda fijo mientras scrolleas). */}
+        <div className="relative">
+          <FiSearch
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+            size={16}
+          />
+          <input
+            type="text"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar producto (pollo, alas, res…)"
+            aria-label="Buscar producto"
+            className="w-full rounded-xl border border-gray-300 bg-gray-50 py-2 pl-9 pr-9 text-base text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+          />
+          {busqueda && (
+            <button
+              type="button"
+              onClick={() => setBusqueda("")}
+              aria-label="Limpiar búsqueda"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600"
+            >
+              <FiX size={16} />
+            </button>
+          )}
+        </div>
       </header>
 
       {/* Banner de modo edición: deja claro que corrige una venta ya registrada. */}
@@ -388,7 +430,7 @@ export default function VentaAvicolaClient({
       {/* Grid de productos: tap = agrega línea con el precio precargado */}
       <section className="pt-4">
         <div className="grid grid-cols-2 gap-3">
-          {productos.map((producto) => {
+          {productosFiltrados.map((producto) => {
             const ultimo = ultimosPrecios[producto.id];
             const enVenta = lineas.some(
               (l) => l.producto_id === producto.id
@@ -417,11 +459,24 @@ export default function VentaAvicolaClient({
             );
           })}
         </div>
-        {productos.length === 0 && (
+        {productos.length === 0 ? (
           <p className="rounded-xl bg-gray-50 p-4 text-center text-sm text-gray-500">
             No hay productos activos en el catálogo.
           </p>
-        )}
+        ) : productosFiltrados.length === 0 ? (
+          <div className="rounded-xl bg-gray-50 p-4 text-center">
+            <p className="text-sm text-gray-500">
+              No se encontró “{busqueda.trim()}”.
+            </p>
+            <button
+              type="button"
+              onClick={() => setBusqueda("")}
+              className="mt-1 text-sm font-bold text-red-600 hover:underline"
+            >
+              Limpiar búsqueda
+            </button>
+          </div>
+        ) : null}
       </section>
 
       {/* Su pedido: líneas con peso × precio = subtotal */}
