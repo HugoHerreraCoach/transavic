@@ -22,6 +22,8 @@ import {
   FiChevronDown,
   FiChevronUp,
   FiLoader,
+  FiCalendar,
+  FiEdit2,
 } from "react-icons/fi";
 
 /** Producto del catálogo tal como lo precarga page.tsx (precio ya numérico). */
@@ -32,11 +34,25 @@ export interface ProductoVentaAvicola {
   precio_venta: number | null;
 }
 
+export interface VentaExistenteProps {
+  id: string;
+  numero_guia: number;
+  fecha: string;
+  observaciones: string | null;
+  items: Array<{
+    producto_id: string | null;
+    producto_nombre: string;
+    peso: string;
+    precio: string;
+  }>;
+}
+
 interface VentaAvicolaClientProps {
   cliente: ClienteAvicolaConSaldo;
   productos: ProductoVentaAvicola[];
   /** producto_id → último precio/kg pactado con ESTE cliente. */
   ultimosPrecios: Record<string, number>;
+  ventaExistente?: VentaExistenteProps | null;
 }
 
 /** Línea de la venta en edición. Peso y precio quedan como texto crudo. */
@@ -71,22 +87,54 @@ export default function VentaAvicolaClient({
   cliente,
   productos,
   ultimosPrecios,
+  ventaExistente,
 }: VentaAvicolaClientProps) {
   const router = useRouter();
 
-  const [lineas, setLineas] = useState<LineaVenta[]>([]);
-  const [observaciones, setObservaciones] = useState("");
-  const [mostrarObservaciones, setMostrarObservaciones] = useState(false);
+  // Hoy en zona Lima (YYYY-MM-DD)
+  const hoyLima = useMemo(
+    () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date()),
+    []
+  );
+
+  const [lineas, setLineas] = useState<LineaVenta[]>(() => {
+    if (ventaExistente) {
+      return ventaExistente.items.map((it) => ({
+        producto_id: it.producto_id || "",
+        producto_nombre: it.producto_nombre,
+        peso: it.peso,
+        precio: it.precio,
+      }));
+    }
+    return [];
+  });
+
+  const [fecha, setFecha] = useState(() => ventaExistente?.fecha ?? hoyLima);
+  const [observaciones, setObservaciones] = useState(() => ventaExistente?.observaciones ?? "");
+  const [mostrarObservaciones, setMostrarObservaciones] = useState(() => !!ventaExistente?.observaciones);
+  // Fecha compacta: por defecto "Hoy" (el ~99% de las ventas). El selector se abre
+  // solo para registrar/corregir una venta de un día pasado (domingos, feriados).
+  const [mostrarFecha, setMostrarFecha] = useState(false);
+  const esRetroactiva = fecha !== hoyLima;
+  const fechaCorta = useMemo(
+    () =>
+      new Intl.DateTimeFormat("es-PE", {
+        day: "numeric",
+        month: "short",
+        timeZone: "America/Lima",
+      }).format(new Date(`${fecha}T12:00:00`)),
+    [fecha]
+  );
   const [guardando, setGuardando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState<ErrorEnvio | null>(null);
   const [guia, setGuia] = useState<GuiaAvicolaData | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
 
-  // Id de la venta: se genera UNA sola vez al montar y NO cambia en reintentos
-  // (clave de idempotencia contra doble-tap / señal intermitente en campo).
+  // Id de la venta: se genera UNA sola vez al montar (o se usa el de la venta a editar)
+  // y NO cambia en reintentos (clave de idempotencia contra doble-tap).
   const idRef = useRef<string | null>(null);
   if (idRef.current === null) {
-    idRef.current = crypto.randomUUID();
+    idRef.current = ventaExistente?.id ?? crypto.randomUUID();
   }
 
   // Refs a los inputs de peso por producto, para el autofocus de la línea nueva.
@@ -142,7 +190,21 @@ export default function VentaAvicolaClient({
     motivoBloqueo = "Revisa el precio para continuar.";
   }
 
-  const saldoProyectado = round2(cliente.saldo_actual + analisis.total);
+  // En modo edición el saldo actual YA incluye esta venta con su total original;
+  // para proyectar bien hay que descontar ese total antes de sumar el nuevo (si no,
+  // la venta se contaría dos veces y el "saldo quedará en…" saldría inflado).
+  const totalOriginal = useMemo(() => {
+    if (!ventaExistente) return 0;
+    return ventaExistente.items.reduce((acc, it) => {
+      const p = aNumero(it.peso);
+      const pr = aNumero(it.precio);
+      return Number.isFinite(p) && Number.isFinite(pr)
+        ? round2(acc + round2(p * pr))
+        : acc;
+    }, 0);
+  }, [ventaExistente]);
+
+  const saldoProyectado = round2(cliente.saldo_actual - totalOriginal + analisis.total);
   const tieneDeuda = cliente.saldo_actual > UMBRAL_DEUDA;
 
   const agregarProducto = (producto: ProductoVentaAvicola) => {
@@ -189,24 +251,37 @@ export default function VentaAvicolaClient({
     setGuardando(true);
     setErrorEnvio(null);
     try {
-      const res = await fetch("/api/avicola/ventas", {
-        method: "POST",
+      const url = ventaExistente ? `/api/avicola/ventas/${idRef.current}` : "/api/avicola/ventas";
+      const method = ventaExistente ? "PATCH" : "POST";
+      
+      const payload: Record<string, unknown> = {
+        items: lineas.map((l) => ({
+          producto_id: l.producto_id || null,
+          producto_nombre: l.producto_nombre,
+          peso_kg: aNumero(l.peso),
+          precio_kg: aNumero(l.precio),
+        })),
+        observaciones: observaciones.trim() || null,
+      };
+
+      if (!ventaExistente) {
+        payload.id = idRef.current;
+        payload.cliente_id = cliente.id;
+      }
+      if (fecha && fecha !== hoyLima) {
+        payload.fecha = fecha;
+      } else if (ventaExistente && fecha) {
+        payload.fecha = fecha; // Siempre mandar en edición para actualizarla
+      }
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: idRef.current,
-          cliente_id: cliente.id,
-          items: lineas.map((l) => ({
-            producto_id: l.producto_id,
-            producto_nombre: l.producto_nombre,
-            peso_kg: aNumero(l.peso),
-            precio_kg: aNumero(l.precio),
-          })),
-          observaciones: observaciones.trim() || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (res.ok) {
-        // 201 creada o 200 ya existía (reintento) — en ambos casos hay guía.
+        // En ambos casos hay guía devuelta
         const data = (await res.json()) as { guia: GuiaAvicolaData };
         setGuia(data.guia);
         return;
@@ -244,25 +319,71 @@ export default function VentaAvicolaClient({
           del header fijo del DashboardLayout (64px), en desktop pega arriba. */}
       <header className="sticky top-16 lg:top-0 z-30 -mx-4 flex items-center gap-2 border-b border-gray-200 bg-white px-4 py-2">
         <Link
-          href="/dashboard/clientes-avicola"
-          aria-label="Volver a clientes avícola"
+          href={`/dashboard/clientes-avicola/${cliente.id}`}
+          aria-label="Volver a la ficha del cliente"
           className="-ml-2 p-2 text-gray-600 hover:text-gray-900"
         >
           <FiArrowLeft size={22} />
         </Link>
         <div className="min-w-0 flex-1">
           <p className="truncate font-bold leading-tight text-gray-900">
-            {cliente.nombre}
+            {ventaExistente ? `Editar Venta - ${cliente.nombre}` : cliente.nombre}
           </p>
           <p
             className={`text-xs font-semibold ${
               tieneDeuda ? "text-red-600" : "text-gray-500"
             }`}
           >
-            Saldo: S/ {cliente.saldo_actual.toFixed(2)}
+            Saldo actual: S/ {cliente.saldo_actual.toFixed(2)}
           </p>
         </div>
+
+        {/* Fecha compacta: "Hoy" por defecto; el selector se abre solo para retroceder. */}
+        <div className="shrink-0">
+          {mostrarFecha ? (
+            <input
+              type="date"
+              value={fecha}
+              max={hoyLima}
+              autoFocus
+              aria-label="Fecha de la venta"
+              onChange={(e) => setFecha(e.target.value)}
+              onBlur={() => {
+                if (fecha === hoyLima) setMostrarFecha(false);
+              }}
+              className="rounded-lg border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs font-bold text-amber-800 outline-none"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setMostrarFecha(true)}
+              aria-label="Cambiar la fecha de la venta"
+              className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${
+                esRetroactiva
+                  ? "border-amber-300 bg-amber-50 text-amber-800"
+                  : "border-gray-200 bg-gray-50 text-gray-600"
+              }`}
+            >
+              <FiCalendar
+                size={14}
+                className={esRetroactiva ? "text-amber-600" : "text-gray-400"}
+              />
+              {esRetroactiva ? fechaCorta : "Hoy"}
+            </button>
+          )}
+        </div>
       </header>
+
+      {/* Banner de modo edición: deja claro que corrige una venta ya registrada. */}
+      {ventaExistente && (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <FiEdit2 size={15} className="mt-0.5 shrink-0 text-amber-600" />
+          <p className="text-xs font-semibold leading-snug text-amber-800">
+            Editando la guía N.º {String(ventaExistente.numero_guia).padStart(8, "0")}.
+            Al guardar se reenvía la guía corregida.
+          </p>
+        </div>
+      )}
 
       {/* Grid de productos: tap = agrega línea con el precio precargado */}
       <section className="pt-4">
@@ -352,7 +473,7 @@ export default function VentaAvicolaClient({
                       onFocus={(e) => e.target.select()}
                       placeholder="Peso"
                       aria-label={`Peso en kilos de ${linea.producto_nombre}`}
-                      className="w-24 rounded-xl border border-gray-300 py-3 px-2 text-center text-lg font-semibold text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      className="w-24 rounded-xl border border-gray-300 py-3 px-2 text-center text-lg font-semibold tabular-nums text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
                     />
                     <span className="text-xs font-semibold text-gray-500">
                       kg
@@ -375,9 +496,9 @@ export default function VentaAvicolaClient({
                       onFocus={(e) => e.target.select()}
                       placeholder="Precio"
                       aria-label={`Precio por kilo de ${linea.producto_nombre}`}
-                      className="w-24 rounded-xl border border-gray-300 py-3 px-2 text-center text-lg font-semibold text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      className="w-24 rounded-xl border border-gray-300 py-3 px-2 text-center text-lg font-semibold tabular-nums text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
                     />
-                    <span className="ml-auto text-right font-extrabold text-gray-900">
+                    <span className="ml-auto text-right font-extrabold tabular-nums text-gray-900">
                       {subtotal !== null && subtotal !== undefined
                         ? `= S/ ${subtotal.toFixed(2)}`
                         : "= —"}
@@ -468,6 +589,8 @@ export default function VentaAvicolaClient({
             <>
               <FiLoader className="mr-2 animate-spin" size={22} /> Guardando…
             </>
+          ) : ventaExistente ? (
+            "Actualizar y enviar guía"
           ) : (
             "Guardar y enviar guía"
           )}

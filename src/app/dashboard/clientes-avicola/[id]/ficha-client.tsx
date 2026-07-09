@@ -519,6 +519,7 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
                 cargandoGuia={cargandoGuia === mov.id}
                 onReenviarGuia={() => reenviarGuia(mov.id)}
                 onAnular={() => setAnular({ tipo: mov.tipo, id: mov.id })}
+                clienteId={clienteId}
               />
             ))}
           </ul>
@@ -580,6 +581,7 @@ function MovimientoRow({
   cargandoGuia,
   onReenviarGuia,
   onAnular,
+  clienteId,
 }: {
   mov: MovimientoAvicola;
   expandida: boolean;
@@ -587,6 +589,7 @@ function MovimientoRow({
   cargandoGuia: boolean;
   onReenviarGuia: () => void;
   onAnular: () => void;
+  clienteId: string;
 }) {
   const esVenta = mov.tipo === "venta";
   const tieneItems = esVenta && (mov.items?.length ?? 0) > 0;
@@ -678,19 +681,28 @@ function MovimientoRow({
         {(!mov.anulado || (!esVenta && mov.tiene_comprobante)) && (
           <div className="mt-2 ml-[52px] flex flex-wrap gap-2">
             {esVenta && !mov.anulado && (
-              <button
-                type="button"
-                onClick={onReenviarGuia}
-                disabled={cargandoGuia}
-                className="h-10 px-4 rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer disabled:opacity-50"
-              >
-                {cargandoGuia ? (
-                  <FiLoader size={16} className="animate-spin" />
-                ) : (
-                  <FiShare2 size={16} />
-                )}
-                Reenviar guía
-              </button>
+              <>
+                <Link
+                  href={`/dashboard/clientes-avicola/${clienteId}/venta?edit=${mov.id}`}
+                  className="h-10 px-4 rounded-2xl bg-red-600 text-white text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform shadow-sm shadow-red-600/20"
+                >
+                  <FiEdit2 size={16} />
+                  Editar
+                </Link>
+                <button
+                  type="button"
+                  onClick={onReenviarGuia}
+                  disabled={cargandoGuia}
+                  className="h-10 px-4 rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer disabled:opacity-50"
+                >
+                  {cargandoGuia ? (
+                    <FiLoader size={16} className="animate-spin" />
+                  ) : (
+                    <FiShare2 size={16} />
+                  )}
+                  Reenviar guía
+                </button>
+              </>
             )}
             {!esVenta && mov.tiene_comprobante && (
               <a
@@ -707,7 +719,7 @@ function MovimientoRow({
               <button
                 type="button"
                 onClick={onAnular}
-                className="h-10 px-4 rounded-2xl bg-white border-2 border-red-200 text-red-600 text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer"
+                className="h-10 px-3 rounded-2xl text-gray-500 hover:bg-red-50 hover:text-red-600 text-sm font-semibold flex items-center gap-1.5 active:scale-95 transition-colors cursor-pointer"
               >
                 <FiX size={16} />
                 Anular

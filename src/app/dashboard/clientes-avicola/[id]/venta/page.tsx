@@ -3,6 +3,7 @@
 // La usa el Gerente General EN CAMPO: debe cargarse con todo listo para que la
 // venta tome menos de un minuto. Precarga: estado de cuenta del cliente,
 // catálogo activo y el ÚLTIMO precio pactado con ESTE cliente por producto.
+// También soporta edición de venta mediante el query param ?edit=ventaId.
 import { redirect, notFound } from "next/navigation";
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
@@ -21,8 +22,10 @@ const UUID_REGEX =
 
 export default async function VentaAvicolaPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
@@ -30,6 +33,10 @@ export default async function VentaAvicolaPage({
 
   const { id } = await params;
   if (!UUID_REGEX.test(id)) notFound();
+
+  const sp = await searchParams;
+  const edit = sp.edit;
+  const editId = typeof edit === "string" && UUID_REGEX.test(edit) ? edit : null;
 
   const sql = neon(process.env.DATABASE_URL!);
 
@@ -81,11 +88,51 @@ export default async function VentaAvicolaPage({
     ultimosPrecios[fila.producto_id] = fila.precio_kg;
   }
 
+  // Cargar venta existente si estamos en modo edición
+  let ventaExistente = null;
+  if (editId) {
+    const ventaRow = await sql`
+      SELECT id, numero_guia, fecha::text as fecha, observaciones
+      FROM ventas_avicola
+      WHERE id = ${editId} AND NOT anulada AND cliente_id = ${id}
+    `;
+    if (ventaRow.length > 0) {
+      const itemsRows = await sql`
+        SELECT 
+          producto_id,
+          producto_nombre,
+          peso_kg::float8 AS peso,
+          precio_kg::float8 AS precio
+        FROM venta_avicola_items
+        WHERE venta_id = ${editId}
+        ORDER BY created_at ASC
+      `;
+      ventaExistente = {
+        id: ventaRow[0].id,
+        numero_guia: ventaRow[0].numero_guia,
+        fecha: ventaRow[0].fecha,
+        observaciones: ventaRow[0].observaciones,
+        items: (itemsRows as Array<{
+          producto_id: string | null;
+          producto_nombre: string;
+          peso: number;
+          precio: number;
+        }>).map((it) => ({
+          producto_id: it.producto_id,
+          producto_nombre: it.producto_nombre,
+          peso: String(it.peso),
+          precio: String(it.precio),
+        })),
+      };
+    }
+  }
+
   return (
     <VentaAvicolaClient
       cliente={cliente}
       productos={productos}
       ultimosPrecios={ultimosPrecios}
+      ventaExistente={ventaExistente}
     />
   );
 }
