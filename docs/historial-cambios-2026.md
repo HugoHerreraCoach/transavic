@@ -875,3 +875,42 @@ post-venta; (3) Clientes Avícola alta→venta→abono→estado de cuenta; (4) p
 ejecutivas: emitir comprobante de pedido normal SÍ crea su cobranza en `facturas`. Si alguna falla, el punto de
 partida para depurar es el guard `esPos` en `emitir/route.ts` y las tablas `cobranzas_planta`/`clientes_planta`.
 
+### 🚀 Clientes Avícola — editar peso/precio + fecha retroactiva + rediseño (9 jul 2026, EN PRODUCCIÓN)
+Commit `dab54a8` (buildId `cNSO_hKWPG-4Y6IHvqszS`). Pedido de Antonio por video (8 jul): en la mañana Ariana
+(producción) sube los pesos; en la tarde el GG cobra EN CAMPO y necesita (1) cambiar el **peso** real, (2)
+cambiar el **precio** (él maneja el precio en campo), y (3) registrar ventas de **días pasados** (domingos,
+feriados, o cuando la asistente no cargó). Hugo lo implementó con otra IA (sin commitear); yo revisé,
+corregí, optimicé el diseño, probé E2E y desplegué.
+
+**Qué se agregó (funciona):** PATCH `/api/avicola/ventas/[id]` edita ítems (peso/precio), observaciones y
+fecha de una venta ya creada — recalcula el total en server, transacción atómica (DELETE items → re-INSERT →
+UPDATE cabecera), **se bloquea si la venta está anulada** (409), y **audita** `modificada_por`/`modificada_at`.
+El GET del mismo route devuelve los ítems crudos para poblar el form. `venta/page.tsx` entra en modo edición
+con `?edit=<uuid>` (scoped a `NOT anulada AND cliente_id`). `venta-client.tsx` reusa el MISMO formulario para
+crear y editar; el selector de fecha permite retroceder (`max=hoy`, futura NO). El saldo se calcula al vuelo,
+así que editar una venta actualiza el saldo solo (sin persistir nada). Esto **cambia la regla original**
+"jamás edición" de la gotcha #41 (era una decisión, ahora Antonio pidió lo contrario).
+
+**Revisión del trabajo de la otra IA (para el futuro):** (a) 🔴 un `payload: Record<string, any>` en
+`venta-client.tsx` disparaba un **ESLint error que rompía el build de Vercel** — cambiado a `unknown`; (b) 🔴
+la migración de auditoría se aplicó como **`.mjs` y contra PRODUCCIÓN** (no dev), porque el `.mjs` usa
+`process.env.DATABASE_URL`; reemplazada por `scripts/migrate-ventas-avicola-edit-2026-07-09.sql` (idempotente,
+`ADD COLUMN IF NOT EXISTS`), aplicada a dev-hugo para poder probar, y el `.mjs` eliminado (una sola fuente,
+convención psql — gotcha #13); (c) 🐛 la proyección de saldo en modo edición **contaba la venta dos veces**
+(`saldo_actual + total` sin descontar el total original) → corregido descontando `totalOriginal`.
+
+**Optimización de diseño (skill mejora-diseño):** la fecha dejó de ser una **tarjeta grande** arriba de los
+productos y pasó a un **chip compacto en el header** ("Hoy" gris por defecto; ámbar con el día si es
+retroactiva) → los productos vuelven a ser lo primero (el 95% de las ventas son de hoy, el caso raro no
+estorba al común); **banner de modo edición** ("Editando la guía N.º … · al guardar se reenvía la guía
+corregida", ámbar) para no confundir con un alta; en la **ficha**, las 3 acciones por venta pasaron de 3
+botones iguales a jerarquía: **Editar = primaria (rojo)**, Reenviar guía secundaria, **Anular discreto**
+(fantasma, rojo solo al tocar — la acción peligrosa deja de estar a un toque); números tabulares.
+
+**Prueba E2E real (dev-hugo, navegador logueado):** con un cliente+venta sembrados, se editó por la Ut peso
+10→12 kg, precio 10.40→11.50, fecha hoy→8 jul → total 104→**138**, guía regenerada con "Miércoles, 8 de julio
+de 2026", y **verificado en la BD**: `total=138`, `fecha=2026-07-08`, `modificada_por/at` seteados, ítem
+`peso=12`/`precio=11.5`. Datos de prueba borrados. `tsc`/`eslint`/`build` limpios. Prod ya tenía las columnas
+(las aplicó el `.mjs` de la otra IA); el deploy fue solo código. Rollback: Redeploy del deployment previo
+(`a18d450`) en Vercel; BD aditiva, no se toca.
+
