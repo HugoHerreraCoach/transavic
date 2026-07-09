@@ -71,17 +71,25 @@ abonos_avicola        id UUID del cliente (idempotencia), cliente_id, fecha, mon
    `estadoCuentaParaGuia`). NO dupliques esos SUMs.
 2. **Anulación soft, nunca DELETE** (motivo obligatorio ≥5 chars). Toda query filtra
    `NOT anulada/anulado` — misma disciplina que `facturas.estado='Anulada'` (gotcha #24).
-   La corrección de una venta ya enviada = anular + crear nueva (guía nueva); jamás editarla.
-3. **Idempotencia doble-tap**: la PK de venta/abono la genera el FRONTEND (`crypto.randomUUID()` al
+   **Editar una venta ya enviada SÍ se puede** (desde 9 jul 2026, pedido de Antonio: en la tarde el GG
+   ajusta el peso/precio reales al cobrar): PATCH `/api/avicola/ventas/[id]` cambia peso/precio/fecha/
+   observaciones, **recalcula el total en server** (transacción atómica: `DELETE` items → re-`INSERT` →
+   `UPDATE` cabecera), **audita** `modificada_por`/`modificada_at`, y se **bloquea si la venta está anulada**
+   (409). El botón "Editar" de la ficha abre el MISMO form en modo `?edit=<uuid>` (`GET` del route devuelve
+   los ítems crudos). La anulación soft se conserva para descartar una venta entera (no para corregir).
+3. **La fecha de la venta es seleccionable** (alta y edición): **retroactiva permitida** (para cargar lo
+   de un domingo/feriado o cuando la asistente no registró), **futura NO** (validado en server, zona Lima).
+   Por defecto es hoy; en la UI es un chip compacto en el header ("Hoy", o ámbar con el día si es pasado).
+4. **Idempotencia doble-tap**: la PK de venta/abono la genera el FRONTEND (`crypto.randomUUID()` al
    montar el form, reusada en reintentos). El POST pre-checkea por id y captura `23505` → responde
    200 con lo ya guardado (mismo número de guía). No quitar.
-4. **La guía es reimprimible y estable**: su estado de cuenta va ANCLADO al `created_at` de la venta
+5. **La guía es reimprimible y estable**: su estado de cuenta va ANCLADO al `created_at` de la venta
    (`estadoCuentaParaGuia`): `saldo_previo` = movimientos anteriores; `abonos_del_dia` = abonos del
    mismo día posteriores a la venta (el corte por `created_at` evita doble conteo).
-5. Sobrepago de abono = **409 blando** (`requiere_confirmacion`) + `permitir_sobrepago:true` →
+6. Sobrepago de abono = **409 blando** (`requiere_confirmacion`) + `permitir_sobrepago:true` →
    saldo negativo se muestra "a favor". La cartera usa `GREATEST(saldo, 0)`.
-6. Cliente **inactivo**: ventas bloqueadas (409), abonos permitidos, deuda sigue en cartera/rankings.
-7. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
+7. Cliente **inactivo**: ventas bloqueadas (409), abonos permitidos, deuda sigue en cartera/rankings.
+8. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
    camión de Antonio (pendiente confirmar). Los kg por producto/día SÍ quedan registrados
    (`venta_avicola_items` + liquidación) → activar el descuento después es un cambio acotado.
 
