@@ -40,29 +40,58 @@ export default async function VentaAvicolaPage({
 
   const sql = neon(process.env.DATABASE_URL!);
 
-  const [cliente, productosRaw, preciosRaw] = await Promise.all([
-    // (a) Estado de cuenta del cliente (saldo actual para el header y el footer).
-    estadoCuentaCliente(sql, id),
-    // (b) Catálogo activo (mismo orden que el POS: categoría, nombre).
-    sql`
-      SELECT id, nombre, categoria, COALESCE(precio_venta, 0)::float8 AS precio_venta
-      FROM productos
-      WHERE activo = TRUE
-      ORDER BY categoria, nombre
-    `,
-    // (c) Último precio pactado con ESTE cliente por producto (ventas no anuladas).
-    sql`
-      SELECT DISTINCT ON (vi.producto_id)
-        vi.producto_id,
-        vi.precio_kg::float8 AS precio_kg
-      FROM venta_avicola_items vi
-      JOIN ventas_avicola v ON v.id = vi.venta_id
-      WHERE v.cliente_id = ${id}
-        AND NOT v.anulada
-        AND vi.producto_id IS NOT NULL
-      ORDER BY vi.producto_id, v.created_at DESC
-    `,
-  ]);
+  const [cliente, productosRaw, historialRaw, masVendidosRaw, ultimaVentaRaw] =
+    await Promise.all([
+      // (a) Estado de cuenta del cliente (saldo actual para el header y el footer).
+      estadoCuentaCliente(sql, id),
+      // (b) Catálogo activo (mismo orden que el POS: categoría, nombre).
+      sql`
+        SELECT id, nombre, categoria, COALESCE(precio_venta, 0)::float8 AS precio_venta
+        FROM productos
+        WHERE activo = TRUE
+        ORDER BY categoria, nombre
+      `,
+      // (c) "Lo de siempre" de ESTE cliente: cuántas VECES le compró cada producto
+      //     y a qué precio la última vez. Ordenado por frecuencia (desempate: lo más
+      //     reciente). Alimenta el orden de la sección + los precios precargados.
+      sql`
+        SELECT
+          vi.producto_id,
+          COUNT(DISTINCT v.id)::int AS veces,
+          (ARRAY_AGG(vi.precio_kg ORDER BY v.created_at DESC))[1]::float8 AS ultimo_precio
+        FROM venta_avicola_items vi
+        JOIN ventas_avicola v ON v.id = vi.venta_id
+        WHERE v.cliente_id = ${id}
+          AND NOT v.anulada
+          AND vi.producto_id IS NOT NULL
+        GROUP BY vi.producto_id
+        ORDER BY veces DESC, MAX(v.created_at) DESC
+      `,
+      // (d) Top del módulo (todas las ventas de campo): se usa SOLO cuando el cliente
+      //     es nuevo y no tiene historial propio, para que igual arranque con algo útil.
+      sql`
+        SELECT vi.producto_id, COUNT(DISTINCT v.id)::int AS veces
+        FROM venta_avicola_items vi
+        JOIN ventas_avicola v ON v.id = vi.venta_id
+        WHERE NOT v.anulada AND vi.producto_id IS NOT NULL
+        GROUP BY vi.producto_id
+        ORDER BY veces DESC
+        LIMIT 8
+      `,
+      // (e) Ítems de la ÚLTIMA venta del cliente → botón "Repetir última venta".
+      sql`
+        SELECT vi.producto_id, vi.producto_nombre, vi.precio_kg::float8 AS precio_kg
+        FROM venta_avicola_items vi
+        WHERE vi.venta_id = (
+          SELECT id FROM ventas_avicola
+          WHERE cliente_id = ${id} AND NOT anulada
+          ORDER BY created_at DESC
+          LIMIT 1
+        )
+          AND vi.producto_id IS NOT NULL
+        ORDER BY vi.created_at ASC
+      `,
+    ]);
 
   if (!cliente) notFound();
 
@@ -80,13 +109,33 @@ export default async function VentaAvicolaPage({
     precio_venta: p.precio_venta,
   }));
 
+  // "Lo de siempre": ids ordenados por frecuencia; y de paso el precio precargado.
   const ultimosPrecios: Record<string, number> = {};
-  for (const fila of preciosRaw as Array<{
+  const historialIds: string[] = [];
+  for (const fila of historialRaw as Array<{
     producto_id: string;
-    precio_kg: number;
+    veces: number;
+    ultimo_precio: number;
   }>) {
-    ultimosPrecios[fila.producto_id] = fila.precio_kg;
+    ultimosPrecios[fila.producto_id] = fila.ultimo_precio;
+    historialIds.push(fila.producto_id);
   }
+
+  const masVendidosIds = (
+    masVendidosRaw as Array<{ producto_id: string }>
+  ).map((f) => f.producto_id);
+
+  const ultimaVentaItems = (
+    ultimaVentaRaw as Array<{
+      producto_id: string;
+      producto_nombre: string;
+      precio_kg: number;
+    }>
+  ).map((f) => ({
+    producto_id: f.producto_id,
+    producto_nombre: f.producto_nombre,
+    precio: f.precio_kg,
+  }));
 
   // Cargar venta existente si estamos en modo edición
   let ventaExistente = null;
@@ -132,6 +181,9 @@ export default async function VentaAvicolaPage({
       cliente={cliente}
       productos={productos}
       ultimosPrecios={ultimosPrecios}
+      historialIds={historialIds}
+      masVendidosIds={masVendidosIds}
+      ultimaVentaItems={ultimaVentaItems}
       ventaExistente={ventaExistente}
     />
   );

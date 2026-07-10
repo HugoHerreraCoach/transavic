@@ -26,7 +26,12 @@ import {
   FiEdit2,
   FiSearch,
   FiX,
+  FiStar,
+  FiRotateCcw,
 } from "react-icons/fi";
+
+/** Productos que el GG fija a mano para verlos siempre arriba (por dispositivo). */
+const CLAVE_FAVORITOS = "transavic_avicola_favoritos";
 
 /** Producto del catálogo tal como lo precarga page.tsx (precio ya numérico). */
 export interface ProductoVentaAvicola {
@@ -49,11 +54,24 @@ export interface VentaExistenteProps {
   }>;
 }
 
+/** Ítem de la última venta del cliente (alimenta "Repetir última venta"). */
+export interface ItemUltimaVenta {
+  producto_id: string;
+  producto_nombre: string;
+  precio: number;
+}
+
 interface VentaAvicolaClientProps {
   cliente: ClienteAvicolaConSaldo;
   productos: ProductoVentaAvicola[];
   /** producto_id → último precio/kg pactado con ESTE cliente. */
   ultimosPrecios: Record<string, number>;
+  /** "Lo de siempre": ids que ESTE cliente ya compró, ordenados por frecuencia. */
+  historialIds: string[];
+  /** Top del módulo; solo se muestra si el cliente aún no tiene historial. */
+  masVendidosIds: string[];
+  /** Ítems de la última venta del cliente (vacío si nunca compró). */
+  ultimaVentaItems: ItemUltimaVenta[];
   ventaExistente?: VentaExistenteProps | null;
 }
 
@@ -85,10 +103,87 @@ function limpiarDecimal(valor: string): string {
   return valor.replace(/[^\d.,]/g, "");
 }
 
+/** Encabezado fino de sección (no debe robarle altura a los productos). */
+function TituloSeccion({
+  icono,
+  children,
+}: {
+  icono: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <h2 className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-400">
+      {icono}
+      {children}
+    </h2>
+  );
+}
+
+/** Tarjeta de producto: tocar el cuerpo lo agrega; la estrella lo fija arriba. */
+function TarjetaProducto({
+  producto,
+  ultimo,
+  enVenta,
+  esFavorito,
+  onAdd,
+  onToggleFavorito,
+}: {
+  producto: ProductoVentaAvicola;
+  ultimo?: number;
+  enVenta: boolean;
+  esFavorito: boolean;
+  onAdd: (p: ProductoVentaAvicola) => void;
+  onToggleFavorito: (id: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => onAdd(producto)}
+        className={`w-full rounded-2xl border bg-white p-3 pr-9 text-left transition-transform active:scale-95 cursor-pointer ${
+          enVenta
+            ? "border-red-400 ring-1 ring-red-400"
+            : "border-gray-200 hover:border-red-300"
+        }`}
+      >
+        <span className="block font-semibold leading-tight text-gray-900">
+          {producto.nombre}
+        </span>
+        <span className="mt-1 block text-sm font-bold text-red-600">
+          S/ {(ultimo ?? producto.precio_venta ?? 0).toFixed(2)}/kg{" "}
+          <span className="font-medium text-gray-400">
+            · {ultimo !== undefined ? "último" : "catálogo"}
+          </span>
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={() => onToggleFavorito(producto.id)}
+        aria-label={
+          esFavorito
+            ? `Quitar ${producto.nombre} de los fijados`
+            : `Fijar ${producto.nombre} arriba`
+        }
+        className="absolute right-0.5 top-0.5 p-2 rounded-full transition-transform active:scale-90"
+      >
+        <FiStar
+          size={16}
+          className={
+            esFavorito ? "fill-amber-400 text-amber-500" : "text-gray-300"
+          }
+        />
+      </button>
+    </div>
+  );
+}
+
 export default function VentaAvicolaClient({
   cliente,
   productos,
   ultimosPrecios,
+  historialIds,
+  masVendidosIds,
+  ultimaVentaItems,
   ventaExistente,
 }: VentaAvicolaClientProps) {
   const router = useRouter();
@@ -129,6 +224,8 @@ export default function VentaAvicolaClient({
   );
   const [guardando, setGuardando] = useState(false);
   const [busqueda, setBusqueda] = useState("");
+  /** Productos fijados a mano (estrella). Se guardan por dispositivo. */
+  const [favoritos, setFavoritos] = useState<string[]>([]);
   const [errorEnvio, setErrorEnvio] = useState<ErrorEnvio | null>(null);
   const [guia, setGuia] = useState<GuiaAvicolaData | null>(null);
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -152,6 +249,34 @@ export default function VentaAvicolaClient({
     }
     setFocusId(null);
   }, [focusId]);
+
+  // Favoritos fijados a mano (persisten por dispositivo, no por cliente).
+  useEffect(() => {
+    try {
+      const crudo = window.localStorage.getItem(CLAVE_FAVORITOS);
+      if (!crudo) return;
+      const ids: unknown = JSON.parse(crudo);
+      if (Array.isArray(ids)) {
+        setFavoritos(ids.filter((i): i is string => typeof i === "string"));
+      }
+    } catch {
+      // localStorage corrupto o no disponible: se ignora, no es crítico.
+    }
+  }, []);
+
+  const toggleFavorito = (productoId: string) => {
+    setFavoritos((prev) => {
+      const nuevos = prev.includes(productoId)
+        ? prev.filter((i) => i !== productoId)
+        : [...prev, productoId];
+      try {
+        window.localStorage.setItem(CLAVE_FAVORITOS, JSON.stringify(nuevos));
+      } catch {
+        // Sin espacio/modo privado: el fijado queda solo en memoria.
+      }
+      return nuevos;
+    });
+  };
 
   // Validación + total. Peso: > 0. Precio: >= 0. Vacío = inválido.
   const analisis = useMemo(() => {
@@ -211,6 +336,7 @@ export default function VentaAvicolaClient({
   const tieneDeuda = cliente.saldo_actual > UMBRAL_DEUDA;
 
   // Buscador del catálogo: filtra por nombre o categoría para no scrollear ~90 ítems.
+  const hayBusqueda = busqueda.trim() !== "";
   const productosFiltrados = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     if (!q) return productos;
@@ -220,6 +346,57 @@ export default function VentaAvicolaClient({
         p.categoria.toLowerCase().includes(q)
     );
   }, [productos, busqueda]);
+
+  // Secciones del catálogo (sin buscar): primero lo fijado a mano, luego lo que ESTE
+  // cliente compra siempre (por frecuencia), y para clientes nuevos el top del módulo.
+  // Cada producto aparece UNA sola vez: el resto cae en "Todo el catálogo".
+  const { fijados, loDeSiempre, masVendidos, resto } = useMemo(() => {
+    const porId = new Map(productos.map((p) => [p.id, p]));
+    const usados = new Set<string>();
+    const tomar = (ids: string[]) => {
+      const lista: ProductoVentaAvicola[] = [];
+      for (const id of ids) {
+        const p = porId.get(id);
+        if (p && !usados.has(id)) {
+          lista.push(p);
+          usados.add(id);
+        }
+      }
+      return lista;
+    };
+
+    const fijadosLista = tomar(favoritos);
+    const siempreLista = tomar(historialIds);
+    // El top global solo tiene sentido si el cliente todavía no compró nada.
+    const topLista = historialIds.length === 0 ? tomar(masVendidosIds) : [];
+    const restoLista = productos.filter((p) => !usados.has(p.id));
+
+    return {
+      fijados: fijadosLista,
+      loDeSiempre: siempreLista,
+      masVendidos: topLista,
+      resto: restoLista,
+    };
+  }, [productos, favoritos, historialIds, masVendidosIds]);
+
+  // "Repetir última venta": siembra los mismos productos con su precio; los pesos
+  // quedan vacíos porque son los que cambian cada día. Solo con el carrito vacío
+  // (nunca pisa lo que el usuario ya cargó).
+  const puedeRepetir =
+    !ventaExistente && ultimaVentaItems.length > 0 && lineas.length === 0;
+
+  const repetirUltimaVenta = () => {
+    if (ultimaVentaItems.length === 0) return;
+    setLineas(
+      ultimaVentaItems.map((it) => ({
+        producto_id: it.producto_id,
+        producto_nombre: it.producto_nombre,
+        peso: "",
+        precio: it.precio.toFixed(2),
+      }))
+    );
+    setFocusId(ultimaVentaItems[0].producto_id);
+  };
 
   const agregarProducto = (producto: ProductoVentaAvicola) => {
     const existente = lineas.find((l) => l.producto_id === producto.id);
@@ -327,6 +504,23 @@ export default function VentaAvicolaClient({
     }
   };
 
+  /** Grilla de tarjetas, reusada por todas las secciones y por la búsqueda. */
+  const renderGrid = (lista: ProductoVentaAvicola[]) => (
+    <div className="grid grid-cols-2 gap-3">
+      {lista.map((producto) => (
+        <TarjetaProducto
+          key={producto.id}
+          producto={producto}
+          ultimo={ultimosPrecios[producto.id]}
+          enVenta={lineas.some((l) => l.producto_id === producto.id)}
+          esFavorito={favoritos.includes(producto.id)}
+          onAdd={agregarProducto}
+          onToggleFavorito={toggleFavorito}
+        />
+      ))}
+    </div>
+  );
+
   return (
     <div className="mx-auto w-full max-w-lg px-4">
       {/* Header fino sticky: volver + cliente + saldo. En móvil queda debajo
@@ -427,56 +621,94 @@ export default function VentaAvicolaClient({
         </div>
       )}
 
-      {/* Grid de productos: tap = agrega línea con el precio precargado */}
+      {/* Atajo: repite los productos de la última venta (los pesos cambian a diario). */}
+      {puedeRepetir && (
+        <section className="pt-4">
+          <button
+            type="button"
+            onClick={repetirUltimaVenta}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-red-300 bg-red-50 py-3 text-sm font-bold text-red-700 transition-transform active:scale-[0.99]"
+          >
+            <FiRotateCcw size={16} />
+            Repetir última venta ({ultimaVentaItems.length}{" "}
+            {ultimaVentaItems.length === 1 ? "producto" : "productos"})
+          </button>
+        </section>
+      )}
+
+      {/* Productos. Al BUSCAR se aplanan las secciones en una sola lista filtrada:
+          el buscador manda y no hay que pensar en secciones. */}
       <section className="pt-4">
-        <div className="grid grid-cols-2 gap-3">
-          {productosFiltrados.map((producto) => {
-            const ultimo = ultimosPrecios[producto.id];
-            const enVenta = lineas.some(
-              (l) => l.producto_id === producto.id
-            );
-            return (
-              <button
-                key={producto.id}
-                type="button"
-                onClick={() => agregarProducto(producto)}
-                className={`rounded-2xl border bg-white p-3 text-left transition-transform active:scale-95 cursor-pointer ${
-                  enVenta
-                    ? "border-red-400 ring-1 ring-red-400"
-                    : "border-gray-200 hover:border-red-300"
-                }`}
-              >
-                <span className="block font-semibold leading-tight text-gray-900">
-                  {producto.nombre}
-                </span>
-                <span className="mt-1 block text-sm font-bold text-red-600">
-                  S/ {(ultimo ?? producto.precio_venta ?? 0).toFixed(2)}/kg{" "}
-                  <span className="font-medium text-gray-400">
-                    · {ultimo !== undefined ? "último" : "catálogo"}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
         {productos.length === 0 ? (
           <p className="rounded-xl bg-gray-50 p-4 text-center text-sm text-gray-500">
             No hay productos activos en el catálogo.
           </p>
-        ) : productosFiltrados.length === 0 ? (
-          <div className="rounded-xl bg-gray-50 p-4 text-center">
-            <p className="text-sm text-gray-500">
-              No se encontró “{busqueda.trim()}”.
-            </p>
-            <button
-              type="button"
-              onClick={() => setBusqueda("")}
-              className="mt-1 text-sm font-bold text-red-600 hover:underline"
-            >
-              Limpiar búsqueda
-            </button>
+        ) : hayBusqueda ? (
+          productosFiltrados.length === 0 ? (
+            <div className="rounded-xl bg-gray-50 p-4 text-center">
+              <p className="text-sm text-gray-500">
+                No se encontró “{busqueda.trim()}”.
+              </p>
+              <button
+                type="button"
+                onClick={() => setBusqueda("")}
+                className="mt-1 text-sm font-bold text-red-600 hover:underline"
+              >
+                Limpiar búsqueda
+              </button>
+            </div>
+          ) : (
+            renderGrid(productosFiltrados)
+          )
+        ) : (
+          <div className="space-y-5">
+            {fijados.length > 0 && (
+              <div>
+                <TituloSeccion
+                  icono={
+                    <FiStar size={12} className="fill-amber-400 text-amber-500" />
+                  }
+                >
+                  Fijados
+                </TituloSeccion>
+                {renderGrid(fijados)}
+              </div>
+            )}
+
+            {loDeSiempre.length > 0 && (
+              <div>
+                <TituloSeccion
+                  icono={<FiRotateCcw size={12} className="text-red-500" />}
+                >
+                  Lo de siempre
+                </TituloSeccion>
+                {renderGrid(loDeSiempre)}
+              </div>
+            )}
+
+            {masVendidos.length > 0 && (
+              <div>
+                <TituloSeccion
+                  icono={<FiStar size={12} className="text-gray-400" />}
+                >
+                  Más vendidos
+                </TituloSeccion>
+                {renderGrid(masVendidos)}
+              </div>
+            )}
+
+            {resto.length > 0 && (
+              <div>
+                {(fijados.length > 0 ||
+                  loDeSiempre.length > 0 ||
+                  masVendidos.length > 0) && (
+                  <TituloSeccion icono={null}>Todo el catálogo</TituloSeccion>
+                )}
+                {renderGrid(resto)}
+              </div>
+            )}
           </div>
-        ) : null}
+        )}
       </section>
 
       {/* Su pedido: líneas con peso × precio = subtotal */}

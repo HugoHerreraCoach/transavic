@@ -89,7 +89,14 @@ abonos_avicola        id UUID del cliente (idempotencia), cliente_id, fecha, mon
 6. Sobrepago de abono = **409 blando** (`requiere_confirmacion`) + `permitir_sobrepago:true` →
    saldo negativo se muestra "a favor". La cartera usa `GREATEST(saldo, 0)`.
 7. Cliente **inactivo**: ventas bloqueadas (409), abonos permitidos, deuda sigue en cartera/rankings.
-8. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
+8. **La grilla de productos se ordena sola** (9 jul 2026, pedido de Antonio): en la venta, el catálogo (~90
+   ítems) se corta en secciones — **Fijados** (estrella manual, `localStorage` `transavic_avicola_favoritos`,
+   por dispositivo) → **Lo de siempre** (lo que ESE cliente ya compró, ordenado por **frecuencia** y desempate
+   por recencia) → **Más vendidos** (top global, solo si el cliente aún no compró nada) → **Todo el catálogo**.
+   Cada producto aparece UNA vez. Al **buscar**, las secciones se aplanan en una lista filtrada. Además hay un
+   botón **"Repetir última venta"** que siembra los productos de la última venta con su precio y los pesos
+   vacíos (solo con el carrito vacío, para no pisar nada). Las 3 consultas viven en `venta/page.tsx`.
+9. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
    camión de Antonio (pendiente confirmar). Los kg por producto/día SÍ quedan registrados
    (`venta_avicola_items` + liquidación) → activar el descuento después es un cambio acotado.
 
