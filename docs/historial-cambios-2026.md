@@ -947,3 +947,46 @@ nunca se usó; el `decode()` lo reemplaza de verdad.
 llamar `toJpeg` dos veces y usar el segundo resultado (workaround conocido de la librería en Safari).
 Gotcha #43 en CLAUDE.md.
 
+### 🔎 Buscador de productos en la venta de campo (9 jul 2026, EN PRODUCCIÓN)
+Commit `b69de73`. Observación de Hugo mirando la pantalla real: el catálogo tiene **~90 productos** y encontrar
+uno era puro scroll — va justo contra la meta del módulo (registrar una venta en **<1 minuto**).
+**Fix:** buscador **fijo en el header** (2ª fila del `<header>` sticky, así sigue visible al scrollear la lista
+larga) que filtra el catálogo en vivo **por nombre O categoría**: escribir "pollo" trae todos los productos de
+pollo (matchea la categoría), "alas" trae solo Alas. Estado "No se encontró …" con botón para limpiar.
+Solo UI (`venta-client.tsx`); `tsc`/`eslint`/`build` limpios; verificado E2E en el navegador (al escribir
+"pollo" la grilla se reduce a los productos de pollo).
+
+### ⭐ "Lo de siempre", fijados y "Repetir última venta" (9 jul 2026, EN PRODUCCIÓN)
+Commit `233b5c8`. **Pedido de Antonio** (WhatsApp, 2:40 a. m.), en dos mensajes que describen el MISMO dolor:
+(1) *"marcar productos como favoritos para que los que más vendo aparezcan primero"* **o** (2) *"que al cobrar o
+registrar una venta aparezcan rápido los productos vendidos al cliente"*.
+
+**Decisión (Hugo):** hacer **las dos**, pero poniendo primero lo **automático** — el historial por cliente es más
+preciso que una lista global (doña Rosa compra alas; el chifa, pechuga) y **no le cuesta mantenimiento**. Orden
+elegido: **por frecuencia** (desempate por recencia).
+
+**Lo que se construyó:**
+- `venta/page.tsx` — 3 consultas nuevas (la vieja de "último precio" se reemplazó por una agregada):
+  (c) historial de ESE cliente agrupado por producto → `COUNT(DISTINCT v.id) AS veces` + último precio vía
+  `(ARRAY_AGG(precio_kg ORDER BY created_at DESC))[1]`, `ORDER BY veces DESC, MAX(created_at) DESC`;
+  (d) top global del módulo (LIMIT 8) — **solo se usa si el cliente no tiene historial**; (e) ítems de la última
+  venta no anulada del cliente.
+- `venta-client.tsx` — la grilla se corta en secciones: **Fijados ⭐** → **Lo de siempre** → **Más vendidos**
+  (solo clientes nuevos) → **Todo el catálogo**. Cada producto aparece **una sola vez** (un `Set` de "usados").
+  Al **buscar**, las secciones se aplanan en una lista filtrada. La **estrella** por tarjeta fija a mano
+  (`localStorage` `transavic_avicola_favoritos`, por dispositivo; sin tope, él la controla). Botón **"Repetir
+  última venta"**: siembra los productos de la última venta con su precio, **pesos vacíos** y el **foco en el
+  primer peso**; solo aparece con el **carrito vacío** (nunca pisa lo ya cargado) y no en modo edición.
+- Mobile-first: encabezados de sección de una línea, tarjetas grandes, buscador fijo. La estrella va en la
+  esquina de la tarjeta (`pr-9` en el botón para que el nombre no quede debajo).
+
+**Evidencia E2E** (dev-hugo, cliente sembrado con 3 ventas: Alas×3, Pollo entero×2, Pechuga×1):
+"Lo de siempre" ordenó **Alas → Pollo entero → Pechuga** (frecuencia correcta, con su último precio);
+"Repetir última venta (2 productos)" cargó Alas + Pollo entero con precio, pesos vacíos y foco puesto, y el botón
+desapareció al haber carrito; la estrella creó la sección **FIJADOS** y **sobrevivió a recargar la página**;
+ningún producto se duplicó entre secciones. `tsc`/`eslint`/`build` limpios. Datos de prueba borrados.
+Reglas 8 y 9 del [doc 21](./arquitectura/21-clientes-avicola.md).
+
+**Pendiente de negocio:** que Antonio confirme si el orden **por frecuencia** le cuadra con su realidad de campo
+(la alternativa —ordenar por lo más reciente— es un cambio de una línea en la consulta (c)).
+

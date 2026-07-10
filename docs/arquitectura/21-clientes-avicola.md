@@ -93,10 +93,14 @@ abonos_avicola        id UUID del cliente (idempotencia), cliente_id, fecha, mon
    ítems) se corta en secciones — **Fijados** (estrella manual, `localStorage` `transavic_avicola_favoritos`,
    por dispositivo) → **Lo de siempre** (lo que ESE cliente ya compró, ordenado por **frecuencia** y desempate
    por recencia) → **Más vendidos** (top global, solo si el cliente aún no compró nada) → **Todo el catálogo**.
-   Cada producto aparece UNA vez. Al **buscar**, las secciones se aplanan en una lista filtrada. Además hay un
-   botón **"Repetir última venta"** que siembra los productos de la última venta con su precio y los pesos
-   vacíos (solo con el carrito vacío, para no pisar nada). Las 3 consultas viven en `venta/page.tsx`.
-9. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
+   Cada producto aparece UNA vez. Además hay un botón **"Repetir última venta"** que siembra los productos de la
+   última venta con su precio y los pesos vacíos, con el foco en el primer peso (solo con el carrito vacío, para
+   no pisar nada). Las 3 consultas viven en `venta/page.tsx`.
+9. **Buscador de productos** (9 jul 2026): fijo en el header (2ª fila, siempre visible al scrollear), filtra el
+   catálogo en vivo **por nombre O categoría** (escribir "pollo" trae todo el pollo; "alas" trae solo Alas), con
+   estado "no se encontró…" + botón para limpiar. Al buscar, **las secciones se aplanan** en una sola lista
+   filtrada: el buscador manda y no hay que pensar en secciones.
+10. **v1 NO toca inventario ni caja/cuentas** (decisión 7 jul 2026): no se sabe cómo se abastece el
    camión de Antonio (pendiente confirmar). Los kg por producto/día SÍ quedan registrados
    (`venta_avicola_items` + liquidación) → activar el descuento después es un cambio acotado.
 
@@ -117,7 +121,7 @@ abonos_avicola        id UUID del cliente (idempotencia), cliente_id, fecha, mon
 | API | `src/app/api/avicola/liquidacion` · `dashboard` | Reportes (shapes en types.ts) |
 | UI | `clientes-avicola/page.tsx` + `lista-client.tsx` | Home: búsqueda client-side, chips mercado, Vender/Abonar |
 | UI | `[id]/page.tsx` + `ficha-client.tsx` | Ficha 360: héroe 2×2, historial, reenviar guía, anular |
-| UI | `[id]/venta/*` | Venta rápida: grid productos con **último precio por cliente+producto**, footer sticky |
+| UI | `[id]/venta/*` | Venta rápida y **edición** (`?edit=<uuid>`): buscador fijo en el header + chip de fecha compacto ("Hoy"/ámbar si es retroactiva); productos en secciones (Fijados ⭐ → Lo de siempre → Más vendidos → Todo el catálogo) con **último precio por cliente+producto**; botón "Repetir última venta"; footer sticky |
 | UI | `ticket-guia-avicola.tsx` + `guia-avicola-modal.tsx` | Ticket 500px + toJpeg → `navigator.share` (clon ticket-share-modal); toggle precios en localStorage `transavic_avicola_opcion_guia` |
 | UI | `abono-modal.tsx` · `cliente-avicola-form.tsx` · `estado-cuenta-modal.tsx` | Modales compartidos |
 | UI | `liquidacion/*` · `panel/*` | Liquidación del día + panel gerencial |
@@ -133,6 +137,10 @@ Acceso: **solo `admin`** (guard en cada page + cada API). Sidebar: entrada Prima
 - Bloque estado de cuenta (req. §9): Saldo anterior / Venta de hoy / Abonos de hoy (si >0) / SALDO ACTUAL.
 - Envío: JPEG generado con `html-to-image` (pixelRatio 2.5) → `navigator.share({files})` → WhatsApp.
   Fallback: Descargar. El logo sale de `clientes_avicola.empresa`.
+- ⚠️ **El logo del ticket** (ver **gotcha #43**): va como `data:` URL, así que **NUNCA** le pongas
+  `crossOrigin` al `<img>` — en WebKit/iOS eso fuerza una petición CORS que falla y **la guía sale sin logo en
+  iPhone** (en Chrome de escritorio sí se ve, por eso es fácil no cazarlo). Y antes de `toJpeg` hay que esperar
+  `await img.decode()` de las imágenes del ticket: `html-to-image` en iOS omite las que no están decodificadas.
 
 ## 6. Pendientes de negocio (confirmar con Antonio)
 
