@@ -145,6 +145,23 @@ Acceso: **solo `admin`** (guard en cada page + cada API). Sidebar: entrada Prima
   iPhone** (en Chrome de escritorio sí se ve, por eso es fácil no cazarlo). Y antes de `toJpeg` hay que esperar
   `await img.decode()` de las imágenes del ticket: `html-to-image` en iOS omite las que no están decodificadas.
 
+## 5b. Guardar SEPARADO de enviar la guía + venta de hoy (10 jul 2026 — video de Antonio)
+
+Los dos momentos del día del GG en campo mandan el flujo (`venta-client.tsx`):
+
+- **Footer con DOS botones**: primario "**Guardar**" (crear) / "**Actualizar**" (editar) — guarda
+  SIN abrir el modal de la guía (en la mañana solo se registra el peso); secundario "Guardar y
+  enviar guía" / "Actualizar y enviar guía" — abre el modal para compartir. La guía siempre se
+  puede enviar después ("Reenviar guía" / "Enviar guía" en la ficha).
+- **Destinos post-guardar** (`destinoPostGuardar`): crear → **lista** (en la mañana encadena
+  clientes); editar → **ficha del cliente** (en la tarde está cobrando a ESE cliente). El cierre
+  del modal de guía usa los mismos destinos por modo.
+- **Tarjeta "Venta de hoy"** en la ficha (`ficha-client.tsx:ventasDeHoy`, hoy-Lima con `Intl`):
+  al abrir al cliente para cobrar, las ventas del día salen destacadas con botones grandes
+  "Ajustar peso/precio" (→ `?edit=id`) y "Enviar guía" — sin buscar en el historial.
+- El botón "Reintentar" tras un error de red repite EXACTAMENTE el modo del último intento
+  (con o sin guía, ref `ultimoModoEnvio`).
+
 ## 6. Pendientes de negocio (confirmar con Antonio)
 
 1. ¿Cómo se abastece el camión? → decide si las ventas de campo descuentan inventario (hoy NO).

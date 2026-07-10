@@ -10,6 +10,8 @@ export type TipoNotificacion =
   | "pedido_en_camino"
   | "pedido_entregado"
   | "pedido_fallido"
+  // Pedido reprogramado a otra fecha o marcado "se envía más tarde" (video Antonio, jul 2026)
+  | "pedido_reprogramado"
   | "guia_firmada"
   | "factura_vencida"
   | "factura_por_vencer"

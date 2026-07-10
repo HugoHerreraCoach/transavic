@@ -55,6 +55,8 @@ export async function GET(request: Request) {
         p.id, p.cliente, p.distrito, p.hora_entrega, p.empresa,
         p.detalle, p.notas, p.estado,
         TO_CHAR(p.fecha_pedido, 'DD/MM/YYYY') as fecha_pedido,
+        TO_CHAR(p.reprogramado_de, 'DD/MM') as reprogramado_de,
+        p.reprogramado_at, p.reprogramado_motivo,
         u.name as asesor_name
       FROM pedidos p
       LEFT JOIN users u ON p.asesor_id = u.id

@@ -80,6 +80,7 @@ export async function fetchFilteredPedidos(
         p.entregado_por, p.entregado_at,
         p.estado, p.repartidor_id, p.orden_ruta, p.hora_llegada_estimada, p.razon_fallo, p.inicio_viaje_at,
         p.guia_firmada_at,
+        TO_CHAR(p.reprogramado_de, 'DD/MM') as reprogramado_de, p.reprogramado_at, p.reprogramado_motivo,
         u.name as asesor_name,
         r.name as repartidor_name
       FROM pedidos AS p

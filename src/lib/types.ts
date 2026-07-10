@@ -50,6 +50,11 @@ export type Pedido = {
   asesor_name: string | null;
   // --- Orden firmada por el cliente (foto que sube el repartidor) ---
   guia_firmada_at?: string | null;
+  // --- Reprogramación (badge visible para producción y asesoras) ---
+  /** Fecha de entrega ANTERIOR ya formateada DD/MM (NULL si la marca fue "más tarde"). */
+  reprogramado_de?: string | null;
+  reprogramado_at?: string | null;
+  reprogramado_motivo?: string | null;
 };
 
 export type User = {

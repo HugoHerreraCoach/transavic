@@ -48,6 +48,10 @@ interface Pedido {
   notas: string | null;
   estado: "Pendiente" | "En_Produccion" | "Listo_Para_Despacho";
   fecha_pedido: string;
+  /** Fecha anterior DD/MM si fue reprogramado (NULL si la marca fue "más tarde"). */
+  reprogramado_de: string | null;
+  reprogramado_at: string | null;
+  reprogramado_motivo: string | null;
   asesor_name: string | null;
   items: Item[];
 }
@@ -240,13 +244,28 @@ export default function ProduccionClient() {
               >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
                       <h3 className="font-bold text-gray-800 truncate">{p.cliente}</h3>
                       <span
                         className={`text-xs font-medium px-2 py-0.5 rounded-full ${badge.color}`}
                       >
                         {badge.label}
                       </span>
+                      {/* Huella de reprogramación: producción ve que este pedido viene de otro día */}
+                      {p.reprogramado_at && (
+                        <span
+                          className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                            p.reprogramado_de
+                              ? "bg-orange-100 text-orange-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                          title={p.reprogramado_motivo || undefined}
+                        >
+                          {p.reprogramado_de
+                            ? `🔁 Reprogramado · era ${p.reprogramado_de}`
+                            : "🕐 Se envía más tarde"}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500 flex items-center gap-3 flex-wrap">
                       {p.distrito && (

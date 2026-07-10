@@ -1136,3 +1136,46 @@ kardex/transacciones inmutables (corregir = contra-asiento), defaults de empresa
 
 **Aún NO desplegado a producción** — sale TODO JUNTO con el changeset de Nelita (decisión de Hugo): psql de las
 2 migraciones → commit → push, con su OK.
+
+## 2026-07-10 — Videos de Antonio: reprogramar pedidos + venta de campo v2
+
+Dos videos del 9 jul analizados con frames (ffmpeg) + transcripción local (Whisper).
+
+### Video 1 — Reprogramar pedidos (con Ariana, desde /dashboard/produccion)
+**Pedido**: cuando un pedido no se puede entregar, reprogramarlo al día siguiente o marcar "se
+enviará más tarde" desde la Lista de Pedidos, con la marca VISIBLE para producción y asesoras.
+**Implementado** (detalle en [doc 04 §5](./arquitectura/04-maquina-estados.md)):
+- Migración `migrate-reprogramar-2026-07-10.sql`: `pedidos.reprogramado_de/at/motivo` (aditiva).
+- `POST /api/pedidos/[id]/reprogramar` (admin o asesora dueña; Entregado → 409; fecha pasada/misma
+  → 400; refine "exactamente uno" de nueva_fecha|mas_tarde). Con `nueva_fecha` y estado
+  Asignado/En_Camino/Fallido → reset COMPLETO a Pendiente (12 columnas de reparto limpias) para
+  que salga de la ruta de hoy; con `mas_tarde` no toca fecha/estado/reparto. Auditoría en
+  `pedido_ediciones` + notificación `pedido_reprogramado` a la asesora (tipo nuevo en
+  `lib/notificaciones.ts`).
+- UI: ítem "Reprogramar" en el menú ⋮ de la Lista (modal: Para mañana / Elegir fecha / Más tarde
+  + motivo), badges naranja "Reprogramado · era DD/MM" y ámbar "Se envía más tarde" en Lista
+  (tarjeta+tabla, `EstadoBadge`) y en Producción (SELECT del GET + tarjeta). Resumen/Despacho sin
+  cambios (filtran por fecha; el reset saca el pedido del kanban).
+- E2E dev-hugo: Pendiente→mañana (badge+motivo en producción de mañana ✅), Asignado→mañana
+  (12 columnas verificadas NULL/FALSE por psql y fuera del kanban ✅), más tarde (fecha intacta ✅),
+  guards 400/409 ✅, auditoría (3) y notificaciones (3) ✅, modal y badges verificados en navegador.
+  Hallazgo colateral (no bug): con la pestaña OCULTA el dashboard queda en "Cargando dashboard…"
+  — es `usePollingVisible` pausando el fetch, comportamiento esperado del ahorro de cómputo Neon.
+
+### Video 2 — Venta de campo v2
+**Pedidos**: (1) "Guardar" separado de "enviar guía" (en la mañana solo registran peso);
+(2) la venta del día visible al llegar a cobrar para ajustar peso/precio rápido; (3) favoritos /
+productos del cliente primero — **ya estaba desplegado** (233b5c8, 21:30 del 9 jul; el video es de
+las 20:22); (4) botón "Actualizar" sin obligar a enviar.
+**Implementado** (detalle en [doc 21 §5b](./arquitectura/21-clientes-avicola.md)): footer con dos
+botones (Guardar/Actualizar primario; "… y enviar guía" secundario), destinos por modo (crear →
+lista para encadenar clientes; editar → ficha del cliente), banner de edición "enviar la guía
+corregida es opcional", tarjeta "Venta de HOY" en la ficha con "Ajustar peso/precio" y "Enviar
+guía", y "Reintentar" que repite el modo exacto del último intento.
+- E2E dev-hugo en navegador: Guardar → sin modal, a la lista, venta en DB ✅; ficha muestra la
+  tarjeta con la guía y los 2 botones ✅; editar → dos botones "Actualizar"/"Actualizar y enviar
+  guía", banner nuevo, secciones Fijados/Lo de siempre TAMBIÉN en edición, tacho por ítem ✅;
+  Actualizar → vuelve a la ficha sin modal con el total corregido ✅; "Enviar guía" de la tarjeta
+  abre el modal ✅. Datos de prueba revertidos (restos = 0). `tsc`/`eslint`/`build` limpios.
+
+**Deploy**: migración aplicada a prod por psql ANTES del push (columnas inertes para el código viejo).

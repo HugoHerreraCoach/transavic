@@ -45,7 +45,7 @@ function getEstadoBadge(estado: EstadoPedido) {
     return configs[estado] || configs.Pendiente;
 }
 
-function EstadoBadge({ estado, repartidorName, razonFallo }: { estado: EstadoPedido; repartidorName?: string | null; razonFallo?: string | null }) {
+function EstadoBadge({ estado, repartidorName, razonFallo, reprogramadoDe, reprogramadoAt, reprogramadoMotivo }: { estado: EstadoPedido; repartidorName?: string | null; razonFallo?: string | null; reprogramadoDe?: string | null; reprogramadoAt?: string | null; reprogramadoMotivo?: string | null }) {
     const config = getEstadoBadge(estado);
     return (
         <div>
@@ -53,6 +53,20 @@ function EstadoBadge({ estado, repartidorName, razonFallo }: { estado: EstadoPed
                 {config.icon}
                 {config.label}
             </span>
+            {/* Huella de reprogramación: visible para asesoras y admin (video de Antonio, 9 jul 2026) */}
+            {estado !== 'Entregado' && reprogramadoAt && (
+                reprogramadoDe ? (
+                    <span className="mt-1 px-2.5 py-1 inline-flex items-center gap-1.5 text-xs leading-5 font-semibold rounded-full bg-orange-100 text-orange-800" title={reprogramadoMotivo || undefined}>
+                        <FiCalendar className="text-orange-600" />
+                        Reprogramado · era {reprogramadoDe}
+                    </span>
+                ) : (
+                    <span className="mt-1 px-2.5 py-1 inline-flex items-center gap-1.5 text-xs leading-5 font-semibold rounded-full bg-amber-100 text-amber-800" title={reprogramadoMotivo || undefined}>
+                        <FiClock className="text-amber-600" />
+                        Se envía más tarde
+                    </span>
+                )
+            )}
             {repartidorName && (estado === 'Asignado' || estado === 'En_Camino') && (
                 <span className="block text-xs text-gray-500 mt-1">🏍️ {repartidorName}</span>
             )}
@@ -65,6 +79,148 @@ function EstadoBadge({ estado, repartidorName, razonFallo }: { estado: EstadoPed
                     {razonFallo.length > 30 ? razonFallo.substring(0, 30) + '...' : razonFallo}
                 </span>
             )}
+        </div>
+    );
+}
+
+// ── Modal de reprogramación (video de Antonio, 9 jul 2026) ──
+// Tres salidas: mañana, una fecha elegida, o "se envía más tarde" (mismo día).
+// El server (POST /api/pedidos/[id]/reprogramar) valida, resetea el reparto si
+// estaba asignado y notifica a la asesora dueña.
+function ReprogramarModal({ pedido, onClose, onDone }: { pedido: Pedido; onClose: () => void; onDone: (p: Pedido) => void }) {
+    const hoyLima = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+    const mananaLima = (() => {
+        const d = new Date(`${hoyLima}T12:00:00`);
+        d.setDate(d.getDate() + 1);
+        return d.toISOString().split('T')[0];
+    })();
+
+    const [modo, setModo] = useState<'manana' | 'fecha' | 'tarde'>('manana');
+    const [fecha, setFecha] = useState(mananaLima);
+    const [motivo, setMotivo] = useState('');
+    const [enviando, setEnviando] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const teniaReparto = ['Asignado', 'En_Camino', 'Fallido'].includes(pedido.estado);
+    const fechaElegida = modo === 'manana' ? mananaLima : fecha;
+
+    const confirmar = async () => {
+        if (enviando) return;
+        setEnviando(true);
+        setError(null);
+        try {
+            const body = modo === 'tarde'
+                ? { mas_tarde: true, motivo: motivo.trim() || undefined }
+                : { nueva_fecha: fechaElegida, motivo: motivo.trim() || undefined };
+            const res = await fetch(`/api/pedidos/${pedido.id}/reprogramar`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                setError(typeof data?.error === 'string' ? data.error : 'No se pudo reprogramar.');
+                return;
+            }
+            // Refrescar la fila localmente (la lista usa fechas display DD/MM/YYYY).
+            const [y, m, d] = (data.fecha_pedido as string).split('-');
+            const actualizado: Pedido = {
+                ...pedido,
+                fecha_pedido: `${d}/${m}/${y}`,
+                reprogramado_de: modo === 'tarde' ? null : pedido.fecha_pedido.slice(0, 5),
+                reprogramado_at: new Date().toISOString(),
+                reprogramado_motivo: motivo.trim() || null,
+                ...(data.estado_reseteado
+                    ? {
+                          estado: 'Pendiente' as EstadoPedido,
+                          repartidor_id: null,
+                          repartidor_name: null,
+                          orden_ruta: null,
+                          razon_fallo: null,
+                          entregado: false,
+                          entregado_por: null,
+                          entregado_at: null,
+                      }
+                    : {}),
+            };
+            onDone(actualizado);
+        } catch {
+            setError('Sin conexión. Revisa tu internet e intenta de nuevo.');
+        } finally {
+            setEnviando(false);
+        }
+    };
+
+    const opcionClase = (activa: boolean) =>
+        `w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 text-left text-sm font-semibold transition-colors cursor-pointer ${
+            activa ? 'border-orange-500 bg-orange-50 text-orange-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'
+        }`;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => !enviando && onClose()}>
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+            <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={(e) => e.stopPropagation()}>
+                <div className="px-5 pt-5 pb-3">
+                    <h3 className="text-base font-bold text-gray-800">Reprogramar pedido</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                        Pedido de <span className="font-semibold">{pedido.cliente}</span> · entrega {pedido.fecha_pedido}
+                    </p>
+                </div>
+                <div className="px-5 pb-3 space-y-2">
+                    <button type="button" onClick={() => setModo('manana')} className={opcionClase(modo === 'manana')}>
+                        <FiCalendar className="shrink-0" /> Para mañana
+                    </button>
+                    <button type="button" onClick={() => setModo('fecha')} className={opcionClase(modo === 'fecha')}>
+                        <FiCalendar className="shrink-0" /> Elegir otra fecha
+                    </button>
+                    {modo === 'fecha' && (
+                        <input
+                            type="date"
+                            value={fecha}
+                            min={hoyLima}
+                            onChange={(e) => setFecha(e.target.value)}
+                            className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                        />
+                    )}
+                    <button type="button" onClick={() => setModo('tarde')} className={opcionClase(modo === 'tarde')}>
+                        <FiClock className="shrink-0" /> Se envía más tarde (hoy)
+                    </button>
+
+                    <input
+                        type="text"
+                        maxLength={200}
+                        value={motivo}
+                        onChange={(e) => setMotivo(e.target.value)}
+                        placeholder="Motivo (opcional) — ej. cliente no estaba"
+                        className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                    />
+
+                    {modo !== 'tarde' && teniaReparto && (
+                        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                            Este pedido está en reparto: al reprogramarlo saldrá de la ruta de hoy y volverá a <b>Pendiente</b>.
+                        </p>
+                    )}
+                    {error && (
+                        <p className="text-xs font-semibold text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+                    )}
+                </div>
+                <div className="px-5 py-3 border-t border-gray-100 flex gap-2">
+                    <button
+                        onClick={confirmar}
+                        disabled={enviando || (modo === 'fecha' && !fecha)}
+                        className="flex-1 py-2 text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 disabled:opacity-50 rounded-lg transition-colors cursor-pointer active:scale-95"
+                    >
+                        {enviando ? 'Guardando…' : modo === 'tarde' ? 'Marcar "más tarde"' : `Reprogramar al ${fechaElegida.slice(8, 10)}/${fechaElegida.slice(5, 7)}`}
+                    </button>
+                    <button
+                        onClick={onClose}
+                        disabled={enviando}
+                        className="px-4 py-2 text-sm font-medium text-gray-500 hover:text-gray-700 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+                    >
+                        Cancelar
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -93,6 +249,7 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
     const [descargando, setDescargando] = useState<string | null>(null);
     const [showMenu, setShowMenu] = useState(false);
     const [showHistorial, setShowHistorial] = useState(false);
+    const [showReprogramar, setShowReprogramar] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [showFotoMenu, setShowFotoMenu] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -322,6 +479,18 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
 
     return (
         <>
+            {/* Modal de reprogramación (mañana / otra fecha / más tarde) */}
+            {showReprogramar && (
+                <ReprogramarModal
+                    pedido={pedido}
+                    onClose={() => setShowReprogramar(false)}
+                    onDone={(actualizado) => {
+                        setShowReprogramar(false);
+                        onUpdateStatus(actualizado);
+                    }}
+                />
+            )}
+
             {/* Modal selector de repartidor para admin */}
             {showDeliverySelector && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setShowDeliverySelector(false)}>
@@ -579,6 +748,19 @@ function ActionsCell({ pedido, onDelete, onUpdateStatus, onEdit, onShare, userRo
                                         <span>Editar datos</span>
                                     </button>
 
+                                    {pedido.estado !== 'Entregado' && (
+                                        <button
+                                            onClick={() => {
+                                                setShowMenu(false);
+                                                setShowReprogramar(true);
+                                            }}
+                                            className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors text-left cursor-pointer"
+                                        >
+                                            <FiCalendar className="text-gray-400" />
+                                            <span>Reprogramar</span>
+                                        </button>
+                                    )}
+
                                     <button
                                         onClick={() => {
                                             setShowMenu(false);
@@ -787,6 +969,9 @@ function PedidoCard({ pedido, onPedidoDeleted, onPedidoUpdated, onEditClick, onS
                         estado={pedido.estado}
                         repartidorName={pedido.repartidor_name || pedido.entregado_por}
                         razonFallo={pedido.razon_fallo}
+                        reprogramadoDe={pedido.reprogramado_de}
+                        reprogramadoAt={pedido.reprogramado_at}
+                        reprogramadoMotivo={pedido.reprogramado_motivo}
                     />
                 </div>
             )}
@@ -881,6 +1066,9 @@ export default function PedidosTable({ pedidos, onPedidoDeleted, onPedidoUpdated
                                             estado={pedido.estado}
                                             repartidorName={pedido.repartidor_name || pedido.entregado_por}
                                             razonFallo={pedido.razon_fallo}
+                                            reprogramadoDe={pedido.reprogramado_de}
+                                            reprogramadoAt={pedido.reprogramado_at}
+                                            reprogramadoMotivo={pedido.reprogramado_motivo}
                                         />
                                     </td>
                                 )}

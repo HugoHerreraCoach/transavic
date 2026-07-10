@@ -88,3 +88,24 @@ if (estado !== "Entregado") {
 
 ### 4.2 Congelamiento de Distancia
 Cuando un pedido pasa al estado `Asignado`, el backend calcula la distancia kilométrica lineal o vía Google Directions entre la ubicación base y el cliente, y la escribe en `distancia_km`. **Esta distancia se congela** y no se recalcula ni modifica durante la optimización de rutas (evita distorsionar el costo original de asignación del cliente).
+
+## 5. Reprogramación de pedidos (10 jul 2026 — pedido de Antonio/Ariana)
+
+Cuando un pedido no se puede entregar (cliente ausente, etc.), la oficina lo **reprograma** desde
+la Lista de Pedidos (menú ⋮ → "Reprogramar"). Endpoint: **`POST /api/pedidos/[id]/reprogramar`**
+(admin o asesora dueña; el repartidor NO — si no pudo entregar, marca Fallido y la oficina decide).
+
+Dos modos excluyentes:
+
+| Modo | Efecto |
+|---|---|
+| `{ nueva_fecha }` | Cambia `fecha_pedido` (≥ hoy Lima, ≠ actual). Si el estado era `Asignado`/`En_Camino`/`Fallido` → **reset completo a `Pendiente`**: limpia `repartidor_id, orden_ruta, distancia_km, duracion_estimada_min, inicio_viaje_at, hora_llegada_estimada, notificado_*, entregado*, razon_fallo` (sin esto seguiría visible en la columna del motorizado — las queries de despacho por repartidor no tienen tope de fecha). `Pendiente`/`En_Produccion`/`Listo_Para_Despacho` conservan su estado. |
+| `{ mas_tarde: true }` | Mismo día: solo deja la marca visible "se envía más tarde". NO toca fecha, estado ni reparto. |
+
+**Huella**: columnas `pedidos.reprogramado_de` (fecha anterior; NULL si fue "más tarde"),
+`reprogramado_at`, `reprogramado_motivo` (migración `migrate-reprogramar-2026-07-10.sql`).
+Badge naranja "Reprogramado · era DD/MM" / ámbar "Se envía más tarde" en la **Lista de Pedidos**
+(`table.tsx:EstadoBadge`) y en **Producción** (`produccion-client.tsx`); se oculta si el estado
+llega a `Entregado`. Auditoría en `pedido_ediciones` + notificación `pedido_reprogramado` a la
+asesora dueña. `Entregado` → 409. Resumen y Despacho no necesitaron cambios (filtran por
+`fecha_pedido`, y el reset saca el pedido del kanban de hoy).

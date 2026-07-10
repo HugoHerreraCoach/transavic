@@ -237,6 +237,15 @@ export default function VentaAvicolaClient({
     idRef.current = ventaExistente?.id ?? crypto.randomUUID();
   }
 
+  // Con qué botón se intentó guardar la última vez (con o sin guía): el botón
+  // "Reintentar" repite EXACTAMENTE ese modo.
+  const ultimoModoEnvio = useRef(true);
+  // A dónde regresa "solo guardar": crear → lista (encadenar clientes en la
+  // mañana); editar → ficha del cliente (ajuste de peso/precio al cobrar).
+  const destinoPostGuardar = ventaExistente
+    ? `/dashboard/clientes-avicola/${cliente.id}`
+    : "/dashboard/clientes-avicola";
+
   // Refs a los inputs de peso por producto, para el autofocus de la línea nueva.
   const pesoRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -460,8 +469,15 @@ export default function VentaAvicolaClient({
     );
   };
 
-  const enviarVenta = async () => {
+  /**
+   * Guarda la venta. `abrirGuia` separa los dos momentos del día (pedido de
+   * Antonio, video 9 jul 2026): en la mañana solo se registra el peso
+   * (abrirGuia=false → guarda y regresa); enviar la guía es opcional
+   * (abrirGuia=true → abre el modal para compartir por WhatsApp).
+   */
+  const enviarVenta = async (abrirGuia: boolean) => {
     if (guardando || !puedeGuardar) return;
+    ultimoModoEnvio.current = abrirGuia;
     setGuardando(true);
     setErrorEnvio(null);
     try {
@@ -497,7 +513,13 @@ export default function VentaAvicolaClient({
       if (res.ok) {
         // En ambos casos hay guía devuelta
         const data = (await res.json()) as { guia: GuiaAvicolaData };
-        setGuia(data.guia);
+        if (abrirGuia) {
+          setGuia(data.guia);
+        } else {
+          // Solo guardar: en la mañana (crear) se encadenan clientes → lista;
+          // en la tarde (editar, ajuste al cobrar) se vuelve a la ficha del cliente.
+          router.push(destinoPostGuardar);
+        }
         return;
       }
 
@@ -639,7 +661,7 @@ export default function VentaAvicolaClient({
           <FiEdit2 size={15} className="mt-0.5 shrink-0 text-amber-600" />
           <p className="text-xs font-semibold leading-snug text-amber-800">
             Editando la guía N.º {String(ventaExistente.numero_guia).padStart(8, "0")}.
-            Al guardar se reenvía la guía corregida.
+            Enviar la guía corregida es opcional.
           </p>
         </div>
       )}
@@ -870,7 +892,7 @@ export default function VentaAvicolaClient({
             {errorEnvio.reintentable && (
               <button
                 type="button"
-                onClick={enviarVenta}
+                onClick={() => enviarVenta(ultimoModoEnvio.current)}
                 disabled={guardando}
                 className="mt-2 w-full rounded-lg bg-red-600 py-2.5 font-bold text-white hover:bg-red-700 disabled:bg-gray-300"
               >
@@ -899,15 +921,33 @@ export default function VentaAvicolaClient({
           <span className="font-bold">S/ {saldoProyectado.toFixed(2)}</span>
         </p>
 
+        {/* Dos salidas (pedido de Antonio, 9 jul 2026): en la mañana solo se
+            registra el peso — GUARDAR es lo principal; enviar la guía es aparte. */}
         <button
           type="button"
-          onClick={enviarVenta}
+          onClick={() => enviarVenta(false)}
           disabled={!puedeGuardar || guardando}
           className="mt-3 flex h-14 w-full items-center justify-center rounded-xl bg-red-600 text-lg font-bold text-white transition-colors hover:bg-red-700 active:scale-[0.99] disabled:bg-gray-300 disabled:text-gray-500"
         >
-          {guardando ? (
+          {guardando && !ultimoModoEnvio.current ? (
             <>
               <FiLoader className="mr-2 animate-spin" size={22} /> Guardando…
+            </>
+          ) : ventaExistente ? (
+            "Actualizar"
+          ) : (
+            "Guardar"
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => enviarVenta(true)}
+          disabled={!puedeGuardar || guardando}
+          className="mt-2 flex h-12 w-full items-center justify-center rounded-xl border-2 border-red-200 bg-white text-base font-bold text-red-700 transition-colors hover:bg-red-50 active:scale-[0.99] disabled:border-gray-200 disabled:text-gray-400"
+        >
+          {guardando && ultimoModoEnvio.current ? (
+            <>
+              <FiLoader className="mr-2 animate-spin" size={20} /> Guardando…
             </>
           ) : ventaExistente ? (
             "Actualizar y enviar guía"
@@ -917,11 +957,12 @@ export default function VentaAvicolaClient({
         </button>
       </div>
 
-      {/* Éxito: modal de la guía para compartir; al cerrar vuelve a la lista */}
+      {/* Éxito con guía: modal para compartir; al cerrar, mismo destino que
+          "solo guardar" (crear → lista, editar → ficha del cliente) */}
       {guia && (
         <GuiaAvicolaModal
           data={guia}
-          onClose={() => router.push("/dashboard/clientes-avicola")}
+          onClose={() => router.push(destinoPostGuardar)}
         />
       )}
     </div>

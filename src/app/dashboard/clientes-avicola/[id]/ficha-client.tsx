@@ -398,6 +398,18 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
     );
   }, [ficha]);
 
+  // Ventas registradas HOY (Lima): en la tarde, al llegar a cobrar, el GG las ve
+  // de inmediato para ajustar peso/precio sin buscar en el historial (pedido de
+  // Antonio, video 9 jul 2026).
+  const ventasDeHoy = useMemo(() => {
+    const hoyLima = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Lima",
+    }).format(new Date());
+    return historial.filter(
+      (m) => m.tipo === "venta" && !m.anulado && m.fecha.slice(0, 10) === hoyLima
+    );
+  }, [historial]);
+
   // WhatsApp normalizado 51 + dígitos (mismo patrón que la ficha de clientes).
   const whatsappLink = useMemo(() => {
     const tel = ficha?.cliente.telefono;
@@ -624,6 +636,50 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
           </p>
         )}
       </div>
+
+      {/* VENTA DE HOY: acceso directo para ajustar peso/precio al cobrar */}
+      {ventasDeHoy.length > 0 && (
+        <div className="bg-white rounded-3xl shadow-sm border-2 border-red-200 p-5 space-y-3">
+          <h2 className="text-sm font-bold text-red-700 flex items-center gap-1.5">
+            <FiShoppingCart size={15} />
+            {ventasDeHoy.length === 1 ? "Venta de hoy" : "Ventas de hoy"}
+          </h2>
+          {ventasDeHoy.map((v) => (
+            <div key={v.id} className="rounded-2xl bg-red-50/60 px-4 py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-sm font-bold text-gray-800">
+                  Guía N.º {v.numero_guia != null ? formatNumeroGuia(v.numero_guia) : "—"}
+                </p>
+                <p className="text-base font-black text-red-600 whitespace-nowrap">
+                  {fmtSoles(v.monto)}
+                </p>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Link
+                  href={`/dashboard/clientes-avicola/${clienteId}/venta?edit=${v.id}`}
+                  className="h-12 flex-1 min-w-[46%] px-4 rounded-2xl bg-red-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-transform shadow-sm shadow-red-600/20"
+                >
+                  <FiEdit2 size={16} />
+                  Ajustar peso/precio
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => reenviarGuia(v.id)}
+                  disabled={cargandoGuia === v.id}
+                  className="h-12 flex-1 min-w-[46%] px-4 rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-transform cursor-pointer disabled:opacity-50"
+                >
+                  {cargandoGuia === v.id ? (
+                    <FiLoader size={16} className="animate-spin" />
+                  ) : (
+                    <FiShare2 size={16} />
+                  )}
+                  Enviar guía
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* CONTACTO */}
       {(cliente.telefono || cliente.direccion || cliente.observaciones) && (
