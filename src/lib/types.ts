@@ -64,6 +64,8 @@ export type User = {
   activo_rotacion?: boolean;
   orden_rotacion?: number;
   leads_recibidos_hoy?: number;
+  /** FALSE = ex-empleado desactivado: el login lo rechaza (jamás se borra la fila). */
+  activo?: boolean;
 };
 
 export type Producto = {

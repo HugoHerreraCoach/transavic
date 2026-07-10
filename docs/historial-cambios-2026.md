@@ -1002,3 +1002,137 @@ pinta la píldora (sería ruido). `aria-label` lleva la lista completa, porque l
 Verificado a ancho de celular en los dos extremos (3 nombres largos y 1 solo): el botón mantiene su alto y nada
 se desborda; el clic sigue cargando los productos con precio, pesos vacíos y foco en el primero.
 
+### 🛒 Compras: devoluciones al proveedor, ítems de servicio y saldo anterior (9-10 jul 2026 — pedidos de Nelita)
+**Pedido de Nelita** (registra el ingreso de mercadería en planta; WhatsApp con foto de la pantalla): (1) un ítem
+"pelada de pollo" en el selector de productos; (2) un ítem de **devoluciones** por proveedor "que reste el monto
+de la guía al agregar fila"; (3) dónde ingresar los **saldos anteriores** de cada proveedor ("no veo en qué parte
+pueda hacer eso" — no existía). Decisiones de Hugo: pelada = **servicio que cobra el proveedor** (suma a la
+deuda, SIN inventario); devolución = **resta deuda + inventario**.
+
+**Diseño** (detalle en [doc 09 §3.1b y §3.2b](./arquitectura/09-compras-inventario-mermas.md)):
+- **Devoluciones**: columna `compra_items.tipo` (`ingreso`|`devolucion`, CHECK) + toggle por fila en la UI (fila
+  tinteada roja, total con signo −, footer con desglose Ingresos/Devoluciones). El subtotal se guarda NEGATIVO
+  pero los **pesos siempre positivos** (el signo vive en `tipo`). Inventario `−neto` con kardex nuevo
+  **`devolucion_compra`**. Guardas: total de guía < 0 → 400; total == 0 → compra sin cuenta por pagar.
+- **Servicios**: se detectan por **categoría `/servicio/i`** del producto (server-side autoritativo; cubre la
+  categoría existente "SERVICIO DE ENVIO"). En la fila: jabas/tara deshabilitados, el bruto actúa como
+  CANTIDAD ("Cant.", neto en `uni`), nota índigo explicativa. NO tocan stock/kardex ni `precio_compra`.
+  **"Pelada de pollo"** se siembra en la migración (categoría `Servicios`, unidad `uni`, código SRV001).
+- **Saldo anterior de proveedor**: fila de `cuentas_por_pagar` con `compra_id NULL` + columna nueva
+  **`concepto`**. Botón "＋ Deuda anterior" en CxP (admin-only, coherente con los pagos) → modal proveedor/monto/
+  vencimiento opcional/concepto (`POST /api/cuentas-por-pagar/deuda`). Se paga con el flujo normal SIN tocarlo
+  (esa es la gracia del modelo). Badge índigo con el concepto en la lista, y `DELETE /api/cuentas-por-pagar/[id]`
+  solo para manuales sin pagos (409 en el resto). Se activó el fallback "Carga Manual / Sin Doc" que era código
+  muerto. Fix colateral: vencimiento NULL mostraba "01/01/1970" → ahora "—".
+- Migración **`migrate-compras-mejoras-2026-07-09.sql`** (idempotente: tipo + CHECK, concepto, seed pelada).
+  Aplicada a dev-hugo; **a prod por psql ANTES del deploy**. Guías de módulo actualizadas (compras y CxP).
+
+**Verificación E2E en dev-hugo** (navegador logueado, guía QA-DEV-001 con las 3 clases de fila a la vez):
+pollo 100kg/10 tara × S/5 (+450) + pelada 90 uni × S/0.50 (+45) + devolución 10kg × S/5 (−50) → UI mostró
+Ingresos 495 / Devoluciones −50 / **Total 445** y en DB: `compras.total=445`, ítems con tipos y subtotal −50,
+deuda 445 Pendiente, stock pollo 40+90−10=**120**, kardex `compra +90` y `devolucion_compra −10`, **cero
+movimientos de la pelada**. Guarda probada: guía solo-devolución → 400 con mensaje claro. CxP: deuda manual
+S/1000 → pago parcial S/20 (estado **Parcial**, restante 980; validación de fondos activa) → DELETE con pagos →
+**409**; DELETE de manual sin pagos → OK. Datos de prueba revertidos (stock, caja, precio_compra).
+`tsc`/`eslint`/`build` limpios. **Aún NO desplegado a producción** (pendiente OK de Hugo: psql + push).
+
+
+## 2026-07-10 — Flexibilización v1: el admin gestiona datos maestros y parámetros sin programador
+
+**Pedido de Hugo**: tras ver que los productos "por defecto" no se podían tocar, pidió auditar TODO el sistema
+(sobre todo los módulos Beta) para que desde el frontend se pueda crear/editar/eliminar y mover parámetros del
+negocio. Auditoría con 7 agentes (matriz CRUD de 20+ entidades, 11 hardcodeos, 2 bugs, 1 hueco de seguridad).
+Alcance elegido: **bugs + seguridad + página Configuración + 12 quick wins**; lo grande (editar/anular compras,
+etapas CRM) quedó para una sesión con Antonio.
+
+### Bugs corregidos (los 2 de la auditoría + 1 cazado por el E2E)
+1. **`fechaPago` descartada** (`api/cuentas-por-pagar/route.ts`): el usuario elegía la fecha del pago y el CTE
+   registraba "hoy". Fix: columna `transacciones.fecha DATE` (migración) + INSERT con
+   `COALESCE(fechaPago::date, hoy Lima)` + zod `regex(YYYY-MM-DD)`. Verificado E2E: pago retro del 05/07 →
+   `transacciones.fecha = 2026-07-05`.
+2. **POS no descontaba stock si el producto no tenía fila de lote** (`api/pos/route.ts` hacía `UPDATE` a secas
+   → 0 filas afectadas en silencio). Fix: upsert `INSERT … ON CONFLICT (producto_id) DO UPDATE` (igual que
+   compras). Verificado E2E: venta de producto sin fila → fila creada con `-2.00` + kardex `venta_pos`.
+3. **`POST /api/transacciones` devolvía 500 SIEMPRE** (cazado por el E2E de "Ajustar saldo"): el
+   `CASE WHEN ${tipo}='ingreso' THEN ${monto} ELSE -${monto}` sobre parámetros rompía la inferencia de tipos
+   del driver HTTP de Neon (mismo mal que el batch de compras, ver crónica 9-10 jul). Fix: el signo se decide
+   en JS (`delta`) y va un solo parámetro con `::numeric`. Regla de la casa reafirmada: **nunca CASE/comparación
+   sobre parámetros en SQL de Neon — decidir en JS**.
+
+### Seguridad — B1: usuarios se DESACTIVAN, jamás DELETE
+- Migración: `users.activo BOOLEAN NOT NULL DEFAULT TRUE`.
+- `src/auth.ts:authorize`: `if (user.activo === false) return null` → login bloqueado (el `SELECT *` de
+  `getUser` ya trae la columna).
+- `GET /api/users`: oculta inactivos por default; `?incluir_inactivos=1` (solo admin) los muestra.
+- `PATCH /api/users/[id]`: acepta `activo`; **auto-desactivación bloqueada** (400 "No puedes desactivar tu
+  propio usuario", verificado E2E). El DELETE con historial (409) ahora sugiere desactivar.
+- UI `/dashboard/users`: botón Desactivar (ámbar, con confirm) / Reactivar (esmeralda), fila atenuada + badge.
+- E2E: crear usuario → desactivar → oculto sin flag → guard self → reactivar. El bloqueo de login se verificó
+  a nivel de código+columna (no hay endpoint HTTP de credenciales: el login va por server action).
+
+### B2 — `/dashboard/configuracion` + `src/lib/parametros-negocio.ts` (nuevo patrón)
+Los parámetros del negocio viven en **`settings.parametros_negocio`** (whitelist en `api/settings`) con
+**fallback a los valores históricos hardcodeados** — sin la clave, todo se comporta EXACTO igual que antes.
+Fuente única `src/lib/parametros-negocio.ts`: `leerParametrosNegocio(sql)` (server), `fetchParametrosNegocio()`
+(cliente), `normalizarParametros` (nunca lanza). Página admin-only con chips (listas) y números (umbrales).
+Parámetros v1 y sus consumidores recableados:
+| Parámetro | Default (histórico) | Consumidor |
+|---|---|---|
+| `categorias_gasto` | Almuerzo…Otros | Caja Diaria (select de gasto) + página Gastos (filtro) |
+| `tipos_doc_compra` | Guia/Factura/Boleta/Recibo | Compras (select Tipo Documento) |
+| `margen_bueno_pct` / `margen_regular_pct` | 25 / 15 | semáforo del Catálogo |
+| `merma_alta_pct` | 10 | alerta en Calculadora de Mermas |
+| `rendimiento_fallback_pct` | 80 | Rentabilidad sin mermas registradas |
+| `cortes_deuda_avicola` | 7/15/30 | buckets de antigüedad del panel Campo |
+E2E: guardar con categoría "PRUEBA FLEX" + umbrales cambiados → persiste, la página los recarga, el filtro de
+Gastos muestra la categoría nueva, rentabilidad/panel avícola responden 200. (La clave se removió al final para
+dejar dev en fallback puro.)
+
+### Tanda A — los 12 quick wins
+- **A2 Reactivar producto**: `GET /api/productos?incluir_inactivos=1` (admin) + toggle "Ver productos
+  desactivados" + botón Reactivar en el Catálogo. E2E: 85 activos / 93 con inactivos.
+- **A3 Inventario**: `JOIN → LEFT JOIN productos` — un producto nuevo aparece con stock 0 para ponerle stock
+  inicial con el ajuste ± existente. E2E: 85 filas (= todos los activos).
+- **A4 Página Gastos** (`/dashboard/gastos`, admin+produccion, sidebar Finanzas): KPIs hoy/mes, filtro por
+  categoría (dinámicas de settings ∪ presentes) y rango de fechas (server-side), tabla+tarjetas, "Registrado
+  por". El `GET /api/gastos` (huérfano) ganó `?desde/hasta`, campo `fecha` ISO y límite 500.
+- **A5 Desactivar proveedor y cuenta bancaria**: `proveedores.activo` (migración) + badge/atenuado + selects
+  filtran activos; `PATCH /api/cuentas` (rename + activa) con **guards de nombres reservados de Caja Diaria**
+  ("Caja Efectivo Planta"/"Campo": ni renombrar, ni renombrar-hacia, ni desactivar — 409; E2E verificado).
+- **A6 Plazo de pago POR proveedor**: `proveedores.plazo_pago_dias` (default 30) + campo en la ficha; el
+  vencimiento de la compra ya no es +30 fijo. E2E: plazo 12 → compra del 10/07 vence 22/07.
+- **A7 Ajustar saldo bancario**: `POST /api/transacciones` ganó guard admin-only y alimenta el modal "Ajustar
+  saldo" en Cuentas (Sumar/Restar + motivo obligatorio, concepto "Ajuste manual: …"). E2E: +55.5/−5.5 → saldo 50.
+- **A8 Mermas con fecha retroactiva**: input date (max hoy) en la calculadora; el backend ya aceptaba `fecha`.
+- **A9 Corregir deuda manual CxP**: `PATCH /api/cuentas-por-pagar/[id]` (monto/vencimiento/concepto — el
+  vencimiento acepta NULL explícito) con los MISMOS guards del DELETE (solo `compra_id NULL` y sin pagos, 409
+  si no); lápiz en la fila reusa el modal "Deuda anterior" en modo edición (proveedor fijo: si está mal, se
+  borra y se re-registra). E2E completo incluido el 409 sobre deuda de compra.
+- **A11 Corregir préstamo (contra-asiento)**: botón en el kardex del modal Historial que registra el movimiento
+  INVERSO (mapa `TIPO_INVERSO` verificado contra la aritmética del route: OTORGADO↔DEV_RECIBIDA,
+  RECIBIDO↔DEV_OTORGADA) con las mismas cantidades y nota "Corrección del movimiento del …". El kardex es
+  inmutable: NUNCA editar filas. E2E: +7 jabas → corrección → saldo neto 0.
+- **A12a Nueva categoría al EDITAR producto**: el modal de edición ganó la opción "➕ Nueva categoría…" (solo
+  existía al crear).
+- **A12b Corregir abonos**: `PATCH /api/avicola/abonos/[id]` y `PATCH /api/cobranzas-planta/abonos/[id]`
+  (monto/medio_pago/observaciones; 409 si el abono —o su cobranza— está anulado; planta re-deriva el estado
+  con `recalcularEstadoCobranza`). UI: botón "Corregir" en el historial de la ficha avícola (planta no lista
+  abonos individuales — API en paridad con su `anular`, UI cuando exista esa vista). E2E ambos: saldos
+  recalculados al centavo + 409 sobre anulado.
+- Guías de módulo nuevas/actualizadas (`guias-modulos.ts`): gastos, configuracion, cuentas (+ajustar saldo),
+  compras y CxP ya actualizadas el 9-10 jul.
+
+### Migración
+**`scripts/migrate-flexibilizacion-2026-07-10.sql`** (idempotente/aditiva, inerte para el código viejo):
+`users.activo` · `proveedores.activo` · `proveedores.plazo_pago_dias` · `transacciones.fecha`. Aplicada a
+dev-hugo; **a prod por psql ANTES del deploy** (junto con `migrate-compras-mejoras-2026-07-09.sql` de Nelita).
+
+### Verificación
+E2E por API con sesión real (navegador logueado, patrón de la casa) + aserciones psql en dev-hugo para TODO lo
+anterior; páginas Configuración y Gastos verificadas renderizando en el navegador. **Datos de prueba 100%
+revertidos** (query de restos = 0; cuentas/lotes/saldos/plazo restaurados). `tsc` + `eslint` + `npm run build`
+limpios. **Deliberadamente NO tocado**: empresas fijas, roles, tipos de movimiento de préstamos, estados, IGV,
+kardex/transacciones inmutables (corregir = contra-asiento), defaults de empresa por módulo.
+
+**Aún NO desplegado a producción** — sale TODO JUNTO con el changeset de Nelita (decisión de Hugo): psql de las
+2 migraciones → commit → push, con su OK.

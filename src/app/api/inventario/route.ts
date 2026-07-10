@@ -31,11 +31,16 @@ export async function GET(req: NextRequest) {
       })));
     }
 
+    // LEFT JOIN desde productos: un producto nuevo (sin fila de lote) aparece con
+    // stock 0 y ya se le puede poner stock inicial con el ajuste ± (antes era
+    // invisible hasta que lo tocara una compra — hallazgo de la auditoría 10 jul).
     const inventario = await sql`
       SELECT
-        i.id, i.producto_id, p.nombre as producto_nombre, p.categoria, i.cantidad, i.updated_at
-      FROM inventario_lotes i
-      JOIN productos p ON p.id = i.producto_id
+        i.id, p.id AS producto_id, p.nombre as producto_nombre, p.categoria,
+        COALESCE(i.cantidad, 0) AS cantidad, i.updated_at
+      FROM productos p
+      LEFT JOIN inventario_lotes i ON i.producto_id = p.id
+      WHERE p.activo = TRUE
       ORDER BY p.categoria, p.nombre ASC
     `;
     return NextResponse.json(inventario);

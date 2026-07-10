@@ -7,11 +7,12 @@ import {
   FiDollarSign, 
   FiCheckCircle, 
   FiClock, 
-  FiAlertCircle, 
-  FiTrendingUp, 
-  FiSearch, 
+  FiAlertCircle,
+  FiSearch,
   FiFilter,
-  FiX
+  FiX,
+  FiTrash2,
+  FiEdit2
 } from "react-icons/fi";
 import Link from "next/link";
 import SearchableSelect from "@/components/SearchableSelect";
@@ -28,8 +29,17 @@ type Deuda = {
   monto_deuda: number;
   monto_pagado: number;
   estado: "Pendiente" | "Parcial" | "Pagado";
+  /** Rótulo de las deudas manuales (sin compra), ej. "Saldo anterior". */
+  concepto: string | null;
   fecha_vencimiento: string;
   created_at: string;
+};
+
+type ProveedorOption = {
+  id: string;
+  razon_social: string;
+  ruc: string | null;
+  activo?: boolean;
 };
 
 type CuentaBancaria = {
@@ -61,9 +71,31 @@ export default function CuentasPorPagarClient() {
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Modal "Deuda anterior" (deuda manual sin compra: lo que ya se le debía al
+  // proveedor antes de usar el sistema — pedido de Nelita, 9 jul 2026).
+  const [modalDeudaAbierto, setModalDeudaAbierto] = useState(false);
+  // Si hay una deuda aquí, el modal está CORRIGIENDO esa deuda manual (PATCH);
+  // si es null, está registrando una nueva (POST).
+  const [deudaEditando, setDeudaEditando] = useState<Deuda | null>(null);
+  const [proveedores, setProveedores] = useState<ProveedorOption[]>([]);
+  const [deudaProveedorId, setDeudaProveedorId] = useState("");
+  const [deudaMonto, setDeudaMonto] = useState("");
+  const [deudaVencimiento, setDeudaVencimiento] = useState("");
+  const [deudaConcepto, setDeudaConcepto] = useState("Saldo anterior");
+  const [errorDeuda, setErrorDeuda] = useState<string | null>(null);
+  const [guardandoDeuda, setGuardandoDeuda] = useState(false);
+
   useEffect(() => {
     fetchDeudas();
     fetchCuentas();
+    // Directorio completo de proveedores (el filtro de arriba solo conoce a los
+    // que YA tienen deudas; para registrar un saldo anterior hacen falta todos).
+    fetch("/api/proveedores")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: ProveedorOption[]) => {
+        if (Array.isArray(data)) setProveedores(data);
+      })
+      .catch(() => {});
   }, []);
 
   const fetchDeudas = async () => {
@@ -213,6 +245,100 @@ export default function CuentasPorPagarClient() {
     }
   };
 
+  const abrirModalDeuda = () => {
+    setDeudaEditando(null);
+    setDeudaProveedorId("");
+    setDeudaMonto("");
+    setDeudaVencimiento("");
+    setDeudaConcepto("Saldo anterior");
+    setErrorDeuda(null);
+    setModalDeudaAbierto(true);
+  };
+
+  // Reusa el mismo modal en modo corrección (solo deudas manuales sin pagos).
+  const abrirModalEditarDeuda = (d: Deuda) => {
+    setDeudaEditando(d);
+    setDeudaProveedorId(d.proveedor_id);
+    setDeudaMonto(String(d.monto_deuda));
+    setDeudaVencimiento(d.fecha_vencimiento ? d.fecha_vencimiento.slice(0, 10) : "");
+    setDeudaConcepto(d.concepto || "Saldo anterior");
+    setErrorDeuda(null);
+    setModalDeudaAbierto(true);
+  };
+
+  const handleRegistrarDeuda = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const montoVal = Number(deudaMonto);
+    if (!deudaEditando && !deudaProveedorId) {
+      setErrorDeuda("Selecciona el proveedor.");
+      return;
+    }
+    if (isNaN(montoVal) || montoVal <= 0) {
+      setErrorDeuda("El monto debe ser mayor a 0.");
+      return;
+    }
+
+    setGuardandoDeuda(true);
+    setErrorDeuda(null);
+    try {
+      const res = deudaEditando
+        ? await fetch(`/api/cuentas-por-pagar/${deudaEditando.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              monto: montoVal,
+              fecha_vencimiento: deudaVencimiento || null,
+              ...(deudaConcepto.trim() ? { concepto: deudaConcepto.trim() } : {}),
+            }),
+          })
+        : await fetch("/api/cuentas-por-pagar/deuda", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              proveedor_id: deudaProveedorId,
+              monto: montoVal,
+              fecha_vencimiento: deudaVencimiento || null,
+              concepto: deudaConcepto || null,
+            }),
+          });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo guardar la deuda.");
+
+      setSuccessMsg(
+        deudaEditando
+          ? "Deuda corregida."
+          : "Deuda anterior registrada. Ya puedes pagarla como cualquier otra."
+      );
+      setModalDeudaAbierto(false);
+      fetchDeudas();
+    } catch (err: unknown) {
+      setErrorDeuda(err instanceof Error ? err.message : "No se pudo guardar la deuda.");
+    } finally {
+      setGuardandoDeuda(false);
+    }
+  };
+
+  // Borrar una deuda manual mal digitada (solo sin compra y sin pagos).
+  const handleBorrarDeudaManual = async (deuda: Deuda) => {
+    const etiqueta = deuda.concepto || "deuda manual";
+    if (
+      !window.confirm(
+        `¿Borrar la ${etiqueta} de ${deuda.proveedor_nombre} por ${formatSoles(deuda.monto_deuda)}? Esto no se puede deshacer.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/cuentas-por-pagar/${deuda.id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo borrar.");
+      setSuccessMsg("Deuda borrada.");
+      fetchDeudas();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : "No se pudo borrar la deuda.");
+    }
+  };
+
   // Formateador de moneda
   const formatSoles = (val: number) => {
     return `S/ ${val.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -255,6 +381,13 @@ export default function CuentasPorPagarClient() {
           </h1>
           <p className="text-xs text-gray-500 mt-1">Control de facturas de proveedores y pagos parciales.</p>
         </div>
+        <button
+          type="button"
+          onClick={abrirModalDeuda}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-xl font-bold text-xs transition-all shadow-sm cursor-pointer active:scale-95 flex items-center gap-1.5 self-start sm:self-auto"
+        >
+          <FiPlus size={14} /> Deuda anterior
+        </button>
       </div>
 
       <GuiaModulo modulo="cuentas-por-pagar" />
@@ -390,7 +523,9 @@ export default function CuentasPorPagarClient() {
                             <span className="text-[10px] text-gray-400 block mt-0.5">{d.compra_nro_doc}</span>
                           </div>
                         ) : (
-                          <span className="text-gray-400 italic">Carga Manual / Sin Doc</span>
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-100 w-max inline-block">
+                            {d.concepto || "Deuda manual"}
+                          </span>
                         )}
                       </td>
                       <td className="py-4 px-4 text-right text-gray-900 font-medium">
@@ -403,8 +538,11 @@ export default function CuentasPorPagarClient() {
                         {formatSoles(restante)}
                       </td>
                       <td className="py-4 px-4">
+                        {/* Las deudas manuales pueden no tener vencimiento (queda NULL) */}
                         <span className={`font-semibold ${isVencido ? "text-red-600" : "text-gray-700"}`}>
-                          {new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(d.fecha_vencimiento))}
+                          {d.fecha_vencimiento
+                            ? new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(d.fecha_vencimiento))
+                            : "—"}
                         </span>
                         {isVencido && (
                           <span className="block text-[9px] text-red-500 font-bold mt-0.5 uppercase tracking-wide">Vencido</span>
@@ -430,16 +568,37 @@ export default function CuentasPorPagarClient() {
                         )}
                       </td>
                       <td className="py-4 px-6 text-right">
-                        {d.estado !== "Pagado" ? (
-                          <button
-                            onClick={() => handleOpenPago(d)}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all cursor-pointer active:scale-95 shadow-sm inline-flex items-center gap-1"
-                          >
-                            <FiDollarSign size={12} /> Registrar Pago
-                          </button>
-                        ) : (
-                          <span className="text-gray-400 text-[10px] font-semibold italic">Completo</span>
-                        )}
+                        <div className="inline-flex items-center gap-1.5">
+                          {d.estado !== "Pagado" ? (
+                            <button
+                              onClick={() => handleOpenPago(d)}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg font-bold text-[10px] transition-all cursor-pointer active:scale-95 shadow-sm inline-flex items-center gap-1"
+                            >
+                              <FiDollarSign size={12} /> Registrar Pago
+                            </button>
+                          ) : (
+                            <span className="text-gray-400 text-[10px] font-semibold italic">Completo</span>
+                          )}
+                          {/* Solo las deudas manuales sin ningún pago se pueden corregir o borrar (error de tipeo) */}
+                          {d.compra_id === null && d.monto_pagado === 0 && (
+                            <>
+                              <button
+                                onClick={() => abrirModalEditarDeuda(d)}
+                                title="Corregir monto, vencimiento o concepto"
+                                className="p-1.5 text-gray-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
+                              >
+                                <FiEdit2 size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleBorrarDeudaManual(d)}
+                                title="Borrar esta deuda manual (sin pagos)"
+                                className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                              >
+                                <FiTrash2 size={13} />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -581,6 +740,143 @@ export default function CuentasPorPagarClient() {
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-1.5"
                 >
                   {actionLoading ? "Registrando..." : "Registrar Pago"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Deuda Anterior (deuda manual sin compra) */}
+      {modalDeudaAbierto && (
+        <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                {deudaEditando ? (
+                  <>
+                    <FiEdit2 className="text-indigo-500" /> Corregir deuda manual
+                  </>
+                ) : (
+                  <>
+                    <FiPlus className="text-indigo-500" /> Registrar deuda anterior
+                  </>
+                )}
+              </h2>
+              <button
+                onClick={() => setModalDeudaAbierto(false)}
+                className="text-gray-400 hover:text-gray-600 p-2 cursor-pointer rounded-lg hover:bg-gray-100 transition-all"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleRegistrarDeuda} className="p-6 space-y-4">
+              {deudaEditando ? (
+                <p className="text-xs text-gray-500 bg-indigo-50/50 border border-indigo-100/50 p-3 rounded-2xl">
+                  Corrige una deuda manual mal digitada. Solo se puede mientras <b>no tenga pagos</b>.
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 bg-indigo-50/50 border border-indigo-100/50 p-3 rounded-2xl">
+                  Para registrar lo que ya le debías a un proveedor <b>antes de usar el sistema</b>.
+                  Después la pagas como cualquier otra deuda (pagos parciales incluidos).
+                </p>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Proveedor</label>
+                {deudaEditando ? (
+                  // El proveedor de una deuda no se cambia: si está mal, se borra y se
+                  // registra de nuevo con el proveedor correcto.
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 py-2.5 px-3 text-xs font-semibold text-gray-700">
+                    {deudaEditando.proveedor_nombre}
+                    {deudaEditando.proveedor_ruc && (
+                      <span className="block text-[10px] font-mono font-normal text-gray-400 mt-0.5">
+                        {deudaEditando.proveedor_ruc}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <SearchableSelect
+                    required
+                    value={deudaProveedorId}
+                    onChange={setDeudaProveedorId}
+                    options={proveedores
+                      .filter((p) => p.activo !== false)
+                      .map((p) => ({
+                        id: p.id,
+                        nombre: p.razon_social,
+                        subtext: p.ruc || undefined,
+                      }))}
+                    placeholder="Seleccione proveedor..."
+                    searchPlaceholder="Buscar proveedor por RUC o nombre..."
+                  />
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Monto adeudado (S/)</label>
+                <div className="relative rounded-xl shadow-sm">
+                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                    <span className="text-gray-500 text-xs">S/</span>
+                  </div>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    value={deudaMonto}
+                    onChange={(e) => setDeudaMonto(e.target.value)}
+                    placeholder="0.00"
+                    className="block w-full rounded-xl border border-gray-300 pl-8 pr-3 py-2.5 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50 font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                  Fecha de vencimiento <span className="font-normal text-gray-400">(opcional)</span>
+                </label>
+                <input
+                  type="date"
+                  value={deudaVencimiento}
+                  onChange={(e) => setDeudaVencimiento(e.target.value)}
+                  className="block w-full rounded-xl border border-gray-300 py-2.5 px-3 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50 font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Concepto</label>
+                <input
+                  type="text"
+                  maxLength={200}
+                  value={deudaConcepto}
+                  onChange={(e) => setDeudaConcepto(e.target.value)}
+                  placeholder="Ej: Saldo anterior"
+                  className="block w-full rounded-xl border border-gray-300 py-2.5 px-3 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50"
+                />
+              </div>
+
+              {errorDeuda && (
+                <div className="bg-red-50 border border-red-200 text-red-800 p-3 rounded-xl flex items-center gap-2 text-xs font-semibold">
+                  <FiAlertCircle size={14} className="shrink-0" /> {errorDeuda}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setModalDeudaAbierto(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={guardandoDeuda}
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95"
+                >
+                  {guardandoDeuda ? "Guardando..." : deudaEditando ? "Guardar cambios" : "Registrar deuda"}
                 </button>
               </div>
             </form>

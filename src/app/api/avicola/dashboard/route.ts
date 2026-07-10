@@ -6,6 +6,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import type { DashboardAvicola } from "@/lib/avicola/types";
+import { leerParametrosNegocio } from "@/lib/parametros-negocio";
 import { listaClientesConSaldo, UMBRAL_DEUDA } from "@/lib/avicola/saldos";
 
 export const dynamic = "force-dynamic";
@@ -130,10 +131,12 @@ export async function GET() {
       }));
 
     // ── Buckets EXCLUYENTES de días sin comprar (ya vienen ORDER BY dias DESC) ─
+    // Cortes configurables desde /dashboard/configuracion (default histórico 7/15/30).
+    const [corte1, corte2, corte3] = (await leerParametrosNegocio(sql)).cortes_deuda_avicola;
     const sin_comprar = {
-      d7: sinComprarRows.filter((c) => c.dias >= 7 && c.dias <= 14),
-      d15: sinComprarRows.filter((c) => c.dias >= 15 && c.dias <= 29),
-      d30: sinComprarRows.filter((c) => c.dias >= 30),
+      d7: sinComprarRows.filter((c) => c.dias >= corte1 && c.dias < corte2),
+      d15: sinComprarRows.filter((c) => c.dias >= corte2 && c.dias < corte3),
+      d30: sinComprarRows.filter((c) => c.dias >= corte3),
     };
 
     const respuesta: DashboardAvicola = {

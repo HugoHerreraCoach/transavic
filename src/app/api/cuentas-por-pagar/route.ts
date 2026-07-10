@@ -10,7 +10,8 @@ const PagoSchema = z.object({
   cuentaPagarId: z.string().uuid(),
   cuentaBancariaId: z.string().uuid(),
   montoPago: z.number().positive(),
-  fechaPago: z.string(),
+  // Fecha REAL del pago (puede ser retroactiva): se persiste en transacciones.fecha.
+  fechaPago: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato de fecha inválido (YYYY-MM-DD)."),
   notas: z.string().optional().nullable(),
 });
 
@@ -37,6 +38,7 @@ export async function GET() {
         cpp.monto_deuda::float8 AS monto_deuda,
         cpp.monto_pagado::float8 AS monto_pagado,
         cpp.estado,
+        cpp.concepto,
         TO_CHAR(cpp.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
         cpp.created_at
       FROM cuentas_por_pagar cpp
@@ -118,7 +120,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 3. Ejecutar la actualización atómica con el CTE encadenado
-    const docLabel = deuda.compra_nro_doc ? `Doc: ${deuda.compra_nro_doc}` : "Sin Doc";
+    const docLabel = deuda.compra_nro_doc
+      ? `Doc: ${deuda.compra_nro_doc}`
+      : (deuda.concepto as string | null) || "Sin Doc";
     const concepto = `Pago a Proveedor: ${deuda.proveedor_nombre} (${docLabel})${notas ? ` - ${notas}` : ""}`;
 
     const res = await sql`
@@ -137,8 +141,9 @@ export async function POST(req: NextRequest) {
         WHERE id = ${cuentaBancariaId}
         RETURNING id
       )
-      INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id)
-      SELECT uc.id, ${session.user.id}, 'egreso', ${montoPago}, ${concepto}, up.id
+      INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id, fecha)
+      SELECT uc.id, ${session.user.id}, 'egreso', ${montoPago}, ${concepto}, up.id,
+             COALESCE(${fechaPago || null}::date, (NOW() AT TIME ZONE 'America/Lima')::date)
       FROM update_cuenta uc, update_pagar up
       RETURNING id;
     `;

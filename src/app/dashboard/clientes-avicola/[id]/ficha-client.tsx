@@ -28,9 +28,10 @@ import {
 import type {
   FichaClienteAvicola,
   GuiaAvicolaData,
+  MedioPagoAvicola,
   MovimientoAvicola,
 } from "@/lib/avicola/types";
-import { ETIQUETA_MEDIO_PAGO } from "@/lib/avicola/types";
+import { ETIQUETA_MEDIO_PAGO, MEDIOS_PAGO_AVICOLA } from "@/lib/avicola/types";
 import { UMBRAL_DEUDA } from "@/lib/avicola/saldos";
 import { formatNumeroGuia } from "@/lib/correlativos";
 import ClienteAvicolaForm from "../cliente-avicola-form";
@@ -173,6 +174,173 @@ function AnularModal({
 }
 
 /* ------------------------------------------------------------------ */
+/* Mini-modal para CORREGIR un abono mal digitado (monto/medio/nota).  */
+/* PATCH /api/avicola/abonos/[id] — bloqueado si el abono está anulado. */
+/* ------------------------------------------------------------------ */
+
+function CorregirAbonoModal({
+  abono,
+  onClose,
+  onGuardado,
+}: {
+  abono: MovimientoAvicola;
+  onClose: () => void;
+  onGuardado: () => void;
+}) {
+  const [monto, setMonto] = useState(String(abono.monto));
+  const [medioPago, setMedioPago] = useState<MedioPagoAvicola>(
+    abono.medio_pago ?? MEDIOS_PAGO_AVICOLA[0]
+  );
+  const [observaciones, setObservaciones] = useState(abono.observaciones ?? "");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const montoNum = Number(monto);
+  const montoValido = !isNaN(montoNum) && montoNum > 0;
+
+  const guardar = async () => {
+    if (!montoValido || enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/avicola/abonos/${abono.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          monto: montoNum,
+          medio_pago: medioPago,
+          observaciones: observaciones.trim() || null,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(
+          typeof data?.error === "string" ? data.error : "No se pudo guardar. Intenta de nuevo."
+        );
+        return;
+      }
+      onGuardado();
+    } catch {
+      setError("Sin conexión. Revisa tu internet e intenta de nuevo.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center sm:justify-center"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !enviando) onClose();
+      }}
+    >
+      <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl shadow-xl">
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-black text-gray-900">Corregir abono</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={enviando}
+            aria-label="Cerrar"
+            className="shrink-0 h-12 w-12 flex items-center justify-center rounded-2xl bg-gray-100 text-gray-600 active:scale-95 transition-transform cursor-pointer"
+          >
+            <FiX size={22} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4 pb-8">
+          <div>
+            <label htmlFor="corregir-monto" className="block text-sm font-bold text-gray-700 mb-1">
+              Monto (S/) <span className="text-red-500">*</span>
+            </label>
+            <input
+              id="corregir-monto"
+              type="number"
+              inputMode="decimal"
+              step="0.01"
+              min="0.01"
+              autoFocus
+              value={monto}
+              onChange={(e) => setMonto(e.target.value)}
+              className="w-full rounded-2xl border border-gray-300 px-4 py-3 text-base font-bold text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
+            />
+            {!montoValido && monto.trim().length > 0 && (
+              <p className="mt-1 text-sm text-red-600">El monto debe ser mayor a 0.</p>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-1">Medio de pago</label>
+            <div className="flex flex-wrap gap-2">
+              {MEDIOS_PAGO_AVICOLA.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMedioPago(m)}
+                  className={`h-12 px-4 rounded-2xl text-sm font-bold border-2 active:scale-95 transition-transform cursor-pointer ${
+                    medioPago === m
+                      ? "bg-green-600 text-white border-green-600"
+                      : "bg-white text-gray-600 border-gray-200"
+                  }`}
+                >
+                  {ETIQUETA_MEDIO_PAGO[m]}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="corregir-obs" className="block text-sm font-bold text-gray-700 mb-1">
+              Nota <span className="font-normal text-gray-400">(opcional)</span>
+            </label>
+            <input
+              id="corregir-obs"
+              type="text"
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+              placeholder="Ej. pagó con billete de 100"
+              className="w-full rounded-2xl border border-gray-300 px-4 py-3 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100"
+            />
+          </div>
+
+          {error && (
+            <p className="text-base font-semibold text-red-700 bg-red-50 border border-red-200 rounded-2xl px-4 py-3">
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={guardar}
+              disabled={!montoValido || enviando}
+              className="flex-1 h-12 rounded-2xl bg-green-600 text-white text-base font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform cursor-pointer disabled:opacity-50 disabled:active:scale-100"
+            >
+              {enviando ? (
+                <>
+                  <span className="inline-block h-5 w-5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                  Guardando...
+                </>
+              ) : (
+                "Guardar cambios"
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={enviando}
+              className="flex-1 h-12 rounded-2xl bg-white border-2 border-gray-300 text-gray-700 text-base font-bold active:scale-95 transition-transform cursor-pointer disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Ficha 360                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -188,6 +356,7 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
   const [guiaModal, setGuiaModal] = useState<GuiaAvicolaData | null>(null);
   const [cargandoGuia, setCargandoGuia] = useState<string | null>(null);
   const [anular, setAnular] = useState<{ tipo: "venta" | "abono"; id: string } | null>(null);
+  const [corregirAbono, setCorregirAbono] = useState<MovimientoAvicola | null>(null);
 
   // Ventas expandidas (para ver los items con peso × precio).
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
@@ -519,6 +688,7 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
                 cargandoGuia={cargandoGuia === mov.id}
                 onReenviarGuia={() => reenviarGuia(mov.id)}
                 onAnular={() => setAnular({ tipo: mov.tipo, id: mov.id })}
+                onCorregirAbono={() => setCorregirAbono(mov)}
                 clienteId={clienteId}
               />
             ))}
@@ -551,6 +721,16 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
       )}
       {modalEstado && <EstadoCuentaModal cliente={cliente} onClose={() => setModalEstado(false)} />}
       {guiaModal && <GuiaAvicolaModal data={guiaModal} onClose={() => setGuiaModal(null)} />}
+      {corregirAbono && (
+        <CorregirAbonoModal
+          abono={corregirAbono}
+          onClose={() => setCorregirAbono(null)}
+          onGuardado={() => {
+            setCorregirAbono(null);
+            cargarFicha();
+          }}
+        />
+      )}
       {anular && (
         <AnularModal
           titulo={anular.tipo === "venta" ? "Anular venta" : "Anular abono"}
@@ -581,6 +761,7 @@ function MovimientoRow({
   cargandoGuia,
   onReenviarGuia,
   onAnular,
+  onCorregirAbono,
   clienteId,
 }: {
   mov: MovimientoAvicola;
@@ -589,6 +770,7 @@ function MovimientoRow({
   cargandoGuia: boolean;
   onReenviarGuia: () => void;
   onAnular: () => void;
+  onCorregirAbono: () => void;
   clienteId: string;
 }) {
   const esVenta = mov.tipo === "venta";
@@ -703,6 +885,16 @@ function MovimientoRow({
                   Reenviar guía
                 </button>
               </>
+            )}
+            {!esVenta && !mov.anulado && (
+              <button
+                type="button"
+                onClick={onCorregirAbono}
+                className="h-10 px-4 rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer"
+              >
+                <FiEdit2 size={16} />
+                Corregir
+              </button>
             )}
             {!esVenta && mov.tiene_comprobante && (
               <a

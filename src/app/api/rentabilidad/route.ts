@@ -2,6 +2,7 @@
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
+import { leerParametrosNegocio } from "@/lib/parametros-negocio";
 
 export const dynamic = "force-dynamic";
 
@@ -78,8 +79,11 @@ export async function GET(req: NextRequest) {
     // Cálculos de Costeo Real
     const costoCompraPorKg = polloComprasPeso > 0 ? (polloComprasMonto / polloComprasPeso) : precioCompraFallback;
     
-    // Si hay mermas, calculamos el yield del periodo. Si no, usamos un rendimiento estándar del 80% (20% merma)
-    const mermaPorcentaje = totalBruto > 0 ? (totalMerma / totalBruto) * 100 : 20.0;
+    // Si hay mermas, calculamos el yield del periodo. Si no, usamos el rendimiento
+    // estándar configurable (/dashboard/configuracion; default histórico 80% = 20% merma).
+    const parametros = await leerParametrosNegocio(sql);
+    const mermaFallback = 100 - parametros.rendimiento_fallback_pct;
+    const mermaPorcentaje = totalBruto > 0 ? (totalMerma / totalBruto) * 100 : mermaFallback;
     const rendimientoPorcentaje = 100 - mermaPorcentaje;
 
     const costoRealPorKg = costoCompraPorKg / (rendimientoPorcentaje / 100);

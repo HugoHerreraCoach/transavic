@@ -14,7 +14,7 @@ const CreateGastoSchema = z.object({
   cuenta_id: z.string().uuid(),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await auth();
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
@@ -29,14 +29,38 @@ export async function GET() {
   const sql = neon(connectionString);
 
   try {
-    const list = await sql`
-      SELECT g.id, TO_CHAR(g.fecha, 'DD/MM/YYYY') as fecha_formateada, g.categoria, g.descripcion, g.monto, g.metodo_pago,
+    // Filtro opcional por rango de fechas (YYYY-MM-DD). Sin params se comporta
+    // como siempre: los gastos más recientes.
+    const esFechaValida = (v: string | null): v is string =>
+      !!v && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    const desde = req.nextUrl.searchParams.get("desde");
+    const hasta = req.nextUrl.searchParams.get("hasta");
+
+    const condiciones: string[] = [];
+    const params: string[] = [];
+    if (esFechaValida(desde)) {
+      params.push(desde);
+      condiciones.push(`g.fecha >= $${params.length}::date`);
+    }
+    if (esFechaValida(hasta)) {
+      params.push(hasta);
+      condiciones.push(`g.fecha <= $${params.length}::date`);
+    }
+    const where = condiciones.length > 0 ? `WHERE ${condiciones.join(" AND ")}` : "";
+
+    const consulta = `
+      SELECT g.id,
+             TO_CHAR(g.fecha, 'YYYY-MM-DD') as fecha,
+             TO_CHAR(g.fecha, 'DD/MM/YYYY') as fecha_formateada,
+             g.categoria, g.descripcion, g.monto, g.metodo_pago,
              u.name as created_by_name
       FROM gastos g
       LEFT JOIN users u ON g.created_by = u.id
+      ${where}
       ORDER BY g.fecha DESC, g.created_at DESC
-      LIMIT 50
+      LIMIT 500
     `;
+    const list = (await sql.query(consulta, params)) as Array<Record<string, unknown>>;
     return NextResponse.json(list.map(g => ({
       ...g,
       monto: Number(g.monto)

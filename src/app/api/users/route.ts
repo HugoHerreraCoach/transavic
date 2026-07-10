@@ -36,6 +36,10 @@ export async function GET(request: Request) {
 
     const { searchParams } = new URL(request.url);
     const roleFilter = searchParams.get("role");
+    // Los DESACTIVADOS no aparecen en los selects de asignación (repartidores,
+    // asesoras…). Solo la página de usuarios (admin) los pide con ?incluir_inactivos=1.
+    const incluirInactivos =
+      session.user.role === "admin" && searchParams.get("incluir_inactivos") === "1";
 
     // No-admin: solo puede obtener lista filtrada por rol (id + name, sin datos sensibles)
     // Esto permite a las asesoras ver la lista de asesoras para transferir clientes
@@ -44,7 +48,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
       const users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE role = ${roleFilter} AND activo IS NOT FALSE ORDER BY name ASC
       `;
       return NextResponse.json(users);
     }
@@ -53,11 +57,11 @@ export async function GET(request: Request) {
     let users;
     if (roleFilter) {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users WHERE role = ${roleFilter} ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE role = ${roleFilter} AND (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     } else {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy FROM users ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     }
 

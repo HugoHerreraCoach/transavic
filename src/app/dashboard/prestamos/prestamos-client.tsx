@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FiPlus, FiAlertCircle, FiArrowRight, FiArrowLeft, FiList, FiCornerUpLeft } from "react-icons/fi";
+import { FiPlus, FiAlertCircle, FiArrowRight, FiArrowLeft, FiList, FiCornerUpLeft, FiRotateCcw } from "react-icons/fi";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
@@ -17,6 +17,7 @@ type Saldo = {
 };
 type Transaccion = {
   id: string;
+  proveedor_id: string;
   producto_id: string;
   tipo_movimiento: string;
   fecha: string;
@@ -43,6 +44,22 @@ const ETIQUETA_TIPO: Record<string, string> = {
   DEVOLUCION_OTORGADA: "Devolvimos",
 };
 
+// Contra-asiento: el kardex es inmutable (nunca se edita ni borra una fila);
+// corregir = registrar el movimiento cuyo efecto en prestamos_saldos es exactamente
+// el opuesto. Según el POST del route: OTORGADO (préstamo o devolución) = factor +1,
+// RECIBIDO (préstamo o devolución) = factor -1. El inverso conserva además el
+// sentido físico: si les prestamos, lo anula "nos devuelven"; si nos prestaron,
+// lo anula "devolvemos".
+const TIPO_INVERSO: Record<string, string> = {
+  PRESTAMO_OTORGADO: "DEVOLUCION_RECIBIDA",   // +1 → -1
+  DEVOLUCION_RECIBIDA: "PRESTAMO_OTORGADO",   // -1 → +1
+  PRESTAMO_RECIBIDO: "DEVOLUCION_OTORGADA",   // -1 → +1
+  DEVOLUCION_OTORGADA: "PRESTAMO_RECIBIDO",   // +1 → -1
+};
+
+const formatearFechaCorta = (fecha: string) =>
+  new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "short", year: "numeric" }).format(new Date(fecha));
+
 export default function PrestamosClient() {
   const [saldos, setSaldos] = useState<Saldo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,6 +67,8 @@ export default function PrestamosClient() {
   const [kardexOpen, setKardexOpen] = useState(false);
   const [kardexLoading, setKardexLoading] = useState(false);
   const [transacciones, setTransacciones] = useState<Transaccion[]>([]);
+  const [kardexProveedorNombre, setKardexProveedorNombre] = useState("");
+  const [corrigiendoId, setCorrigiendoId] = useState<string | null>(null);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const { mostrarToast, toasts } = useToast();
@@ -114,18 +133,68 @@ export default function PrestamosClient() {
     }
   };
 
-  const openKardex = async (proveedorId: string) => {
-    setTransacciones([]);
-    setKardexLoading(true);
-    setKardexOpen(true);
+  const cargarTransacciones = async (proveedorId: string) => {
     try {
       const res = await fetch(`/api/prestamos/transacciones?proveedorId=${proveedorId}`);
       const data = await res.json();
       setTransacciones(data.transacciones || []);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const openKardex = async (proveedorId: string, proveedorNombre: string) => {
+    setTransacciones([]);
+    setKardexProveedorNombre(proveedorNombre);
+    setKardexLoading(true);
+    setKardexOpen(true);
+    await cargarTransacciones(proveedorId);
+    setKardexLoading(false);
+  };
+
+  // Corregir = registrar el CONTRA-ASIENTO (movimiento inverso con las mismas
+  // cantidades, fecha de hoy). El movimiento original NUNCA se edita ni se borra.
+  const corregirMovimiento = async (t: Transaccion) => {
+    const tipoInverso = TIPO_INVERSO[t.tipo_movimiento];
+    if (!tipoInverso) {
+      mostrarToast("Este tipo de movimiento no se puede corregir automáticamente", "error");
+      return;
+    }
+    const confirmado = window.confirm(
+      `Se registrará un movimiento inverso de ${Number(t.jabas)} jabas / ${Number(t.peso_kg)} kg con ${kardexProveedorNombre || "el proveedor"}. El original queda en el historial.`
+    );
+    if (!confirmado) return;
+
+    setCorrigiendoId(t.id);
+    try {
+      const notasCorreccion =
+        `Corrección del movimiento del ${formatearFechaCorta(t.fecha)}` +
+        (t.notas ? ` — Nota original: ${t.notas}` : "");
+      const res = await fetch("/api/prestamos/transacciones", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proveedorId: t.proveedor_id,
+          productoId: t.producto_id,
+          tipoMovimiento: tipoInverso,
+          jabas: Number(t.jabas),
+          pesoKg: Number(t.peso_kg),
+          fecha: new Date().toISOString().split("T")[0],
+          notas: notasCorreccion,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || "Error registrando la corrección");
+      }
+      mostrarToast("Corrección registrada: se creó el movimiento inverso", "exito");
+      fetchSaldos();
+      await cargarTransacciones(t.proveedor_id);
+    } catch (err: unknown) {
+      mostrarToast(err instanceof Error ? err.message : "Error al registrar la corrección", "error");
+      console.error(err);
     } finally {
-      setKardexLoading(false);
+      setCorrigiendoId(null);
     }
   };
 
@@ -294,7 +363,7 @@ export default function PrestamosClient() {
                           <FiPlus className="w-3.5 h-3.5" /> Préstamo
                         </button>
                         <button
-                          onClick={() => openKardex(s.proveedor_id)}
+                          onClick={() => openKardex(s.proveedor_id, s.proveedor_nombre)}
                           className="text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center gap-1 transition-colors cursor-pointer active:scale-95"
                         >
                           <FiList /> Ver movimientos
@@ -433,18 +502,19 @@ export default function PrestamosClient() {
                     <th className="p-3 font-semibold text-gray-600 text-right">Jabas</th>
                     <th className="p-3 font-semibold text-gray-600 text-right">Peso</th>
                     <th className="p-3 font-semibold text-gray-600">Notas</th>
+                    <th className="p-3 font-semibold text-gray-600"><span className="sr-only">Acciones</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {kardexLoading ? (
                     <tr>
-                      <td colSpan={6} className="py-12 px-4 text-center">
+                      <td colSpan={7} className="py-12 px-4 text-center">
                         <p className="text-sm text-gray-400 animate-pulse">Cargando movimientos...</p>
                       </td>
                     </tr>
                   ) : transacciones.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-12 px-4 text-center">
+                      <td colSpan={7} className="py-12 px-4 text-center">
                         <div className="flex flex-col items-center justify-center text-gray-400 space-y-2">
                           <FiList size={32} className="opacity-40 text-indigo-400" />
                           <span className="font-semibold text-gray-700 text-xs">Sin movimientos registrados</span>
@@ -455,7 +525,7 @@ export default function PrestamosClient() {
                   ) : transacciones.map((t) => (
                     <tr key={t.id} className="hover:bg-gray-50">
                       <td className="p-3 text-gray-600">
-                        {new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(t.fecha))}
+                        {formatearFechaCorta(t.fecha)}
                       </td>
                       <td className="p-3 font-medium text-gray-900 text-xs">
                         {ETIQUETA_TIPO[t.tipo_movimiento] ?? t.tipo_movimiento.replace('_', ' ')}
@@ -464,6 +534,18 @@ export default function PrestamosClient() {
                       <td className="p-3 text-gray-900 text-right">{t.jabas}</td>
                       <td className="p-3 text-gray-900 text-right">{t.peso_kg} Kg</td>
                       <td className="p-3 text-gray-500 text-xs truncate max-w-[150px]">{t.notas || '-'}</td>
+                      <td className="p-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => corregirMovimiento(t)}
+                          disabled={corrigiendoId !== null}
+                          title="Registrar el movimiento inverso (el original queda en el historial)"
+                          className="text-xs font-medium px-2 py-1 rounded-lg text-gray-400 hover:text-amber-700 hover:bg-amber-50 transition-colors cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 ml-auto"
+                        >
+                          <FiRotateCcw className="w-3.5 h-3.5" />
+                          {corrigiendoId === t.id ? "Corrigiendo..." : "Corregir"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -37,6 +37,7 @@ import {
   FiClock,
 } from "react-icons/fi";
 import type { Producto } from "@/lib/types";
+import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
 
 const DEFAULT_EMOJIS: Record<string, string> = {
   Pollo: "🐔",
@@ -106,6 +107,7 @@ interface ModalEdit {
   nombre: string;
   codigo: string;
   categoria: string;
+  customCategoria: string;
   unidad: string;
   precio_compra: string;
   precio_venta: string;
@@ -124,6 +126,15 @@ interface ModalNuevo {
 export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
+  // Umbrales del semáforo de margen, configurables desde /dashboard/configuracion.
+  const [margenBueno, setMargenBueno] = useState(PARAMETROS_NEGOCIO_DEFAULT.margen_bueno_pct);
+  const [margenRegular, setMargenRegular] = useState(PARAMETROS_NEGOCIO_DEFAULT.margen_regular_pct);
+  useEffect(() => {
+    fetchParametrosNegocio().then((par) => {
+      setMargenBueno(par.margen_bueno_pct);
+      setMargenRegular(par.margen_regular_pct);
+    });
+  }, []);
   const [busqueda, setBusqueda] = useState("");
   const [categoriaActiva, setCategoriaActiva] = useState<string>("Todos");
   const [soloSinPrecio, setSoloSinPrecio] = useState(false);
@@ -141,6 +152,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
     nombre: "",
     codigo: "",
     categoria: "",
+    customCategoria: "",
     unidad: "",
     precio_compra: "",
     precio_venta: "",
@@ -166,10 +178,12 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
   const [errorHistorial, setErrorHistorial] = useState<string | null>(null);
   const [filtroHistorial, setFiltroHistorial] = useState("");
 
+  const [verInactivos, setVerInactivos] = useState(false);
+
   const fetchProductos = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/productos");
+      const res = await fetch(`/api/productos${verInactivos ? "?incluir_inactivos=1" : ""}`);
       if (!res.ok) {
         // El GET ahora exige sesión: un 401 (sesión expirada) no debe dejar la
         // lista vacía en silencio.
@@ -190,7 +204,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [verInactivos]);
 
   useEffect(() => {
     fetchProductos();
@@ -357,6 +371,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       nombre: p.nombre,
       codigo: p.codigo ?? "",
       categoria: p.categoria,
+      customCategoria: "",
       unidad: p.unidad,
       precio_compra: toNum(p.precio_compra) === null ? "" : String(toNum(p.precio_compra)),
       precio_venta: toNum(p.precio_venta) === null ? "" : String(toNum(p.precio_venta)),
@@ -370,7 +385,11 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       setMensaje({ tipo: "error", texto: "El nombre es requerido" });
       return;
     }
-    if (!modalEdit.categoria.trim() || !modalEdit.unidad.trim()) {
+    const categoriaFinal =
+      modalEdit.categoria === "__custom__"
+        ? modalEdit.customCategoria.trim()
+        : modalEdit.categoria.trim();
+    if (!categoriaFinal || !modalEdit.unidad.trim()) {
       setMensaje({ tipo: "error", texto: "Categoría y unidad son requeridos" });
       return;
     }
@@ -389,7 +408,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
         body: JSON.stringify({
           nombre: modalEdit.nombre.trim(),
           codigo: modalEdit.codigo.trim(),
-          categoria: modalEdit.categoria,
+          categoria: categoriaFinal,
           unidad: modalEdit.unidad,
           precio_compra: compra,
           precio_venta: venta,
@@ -416,6 +435,28 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
   // ════════════════════════════════════════════════════════════════════
   // Eliminar (soft delete)
   // ════════════════════════════════════════════════════════════════════
+  // Reactivar un producto desactivado (el PATCH {activo:true} ya existía sin UI).
+  const reactivar = async (p: Producto) => {
+    try {
+      const res = await fetch(`/api/productos/${p.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activo: true }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(typeof err.error === "string" ? err.error : "Error");
+      }
+      setMensaje({ tipo: "ok", texto: `"${p.nombre}" reactivado: ya aparece en el catálogo.` });
+      fetchProductos();
+    } catch (e) {
+      setMensaje({
+        tipo: "error",
+        texto: e instanceof Error ? e.message : "Error al reactivar",
+      });
+    }
+  };
+
   const eliminar = async (p: Producto) => {
     if (!window.confirm(`¿Desactivar "${p.nombre}"? No aparecerá más en el catálogo.`)) return;
     try {
@@ -663,6 +704,18 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
           />
         </div>
 
+        {isAdmin && (
+          <label className="inline-flex items-center gap-2 text-sm text-gray-600 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={verInactivos}
+              onChange={(e) => setVerInactivos(e.target.checked)}
+              className="h-4 w-4 accent-red-600 cursor-pointer"
+            />
+            Ver productos desactivados
+          </label>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {["Todos", ...allCategories].map((cat) => (
             <button
@@ -835,14 +888,14 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                           {m !== null ? (
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
-                                m >= 25
+                                m >= margenBueno
                                   ? "bg-green-100 text-green-700"
-                                  : m >= 15
+                                  : m >= margenRegular
                                   ? "bg-amber-100 text-amber-700"
                                   : "bg-red-100 text-red-700"
                               }`}
                               title={
-                                m >= 25 ? "Buen margen" : m >= 15 ? "Margen ajustado" : "Margen bajo"
+                                m >= margenBueno ? "Buen margen" : m >= margenRegular ? "Margen ajustado" : "Margen bajo"
                               }
                             >
                               {m.toFixed(0)}%
@@ -863,13 +916,23 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                             >
                               <FiEdit2 size={16} />
                             </button>
-                            <button
-                              onClick={() => eliminar(p)}
-                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Desactivar"
-                            >
-                              <FiTrash2 size={16} />
-                            </button>
+                            {p.activo === false ? (
+                              <button
+                                onClick={() => reactivar(p)}
+                                className="px-2.5 py-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 rounded-lg transition-colors"
+                                title="Volver a mostrarlo en el catálogo y los selectores"
+                              >
+                                Reactivar
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => eliminar(p)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Desactivar"
+                              >
+                                <FiTrash2 size={16} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       )}
@@ -962,9 +1025,9 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                         {m !== null && (
                           <span
                             className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold tabular-nums ${
-                              m >= 25
+                              m >= margenBueno
                                 ? "bg-green-100 text-green-700"
-                                : m >= 15
+                                : m >= margenRegular
                                 ? "bg-amber-100 text-amber-700"
                                 : "bg-red-100 text-red-700"
                             }`}
@@ -1068,7 +1131,19 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                       {getEmoji(cat)} {cat}
                     </option>
                   ))}
+                  <option value="__custom__">➕ Nueva categoría…</option>
                 </select>
+                {modalEdit.categoria === "__custom__" && (
+                  <input
+                    type="text"
+                    value={modalEdit.customCategoria}
+                    onChange={(e) =>
+                      setModalEdit({ ...modalEdit, customCategoria: e.target.value })
+                    }
+                    className="w-full mt-2 p-2.5 border border-gray-300 rounded-lg text-gray-900"
+                    placeholder="Nombre de la nueva categoría"
+                  />
+                )}
               </Field>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Compra (S/)">

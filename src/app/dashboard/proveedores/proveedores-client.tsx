@@ -12,6 +12,8 @@ interface Proveedor {
   direccion: string | null;
   telefono: string | null;
   tipo: "principal" | "secundario";
+  plazo_pago_dias: number;
+  activo: boolean;
 }
 
 interface ProveedoresClientProps {
@@ -34,7 +36,9 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
     razon_social: "",
     direccion: "",
     telefono: "",
-    tipo: "principal" as "principal" | "secundario"
+    tipo: "principal" as "principal" | "secundario",
+    plazo_pago_dias: "30",
+    activo: true
   });
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -60,7 +64,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
 
   const handleOpenCreate = () => {
     setEditingProveedor(null);
-    setForm({ ruc: "", razon_social: "", direccion: "", telefono: "", tipo: "principal" });
+    setForm({ ruc: "", razon_social: "", direccion: "", telefono: "", tipo: "principal", plazo_pago_dias: "30", activo: true });
     setFormError(null);
     setModalOpen(true);
   };
@@ -72,7 +76,9 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
       razon_social: p.razon_social,
       direccion: p.direccion || "",
       telefono: p.telefono || "",
-      tipo: p.tipo || "principal"
+      tipo: p.tipo || "principal",
+      plazo_pago_dias: String(p.plazo_pago_dias ?? 30),
+      activo: p.activo !== false
     });
     setFormError(null);
     setModalOpen(true);
@@ -113,7 +119,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form)
+        body: JSON.stringify({ ...form, plazo_pago_dias: Number(form.plazo_pago_dias) || 30 })
       });
       const result = await res.json();
 
@@ -208,8 +214,13 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filtered.map((p) => (
-                  <tr key={p.id} className="hover:bg-gray-50 transition-colors group">
-                    <td className="p-4 text-gray-900 font-semibold">{p.razon_social}</td>
+                  <tr key={p.id} className={`hover:bg-gray-50 transition-colors group ${p.activo === false ? "opacity-55" : ""}`}>
+                    <td className="p-4 text-gray-900 font-semibold">
+                      {p.razon_social}
+                      {p.activo === false && (
+                        <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">Inactivo</span>
+                      )}
+                    </td>
                     <td className="p-4">
                       <span
                         className={`text-xs font-bold px-2.5 py-1 rounded-full ${
@@ -331,6 +342,36 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
                   ))}
                 </div>
               </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Plazo de pago (días)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={365}
+                  inputMode="numeric"
+                  value={form.plazo_pago_dias}
+                  onChange={(e) => setForm({ ...form, plazo_pago_dias: e.target.value })}
+                  className="w-full border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 rounded-xl p-3 outline-none transition-all text-gray-900 bg-gray-50"
+                  placeholder="30"
+                />
+                <p className="text-xs text-gray-400 mt-1">Las deudas de sus compras vencen a este plazo (antes era 30 fijo para todos).</p>
+              </div>
+
+              {editingProveedor && (
+                <label className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 cursor-pointer">
+                  <span>
+                    <span className="block text-sm font-semibold text-gray-700">Proveedor activo</span>
+                    <span className="block text-xs text-gray-400">Desactívalo para ocultarlo de los selects (su historial se conserva).</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={form.activo}
+                    onChange={(e) => setForm({ ...form, activo: e.target.checked })}
+                    className="h-5 w-5 accent-indigo-600 cursor-pointer"
+                  />
+                </label>
+              )}
 
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">

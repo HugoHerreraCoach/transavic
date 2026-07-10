@@ -5,11 +5,13 @@ import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText } from "react-i
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
+import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
 
 interface Proveedor {
   id: string;
   ruc: string;
   razon_social: string;
+  activo?: boolean;
 }
 
 interface Producto {
@@ -18,13 +20,22 @@ interface Producto {
   categoria: string;
 }
 
+type TipoFila = "ingreso" | "devolucion";
+
 interface CompraItemInput {
   producto_id: string;
   jabas: number;
   peso_bruto: number;
   peso_tara: number;
   costo_unitario: number;
+  /** 'devolucion' = mercadería devuelta al proveedor: RESTA del total y del stock. */
+  tipo: TipoFila;
 }
+
+/** Productos de categoría "servicio" (Pelada de pollo, ENVIO…): cargo del proveedor
+ *  sin mercadería — se digita cantidad × precio y NO tocan inventario. */
+const esCategoriaServicio = (categoria: string | null | undefined) =>
+  /servicio/i.test(categoria ?? "");
 
 interface CompraRecord {
   id: string;
@@ -47,6 +58,7 @@ interface CompraRecord {
     peso_neto: number;
     costo_unitario: number;
     subtotal: number;
+    tipo?: TipoFila;
   }[];
 }
 
@@ -58,6 +70,7 @@ const filaVacia = (): CompraItemInput => ({
   peso_bruto: 0,
   peso_tara: 0,
   costo_unitario: 0,
+  tipo: "ingreso",
 });
 
 export default function ComprasClient() {
@@ -71,10 +84,10 @@ export default function ComprasClient() {
   const [proveedorId, setProveedorId] = useState("");
   const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
   const [tipoDoc, setTipoDoc] = useState("Factura");
+  // Tipos de documento configurables desde /dashboard/configuracion.
+  const [tiposDoc, setTiposDoc] = useState<string[]>(PARAMETROS_NEGOCIO_DEFAULT.tipos_doc_compra);
   const [nroDoc, setNroDoc] = useState("");
-  const [items, setItems] = useState<CompraItemInput[]>([
-    { producto_id: "", jabas: 0, peso_bruto: 0, peso_tara: 0, costo_unitario: 0 }
-  ]);
+  const [items, setItems] = useState<CompraItemInput[]>([filaVacia()]);
 
   const [submitting, setSubmitting] = useState(false);
   const { mostrarToast, toasts } = useToast();
@@ -86,6 +99,10 @@ export default function ComprasClient() {
 
   useEffect(() => {
     fetchInitialData();
+    fetchParametrosNegocio().then((p) => {
+      setTiposDoc(p.tipos_doc_compra);
+      setTipoDoc((prev) => (p.tipos_doc_compra.includes(prev) ? prev : p.tipos_doc_compra[0]));
+    });
   }, []);
 
   // Al cambiar de proveedor, traer sus últimos costos por producto
@@ -159,28 +176,41 @@ export default function ComprasClient() {
     setItems(items.filter((_, i) => i !== index));
   };
 
+  // ¿El producto de la fila es un servicio? (Pelada de pollo, ENVIO…)
+  const esFilaServicio = (productoId: string) =>
+    esCategoriaServicio(productos.find((p) => p.id === productoId)?.categoria);
+
   const handleItemChange = (index: number, field: keyof CompraItemInput, value: string | number) => {
     const newItems = [...items];
     newItems[index] = {
       ...newItems[index],
       [field]: value
     };
-    // Al elegir producto con el costo vacío, precargar el último costo del proveedor
     if (field === "producto_id" && typeof value === "string") {
+      // Al elegir producto con el costo vacío, precargar el último costo del proveedor
       const ultimo = ultimosCostos[value];
       if (ultimo != null && !newItems[index].costo_unitario) {
         newItems[index] = { ...newItems[index], costo_unitario: ultimo };
+      }
+      // Un servicio no lleva jabas ni tara: se digita cantidad × precio.
+      if (esFilaServicio(value)) {
+        newItems[index] = { ...newItems[index], jabas: 0, peso_tara: 0 };
       }
     }
     setItems(newItems);
   };
 
-  const calculateTotal = () => {
-    return items.reduce((acc, item) => {
+  // Totales con signo: las filas de devolución RESTAN del total de la guía.
+  const totales = items.reduce(
+    (acc, item) => {
       const neto = Math.max(0, item.peso_bruto - item.peso_tara);
-      return acc + (neto * item.costo_unitario);
-    }, 0);
-  };
+      const sub = neto * item.costo_unitario;
+      if (item.tipo === "devolucion") acc.devoluciones += sub;
+      else acc.ingresos += sub;
+      return acc;
+    },
+    { ingresos: 0, devoluciones: 0 }
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,11 +234,19 @@ export default function ComprasClient() {
         setSubmitting(false);
         return;
       }
-      if (item.peso_bruto <= item.peso_tara) {
+      // Los servicios no llevan tara (el campo va deshabilitado en 0).
+      if (!esFilaServicio(item.producto_id) && item.peso_bruto <= item.peso_tara) {
         mostrarToast("El peso bruto debe ser mayor al peso tara.", "error");
         setSubmitting(false);
         return;
       }
+    }
+
+    // La guía no puede quedar en negativo (la deuda nunca es "a favor").
+    if (totalCompra < 0) {
+      mostrarToast("Las devoluciones no pueden superar el ingreso de la guía.", "error");
+      setSubmitting(false);
+      return;
     }
 
     try {
@@ -250,7 +288,7 @@ export default function ComprasClient() {
     }
   };
 
-  const totalCompra = calculateTotal();
+  const totalCompra = totales.ingresos - totales.devoluciones;
 
   return (
     <div className="space-y-6">
@@ -299,11 +337,13 @@ export default function ComprasClient() {
                   required
                   value={proveedorId}
                   onChange={setProveedorId}
-                  options={proveedores.map(p => ({
-                    id: p.id,
-                    nombre: p.razon_social,
-                    subtext: p.ruc
-                  }))}
+                  options={proveedores
+                    .filter((p) => p.activo !== false)
+                    .map(p => ({
+                      id: p.id,
+                      nombre: p.razon_social,
+                      subtext: p.ruc
+                    }))}
                   placeholder="Seleccione proveedor..."
                   searchPlaceholder="Buscar proveedor por RUC o nombre..."
                 />
@@ -332,10 +372,9 @@ export default function ComprasClient() {
                   onChange={(e) => setTipoDoc(e.target.value)}
                   className="block w-full rounded-xl border-gray-300 py-3 px-4 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-sm"
                 >
-                  <option value="Factura">Factura</option>
-                  <option value="Boleta">Boleta</option>
-                  <option value="Guia">Guía de Remisión</option>
-                  <option value="Sin Documento">Sin Documento</option>
+                  {tiposDoc.map((t) => (
+                    <option key={t} value={t}>{t === "Guia" ? "Guía de Remisión" : t}</option>
+                  ))}
                 </select>
               </div>
 
@@ -373,6 +412,7 @@ export default function ComprasClient() {
                 <thead>
                   <tr className="border-b border-gray-100 text-gray-500 font-semibold">
                     <th className="pb-3 pr-4 w-1/3">Producto</th>
+                    <th className="pb-3 pr-4">Tipo</th>
                     <th className="pb-3 pr-4 text-right">Jabas</th>
                     <th className="pb-3 pr-4 text-right">P. Bruto (Kg)</th>
                     <th className="pb-3 pr-4 text-right">P. Tara (Kg)</th>
@@ -384,13 +424,15 @@ export default function ComprasClient() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {items.map((item, idx) => {
+                    const servicio = esFilaServicio(item.producto_id);
+                    const esDevolucion = item.tipo === "devolucion";
                     const neto = Math.max(0, item.peso_bruto - item.peso_tara);
                     const subtotal = neto * item.costo_unitario;
-                    const taraInvalida = item.peso_bruto > 0 && item.peso_tara > 0 && item.peso_tara >= item.peso_bruto;
+                    const taraInvalida = !servicio && item.peso_bruto > 0 && item.peso_tara > 0 && item.peso_tara >= item.peso_bruto;
                     const ultimoCosto = item.producto_id ? ultimosCostos[item.producto_id] : undefined;
 
                     return (
-                      <tr key={idx} className="align-middle">
+                      <tr key={idx} className={`align-middle ${esDevolucion ? "bg-red-50/60" : ""}`}>
                         <td
                           className="py-3 pr-4"
                           ref={(el) => {
@@ -409,14 +451,35 @@ export default function ComprasClient() {
                             placeholder="Seleccione producto..."
                             searchPlaceholder="Buscar producto..."
                           />
+                          {servicio && (
+                            <p className="text-[10px] text-indigo-500 font-semibold mt-1">
+                              Servicio: cantidad × precio, no entra al inventario
+                            </p>
+                          )}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <select
+                            value={item.tipo}
+                            onChange={(e) => handleItemChange(idx, "tipo", e.target.value as TipoFila)}
+                            title="Devolución: resta del total de la guía y del inventario"
+                            className={`block w-28 rounded-xl py-2.5 px-2 shadow-sm text-xs font-bold cursor-pointer ${
+                              esDevolucion
+                                ? "border-red-300 bg-red-50 text-red-700 focus:border-red-500 focus:ring-red-500"
+                                : "border-gray-300 bg-gray-50 text-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
+                            }`}
+                          >
+                            <option value="ingreso">Ingreso</option>
+                            <option value="devolucion">Devolución</option>
+                          </select>
                         </td>
                         <td className="py-3 pr-4">
                           <input
                             type="number"
                             min="0"
-                            value={item.jabas || ""}
+                            disabled={servicio}
+                            value={servicio ? "" : item.jabas || ""}
                             onChange={(e) => handleItemChange(idx, "jabas", Number(e.target.value))}
-                            className="block w-20 ml-auto text-right rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs"
+                            className="block w-20 ml-auto text-right rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                           />
                         </td>
                         <td className="py-3 pr-4">
@@ -425,7 +488,8 @@ export default function ComprasClient() {
                             step="0.01"
                             min="0"
                             required
-                            placeholder="0.00"
+                            placeholder={servicio ? "Cant." : "0.00"}
+                            title={servicio ? "Cantidad del servicio (ej. pollos pelados)" : "Peso bruto en kg"}
                             value={item.peso_bruto || ""}
                             onChange={(e) => handleItemChange(idx, "peso_bruto", Number(e.target.value))}
                             className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs"
@@ -436,10 +500,11 @@ export default function ComprasClient() {
                             type="number"
                             step="0.01"
                             min="0"
+                            disabled={servicio}
                             placeholder="0.00"
-                            value={item.peso_tara || ""}
+                            value={servicio ? "" : item.peso_tara || ""}
                             onChange={(e) => handleItemChange(idx, "peso_tara", Number(e.target.value))}
-                            className={`block w-24 ml-auto text-right rounded-xl py-2.5 px-3 text-gray-900 shadow-sm bg-gray-50 text-xs ${
+                            className={`block w-24 ml-auto text-right rounded-xl py-2.5 px-3 text-gray-900 shadow-sm bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed ${
                               taraInvalida
                                 ? "border-red-500 ring-1 ring-red-400 focus:border-red-500 focus:ring-red-500"
                                 : "border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
@@ -448,7 +513,7 @@ export default function ComprasClient() {
                         </td>
                         <td className="py-3 pr-4 text-right">
                           <span className={`font-mono font-medium ${taraInvalida ? "text-red-600" : "text-gray-600"}`}>
-                            {neto.toFixed(2)} kg
+                            {neto.toFixed(2)} {servicio ? "uni" : "kg"}
                           </span>
                           {taraInvalida && (
                             <p className="text-[10px] text-red-600 font-semibold mt-0.5">tara ≥ bruto</p>
@@ -477,8 +542,8 @@ export default function ComprasClient() {
                             </button>
                           )}
                         </td>
-                        <td className="py-3 pr-4 text-right font-mono font-bold text-gray-800">
-                          S/ {subtotal.toFixed(2)}
+                        <td className={`py-3 pr-4 text-right font-mono font-bold ${esDevolucion ? "text-red-600" : "text-gray-800"}`}>
+                          {esDevolucion ? "− " : ""}S/ {subtotal.toFixed(2)}
                         </td>
                         <td className="py-3 text-right">
                           <button
@@ -500,6 +565,18 @@ export default function ComprasClient() {
             {/* Total summary */}
             <div className="flex justify-end pt-4 border-t border-gray-100">
               <div className="w-64 space-y-2 text-right">
+                {totales.devoluciones > 0 && (
+                  <>
+                    <div className="flex justify-between text-sm text-gray-500">
+                      <span>Ingresos:</span>
+                      <span className="font-mono">S/ {totales.ingresos.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm font-semibold text-red-600">
+                      <span>Devoluciones:</span>
+                      <span className="font-mono">− S/ {totales.devoluciones.toFixed(2)}</span>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>Subtotal Neto:</span>
                   <span className="font-mono">S/ {(totalCompra / 1.18).toFixed(2)}</span>
@@ -572,6 +649,11 @@ export default function ComprasClient() {
                       </td>
                       <td className="p-4 text-right font-medium text-gray-700">
                         {c.items?.length || 0} prod.
+                        {c.items?.some((it) => it.tipo === "devolucion") && (
+                          <span className="block text-[10px] font-bold text-red-600">
+                            incl. devolución
+                          </span>
+                        )}
                       </td>
                       <td className="p-4 text-right font-mono font-bold text-indigo-600">
                         S/ {Number(c.total).toFixed(2)}

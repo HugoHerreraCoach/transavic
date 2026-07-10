@@ -15,6 +15,9 @@ const ProveedorEditSchema = z.object({
   telefono: z.string().min(6, { message: "El teléfono es obligatorio" }),
   direccion: z.string().optional().nullable(),
   tipo: z.enum(["principal", "secundario"]).default("principal"),
+  plazo_pago_dias: z.number().int().min(0).max(365).default(30),
+  // Desactivar = ocultarlo de los selects sin perder su historial (jamás DELETE con movimientos).
+  activo: z.boolean().default(true),
 });
 
 export async function PUT(req: Request, props: { params: Promise<{ id: string }> }) {
@@ -37,7 +40,7 @@ export async function PUT(req: Request, props: { params: Promise<{ id: string }>
       );
     }
 
-    const { razon_social, direccion, telefono, tipo } = result.data;
+    const { razon_social, direccion, telefono, tipo, plazo_pago_dias, activo } = result.data;
     const ruc = result.data.ruc && result.data.ruc.trim() !== "" ? result.data.ruc : null;
     const sql = neon(process.env.DATABASE_URL!);
 
@@ -58,9 +61,11 @@ export async function PUT(req: Request, props: { params: Promise<{ id: string }>
           direccion = ${direccion || null},
           telefono = ${telefono || null},
           tipo = ${tipo},
+          plazo_pago_dias = ${plazo_pago_dias},
+          activo = ${activo},
           updated_at = NOW()
       WHERE id = ${id}
-      RETURNING id, ruc, razon_social, direccion, telefono, tipo
+      RETURNING id, ruc, razon_social, direccion, telefono, tipo, plazo_pago_dias, activo
     `;
 
     if (actualizado.length === 0) {

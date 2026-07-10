@@ -64,10 +64,30 @@ const CompraItemSchema = z.object({
   peso_bruto: z.number().positive(),
   peso_tara: z.number().nonnegative(),
   costo_unitario: z.number().nonnegative(),
+  tipo: z.enum(["ingreso", "devolucion"]).default("ingreso"), // 9 jul 2026 (Nelita)
 });
 ```
 
 La cabecera exige `proveedor_id` (uuid), `fecha`, `tipo_doc`, `nro_doc` (mín. 1 carácter) y al menos 1 ítem. El servidor **recalcula todo**: `peso_neto = bruto − tara` (2 decimales), `subtotal ítem = neto × costo`, y el IGV se extrae del total con la convención de precios CON IGV incluido (`igv = total − total/1.18`, gotcha #10).
+
+### 3.1b Tipos de fila: ingreso, devolución y servicio (9 jul 2026, pedidos de Nelita)
+
+Cada fila de la guía puede ser de **3 clases**, y las 3 conviven en la misma guía:
+
+| Clase | Cómo se detecta | Total | Inventario | `precio_compra` |
+|---|---|---|---|---|
+| **Ingreso** (default) | `tipo='ingreso'` | suma `neto × costo` | `+neto` + kardex `'compra'` | se actualiza (si costo > 0) |
+| **Devolución** | `tipo='devolucion'` (toggle por fila en la UI, fila tinteada roja) | **resta** `neto × costo` (subtotal se guarda NEGATIVO) | `−neto` + kardex **`'devolucion_compra'`** | NO se toca |
+| **Servicio** (Pelada de pollo, ENVIO…) | la **categoría** del producto matchea `/servicio/i` — server-side autoritativo (consulta las categorías de los `producto_id`) | suma `cantidad × precio` (el campo bruto actúa como CANTIDAD; jabas/tara deshabilitados = 0) | **NO toca stock ni kardex** | NO se toca |
+
+Los **pesos se guardan siempre POSITIVOS** en `compra_items`; el signo vive en la columna `tipo`
+(migración `migrate-compras-mejoras-2026-07-09.sql`, CHECK `ingreso|devolucion`). Decisiones de negocio
+(Hugo, 9 jul): la devolución **resta deuda + inventario**; la pelada es un **servicio que cobra el
+proveedor** (suma a la deuda, jamás al stock).
+
+**Guardas del total**: si `total < 0` (devoluciones > ingresos) → **400** con mensaje claro (una
+devolución "pura" contra deuda vieja se registra junto con la próxima guía de ingreso — fuera de v1);
+si `total == 0` → la compra se registra pero **NO se crea** cuenta por pagar.
 
 ### 3.2 Transacción atómica batch (5 efectos en un solo commit)
 
@@ -94,12 +114,26 @@ await sql.transaction([
 Los 5 efectos, en orden:
 
 1. **Cabecera** en `compras` (estado `'Completado'`).
-2. **Ítems** en `compra_items` con el pesaje completo.
-3. **Inventario** (+neto por producto, upsert) **y kardex** (`tipo='compra'`, `referencia_id=compraId`).
-4. **Costo del catálogo actualizado:** `productos.precio_compra` toma el costo real de la última compra (solo si es > 0) — la rentabilidad deja de depender de un `precio_compra` desactualizado.
-5. **Cuenta por pagar** por el total, con vencimiento a **30 días** de la fecha de compra.
+2. **Ítems** en `compra_items` con el pesaje completo **+ su `tipo`** (ingreso/devolución).
+3. **Inventario y kardex** — condicionales por clase de fila (§3.1b): ingreso `+neto` (`'compra'`),
+   devolución `−neto` (`'devolucion_compra'`), servicio NADA.
+4. **Costo del catálogo actualizado:** `productos.precio_compra` toma el costo real de la última compra
+   (solo filas de INGRESO de mercadería con costo > 0) — la rentabilidad deja de depender de un
+   `precio_compra` desactualizado.
+5. **Cuenta por pagar** por el total NETO de devoluciones (solo si quedó > 0), con vencimiento a
+   **30 días** de la fecha de compra.
 
 Si cualquier query falla, no queda una compra a medias (ítems sin stock, compra sin pasivo, etc.).
+
+### 3.2b Deuda manual / "Saldo anterior" del proveedor (9 jul 2026)
+
+Lo que ya se le debía al proveedor **antes de usar el sistema** se registra desde **Cuentas por Pagar**
+(botón "＋ Deuda anterior", admin-only): `POST /api/cuentas-por-pagar/deuda` crea una fila de
+`cuentas_por_pagar` con **`compra_id = NULL`** y **`concepto`** (columna nueva, default "Saldo anterior").
+Se paga con el flujo normal de pagos (parciales incluidos) sin tocar nada más. La lista la muestra con un
+badge índigo con su concepto, y `DELETE /api/cuentas-por-pagar/[id]` borra SOLO deudas manuales sin
+ningún pago (409 en cualquier otro caso) — para errores de tipeo. Mismo espíritu que
+`clientes_avicola.saldo_anterior`, pero encajado en el modelo por-documento de CxP.
 
 ### 3.3 Precarga de últimos costos — `GET /api/compras?ultimos_costos=<proveedorId>`
 

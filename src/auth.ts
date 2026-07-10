@@ -36,6 +36,10 @@ export const { auth, signIn, signOut: authSignOut } = NextAuth({
           const user = await getUser(name);
           if (!user) return null;
 
+          // Usuario DESACTIVADO (ex-empleado): login bloqueado. Nunca se borra la
+          // fila (el historial la referencia); se apaga con users.activo = FALSE.
+          if (user.activo === false) return null;
+
           const passwordsMatch = await bcrypt.compare(password, user.password);
 
           if (passwordsMatch) return user;

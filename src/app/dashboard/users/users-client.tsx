@@ -13,6 +13,8 @@ import {
     FiPackage,
     FiAlertTriangle,
     FiRefreshCw,
+    FiSlash,
+    FiCheckCircle,
 } from 'react-icons/fi';
 import UserModal from './user-modal';
 
@@ -121,6 +123,34 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
         }
     };
 
+    // Desactivar/reactivar: la vía correcta para ex-empleados (el DELETE se bloquea
+    // con historial). El login rechaza a los desactivados (auth.ts).
+    const toggleActivo = async (user: User) => {
+        const activar = user.activo === false;
+        if (
+            !activar &&
+            !window.confirm(`¿Desactivar a ${user.name.trim()}? Ya no podrá iniciar sesión (sus datos e historial se conservan).`)
+        ) {
+            return;
+        }
+        setLoading(true);
+        try {
+            const response = await fetch(`/api/users/${user.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activo: activar }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || 'No se pudo cambiar el estado.');
+            setUsers(users.map((u) => (u.id === user.id ? { ...u, activo: activar } : u)));
+            aviso('ok', activar ? 'Usuario reactivado: ya puede iniciar sesión.' : 'Usuario desactivado: ya no puede iniciar sesión.');
+        } catch (error) {
+            aviso('error', error instanceof Error ? error.message : 'Ocurrió un problema.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const confirmDelete = async () => {
         if (!userToDelete) return;
         setLoading(true);
@@ -192,8 +222,9 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                             {users.map((user) => {
                                 const ui = rolUI(user.role);
                                 const nombre = user.name.trim();
+                                const desactivado = user.activo === false;
                                 return (
-                                    <tr key={user.id} className="hover:bg-gray-50/70 transition-colors">
+                                    <tr key={user.id} className={`hover:bg-gray-50/70 transition-colors ${desactivado ? 'opacity-60' : ''}`}>
                                         <td className="px-5 py-3">
                                             <div className="flex items-center gap-3">
                                                 <span
@@ -220,6 +251,11 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                                                 {ui.icon}
                                                 {ui.label}
                                             </span>
+                                            {desactivado && (
+                                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border bg-red-50 text-red-700 border-red-200 ml-2">
+                                                    <FiSlash className="h-3 w-3" /> Desactivado
+                                                </span>
+                                            )}
                                         </td>
                                         <td className="px-5 py-3">
                                             <div className="flex items-center justify-end gap-2">
@@ -230,9 +266,27 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                                                     <FiEdit2 className="h-3.5 w-3.5" />
                                                     Editar
                                                 </button>
+                                                {desactivado ? (
+                                                    <button
+                                                        onClick={() => toggleActivo(user)}
+                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors active:scale-95"
+                                                    >
+                                                        <FiCheckCircle className="h-3.5 w-3.5" />
+                                                        Reactivar
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => toggleActivo(user)}
+                                                        title="Quitarle el acceso sin borrar su historial"
+                                                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-white border border-amber-200 rounded-lg hover:bg-amber-50 transition-colors active:scale-95"
+                                                    >
+                                                        <FiSlash className="h-3.5 w-3.5" />
+                                                        Desactivar
+                                                    </button>
+                                                )}
                                                 <button
                                                     onClick={() => setUserToDelete(user)}
-                                                    title="Eliminar usuario"
+                                                    title="Eliminar usuario (solo si no tiene historial)"
                                                     className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors active:scale-95"
                                                 >
                                                     <FiTrash2 className="h-4 w-4" />

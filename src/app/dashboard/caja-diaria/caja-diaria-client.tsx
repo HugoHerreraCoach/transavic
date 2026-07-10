@@ -9,6 +9,7 @@ import {
 import { usePollingVisible } from "@/lib/use-polling-visible";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
+import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
 
 type Transaction = {
   id: string;
@@ -91,6 +92,10 @@ export default function CajaDiariaClient() {
   const [montoCierreReal, setMontoCierreReal] = useState<string>("");
   const [gastoMonto, setGastoMonto] = useState<string>("");
   const [gastoCategoria, setGastoCategoria] = useState<string>("Almuerzo");
+  // Categorías de gasto configurables desde /dashboard/configuracion (fallback: las históricas).
+  const [categoriasGasto, setCategoriasGasto] = useState<string[]>(
+    PARAMETROS_NEGOCIO_DEFAULT.categorias_gasto
+  );
   const [gastoDescripcion, setGastoDescripcion] = useState<string>("");
   const [gastoCuentaId, setGastoCuentaId] = useState<string>("");
 
@@ -98,6 +103,16 @@ export default function CajaDiariaClient() {
   const [aperturaLoading, setAperturaLoading] = useState(false);
   const [gastoLoading, setGastoLoading] = useState(false);
   const [cierreLoading, setCierreLoading] = useState(false);
+
+  useEffect(() => {
+    fetchParametrosNegocio().then((p) => {
+      setCategoriasGasto(p.categorias_gasto);
+      // Si la primera categoría configurada no es "Almuerzo", usarla como default.
+      setGastoCategoria((prev) =>
+        p.categorias_gasto.includes(prev) ? prev : p.categorias_gasto[0]
+      );
+    });
+  }, []);
 
   // Mini-modal de confirmación del cierre de caja (acción irreversible)
   const [confirmarCierre, setConfirmarCierre] = useState(false);
@@ -467,13 +482,9 @@ export default function CajaDiariaClient() {
                       onChange={(e) => setGastoCategoria(e.target.value)}
                       className="block w-full rounded-xl border-gray-300 px-3 py-2.5 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                     >
-                      <option value="Almuerzo">Almuerzo</option>
-                      <option value="Limpieza">Útiles de Limpieza</option>
-                      <option value="Combustible">Combustible</option>
-                      <option value="Útiles">Útiles de Oficina</option>
-                      <option value="Mantenimiento">Mantenimiento local</option>
-                      <option value="Sencillo">Cambio/Sencillo</option>
-                      <option value="Otros">Otros gastos</option>
+                      {categoriasGasto.map((cat) => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
                     </select>
                   </div>
                 </div>

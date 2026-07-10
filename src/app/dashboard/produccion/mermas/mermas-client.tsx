@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
+import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
 
 type MermaRecord = {
   id: string;
@@ -93,6 +94,14 @@ export default function MermasClient() {
   const limpio = Number(pesoLimpio) || 0;
   const menudencia = Number(pesoMenudencia) || 0;
 
+  // Umbral de "merma alta" configurable (/dashboard/configuracion; default 10%).
+  const [mermaAltaPct, setMermaAltaPct] = useState(PARAMETROS_NEGOCIO_DEFAULT.merma_alta_pct);
+  // Fecha de la merma: hoy por defecto, retroactiva permitida (el backend ya la acepta).
+  const [fechaMerma, setFechaMerma] = useState(fechaHoyLocal());
+  useEffect(() => {
+    fetchParametrosNegocio().then((p) => setMermaAltaPct(p.merma_alta_pct));
+  }, []);
+
   const mermaKg = bruto - (limpio + menudencia);
   const mermaPorcentaje = bruto > 0 ? ((mermaKg / bruto) * 100).toFixed(2) : "0.00";
   const sumaExcede = limpio + menudencia > bruto && limpio + menudencia > 0;
@@ -124,6 +133,7 @@ export default function MermasClient() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          fecha: fechaMerma,
           peso_bruto: bruto,
           peso_limpio: limpio,
           peso_menudencia: menudencia,
@@ -159,6 +169,19 @@ export default function MermasClient() {
       <div className="bg-white rounded-3xl p-6 md:p-8 shadow-sm border border-gray-100 max-w-2xl">
         <h2 className="text-xl font-bold text-gray-800 mb-6">Nuevo Cálculo</h2>
         <form onSubmit={handleSave} className="space-y-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Fecha</label>
+              <input
+                type="date"
+                value={fechaMerma}
+                max={fechaHoyLocal()}
+                onChange={(e) => setFechaMerma(e.target.value)}
+                className="w-full text-sm border border-gray-300 rounded-2xl px-4 py-3 bg-white focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+              <p className="text-xs text-gray-400 mt-1.5">Puedes registrar la merma de un día anterior.</p>
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-2">Carga del día (opcional)</label>
             <select
@@ -232,7 +255,7 @@ export default function MermasClient() {
             <div>
               <p className="text-gray-500 text-sm font-medium">Merma Total Calculada</p>
               <div className="flex items-end space-x-3 mt-1">
-                <span className={`text-3xl font-bold ${sumaExcede || mermaKg > (bruto * 0.1) ? 'text-red-600' : 'text-indigo-600'}`}>
+                <span className={`text-3xl font-bold ${sumaExcede || mermaKg > (bruto * (mermaAltaPct / 100)) ? 'text-red-600' : 'text-indigo-600'}`}>
                   {mermaKg.toFixed(2)} kg
                 </span>
                 <span className="text-lg text-gray-500 font-medium mb-1">

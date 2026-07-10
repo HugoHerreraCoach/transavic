@@ -21,6 +21,9 @@ const UpdateUserSchema = z.object({
   activo_rotacion: z.boolean().optional(),
   orden_rotacion: z.number().int().optional(),
   leads_recibidos_hoy: z.number().int().optional(),
+  // Desactivar = apagar el acceso de un ex-empleado (el login lo rechaza en auth.ts).
+  // Se usa en vez de DELETE cuando el usuario tiene historial. JAMÁS borrar la fila.
+  activo: z.boolean().optional(),
 });
 
 /**
@@ -50,20 +53,26 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
-    
+    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
+
+    // Nadie puede desactivarse a sí mismo (evita dejar el sistema sin admins por accidente).
+    if (activo === false && session.user.id === (new URL(request.url)).pathname.split("/").pop()) {
+      return NextResponse.json({ error: "No puedes desactivar tu propio usuario." }, { status: 400 });
+    }
+
     if (
-      !name && 
-      !password && 
-      !role && 
-      chofer_dni === undefined && 
-      chofer_licencia === undefined && 
+      !name &&
+      !password &&
+      !role &&
+      chofer_dni === undefined &&
+      chofer_licencia === undefined &&
       vehiculo_placa === undefined &&
       chofer_nombres === undefined &&
       chofer_apellidos === undefined &&
       activo_rotacion === undefined &&
       orden_rotacion === undefined &&
-      leads_recibidos_hoy === undefined
+      leads_recibidos_hoy === undefined &&
+      activo === undefined
     ) {
       return NextResponse.json({ error: "No se proporcionaron campos para actualizar." }, { status: 400 });
     }
@@ -89,12 +98,13 @@ export async function PATCH(request: NextRequest) {
     if (activo_rotacion !== undefined) updates.activo_rotacion = activo_rotacion;
     if (orden_rotacion !== undefined) updates.orden_rotacion = orden_rotacion;
     if (leads_recibidos_hoy !== undefined) updates.leads_recibidos_hoy = leads_recibidos_hoy;
+    if (activo !== undefined) updates.activo = activo;
 
     const setClauses = Object.keys(updates).map((key, i) => `"${key}" = $${i + 1}`).join(', ');
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
       [...values, id]
     );
 
@@ -149,7 +159,7 @@ export async function DELETE(request: NextRequest) {
 
     if (partes.length > 0) {
       return NextResponse.json(
-        { error: `No se puede eliminar: este usuario tiene ${partes.join(", ")} en su historial. Por integridad de los datos, no se borra un usuario con movimientos registrados.` },
+        { error: `No se puede eliminar: este usuario tiene ${partes.join(", ")} en su historial. Usa "Desactivar" para quitarle el acceso sin perder los datos.` },
         { status: 409 }
       );
     }

@@ -105,13 +105,13 @@ Quien cierra cuenta el efectivo físico y digita `monto_cierre_real`. El servido
 
 ## 4. Cuentas bancarias y transacciones (tesorería simple)
 
-- **`GET /api/cuentas`** (sesión): lista todas las cuentas con saldo. **`POST`** (solo `admin`): crea cuentas dinámicamente (regla 9 del doc 18 — Efectivo, BCP, Yape, etc.), siempre con saldo 0.
-- **`POST /api/transacciones`**: movimiento manual de dinero (ingreso/egreso) sobre una cuenta. Es **atómico por CTE**: el `UPDATE` del saldo y el `INSERT` del ledger van en un solo statement — si la cuenta no existe, el CTE no devuelve filas y no se inserta nada (404).
+- **`GET /api/cuentas`** (sesión): lista todas las cuentas con saldo. **`POST`** (solo `admin`): crea cuentas dinámicamente (regla 9 del doc 18 — Efectivo, BCP, Yape, etc.), siempre con saldo 0. **`PATCH`** (solo `admin`, 10 jul 2026): renombrar y activar/desactivar (`activa`) — con **guards de nombres reservados**: `"Caja Efectivo Planta"` y `"Caja Efectivo Campo"` son get-or-create POR NOMBRE de la caja diaria, así que NI se renombran, NI se renombra otra cuenta HACIA esos nombres, NI se desactivan (409).
+- **`POST /api/transacciones`** (solo `admin` desde el 10 jul 2026 — alimenta el modal **"Ajustar saldo"** de `/dashboard/cuentas`): movimiento manual de dinero (ingreso/egreso) sobre una cuenta. Es **atómico por CTE**: el `UPDATE` del saldo y el `INSERT` del ledger van en un solo statement — si la cuenta no existe, el CTE no devuelve filas y no se inserta nada (404). ⚠️ El signo se decide **en JS** (`delta = tipo === 'ingreso' ? monto : -monto`), NUNCA con `CASE WHEN` sobre parámetros: el driver HTTP de Neon manda los parámetros sin tipo y el CASE rompía la inferencia → el endpoint devolvía 500 SIEMPRE (gotcha #45, cazado por E2E el 10 jul).
 
 ```sql
 WITH update_cuenta AS (
   UPDATE cuentas_bancarias
-  SET saldo = saldo + CASE WHEN ${tipo} = 'ingreso' THEN ${monto} ELSE -${monto} END, ...
+  SET saldo = saldo + ${delta}::numeric, ...   -- delta calculado en JS
   WHERE id = ${cuenta_id}
   RETURNING id
 )
@@ -121,9 +121,11 @@ FROM update_cuenta
 RETURNING *;
 ```
 
+- `transacciones` tiene columna **`fecha DATE`** (migración `migrate-flexibilizacion-2026-07-10.sql`, default hoy Lima): el pago a proveedor con fecha retroactiva (`fechaPago` del modal de CxP) se persiste ahí (§6).
+
 **Pendientes menores detectados (válidos, anotados a propósito):**
-1. `POST /api/transacciones` hoy solo exige **sesión** (401), sin check de rol — el resto de endpoints de dinero scopea `admin`/`produccion`. Alinear cuando se toque el módulo.
-2. El zod de `POST /api/cuentas` solo acepta `tipo: "banco" | "efectivo"`, pero el seed de la migración crea cuentas tipo `'billetera'` (Yape). Crear una billetera nueva desde la UI hoy obliga a marcarla como banco.
+1. ~~`POST /api/transacciones` sin check de rol~~ — **resuelto el 10 jul 2026** (admin-only).
+2. ~~El zod de `POST /api/cuentas` no aceptaba `'billetera'`~~ — **resuelto** (enum banco/efectivo/billetera).
 
 ---
 
@@ -137,7 +139,7 @@ Roles: `GET` y `POST` solo `admin`/`produccion` (los gastos son información sen
 
 ## 6. Cuentas por pagar — pago a proveedores (`POST /api/cuentas-por-pagar`)
 
-La deuda nace automáticamente con cada compra (doc [09 §3](./09-compras-inventario-mermas.md): total de la carga, vencimiento a 30 días). El pago es **admin-only** y valida ANTES de mover dinero:
+La deuda nace automáticamente con cada compra (doc [09 §3](./09-compras-inventario-mermas.md): total de la carga; el vencimiento usa el **`plazo_pago_dias` del proveedor** — editable en su ficha, default 30, desde el 10 jul 2026). El pago es **admin-only**, acepta **`fechaPago` retroactiva** (se persiste en `transacciones.fecha`) y valida ANTES de mover dinero:
 
 - Que la deuda exista y tenga saldo restante (`monto_deuda − monto_pagado > 0`); tolerancia de S/ 0.01 para flotantes.
 - Que el pago no supere el restante.

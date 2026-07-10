@@ -31,6 +31,8 @@ import {
   FiChevronRight,
   FiChevronLeft,
   FiShoppingBag,
+  FiSettings,
+  FiDollarSign,
 } from "react-icons/fi";
 import { doLogout } from "@/lib/actions";
 import NotificationBell from "./NotificationBell";
@@ -97,6 +99,7 @@ const navItems: NavItem[] = [
 
   // ── FINANZAS ── (Cobranzas de ejecutivas vive en su bloque 🛵)
   { href: "/dashboard/caja-diaria", label: "Caja Diaria", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
+  { href: "/dashboard/gastos", label: "Gastos", icon: <FiDollarSign className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/comprobantes", label: "Comprobantes", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/cuentas-por-pagar", label: "Cuentas por Pagar", icon: <FiList className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/cuentas", label: "Cuentas Bancarias", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
@@ -113,6 +116,7 @@ const navItems: NavItem[] = [
   { href: "/dashboard/comunicados", label: "Comunicados", icon: <FiMessageSquare className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
   { href: "/dashboard/incentivos", label: "Incentivos", icon: <FiAward className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
   { href: "/dashboard/users", label: "Usuarios", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, adminOnly: true },
+  { href: "/dashboard/configuracion", label: "Configuración", icon: <FiSettings className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
 ];
 
 // Grupos por OPERACIÓN de venta (decisión de Antonio, jul 2026: 3 sistemas separados).
@@ -156,6 +160,7 @@ const GROUP_BY_HREF: Record<string, string> = {
 
   // Finanzas transversales (caja con selector Planta/Campo, facturación electrónica compartida)
   "/dashboard/caja-diaria": "Finanzas",
+  "/dashboard/gastos": "Finanzas",
   "/dashboard/comprobantes": "Finanzas",
   "/dashboard/cuentas-por-pagar": "Finanzas",
   "/dashboard/cuentas": "Finanzas",
@@ -170,6 +175,7 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/comunicados": "Configuración",
   "/dashboard/incentivos": "Configuración",
   "/dashboard/users": "Configuración",
+  "/dashboard/configuracion": "Configuración",
 };
 
 interface DashboardLayoutProps {

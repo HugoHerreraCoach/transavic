@@ -16,7 +16,7 @@ const ProductoSchema = z.object({
   precio_compra: z.number().nonnegative().optional().nullable(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     // El catálogo ahora lo ven también las asesoras (11 jun 2026), pero el
     // PRECIO DE COMPRA (margen del negocio) es SOLO de admin — y el control
@@ -33,11 +33,15 @@ export async function GET() {
     }
 
     const sql = neon(connectionString);
+    // ?incluir_inactivos=1 (solo admin): el catálogo puede mostrar y REACTIVAR
+    // productos desactivados (antes desaparecían para siempre, salvo SQL).
+    const incluirInactivos =
+      esAdmin && new URL(request.url).searchParams.get("incluir_inactivos") === "1";
     const productos = await sql`
       SELECT id, nombre, categoria, unidad, activo,
         precio_venta, precio_compra, codigo
       FROM productos
-      WHERE activo = TRUE
+      WHERE (${incluirInactivos} OR activo = TRUE)
       ORDER BY
         CASE categoria
           WHEN 'Pollo' THEN 1

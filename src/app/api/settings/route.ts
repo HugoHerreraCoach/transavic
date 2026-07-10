@@ -38,7 +38,10 @@ const SettingSchema = z.object({
     "crm_whatsapp_templates",
     "crm_tags",
     "crm_welcome_bot",
-    "crm_lead_distribution"
+    "crm_lead_distribution",
+    // Parámetros de negocio editables desde /dashboard/configuracion
+    // (src/lib/parametros-negocio.ts define shape, defaults y normalización).
+    "parametros_negocio"
   ]),
   value: z.any(),
 });

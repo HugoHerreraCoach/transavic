@@ -148,11 +148,16 @@ export async function POST(req: NextRequest) {
               ${item.precioUnitario}, ${subtotal}, ${subtotal}, ${item.notas || null}
             )
           `,
+          // Upsert (no UPDATE a secas): si el producto nunca tuvo fila de lote, el
+          // UPDATE viejo no hacía NADA y la venta no descontaba stock (bug cazado en
+          // la auditoría del 10 jul). Con el upsert queda el negativo, coherente con
+          // la política de inventario flexible (doc 09 §4).
           sql`
-            UPDATE inventario_lotes
-            SET cantidad = cantidad - ${item.cantidad},
-                updated_at = (NOW() AT TIME ZONE 'America/Lima')
-            WHERE producto_id = ${item.productoId}
+            INSERT INTO inventario_lotes (producto_id, cantidad)
+            VALUES (${item.productoId}, ${-item.cantidad})
+            ON CONFLICT (producto_id) DO UPDATE SET
+              cantidad = inventario_lotes.cantidad + EXCLUDED.cantidad,
+              updated_at = (NOW() AT TIME ZONE 'America/Lima')
           `,
           sql`
             INSERT INTO inventario_movimientos (producto_id, cantidad_cambio, tipo, usuario_id, referencia_id)

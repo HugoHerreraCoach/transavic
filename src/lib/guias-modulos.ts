@@ -49,6 +49,8 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
       { titulo: "Elige el proveedor", detalle: "queda recordado para la próxima carga" },
       { titulo: "Agrega cada producto con jabas, peso bruto y tara", detalle: "el peso neto se calcula solo" },
       { titulo: "Revisa el costo", detalle: "se precarga el último pagado a ese proveedor; corrígelo si cambió" },
+      { titulo: "¿Le devuelves mercadería? Cambia la fila a 'Devolución'", detalle: "resta del total de la guía y del inventario" },
+      { titulo: "Servicios como 'Pelada de pollo': se digitan cantidad × precio", detalle: "suman a la deuda pero no entran al inventario" },
       { titulo: "Toca Registrar Carga", detalle: "crea la deuda al proveedor y suma el stock automáticamente" },
     ],
     nota: "Presiona Enter en el campo de costo para agregar otra fila sin usar el mouse.",
@@ -108,6 +110,7 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
     nombre: "Cuentas por Pagar",
     pasos: [
       { titulo: "Cada compra crea una deuda al proveedor automáticamente" },
+      { titulo: "¿Le debías de antes? Usa el botón 'Deuda anterior'", detalle: "registra el saldo que tenías con el proveedor antes del sistema" },
       { titulo: "Cuando pagues, toca la deuda y registra el pago", detalle: "el dinero sale de la cuenta o caja que elijas" },
     ],
   },
@@ -116,6 +119,24 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
     pasos: [
       { titulo: "Crea aquí las cajas y cuentas bancarias del negocio" },
       { titulo: "Sus saldos se mueven solos con las ventas, gastos y pagos" },
+      { titulo: "¿El saldo no cuadra con el banco? Usa 'Ajustar saldo'", detalle: "queda registrado como ajuste manual con su motivo" },
+    ],
+  },
+  gastos: {
+    nombre: "Gastos",
+    pasos: [
+      { titulo: "Aquí ves todos los gastos registrados del negocio" },
+      { titulo: "Los gastos se registran desde Caja Diaria", detalle: "esta vista es solo para consultar y filtrar" },
+      { titulo: "Filtra por categoría o por fechas para revisar un periodo" },
+    ],
+  },
+  configuracion: {
+    nombre: "Configuración",
+    pasos: [
+      { titulo: "Aquí cambias las opciones y umbrales del negocio sin programador" },
+      { titulo: "Agrega o quita categorías de gasto y tipos de documento" },
+      { titulo: "Ajusta los porcentajes de margen, merma y rendimiento" },
+      { titulo: "Toca Guardar y el cambio aplica en todo el sistema al instante" },
     ],
   },
   rentabilidad: {

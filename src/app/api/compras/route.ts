@@ -12,7 +12,15 @@ const CompraItemSchema = z.object({
   peso_bruto: z.number().positive(),
   peso_tara: z.number().nonnegative(),
   costo_unitario: z.number().nonnegative(),
+  // 'devolucion' = mercadería que se le devuelve al proveedor en esta guía:
+  // RESTA del total (deuda) y del inventario (decisión Hugo/Nelita, 9 jul 2026).
+  tipo: z.enum(["ingreso", "devolucion"]).default("ingreso"),
 });
+
+// Un producto de categoría "servicio" (ej. "Pelada de pollo", "ENVIO") es un cargo
+// del proveedor, no mercadería: suma a la deuda pero NUNCA toca inventario.
+const esCategoriaServicio = (categoria: string | null | undefined) =>
+  /servicio/i.test(categoria ?? "");
 
 const CompraSchema = z.object({
   proveedor_id: z.string().uuid(),
@@ -64,9 +72,10 @@ export async function GET(req: NextRequest) {
 
     // Obtener los items detallados de cada compra
     const items = await sql`
-      SELECT 
+      SELECT
         ci.id, ci.compra_id, ci.producto_id, prod.nombre as producto_nombre,
-        ci.jabas, ci.peso_bruto, ci.peso_tara, ci.peso_neto, ci.costo_unitario, ci.subtotal
+        ci.jabas, ci.peso_bruto, ci.peso_tara, ci.peso_neto, ci.costo_unitario, ci.subtotal,
+        ci.tipo
       FROM compra_items ci
       JOIN productos prod ON ci.producto_id = prod.id
     `;
@@ -104,25 +113,60 @@ export async function POST(req: Request) {
     const { proveedor_id, fecha, tipo_doc, nro_doc, items } = result.data;
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Calcular montos de cada item y sumas totales
+    // Categorías de los productos de la guía (server-side autoritativo): decide qué
+    // filas son SERVICIO (no tocan inventario) sin confiar en lo que mande la UI.
+    const idsProductos = [...new Set(items.map((i) => i.producto_id))];
+    const categoriasRows = (await sql`
+      SELECT id, categoria FROM productos WHERE id = ANY(${idsProductos}::uuid[])
+    `) as Array<{ id: string; categoria: string | null }>;
+    const categoriaPorProducto = new Map(
+      categoriasRows.map((r) => [r.id, r.categoria])
+    );
+    if (categoriasRows.length !== idsProductos.length) {
+      return NextResponse.json(
+        { error: "Hay un producto que ya no existe en el catálogo. Recarga la página." },
+        { status: 400 }
+      );
+    }
+
+    // Calcular montos de cada item y sumas totales. El peso se guarda POSITIVO;
+    // el signo vive en `tipo`: una devolución resta su subtotal del total de la guía.
     let totalAcumulado = 0;
     const itemsProcesados = items.map(item => {
+      const servicio = esCategoriaServicio(categoriaPorProducto.get(item.producto_id));
       const peso_neto = Number((item.peso_bruto - item.peso_tara).toFixed(2));
-      const subtotalItem = Number((peso_neto * item.costo_unitario).toFixed(2));
+      const signo = item.tipo === "devolucion" ? -1 : 1;
+      const subtotalItem = Number((signo * peso_neto * item.costo_unitario).toFixed(2));
       totalAcumulado += subtotalItem;
       return {
         ...item,
+        servicio,
         peso_neto,
         subtotalItem
       };
     });
+    totalAcumulado = Number(totalAcumulado.toFixed(2));
+
+    // La guía no puede quedar en negativo: la deuda al proveedor nunca es "a favor".
+    // (Una devolución pura contra deuda vieja se registra junto con la próxima guía.)
+    if (totalAcumulado < 0) {
+      return NextResponse.json(
+        { error: "Las devoluciones no pueden superar el ingreso de la guía. Regístralas junto con una guía de ingreso mayor." },
+        { status: 400 }
+      );
+    }
 
     const igvTotal = Number((totalAcumulado - (totalAcumulado / 1.18)).toFixed(2));
     const subtotalTotal = Number((totalAcumulado - igvTotal).toFixed(2));
 
-    // Fecha de vencimiento del pasivo (30 días después de la compra)
+    // Fecha de vencimiento del pasivo: el PLAZO DE PAGO del proveedor (editable en
+    // su ficha; default 30 días). Antes estaba fijo en +30 para todos.
+    const provRows = (await sql`
+      SELECT COALESCE(plazo_pago_dias, 30)::int AS plazo FROM proveedores WHERE id = ${proveedor_id}
+    `) as Array<{ plazo: number }>;
+    const plazoDias = provRows[0]?.plazo ?? 30;
     const fechaVencimiento = new Date(fecha);
-    fechaVencimiento.setDate(fechaVencimiento.getDate() + 30);
+    fechaVencimiento.setDate(fechaVencimiento.getDate() + plazoDias);
     const fechaVencimientoStr = fechaVencimiento.toISOString().split('T')[0];
 
     // TODO en UNA transacción: compra + items + inventario + cuenta por pagar.
@@ -138,35 +182,48 @@ export async function POST(req: Request) {
       `,
       ...itemsProcesados.flatMap((item) => [
         sql`
-          INSERT INTO compra_items (compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal)
-          VALUES (${compraId}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${item.peso_neto}, ${item.costo_unitario}, ${item.subtotalItem})
+          INSERT INTO compra_items (compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal, tipo)
+          VALUES (${compraId}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${item.peso_neto}, ${item.costo_unitario}, ${item.subtotalItem}, ${item.tipo})
         `,
-        sql`
-          INSERT INTO inventario_lotes (producto_id, cantidad)
-          VALUES (${item.producto_id}, ${item.peso_neto})
-          ON CONFLICT (producto_id) DO UPDATE SET
-            cantidad = inventario_lotes.cantidad + EXCLUDED.cantidad,
-            updated_at = (NOW() AT TIME ZONE 'America/Lima')
-        `,
-        sql`
-          INSERT INTO inventario_movimientos (producto_id, cantidad_cambio, tipo, usuario_id, referencia_id)
-          VALUES (${item.producto_id}, ${item.peso_neto}, 'compra', ${session.user.id}, ${compraId})
-        `,
+        // Inventario: los SERVICIOS (pelada, flete…) no son mercadería y no tocan
+        // stock ni kardex. La devolución RESTA (cantidad negativa, kardex propio).
+        ...(!item.servicio
+          ? [
+              sql`
+                INSERT INTO inventario_lotes (producto_id, cantidad)
+                VALUES (${item.producto_id}, ${item.tipo === "devolucion" ? -item.peso_neto : item.peso_neto})
+                ON CONFLICT (producto_id) DO UPDATE SET
+                  cantidad = inventario_lotes.cantidad + EXCLUDED.cantidad,
+                  updated_at = (NOW() AT TIME ZONE 'America/Lima')
+              `,
+              sql`
+                INSERT INTO inventario_movimientos (producto_id, cantidad_cambio, tipo, usuario_id, referencia_id)
+                VALUES (${item.producto_id}, ${item.tipo === "devolucion" ? -item.peso_neto : item.peso_neto}, ${item.tipo === "devolucion" ? "devolucion_compra" : "compra"}, ${session.user.id}, ${compraId})
+              `,
+            ]
+          : []),
         // El costo real de la última compra pasa a ser el costo del catálogo
         // (rentabilidad deja de depender de un precio_compra desactualizado).
+        // Solo filas de INGRESO de mercadería (ni devoluciones ni servicios).
         // La condición costo>0 va en JS: como parámetro SQL comparado con 0,
         // Postgres lo infería INTEGER y un costo con decimales rompía TODO el batch.
-        ...(item.costo_unitario > 0
+        ...(item.costo_unitario > 0 && item.tipo === "ingreso" && !item.servicio
           ? [sql`
               UPDATE productos SET precio_compra = ${item.costo_unitario}
               WHERE id = ${item.producto_id}
             `]
           : []),
       ]),
-      sql`
-        INSERT INTO cuentas_por_pagar (proveedor_id, compra_id, monto_deuda, monto_pagado, estado, fecha_vencimiento)
-        VALUES (${proveedor_id}, ${compraId}, ${totalAcumulado}, 0, 'Pendiente', ${fechaVencimientoStr}::date)
-      `,
+      // La deuda solo nace si la guía quedó con saldo (>0). Una guía cuyo total
+      // quedó en 0 por devoluciones se registra igual, pero sin cuenta por pagar.
+      ...(totalAcumulado > 0
+        ? [
+            sql`
+              INSERT INTO cuentas_por_pagar (proveedor_id, compra_id, monto_deuda, monto_pagado, estado, fecha_vencimiento)
+              VALUES (${proveedor_id}, ${compraId}, ${totalAcumulado}, 0, 'Pendiente', ${fechaVencimientoStr}::date)
+            `,
+          ]
+        : []),
     ]);
 
     return NextResponse.json({ success: true, compraId });

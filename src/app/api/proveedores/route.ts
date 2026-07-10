@@ -19,6 +19,7 @@ const ProveedorSchema = z.object({
   telefono: z.string().min(6, { message: "El teléfono es obligatorio" }),
   direccion: z.string().optional().nullable(),
   tipo: z.enum(["principal", "secundario"]).default("principal"),
+  plazo_pago_dias: z.number().int().min(0).max(365).default(30),
 });
 
 export async function GET() {
@@ -30,7 +31,7 @@ export async function GET() {
   try {
     const sql = neon(process.env.DATABASE_URL!);
     const proveedores = await sql`
-      SELECT id, ruc, razon_social, direccion, telefono, tipo, created_at
+      SELECT id, ruc, razon_social, direccion, telefono, tipo, plazo_pago_dias, COALESCE(activo, TRUE) AS activo, created_at
       FROM proveedores
       ORDER BY razon_social ASC
     `;
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { razon_social, direccion, telefono, tipo } = result.data;
+    const { razon_social, direccion, telefono, tipo, plazo_pago_dias } = result.data;
     // RUC vacío o ausente → NULL (proveedor informal sin RUC).
     const ruc = result.data.ruc && result.data.ruc.trim() !== "" ? result.data.ruc : null;
     const sql = neon(process.env.DATABASE_URL!);
@@ -72,9 +73,9 @@ export async function POST(req: Request) {
     }
 
     const nuevo = await sql`
-      INSERT INTO proveedores (ruc, razon_social, direccion, telefono, tipo)
-      VALUES (${ruc}, ${razon_social}, ${direccion || null}, ${telefono || null}, ${tipo})
-      RETURNING id, ruc, razon_social, direccion, telefono, tipo
+      INSERT INTO proveedores (ruc, razon_social, direccion, telefono, tipo, plazo_pago_dias)
+      VALUES (${ruc}, ${razon_social}, ${direccion || null}, ${telefono || null}, ${tipo}, ${plazo_pago_dias})
+      RETURNING id, ruc, razon_social, direccion, telefono, tipo, plazo_pago_dias, activo
     `;
 
     return NextResponse.json(nuevo[0], { status: 201 });

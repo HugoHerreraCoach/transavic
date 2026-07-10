@@ -18,6 +18,11 @@ export async function POST(req: NextRequest) {
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
+  // Ajuste financiero manual: solo admin (la auditoría del 10 jul encontró este
+  // endpoint huérfano y sin check de rol — ahora alimenta "Ajustar saldo" en Cuentas).
+  if (session.user.role !== "admin") {
+    return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
+  }
 
   try {
     const body = await req.json();
@@ -34,18 +39,16 @@ export async function POST(req: NextRequest) {
     const usuario_id = session.user.id;
 
     const sql = neon(process.env.DATABASE_URL!);
-    
-    // Necesitamos asegurarnos de actualizar el saldo y registrar la transacción.
-    // Usaremos unpooled para soportar la transacción si es necesario, 
-    // pero con HTTP neon driver, las transacciones explícitas (BEGIN/COMMIT) requieren endpoints especiales o queries múltiples en una.
-    // Lo más seguro es usar un CTE o una query encadenada para actualizar el saldo y luego insertar.
-    
-    // Neon HTTP client permite arrays de queries o múltiples statements si se envían juntos, 
-    // pero la forma más segura atómica es un CTE en PostgreSQL:
+
+    // El signo del movimiento se decide en JS, no con un CASE sobre el parámetro:
+    // el driver HTTP de Neon manda los parámetros sin tipo y Postgres infería mal
+    // el CASE (mismo problema que el batch de compras). El CTE mantiene la
+    // atomicidad saldo + transacción.
+    const delta = tipo === "ingreso" ? monto : -monto;
     const res = await sql`
       WITH update_cuenta AS (
         UPDATE cuentas_bancarias
-        SET saldo = saldo + CASE WHEN ${tipo} = 'ingreso' THEN ${monto} ELSE -${monto} END,
+        SET saldo = saldo + ${delta}::numeric,
             updated_at = (NOW() AT TIME ZONE 'America/Lima')
         WHERE id = ${cuenta_id}
         RETURNING id
