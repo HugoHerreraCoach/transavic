@@ -62,6 +62,15 @@ export default function GuiaAvicolaModal({ data, onClose }: GuiaAvicolaModalProp
     if (!ticketElement) return;
 
     try {
+      // iOS/WebKit: html-to-image puede fotografiar ANTES de que el <img> del logo
+      // termine de decodificar y la guía sale sin logo. Esperamos el decode real del
+      // <img> que está en el DOM (no basta el precargado en un `new Image()`).
+      await Promise.all(
+        Array.from(ticketElement.querySelectorAll("img")).map((img) =>
+          img.decode().catch(() => undefined)
+        )
+      );
+
       const dataUrl = await toJpeg(ticketElement, {
         quality: 0.95,
         pixelRatio: 2.5,

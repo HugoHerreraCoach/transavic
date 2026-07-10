@@ -94,13 +94,15 @@ export default function TicketGuiaAvicola({
                 aspectRatio: esTransavic ? "3 / 2" : "1 / 1",
               }}
             >
+              {/* NO agregar crossOrigin: el src es un data: URL (mismo origen).
+                  En WebKit/iOS ese atributo fuerza una petición CORS que falla para
+                  data: URLs → la imagen no carga y la guía sale SIN logo. */}
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={logoDataUrl}
                 alt={`Logo de ${data.cliente.empresa}`}
                 className="h-full w-full object-cover object-center"
                 style={{ display: "block" }}
-                crossOrigin="anonymous"
               />
             </div>
           )}

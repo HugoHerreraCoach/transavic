@@ -36,6 +36,9 @@ interface TicketPedidoProps {
 const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoDataUrl, onLogoReady }) => (
     <div ref={referencia} className="bg-white p-8 border-2 border-gray-300 rounded-lg text-black w-full">
         <div className="text-center pb-4 border-b-2 border-dashed">
+            {/* NO agregar crossOrigin: el src es un data: URL (mismo origen). En
+                WebKit/iOS ese atributo fuerza una petición CORS que falla para los
+                data: URLs → la imagen no carga y el ticket sale SIN logo. */}
             {logoDataUrl && (
                 <img
                     id="ticket-logo"
@@ -43,7 +46,6 @@ const TicketPedido: React.FC<TicketPedidoProps> = ({ datos, referencia, logoData
                     alt="Logo de la empresa"
                     className="w-[120px] h-auto mx-auto"
                     style={{ display: 'block' }}
-                    crossOrigin="anonymous"
                     onLoad={onLogoReady}
                     onError={(e) => console.error('Error al cargar imagen en ticket:', e)}
                 />

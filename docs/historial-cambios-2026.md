@@ -914,3 +914,36 @@ de 2026", y **verificado en la BD**: `total=138`, `fecha=2026-07-08`, `modificad
 (las aplicó el `.mjs` de la otra IA); el deploy fue solo código. Rollback: Redeploy del deployment previo
 (`a18d450`) en Vercel; BD aditiva, no se toca.
 
+### 🐛 El logo no salía en la guía/ticket EN iPHONE — `crossOrigin` sobre un `data:` URL (9 jul 2026)
+**Síntoma:** Hugo abre en su **iPhone** la guía de venta avícola (N.º 35, producción) y el ticket sale con un
+**hueco blanco** donde va el logo (el resto del ticket se ve perfecto). Sospecha inicial: caché.
+
+**Por qué NO era caché** (descartado con evidencia, no por intuición):
+- Los logos existen y se sirven: `public/avicola.jpg` (29 KB), `public/transavic.jpg` (17 KB).
+- `guia-avicola-modal.tsx` YA hace cache-bust (`/avicola.jpg?v=${timestamp}`), lo pasa a `dataURL` y lo precarga
+  en un `new Image()`. Si esa carga fallara, el modal **se cierra solo** (`onClose()` en el `catch` y en
+  `img.onerror`). El modal se abrió → el dataURL cargó bien. **No hay 404 ni caché rancia.**
+- El hueco blanco tiene el **tamaño exacto del contenedor** (140×140, `aspectRatio: 1/1`) → el contenedor midió;
+  el vacío es el `<img>` de adentro.
+- **El mismo modal en Chrome de escritorio SÍ muestra el logo** (verificado en captura). Es específico de WebKit.
+
+**Causa raíz:** el `<img>` del logo llevaba **`crossOrigin="anonymous"` con un `src` que es un `data:` URL**. En
+WebKit (iOS: Safari, Chrome, todos) ese atributo fuerza una petición en modo CORS que **falla para `data:` URLs**
+→ la imagen nunca carga → `html-to-image` fotografía el hueco. Chrome de escritorio lo tolera. El atributo era
+además **inútil**: un `data:` URL es del mismo origen (ni CORS ni *tainted canvas*); quedó de cuando el `<img>`
+apuntaba directo a `/avicola.jpg`. Estaba en las 2 únicas apariciones del repo:
+`ticket-guia-avicola.tsx:103` y `TicketPedido.tsx:46` → **el ticket de PEDIDOS tenía el mismo bug** (mismo
+síntoma en iPhone, nadie lo había reportado).
+
+**Fix:** (a) quitar `crossOrigin` de ambos `<img>` (con comentario para que nadie lo re-agregue); (b) endurecer
+la captura: antes de `toJpeg`, `await img.decode()` de las imágenes del ticket, en vez de confiar en un solo
+`requestAnimationFrame` + el precargado off-screen (`html-to-image` en iOS es conocido por omitir imágenes no
+decodificadas). Aplicado en `guia-avicola-modal.tsx` y `ticket-share-modal.tsx`.
+Nota: `ticket-share-modal.tsx:159` pasa un `onLogoReady={() => {}}` **no-op** — el candado de `TicketPedido`
+nunca se usó; el `decode()` lo reemplaza de verdad.
+
+**Verificación:** regresión en Chrome de escritorio → la guía se genera con el logo visible (captura). `tsc`,
+`eslint` y `build` limpios. **La prueba definitiva (iPhone) la hace Hugo**; si aún fallara, la contingencia es
+llamar `toJpeg` dos veces y usar el segundo resultado (workaround conocido de la librería en Safari).
+Gotcha #43 en CLAUDE.md.
+
