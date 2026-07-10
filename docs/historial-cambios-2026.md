@@ -990,3 +990,15 @@ Reglas 8 y 9 del [doc 21](./arquitectura/21-clientes-avicola.md).
 **Pendiente de negocio:** que Antonio confirme si el orden **por frecuencia** le cuadra con su realidad de campo
 (la alternativa —ordenar por lo más reciente— es un cambio de una línea en la consulta (c)).
 
+**Refinamiento (mismo día, pedido de Hugo): el botón ahora dice QUÉ trae.** Antes solo mostraba el conteo
+("Repetir última venta (1 producto)") y había que tocarlo a ciegas. Ahora es un botón de **dos líneas**: la acción
+arriba y, debajo, hasta **2 nombres de producto truncados** + una **píldora con el TOTAL** ("3 productos"). Sin
+consultas nuevas (`producto_nombre` ya venía en `ultimaVentaItems`). Dos decisiones no obvias, que salieron de
+**mirar el caso peor** en pantalla (nombres del catálogo larguísimos, ej. "Corazón de res para anticucho por
+entero (peso aprox 1 kg)"): (a) la píldora va con `shrink-0` para que **nunca** se recorte —si se truncara, el
+usuario no sabría que hay más productos—; (b) se muestra el **total** y NO "+N restantes", porque con el texto
+truncado un "+1 más" haría creer que son 2 cuando son 3 — **el total nunca miente**. Con 1 solo producto no se
+pinta la píldora (sería ruido). `aria-label` lleva la lista completa, porque la línea visible va truncada.
+Verificado a ancho de celular en los dos extremos (3 nombres largos y 1 solo): el botón mantiene su alto y nada
+se desborda; el clic sigue cargando los productos con precio, pesos vacíos y foco en el primero.
+

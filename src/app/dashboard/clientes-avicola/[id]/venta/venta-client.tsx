@@ -385,6 +385,29 @@ export default function VentaAvicolaClient({
   const puedeRepetir =
     !ventaExistente && ultimaVentaItems.length > 0 && lineas.length === 0;
 
+  // Vista previa de QUÉ trae el botón: hasta 2 nombres (truncados, porque los del
+  // catálogo son larguísimos: "Corazón de res para anticucho por entero…") + una
+  // píldora con el TOTAL. Se muestra el total y no "+N restantes" a propósito: con
+  // el texto truncado, un "+1 más" haría creer que son 2 cuando son 3. El total
+  // nunca miente, y la píldora no se recorta (`shrink-0`).
+  const resumenUltimaVenta = useMemo(
+    () => ({
+      texto: ultimaVentaItems
+        .slice(0, 2)
+        .map((it) => it.producto_nombre)
+        .join(" · "),
+      total: ultimaVentaItems.length,
+    }),
+    [ultimaVentaItems]
+  );
+
+  // Lectura completa para lectores de pantalla (la línea visible va truncada).
+  const etiquetaRepetir = `Repetir última venta: ${ultimaVentaItems
+    .map((it) => it.producto_nombre)
+    .join(", ")} — ${ultimaVentaItems.length} ${
+    ultimaVentaItems.length === 1 ? "producto" : "productos"
+  }`;
+
   const repetirUltimaVenta = () => {
     if (ultimaVentaItems.length === 0) return;
     setLineas(
@@ -627,11 +650,21 @@ export default function VentaAvicolaClient({
           <button
             type="button"
             onClick={repetirUltimaVenta}
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-red-300 bg-red-50 py-3 text-sm font-bold text-red-700 transition-transform active:scale-[0.99]"
+            aria-label={etiquetaRepetir}
+            className="flex w-full flex-col items-center gap-0.5 rounded-2xl border-2 border-dashed border-red-300 bg-red-50 px-3 py-2.5 transition-transform active:scale-[0.99]"
           >
-            <FiRotateCcw size={16} />
-            Repetir última venta ({ultimaVentaItems.length}{" "}
-            {ultimaVentaItems.length === 1 ? "producto" : "productos"})
+            <span className="flex items-center gap-2 text-sm font-bold text-red-700">
+              <FiRotateCcw size={16} />
+              Repetir última venta
+            </span>
+            <span className="flex w-full items-center justify-center gap-1.5 text-xs font-medium text-red-600/80">
+              <span className="min-w-0 truncate">{resumenUltimaVenta.texto}</span>
+              {resumenUltimaVenta.total > 1 && (
+                <span className="shrink-0 whitespace-nowrap rounded bg-red-100 px-1.5 py-0.5 font-bold text-red-700">
+                  {resumenUltimaVenta.total} productos
+                </span>
+              )}
+            </span>
           </button>
         </section>
       )}

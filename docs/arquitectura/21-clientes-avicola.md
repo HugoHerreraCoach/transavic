@@ -95,7 +95,10 @@ abonos_avicola        id UUID del cliente (idempotencia), cliente_id, fecha, mon
    por recencia) → **Más vendidos** (top global, solo si el cliente aún no compró nada) → **Todo el catálogo**.
    Cada producto aparece UNA vez. Además hay un botón **"Repetir última venta"** que siembra los productos de la
    última venta con su precio y los pesos vacíos, con el foco en el primer peso (solo con el carrito vacío, para
-   no pisar nada). Las 3 consultas viven en `venta/page.tsx`.
+   no pisar nada). Ese botón **previsualiza** qué trae: 2ª línea con hasta 2 nombres **truncados** + una píldora
+   con el **TOTAL** ("3 productos"). Se muestra el total —y no "+N restantes"— **a propósito**: como los nombres
+   del catálogo son larguísimos y se recortan, un "+1 más" haría creer que son 2 cuando son 3. Las 3 consultas
+   viven en `venta/page.tsx`.
 9. **Buscador de productos** (9 jul 2026): fijo en el header (2ª fila, siempre visible al scrollear), filtra el
    catálogo en vivo **por nombre O categoría** (escribir "pollo" trae todo el pollo; "alas" trae solo Alas), con
    estado "no se encontró…" + botón para limpiar. Al buscar, **las secciones se aplanan** en una sola lista
