@@ -204,11 +204,11 @@ export default function TicketGuiaAvicola({
               {soles(data.estado_cuenta.total_venta)}
             </span>
           </div>
-          {data.estado_cuenta.abonos_del_dia > 0 && (
+          {data.estado_cuenta.abonos_aplicados > 0 && (
             <div className="flex justify-between text-base py-0.5">
-              <span>Abonos de hoy:</span>
+              <span>Abonos:</span>
               <span className="font-semibold whitespace-nowrap">
-                −{soles(data.estado_cuenta.abonos_del_dia)}
+                −{soles(data.estado_cuenta.abonos_aplicados)}
               </span>
             </div>
           )}

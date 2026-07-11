@@ -1179,3 +1179,32 @@ guía", y "Reintentar" que repite el modo exacto del último intento.
   abre el modal ✅. Datos de prueba revertidos (restos = 0). `tsc`/`eslint`/`build` limpios.
 
 **Deploy**: migración aplicada a prod por psql ANTES del push (columnas inertes para el código viejo).
+
+## 2026-07-11 — Fix: la guía de campo no reflejaba abonos hechos otro día (caso Vicki)
+
+**Reporte de Antonio** (audio): cargó un abono de S/1,300 a Vicki (Mdo Lobatón) en la madrugada,
+pero la guía seguía mostrando el saldo anterior; "ayer sí se actualizaba al instante".
+
+**Diagnóstico (datos reales de prod, solo lectura):** el abono SÍ se guardó (`fecha=2026-07-10`,
+02:36 a.m. Lima). El saldo REAL del cliente (`estadoCuentaCliente`) siempre estuvo bien. El bug
+estaba SOLO en el número que imprimía la guía: `estadoCuentaParaGuia` (`src/lib/avicola/saldos.ts`)
+partía los abonos en `saldo_previo` (`created_at < venta`) y `abonos_del_dia` (`fecha = v.fecha AND
+created_at >= venta`). Un abono hecho un día POSTERIOR a la venta no caía en ninguno de los dos → se
+volvía invisible en esa guía. A la hora del reporte, la última venta de Vicki era la N.º 54 (09/07);
+su guía mostraba **S/15,197.80** en vez de **S/13,897.80** (diferencia = los S/1,300 exactos). "Ayer
+funcionaba" porque el abono y la venta eran del mismo día.
+
+**Fix (solo código, sin migración — el saldo se calcula al vuelo, corrige todas las guías al
+re-render):** `abonos_del_dia` → **`abonos_aplicados`**, ahora una ventana por `created_at`: abonos
+posteriores a la venta y anteriores a la SIGUIENTE venta no anulada del cliente (sin filtrar por
+`fecha`). Las dos ventanas (`saldo_previo` <, `abonos_aplicados` >=) se parten sin solaparse — el
+`fecha` era una sobre-restricción que nunca hizo falta para evitar el doble conteo. Etiqueta del
+ticket "Abonos de hoy" → "Abonos". Archivos: `saldos.ts`, `types.ts` (EstadoCuentaGuia), 
+`ticket-guia-avicola.tsx`.
+
+**Verificado:** simulación contra los 3 registros reales de Vicki (venta 54: 15,197.80 → 13,897.80;
+ventas 20 y 83 sin cambio) y reproducción en dev con seed (última venta 2,000 → 1,700 = saldo real;
+caso mismo-día 1,300 sin regresión; las guías encadenan: saldo_actualizado de una venta ==
+saldo_previo de la siguiente). La última venta siempre queda == `estadoCuentaCliente`. tsc/eslint/
+build limpios. (La confirmación por la API en vivo quedó pendiente por caída de la extensión del
+navegador; la query probada por psql es idéntica a la del código.)

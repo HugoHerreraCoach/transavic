@@ -83,14 +83,21 @@ export async function estadoCuentaCliente(
 }
 
 /**
- * Estado de cuenta para la GUÍA de una venta (req. §9), ANCLADO al created_at
- * de la venta para que la reimpresión sea estable:
- *   saldo_previo   = saldo_anterior + ventas − abonos con created_at ANTERIOR a la venta
- *   abonos_del_dia = abonos del MISMO día con created_at POSTERIOR o igual a la venta
- *     (el corte por created_at evita contar dos veces un abono matutino que ya
- *      está dentro de saldo_previo)
- *   saldo_actualizado = saldo_previo + total − abonos_del_dia
- * Solo cambia si hubo anulaciones posteriores (corregir la realidad es correcto).
+ * Estado de cuenta para la GUÍA de una venta (req. §9), ANCLADO por `created_at`:
+ *   saldo_previo      = saldo_anterior + ventas − abonos con created_at ANTERIOR a la venta
+ *   abonos_aplicados  = abonos hechos DESPUÉS de esta venta y ANTES de la siguiente
+ *                       venta (no anulada) del cliente — SIN filtrar por fecha
+ *   saldo_actualizado = saldo_previo + total − abonos_aplicados
+ *
+ * La ventana es puramente por `created_at`: `saldo_previo` toma lo anterior a la
+ * venta y `abonos_aplicados` lo posterior hasta la próxima venta — se parten sin
+ * solaparse ni duplicar. Antes se restringía `abonos` a `fecha = v.fecha`, y un
+ * abono hecho un día POSTERIOR a la venta caía en un hueco (ni previo ni del día)
+ * → la guía de esa venta mostraba el saldo sin ese pago (bug del caso Vicki,
+ * 11 jul 2026). Con la cota "hasta la siguiente venta", la guía de la ÚLTIMA venta
+ * refleja el saldo real actual (== estadoCuentaCliente) y las guías de ventas
+ * viejas encadenan coherentes. Solo cambia si hubo anulaciones (corregir la
+ * realidad es correcto).
  */
 export async function estadoCuentaParaGuia(
   sql: Sql,
@@ -111,24 +118,29 @@ export async function estadoCuentaParaGuia(
       )::float8 AS saldo_previo,
       v.total::float8 AS total_venta,
       COALESCE((
-        SELECT SUM(monto) FROM abonos_avicola
-        WHERE cliente_id = v.cliente_id AND NOT anulado
-          AND fecha = v.fecha AND created_at >= v.created_at
-      ), 0)::float8 AS abonos_del_dia
+        SELECT SUM(monto) FROM abonos_avicola a
+        WHERE a.cliente_id = v.cliente_id AND NOT a.anulado
+          AND a.created_at >= v.created_at
+          AND a.created_at < COALESCE((
+            SELECT MIN(v2.created_at) FROM ventas_avicola v2
+            WHERE v2.cliente_id = v.cliente_id AND NOT v2.anulada
+              AND v2.created_at > v.created_at
+          ), 'infinity'::timestamptz)
+      ), 0)::float8 AS abonos_aplicados
     FROM ventas_avicola v
     JOIN clientes_avicola c ON c.id = v.cliente_id
     WHERE v.id = ${ventaId}
   `) as Array<{
     saldo_previo: number;
     total_venta: number;
-    abonos_del_dia: number;
+    abonos_aplicados: number;
   }>;
   const r = rows[0];
   if (!r) return null;
   return {
     saldo_previo: r.saldo_previo,
     total_venta: r.total_venta,
-    abonos_del_dia: r.abonos_del_dia,
-    saldo_actualizado: r.saldo_previo + r.total_venta - r.abonos_del_dia,
+    abonos_aplicados: r.abonos_aplicados,
+    saldo_actualizado: r.saldo_previo + r.total_venta - r.abonos_aplicados,
   };
 }

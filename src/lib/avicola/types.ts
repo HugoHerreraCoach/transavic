@@ -86,15 +86,16 @@ export interface AbonoAvicola {
 
 /**
  * Bloque de estado de cuenta que va impreso en la guía (req. §9).
- * ANCLADO al created_at de la venta para que la reimpresión sea estable:
+ * Anclado por created_at (ver estadoCuentaParaGuia en saldos.ts):
  *   saldo_previo       = saldo_anterior + ventas − abonos ANTERIORES a la venta
- *   abonos_del_dia     = abonos del mismo día POSTERIORES a la venta
- *   saldo_actualizado  = saldo_previo + total_venta − abonos_del_dia
+ *   abonos_aplicados   = abonos posteriores a la venta y anteriores a la siguiente
+ *   saldo_actualizado  = saldo_previo + total_venta − abonos_aplicados
  */
 export interface EstadoCuentaGuia {
   saldo_previo: number;
   total_venta: number;
-  abonos_del_dia: number;
+  /** Abonos aplicados tras esta venta y antes de la siguiente (pueden ser de otro día). */
+  abonos_aplicados: number;
   saldo_actualizado: number;
 }
 
