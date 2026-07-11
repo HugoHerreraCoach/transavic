@@ -49,6 +49,19 @@ function fechaCorta(fecha: string | null): string {
   return `${d}/${m}/${y}`;
 }
 
+/** created_at (timestamptz) → hora "HH:mm" en zona Lima. */
+function horaCorta(createdAt: string | null): string {
+  if (!createdAt) return "";
+  const d = new Date(createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T"));
+  if (isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("es-PE", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "America/Lima",
+  }).format(d);
+}
+
 /* ------------------------------------------------------------------ */
 /* Mini-modal de anulación con motivo OBLIGATORIO (el server exige ≥5) */
 /* ------------------------------------------------------------------ */
@@ -597,7 +610,8 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
               className="h-14 rounded-2xl bg-red-600 text-white text-sm sm:text-base font-black flex items-center justify-center gap-2 shadow-md shadow-red-600/20 active:scale-95 transition-transform"
             >
               <FiShoppingCart size={18} className="shrink-0" />
-              Vender
+              {/* Una guía por día: si ya hay venta hoy, "Vender" continúa esa guía */}
+              {ventasDeHoy.length > 0 ? "Agregar a la guía" : "Vender"}
             </Link>
           ) : (
             <button
@@ -654,13 +668,38 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
                   {fmtSoles(v.monto)}
                 </p>
               </div>
-              <div className="mt-2 flex flex-wrap gap-2">
+              {/* Quién la creó y a qué hora (para saber de un vistazo el estado de la guía) */}
+              <p className="text-xs text-gray-500 mt-0.5">
+                {horaCorta(v.created_at)}
+                {v.creado_por_nombre ? ` · ${v.creado_por_nombre.trim()}` : ""}
+              </p>
+              {/* Productos y pesos de la guía del día */}
+              {(v.items?.length ?? 0) > 0 && (
+                <ul className="mt-2 space-y-1 border-t border-red-100 pt-2">
+                  {v.items!.map((item) => (
+                    <li
+                      key={item.id}
+                      className="flex items-baseline justify-between gap-3 text-sm text-gray-700"
+                    >
+                      <span className="min-w-0">
+                        {item.producto_nombre}
+                        <span className="text-gray-400">
+                          {" — "}
+                          {item.peso_kg.toLocaleString("es-PE", { maximumFractionDigits: 2 })} kg
+                        </span>
+                      </span>
+                      <span className="font-semibold whitespace-nowrap">{fmtSoles(item.subtotal)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Link
                   href={`/dashboard/clientes-avicola/${clienteId}/venta?edit=${v.id}`}
                   className="h-12 flex-1 min-w-[46%] px-4 rounded-2xl bg-red-600 text-white text-sm font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-transform shadow-sm shadow-red-600/20"
                 >
                   <FiEdit2 size={16} />
-                  Ajustar peso/precio
+                  Agregar/editar productos
                 </Link>
                 <button
                   type="button"
@@ -745,6 +784,7 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
                 onReenviarGuia={() => reenviarGuia(mov.id)}
                 onAnular={() => setAnular({ tipo: mov.tipo, id: mov.id })}
                 onCorregirAbono={() => setCorregirAbono(mov)}
+                onEnviarEstado={() => setModalEstado(true)}
                 clienteId={clienteId}
               />
             ))}
@@ -818,6 +858,7 @@ function MovimientoRow({
   onReenviarGuia,
   onAnular,
   onCorregirAbono,
+  onEnviarEstado,
   clienteId,
 }: {
   mov: MovimientoAvicola;
@@ -827,6 +868,7 @@ function MovimientoRow({
   onReenviarGuia: () => void;
   onAnular: () => void;
   onCorregirAbono: () => void;
+  onEnviarEstado: () => void;
   clienteId: string;
 }) {
   const esVenta = mov.tipo === "venta";
@@ -950,6 +992,17 @@ function MovimientoRow({
               >
                 <FiEdit2 size={16} />
                 Corregir
+              </button>
+            )}
+            {/* Enviar el ESTADO DE CUENTA actualizado tras el abono (pedido del equipo, 11 jul 2026) */}
+            {!esVenta && !mov.anulado && (
+              <button
+                type="button"
+                onClick={onEnviarEstado}
+                className="h-10 px-4 rounded-2xl bg-green-600 text-white text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform cursor-pointer shadow-sm shadow-green-600/20"
+              >
+                <FiShare2 size={16} />
+                Enviar
               </button>
             )}
             {!esVenta && mov.tiene_comprobante && (

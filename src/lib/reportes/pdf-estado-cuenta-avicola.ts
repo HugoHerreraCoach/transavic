@@ -1,23 +1,15 @@
 // src/lib/reportes/pdf-estado-cuenta-avicola.ts
 // Genera el ESTADO DE CUENTA de un cliente avícola como PDF A4 (client-side),
-// para compartir por WhatsApp o descargar desde el modal (req. §12).
-// Clona el estilo de pdf-ventas.ts (jsPDF + jspdf-autotable, branding rojo).
+// para compartir por WhatsApp o descargar desde el modal (rediseño 11 jul 2026).
 // jsPDF y jspdf-autotable se importan DINÁMICAMENTE para no inflar el bundle.
 //
-// Reglas:
-// - Movimientos en orden CRONOLÓGICO ASC con saldo corrido.
-// - EXCLUYE los anulados (no van al PDF ni al saldo corrido).
-// - El saldo de arranque se deriva de saldo_actual − neto de los movimientos
-//   incluidos, para que el corrido SIEMPRE cierre en el saldo pendiente real
-//   aunque el historial venga recortado por rango ("Últimos 30 días"). Con el
-//   historial completo equivale EXACTO a cliente.saldo_anterior (misma
-//   aritmética de src/lib/avicola/saldos.ts).
+// Libro mayor POR DÍA con filtro por período; la aritmética vive en
+// src/lib/avicola/estado-cuenta.ts (fuente única, compartida con el modal).
+// Columnas: Fecha · Venta del día · Peso/Producto · Monto del día · Saldo anterior
+// · Abonos · Saldo actual. Al pie: totales del período. EXCLUYE los anulados.
 
-import type {
-  ClienteAvicolaConSaldo,
-  MovimientoAvicola,
-} from "@/lib/avicola/types";
-import { ETIQUETA_MEDIO_PAGO } from "@/lib/avicola/types";
+import type { ClienteAvicolaConSaldo, MovimientoAvicola } from "@/lib/avicola/types";
+import { construirEstadoCuenta, type DiaEstadoCuenta } from "@/lib/avicola/estado-cuenta";
 
 const ROJO: [number, number, number] = [220, 38, 38];
 const ROJO_CLARO: [number, number, number] = [254, 242, 242];
@@ -35,23 +27,49 @@ function fechaCorta(fecha: string): string {
   return `${d}/${m}/${y}`;
 }
 
-function detalleMovimiento(mov: MovimientoAvicola): string {
-  if (mov.tipo === "venta") return `Venta · Guía N.º ${mov.numero_guia ?? "—"}`;
-  const medio = mov.medio_pago ? ETIQUETA_MEDIO_PAGO[mov.medio_pago] : "—";
-  return `Abono · ${medio}`;
+const kg = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+
+/** Texto de la columna Peso/Producto de un día (con o sin el precio por kilo). */
+function textoProductos(dia: DiaEstadoCuenta, conPrecio: boolean): string {
+  if (dia.items.length === 0) return "";
+  return dia.items
+    .map((it) =>
+      conPrecio
+        ? `${it.producto_nombre}  ${kg(it.peso_kg)} kg × ${soles(it.precio_kg)}`
+        : `${it.producto_nombre}  ${kg(it.peso_kg)} kg`
+    )
+    .join("\n");
+}
+
+function textoGuias(dia: DiaEstadoCuenta): string {
+  if (dia.guias.length === 0) return dia.hay_abono ? "Abono" : "—";
+  return dia.guias.map((g) => `Guía ${g}`).join(", ");
+}
+
+export interface OpcionesEstadoCuenta {
+  desde?: string | null;
+  hasta?: string | null;
+  conPrecio?: boolean;
 }
 
 export async function generarPdfEstadoCuenta(
   cliente: ClienteAvicolaConSaldo,
-  historial: MovimientoAvicola[]
+  historial: MovimientoAvicola[],
+  opciones: OpcionesEstadoCuenta = {}
 ): Promise<Blob> {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
 
+  const desde = opciones.desde ?? null;
+  const hasta = opciones.hasta ?? null;
+  const conPrecio = opciones.conPrecio ?? true;
+
+  const est = construirEstadoCuenta(cliente, historial, desde, hasta);
+
   const doc = new jsPDF({ unit: "mm", format: "a4" });
   const W = doc.internal.pageSize.getWidth();
   const H = doc.internal.pageSize.getHeight();
-  const M = 14; // margen
+  const M = 14;
 
   const generado = new Intl.DateTimeFormat("es-PE", {
     timeZone: "America/Lima",
@@ -69,7 +87,7 @@ export async function generarPdfEstadoCuenta(
   doc.setFontSize(11);
   doc.text("ESTADO DE CUENTA", M, 19);
 
-  // ── Datos del cliente + fecha de generación (zona Lima) ──
+  // ── Datos del cliente + fecha de generación ──
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.setTextColor(...NEGRO);
@@ -81,117 +99,92 @@ export async function generarPdfEstadoCuenta(
     ? `${cliente.mercado} · ${cliente.numero_puesto}`
     : cliente.mercado;
   doc.text(ubicacion, M, 40.5);
-  if (cliente.telefono) {
-    doc.text(`Tel.: ${cliente.telefono}`, M, 45.5);
-  }
+  if (cliente.telefono) doc.text(`Tel.: ${cliente.telefono}`, M, 45.5);
   doc.setFontSize(7.5);
   doc.setTextColor(...GRIS_CL);
   doc.text(`Generado: ${generado}`, W - M, 35, { align: "right" });
+  // Período mostrado
+  const periodoTxt =
+    desde || hasta
+      ? `Período: ${desde ? fechaCorta(desde) : "inicio"} — ${hasta ? fechaCorta(hasta) : "hoy"}`
+      : "Período: todo el historial";
+  doc.text(periodoTxt, W - M, 40, { align: "right" });
 
-  // ── KPIs (4 cajas) ──
-  const kpiY = 51;
-  const kpiH = 19;
-  const gap = 4;
-  const kpiW = (W - 2 * M - 3 * gap) / 4;
-  const kpis: { label: string; value: string; destacado?: boolean }[] = [
-    { label: "Saldo anterior", value: soles(cliente.saldo_anterior) },
-    { label: "Total vendido", value: soles(cliente.total_vendido) },
-    { label: "Total abonado", value: soles(cliente.total_abonado) },
-    { label: "Saldo pendiente", value: soles(cliente.saldo_actual), destacado: true },
-  ];
-  kpis.forEach((kpi, i) => {
-    const x = M + i * (kpiW + gap);
-    doc.setDrawColor(229, 231, 235);
-    doc.setLineWidth(0.3);
-    if (kpi.destacado) {
-      doc.setFillColor(...ROJO_CLARO);
-    } else {
-      doc.setFillColor(255, 255, 255);
-    }
-    doc.roundedRect(x, kpiY, kpiW, kpiH, 2, 2, "FD");
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(7);
-    doc.setTextColor(...GRIS_CL);
-    doc.text(kpi.label.toUpperCase(), x + 3, kpiY + 6);
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(kpi.destacado ? 12 : 11);
-    doc.setTextColor(...(kpi.destacado ? ROJO : NEGRO));
-    doc.text(kpi.value, x + 3, kpiY + 14);
-  });
-
-  // ── Movimientos (orden cronológico ASC, sin anulados, con saldo corrido) ──
-  const movs = historial
-    .filter((m) => !m.anulado)
-    .sort((a, b) =>
-      a.fecha === b.fecha
-        ? a.created_at.localeCompare(b.created_at)
-        : a.fecha.localeCompare(b.fecha)
-    );
-
-  const netoMovs = movs.reduce(
-    (acc, m) => acc + (m.tipo === "venta" ? m.monto : -m.monto),
-    0
-  );
-  // Con el historial completo esto es EXACTAMENTE cliente.saldo_anterior.
-  const saldoInicial = cliente.saldo_actual - netoMovs;
-
-  let saldo = saldoInicial;
-  const body: string[][] = [["", "Saldo anterior", "", "", soles(saldoInicial)]];
-  for (const m of movs) {
-    saldo += m.tipo === "venta" ? m.monto : -m.monto;
-    body.push([
-      fechaCorta(m.fecha),
-      detalleMovimiento(m),
-      m.tipo === "venta" ? soles(m.monto) : "",
-      m.tipo === "abono" ? soles(m.monto) : "",
-      soles(saldo),
-    ]);
+  // ── Tabla: un día por fila ──
+  const body: string[][] = est.dias.map((d) => [
+    fechaCorta(d.fecha),
+    textoGuias(d),
+    textoProductos(d, conPrecio),
+    d.hay_venta ? soles(d.venta_del_dia) : "",
+    soles(d.saldo_anterior),
+    d.hay_abono ? soles(d.abonos_del_dia) : "",
+    soles(d.saldo_actual),
+  ]);
+  if (body.length === 0) {
+    body.push(["", "Sin movimientos en el período", "", "", soles(est.saldo_inicial), "", soles(est.saldo_final)]);
   }
 
-  const tablaY = kpiY + kpiH + 9;
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...GRIS_TX);
-  doc.text("Movimientos", M, tablaY - 2);
-
+  const tablaY = 54;
   autoTable(doc, {
     startY: tablaY,
     margin: { left: M, right: M },
-    head: [["Fecha", "Detalle", "Cargo", "Abono", "Saldo"]],
+    head: [[
+      "Fecha",
+      "Venta del día",
+      "Peso / Producto",
+      "Monto del día",
+      "Saldo anterior",
+      "Abonos",
+      "Saldo actual",
+    ]],
     body,
-    foot: [["", "SALDO PENDIENTE", "", "", soles(cliente.saldo_actual)]],
-    styles: { fontSize: 8, cellPadding: 1.8, textColor: NEGRO },
-    headStyles: { fillColor: ROJO, textColor: 255, fontStyle: "bold", fontSize: 8 },
-    footStyles: { fillColor: ROJO_CLARO, textColor: ROJO, fontStyle: "bold", fontSize: 9 },
+    styles: { fontSize: 7.5, cellPadding: 1.6, textColor: NEGRO, valign: "top" },
+    headStyles: { fillColor: ROJO, textColor: 255, fontStyle: "bold", fontSize: 7 },
     columnStyles: {
-      0: { cellWidth: 22 },
-      2: { halign: "right", cellWidth: 26 },
-      3: { halign: "right", cellWidth: 26 },
-      4: { halign: "right", cellWidth: 28 },
-    },
-    didParseCell: (data) => {
-      // La fila de arranque "Saldo anterior" va en gris cursiva.
-      if (data.section === "body" && data.row.index === 0) {
-        data.cell.styles.fontStyle = "italic";
-        data.cell.styles.textColor = GRIS_TX;
-      }
+      0: { cellWidth: 17 },
+      1: { cellWidth: 20 },
+      2: { cellWidth: "auto" },
+      3: { halign: "right", cellWidth: 22 },
+      4: { halign: "right", cellWidth: 23 },
+      5: { halign: "right", cellWidth: 18, textColor: [22, 130, 60] },
+      6: { halign: "right", cellWidth: 23, fontStyle: "bold" },
     },
   });
 
-  // ── Nota final (solo si el saldo quedó a favor del cliente) ──
-  if (cliente.saldo_actual < -0.009) {
-    const lastY =
-      (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
-        ?.finalY ?? tablaY;
-    let yNota = lastY + 6;
-    if (yNota > H - 12) {
-      doc.addPage();
-      yNota = 20;
+  // ── Totales del período (bloque destacado) ──
+  const lastY =
+    (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? tablaY;
+  let y = lastY + 8;
+  if (y > H - 40) {
+    doc.addPage();
+    y = 20;
+  }
+  const boxW = 66;
+  const boxX = W - M - boxW;
+  const filas: { label: string; value: string; destacado?: boolean }[] = [
+    { label: "Total vendido del período", value: soles(est.total_vendido) },
+    { label: "Total abonado del período", value: soles(est.total_abonado) },
+    { label: "Saldo pendiente final", value: soles(est.saldo_final), destacado: true },
+  ];
+  filas.forEach((f) => {
+    if (f.destacado) {
+      doc.setFillColor(...ROJO_CLARO);
+      doc.setDrawColor(...ROJO);
+      doc.roundedRect(boxX, y - 4.5, boxW, 8, 1.5, 1.5, "FD");
     }
+    doc.setFont("helvetica", f.destacado ? "bold" : "normal");
+    doc.setFontSize(f.destacado ? 10 : 9);
+    doc.setTextColor(...(f.destacado ? ROJO : GRIS_TX));
+    doc.text(f.label, boxX + 2, y);
+    doc.text(f.value, boxX + boxW - 2, y, { align: "right" });
+    y += f.destacado ? 9 : 6.5;
+  });
+
+  if (est.saldo_final < -0.009) {
     doc.setFont("helvetica", "italic");
     doc.setFontSize(8);
     doc.setTextColor(...GRIS_CL);
-    doc.text("Saldo negativo: monto a favor del cliente.", M, yNota);
+    doc.text("Saldo negativo: monto a favor del cliente.", M, y + 2);
   }
 
   return doc.output("blob");

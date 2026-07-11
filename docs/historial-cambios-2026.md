@@ -1235,3 +1235,33 @@ con inventario, 46×10 = 460; total 556); seed en dev y prod (INS001-003). tsc/e
 (La confirmación por click en el navegador quedó pendiente por caída de la extensión de Chrome; el
 comportamiento del backend es idéntico al de los servicios ya probados —gotcha #44— y el helper está
 unit-verificado.) Sin cambio de esquema. Detalle: gotcha #44 (ampliado).
+
+## 2026-07-11 — Clientes Avícola: 3 mejoras (Enviar estado de cuenta · rediseño Estado de Cuenta · una guía por día)
+
+Pedido del equipo (venta de campo). Mapa con 4 lectores; sin cambio de esquema.
+
+**C1 — Botón "Enviar" en la fila del abono** (`ficha-client.tsx`): junto a Corregir/Anular, un botón
+"Enviar" que abre el Estado de Cuenta ya actualizado (la ficha se recarga tras el abono) para
+compartirlo por WhatsApp. Prop `onEnviarEstado` en `MovimientoRow` → `setModalEstado(true)`.
+
+**C2 — Rediseño del Estado de Cuenta** (`estado-cuenta-modal.tsx`, `pdf-estado-cuenta-avicola.ts`,
+nuevo helper `src/lib/avicola/estado-cuenta.ts`): libro mayor POR DÍA con **filtro por período
+(Desde–Hasta)**, columnas Fecha · Venta del día · Peso/Producto · Monto del día · Saldo anterior ·
+Abonos · Saldo actual, **totales del período** (vendido, abonado, saldo pendiente final) y **toggle
+Con precio / Sin precio**. El helper `construirEstadoCuenta` es la fuente ÚNICA (modal↔PDF) y calcula
+el saldo de arranque del período como `saldo_anterior + Σ(fecha<desde)` → un "hasta" en el pasado da
+el saldo correcto al cierre (el PDF viejo lo anclaba a `saldo_actual` all-time). Verificado: unit
+test contra los datos reales de Melissa (vendido 462.28, abonado 656.00, saldo 479.98; "hasta 08/07"
+→ 502.58) y **render headless del PDF revisado visualmente** (7 columnas alineadas, montos a la
+derecha, bloque de totales).
+
+**C3 — Una guía por día + tarjeta "guía del día"** (`venta/page.tsx`, `ficha-client.tsx`,
+`historial.ts`, `types.ts`): decisión de Hugo = **una sola guía por día, estricto**. En el server,
+si no viene `?edit=` y existe una venta de HOY no anulada del cliente, se carga ESA venta en modo
+edición (cubre TODAS las entradas a "Vender"); se agregan/editan/eliminan productos con el PATCH
+existente (reemplaza ítems, recalcula total, conserva `numero_guia`). Sin tocar el POST (idempotencia
+por `id` intacta) ni el esquema. La tarjeta "Venta de hoy" ahora muestra **productos + pesos, hora
+(HH:mm Lima) y usuario creador** (nuevo `creado_por_nombre` en `historial.ts` vía JOIN users +
+`MovimientoAvicola`); el botón "Vender" del héroe se rotula "Agregar a la guía" cuando ya hay venta.
+Verificado en dev: la query detecta la venta del día y el historial trae el usuario. Datos verificados
+en prod: 99% ya era una venta/día (1 de 86 con 2). tsc/eslint/build limpios.

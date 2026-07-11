@@ -24,7 +24,7 @@ export async function historialCliente(
     SELECT
       m.tipo, m.id, m.fecha, m.created_at::text AS created_at, m.monto,
       m.numero_guia, m.medio_pago, m.observaciones, m.anulado,
-      m.anulacion_motivo, m.tiene_comprobante
+      m.anulacion_motivo, m.tiene_comprobante, m.creado_por_nombre
     FROM (
       SELECT
         'venta' AS tipo,
@@ -37,8 +37,10 @@ export async function historialCliente(
         v.observaciones,
         v.anulada AS anulado,
         v.anulacion_motivo,
-        FALSE AS tiene_comprobante
+        FALSE AS tiene_comprobante,
+        uv.name AS creado_por_nombre
       FROM ventas_avicola v
+      LEFT JOIN users uv ON uv.id = v.creado_por
       WHERE v.cliente_id = ${clienteId}
       UNION ALL
       SELECT
@@ -52,8 +54,10 @@ export async function historialCliente(
         a.observaciones,
         a.anulado,
         a.anulacion_motivo,
-        (a.comprobante_data IS NOT NULL) AS tiene_comprobante
+        (a.comprobante_data IS NOT NULL) AS tiene_comprobante,
+        ua.name AS creado_por_nombre
       FROM abonos_avicola a
+      LEFT JOIN users ua ON ua.id = a.creado_por
       WHERE a.cliente_id = ${clienteId}
     ) m
     ORDER BY m.created_at DESC

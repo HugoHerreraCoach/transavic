@@ -137,6 +137,8 @@ export interface MovimientoAvicola {
   anulado: boolean;
   anulacion_motivo: string | null;
   tiene_comprobante: boolean;
+  /** Nombre del usuario que registró el movimiento (para la tarjeta de la guía del día). */
+  creado_por_nombre: string | null;
   /** Solo para ventas: líneas con peso y precio usados (req. §6). */
   items?: VentaAvicolaItem[];
 }

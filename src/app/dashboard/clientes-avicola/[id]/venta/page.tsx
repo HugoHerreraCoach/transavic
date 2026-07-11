@@ -40,7 +40,7 @@ export default async function VentaAvicolaPage({
 
   const sql = neon(process.env.DATABASE_URL!);
 
-  const [cliente, productosRaw, historialRaw, masVendidosRaw, ultimaVentaRaw] =
+  const [cliente, productosRaw, historialRaw, masVendidosRaw, ultimaVentaRaw, ventaHoyRaw] =
     await Promise.all([
       // (a) Estado de cuenta del cliente (saldo actual para el header y el footer).
       estadoCuentaCliente(sql, id),
@@ -91,9 +91,24 @@ export default async function VentaAvicolaPage({
           AND vi.producto_id IS NOT NULL
         ORDER BY vi.created_at ASC
       `,
+      // (f) UNA GUÍA POR DÍA (pedido del equipo, 11 jul 2026): si el cliente ya tiene
+      //     una venta de HOY no anulada, "Vender" continúa ESA guía (no crea otra).
+      //     El ruteo va en el server para cubrir TODAS las entradas (ficha, lista…).
+      sql`
+        SELECT id FROM ventas_avicola
+        WHERE cliente_id = ${id}
+          AND fecha = (NOW() AT TIME ZONE 'America/Lima')::date
+          AND NOT anulada
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
     ]);
 
   if (!cliente) notFound();
+
+  // En modo crear (sin ?edit), si ya hay guía del día, editarla (una por día).
+  const ventaHoyId = (ventaHoyRaw as Array<{ id: string }>)[0]?.id ?? null;
+  const effectiveEditId = editId ?? ventaHoyId;
 
   const productos: ProductoVentaAvicola[] = (
     productosRaw as Array<{
@@ -137,23 +152,23 @@ export default async function VentaAvicolaPage({
     precio: f.precio_kg,
   }));
 
-  // Cargar venta existente si estamos en modo edición
+  // Cargar venta existente si estamos en modo edición (o si hay guía del día).
   let ventaExistente = null;
-  if (editId) {
+  if (effectiveEditId) {
     const ventaRow = await sql`
       SELECT id, numero_guia, fecha::text as fecha, observaciones
       FROM ventas_avicola
-      WHERE id = ${editId} AND NOT anulada AND cliente_id = ${id}
+      WHERE id = ${effectiveEditId} AND NOT anulada AND cliente_id = ${id}
     `;
     if (ventaRow.length > 0) {
       const itemsRows = await sql`
-        SELECT 
+        SELECT
           producto_id,
           producto_nombre,
           peso_kg::float8 AS peso,
           precio_kg::float8 AS precio
         FROM venta_avicola_items
-        WHERE venta_id = ${editId}
+        WHERE venta_id = ${effectiveEditId}
         ORDER BY created_at ASC
       `;
       ventaExistente = {
