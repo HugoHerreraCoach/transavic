@@ -29,14 +29,16 @@ function fechaCorta(fecha: string): string {
 
 const kg = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
-/** Texto de la columna Peso/Producto de un día (con o sin el precio por kilo). */
+/** Texto de la columna Peso/Producto de un día (con o sin el precio por kilo).
+ *  Cada producto en 2 líneas (nombre / peso × precio) para que NUNCA se parta el
+ *  monto a la mitad aunque el nombre sea largo (presentación limpia). */
 function textoProductos(dia: DiaEstadoCuenta, conPrecio: boolean): string {
   if (dia.items.length === 0) return "";
   return dia.items
     .map((it) =>
       conPrecio
-        ? `${it.producto_nombre}  ${kg(it.peso_kg)} kg × ${soles(it.precio_kg)}`
-        : `${it.producto_nombre}  ${kg(it.peso_kg)} kg`
+        ? `${it.producto_nombre}\n   ${kg(it.peso_kg)} kg × ${soles(it.precio_kg)}`
+        : `${it.producto_nombre}\n   ${kg(it.peso_kg)} kg`
     )
     .join("\n");
 }
