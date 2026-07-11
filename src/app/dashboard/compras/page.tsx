@@ -31,7 +31,7 @@ export default async function ComprasPage() {
         </p>
       </div>
 
-      <ComprasClient />
+      <ComprasClient esAdmin={session.user.role === "admin"} />
     </div>
   );
 }

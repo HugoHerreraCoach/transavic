@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText } from "react-icons/fi";
+import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText, FiX } from "react-icons/fi";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
 import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
+import { esLineaSinPeso } from "@/lib/compras-lineas";
 
 interface Proveedor {
   id: string;
@@ -31,11 +32,6 @@ interface CompraItemInput {
   /** 'devolucion' = mercadería devuelta al proveedor: RESTA del total y del stock. */
   tipo: TipoFila;
 }
-
-/** Productos de categoría "servicio" (Pelada de pollo, ENVIO…): cargo del proveedor
- *  sin mercadería — se digita cantidad × precio y NO tocan inventario. */
-const esCategoriaServicio = (categoria: string | null | undefined) =>
-  /servicio/i.test(categoria ?? "");
 
 interface CompraRecord {
   id: string;
@@ -73,7 +69,7 @@ const filaVacia = (): CompraItemInput => ({
   tipo: "ingreso",
 });
 
-export default function ComprasClient() {
+export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }) {
   const [activeTab, setActiveTab] = useState<"nuevo" | "historial">("nuevo");
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -96,6 +92,20 @@ export default function ComprasClient() {
   const [ultimosCostos, setUltimosCostos] = useState<Record<string, number>>({});
   // Refs a las celdas de producto para enfocar el selector al agregar fila con Enter
   const celdasProductoRefs = useRef<(HTMLTableCellElement | null)[]>([]);
+
+  // Modal "Nuevo producto" (autoservicio, admin): crea un producto sin salir de
+  // Compras. Para insumos (arcos, mandil…) que faltan en el catálogo — pedido de
+  // Nelita (11 jul 2026). `filaDestino` = fila que auto-selecciona el producto nuevo.
+  const [modalProdAbierto, setModalProdAbierto] = useState(false);
+  const [filaDestino, setFilaDestino] = useState<number | null>(null);
+  const [nuevoProd, setNuevoProd] = useState({ nombre: "", categoria: "Insumos", unidad: "uni" });
+  const [customCategoria, setCustomCategoria] = useState("");
+  const [creandoProd, setCreandoProd] = useState(false);
+
+  // Categorías existentes (para el select del modal) + "Insumos" garantizada.
+  const categoriasExistentes = Array.from(
+    new Set(["Insumos", ...productos.map((p) => p.categoria).filter(Boolean)])
+  );
 
   useEffect(() => {
     fetchInitialData();
@@ -176,9 +186,61 @@ export default function ComprasClient() {
     setItems(items.filter((_, i) => i !== index));
   };
 
-  // ¿El producto de la fila es un servicio? (Pelada de pollo, ENVIO…)
+  // Abre el modal "Nuevo producto"; `fila` = fila que auto-selecciona el producto.
+  const abrirModalProducto = (fila: number | null) => {
+    setFilaDestino(fila);
+    setNuevoProd({ nombre: "", categoria: "Insumos", unidad: "uni" });
+    setCustomCategoria("");
+    setModalProdAbierto(true);
+  };
+
+  const handleCrearProducto = async () => {
+    const nombre = nuevoProd.nombre.trim();
+    const categoria =
+      nuevoProd.categoria === "__custom__" ? customCategoria.trim() : nuevoProd.categoria.trim();
+    const unidad = nuevoProd.unidad.trim() || "uni";
+    if (!nombre) {
+      mostrarToast("Escribe el nombre del producto.", "error");
+      return;
+    }
+    if (!categoria) {
+      mostrarToast("Escribe la categoría.", "error");
+      return;
+    }
+    setCreandoProd(true);
+    try {
+      const res = await fetch("/api/productos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre, categoria, unidad }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string"
+            ? data.error
+            : "No se pudo crear el producto (¿ya existe uno igual?).";
+        mostrarToast(msg, "error");
+        return;
+      }
+      const creado = (data?.data ?? data) as Producto;
+      setProductos((prev) => [...prev, { id: creado.id, nombre: creado.nombre, categoria: creado.categoria }]);
+      // Auto-seleccionar el nuevo producto en la fila desde donde se abrió.
+      if (filaDestino != null) {
+        handleItemChange(filaDestino, "producto_id", creado.id);
+      }
+      mostrarToast(`"${creado.nombre}" creado y agregado al catálogo.`, "exito");
+      setModalProdAbierto(false);
+    } catch {
+      mostrarToast("Sin conexión. Revisa tu internet e intenta de nuevo.", "error");
+    } finally {
+      setCreandoProd(false);
+    }
+  };
+
+  // ¿La fila es una línea SIN peso (servicio/insumo/adicional)? → cantidad × precio.
   const esFilaServicio = (productoId: string) =>
-    esCategoriaServicio(productos.find((p) => p.id === productoId)?.categoria);
+    esLineaSinPeso(productos.find((p) => p.id === productoId)?.categoria);
 
   const handleItemChange = (index: number, field: keyof CompraItemInput, value: string | number) => {
     const newItems = [...items];
@@ -398,13 +460,29 @@ export default function ComprasClient() {
               <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                 <FiFileText className="text-indigo-600" /> Detalle de Carga
               </h2>
-              <button
-                type="button"
-                onClick={handleAddItem}
-                className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
-              >
-                <FiPlus /> Agregar Fila
-              </button>
+              <div className="flex items-center gap-2">
+                {esAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Auto-selecciona en la primera fila sin producto (si hay).
+                      const vacia = items.findIndex((it) => !it.producto_id);
+                      abrirModalProducto(vacia >= 0 ? vacia : null);
+                    }}
+                    title="Crear un producto que falta en el catálogo (insumos, etc.)"
+                    className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                  >
+                    <FiBox /> Nuevo producto
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleAddItem}
+                  className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                >
+                  <FiPlus /> Agregar Fila
+                </button>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -667,6 +745,109 @@ export default function ComprasClient() {
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal "Nuevo producto" (autoservicio, admin) — crea un producto que falta
+          en el catálogo sin salir de Compras (pedido de Nelita, 11 jul 2026). */}
+      {modalProdAbierto && (
+        <div
+          className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4"
+          onClick={() => !creandoProd && setModalProdAbierto(false)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <FiBox className="text-emerald-600" /> Nuevo producto
+              </h2>
+              <button
+                onClick={() => setModalProdAbierto(false)}
+                disabled={creandoProd}
+                className="text-gray-400 hover:text-gray-600 p-2 cursor-pointer rounded-lg hover:bg-gray-100 transition-all"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="text-xs text-gray-500 bg-emerald-50/60 border border-emerald-100 p-3 rounded-2xl">
+                Para ítems que faltan en el catálogo (insumos como arcos, mandil…). Los de
+                categoría <b>Insumos</b>, <b>Servicios</b> o <b>producto adicional</b> se cargan
+                por cantidad × precio (sin pesar) y no tocan el inventario.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Nombre</label>
+                <input
+                  type="text"
+                  autoFocus
+                  value={nuevoProd.nombre}
+                  onChange={(e) => setNuevoProd({ ...nuevoProd, nombre: e.target.value })}
+                  placeholder="Ej: Mandil"
+                  className="block w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-gray-50"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Categoría</label>
+                  <select
+                    value={nuevoProd.categoria}
+                    onChange={(e) => setNuevoProd({ ...nuevoProd, categoria: e.target.value })}
+                    className="block w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 bg-white outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                  >
+                    {categoriasExistentes.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                    <option value="__custom__">➕ Nueva categoría…</option>
+                  </select>
+                  {nuevoProd.categoria === "__custom__" && (
+                    <input
+                      type="text"
+                      value={customCategoria}
+                      onChange={(e) => setCustomCategoria(e.target.value)}
+                      placeholder="Nombre de la categoría"
+                      className="block w-full mt-2 rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-gray-50"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Unidad</label>
+                  <input
+                    type="text"
+                    value={nuevoProd.unidad}
+                    onChange={(e) => setNuevoProd({ ...nuevoProd, unidad: e.target.value })}
+                    placeholder="uni"
+                    className="block w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-gray-50"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setModalProdAbierto(false)}
+                  disabled={creandoProd}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCrearProducto}
+                  disabled={creandoProd}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95"
+                >
+                  {creandoProd ? "Creando…" : "Crear producto"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

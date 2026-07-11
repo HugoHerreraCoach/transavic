@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
+import { esLineaSinPeso } from "@/lib/compras-lineas";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +18,9 @@ const CompraItemSchema = z.object({
   tipo: z.enum(["ingreso", "devolucion"]).default("ingreso"),
 });
 
-// Un producto de categoría "servicio" (ej. "Pelada de pollo", "ENVIO") es un cargo
-// del proveedor, no mercadería: suma a la deuda pero NUNCA toca inventario.
-const esCategoriaServicio = (categoria: string | null | undefined) =>
-  /servicio/i.test(categoria ?? "");
+// Las líneas SIN peso (servicios, insumos, "producto adicional") son un cargo del
+// proveedor, no mercadería pesada: suman a la deuda pero NUNCA tocan inventario.
+// La regla vive en src/lib/compras-lineas.ts (compartida con el front).
 
 const CompraSchema = z.object({
   proveedor_id: z.string().uuid(),
@@ -133,7 +133,7 @@ export async function POST(req: Request) {
     // el signo vive en `tipo`: una devolución resta su subtotal del total de la guía.
     let totalAcumulado = 0;
     const itemsProcesados = items.map(item => {
-      const servicio = esCategoriaServicio(categoriaPorProducto.get(item.producto_id));
+      const servicio = esLineaSinPeso(categoriaPorProducto.get(item.producto_id));
       const peso_neto = Number((item.peso_bruto - item.peso_tara).toFixed(2));
       const signo = item.tipo === "devolucion" ? -1 : 1;
       const subtotalItem = Number((signo * peso_neto * item.costo_unitario).toFixed(2));

@@ -1208,3 +1208,30 @@ caso mismo-día 1,300 sin regresión; las guías encadenan: saldo_actualizado de
 saldo_previo de la siguiente). La última venta siempre queda == `estadoCuentaCliente`. tsc/eslint/
 build limpios. (La confirmación por la API en vivo quedó pendiente por caída de la extensión del
 navegador; la query probada por psql es idéntica a la del código.)
+
+## 2026-07-11 — Compras: insumos (arcos/oferta/mandil) + "Nuevo producto" autoservicio
+
+**Pedido de Nelita (admin):** en Compras faltaban ítems que usa seguido — **arcos, oferta, mandil**;
+"lo demás" lo mete en el genérico "producto adicional". El form de Compras obliga a elegir un
+producto del catálogo (sin texto libre) y crear uno la mandaba a otro menú (Catálogo) → fricción.
+
+**Implementado:**
+- **Helper compartido `src/lib/compras-lineas.ts:esLineaSinPeso`** — extrae y generaliza el
+  `esCategoriaServicio` que estaba DUPLICADO en `compras-client.tsx` y `api/compras/route.ts`. Ahora
+  matchea `/servicio|insumo|adicional/i`: además de los servicios (Pelada/ENVIO), los **Insumos** y
+  el "producto adicional" se cargan cantidad × precio, sin pesar ni tocar inventario/kardex/
+  precio_compra. (Solo afecta compras futuras — las filas guardadas no cambian.)
+- **Botón "➕ Nuevo producto" en el form de Compras** (solo admin — `esAdmin` desde el server;
+  `POST /api/productos` es admin-only y Nelita es admin): mini-modal nombre/categoría(default
+  Insumos, con "➕ Nueva categoría…")/unidad → crea el producto, lo agrega al selector y lo
+  auto-selecciona en la fila. Reusa `SearchableSelect` sin tocarlo. Autoservicio: no vuelve a
+  pedírnoslo. `POST /api/productos`: categoría "Insumos" → prefijo de código `INS`.
+- **Seed `scripts/seed-insumos-compras-2026-07-11.sql`** (idempotente, solo data): Arcos/Oferta/
+  Mandil, categoría "Insumos", unidad "uni", códigos INS001-003. Aplicado a dev y prod por psql.
+
+**Verificado:** unit test del helper (9/9 categorías); simulación fiel del loop de ítems del backend
+para una compra mixta (mandil Insumos → sin inventario/precio_compra, subtotal 96 = 12×8; pollo →
+con inventario, 46×10 = 460; total 556); seed en dev y prod (INS001-003). tsc/eslint/build limpios.
+(La confirmación por click en el navegador quedó pendiente por caída de la extensión de Chrome; el
+comportamiento del backend es idéntico al de los servicios ya probados —gotcha #44— y el helper está
+unit-verificado.) Sin cambio de esquema. Detalle: gotcha #44 (ampliado).

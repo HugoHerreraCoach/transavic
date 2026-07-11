@@ -103,7 +103,9 @@ export async function POST(request: Request) {
           ? "CAR"
           : categoria === "Huevos"
             ? "HUE"
-            : "PRD";
+            : /insumo/i.test(categoria)
+              ? "INS"
+              : "PRD";
     const maxRow = (await sql`
       SELECT COALESCE(MAX(NULLIF(regexp_replace(codigo, '[^0-9]', '', 'g'), '')::int), 0) AS n
       FROM productos WHERE codigo LIKE ${prefijo + "%"}
