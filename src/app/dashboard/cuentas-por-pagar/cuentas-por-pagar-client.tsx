@@ -344,6 +344,23 @@ export default function CuentasPorPagarClient() {
     return `S/ ${val.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  // Hoy en zona Lima (YYYY-MM-DD) — consistente con el KPI "Deuda Vencida" del server.
+  const hoyLima = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+
+  // Días enteros entre hoy (Lima) y la fecha de vencimiento (>0 faltan, 0 hoy, <0 vencida).
+  const diasHastaVencimiento = (fechaVenc: string) => {
+    const a = new Date(hoyLima + "T00:00:00Z").getTime();
+    const b = new Date(fechaVenc.slice(0, 10) + "T00:00:00Z").getTime();
+    return Math.round((b - a) / 86_400_000);
+  };
+
+  // Etiqueta relativa bajo la fecha: hace obvio que es un plazo de pago que corre.
+  const etiquetaVencimiento = (dias: number) => {
+    if (dias < 0) return { texto: `Vencido hace ${-dias} ${-dias === 1 ? "día" : "días"}`, clase: "text-red-500" };
+    if (dias === 0) return { texto: "Vence hoy", clase: "text-amber-600" };
+    return { texto: `${dias === 1 ? "Falta" : "Faltan"} ${dias} ${dias === 1 ? "día" : "días"}`, clase: "text-gray-400" };
+  };
+
   const selectedCuentaDetails = useMemo(() => {
     return cuentas.find(c => c.id === cuentaBancariaId);
   }, [cuentas, cuentaBancariaId]);
@@ -499,7 +516,10 @@ export default function CuentasPorPagarClient() {
                   <th className="py-4 px-4 text-right">Monto Deuda</th>
                   <th className="py-4 px-4 text-right">Monto Pagado</th>
                   <th className="py-4 px-4 text-right">Saldo Restante</th>
-                  <th className="py-4 px-4">Vencimiento</th>
+                  <th className="py-4 px-4" title="Fecha límite para pagarle al proveedor (por defecto 30 días desde la compra; se puede cambiar en la ficha del proveedor).">
+                    Vencimiento
+                    <span className="block text-[10px] font-normal normal-case text-gray-400 mt-0.5">límite de pago</span>
+                  </th>
                   <th className="py-4 px-4">Estado</th>
                   <th className="py-4 px-6 text-right">Acciones</th>
                 </tr>
@@ -507,8 +527,7 @@ export default function CuentasPorPagarClient() {
               <tbody className="divide-y divide-gray-50">
                 {deudasFiltradas.map(d => {
                   const restante = d.monto_deuda - d.monto_pagado;
-                  const hoyStr = new Date().toISOString().split("T")[0];
-                  const isVencido = d.estado !== "Pagado" && d.fecha_vencimiento < hoyStr;
+                  const isVencido = d.estado !== "Pagado" && !!d.fecha_vencimiento && d.fecha_vencimiento.slice(0, 10) < hoyLima;
 
                   return (
                     <tr key={d.id} className="hover:bg-gray-50/50 transition-colors">
@@ -544,9 +563,12 @@ export default function CuentasPorPagarClient() {
                             ? new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" }).format(new Date(d.fecha_vencimiento))
                             : "—"}
                         </span>
-                        {isVencido && (
-                          <span className="block text-[9px] text-red-500 font-bold mt-0.5 uppercase tracking-wide">Vencido</span>
-                        )}
+                        {/* Hint relativo: hace obvio que la fecha es un plazo de pago que corre.
+                            No se muestra en deudas ya pagadas ni en manuales sin fecha. */}
+                        {d.fecha_vencimiento && d.estado !== "Pagado" && (() => {
+                          const { texto, clase } = etiquetaVencimiento(diasHastaVencimiento(d.fecha_vencimiento));
+                          return <span className={`block text-[10px] font-bold mt-0.5 ${clase}`}>{texto}</span>;
+                        })()}
                       </td>
                       <td className="py-4 px-4">
                         {d.estado === "Pagado" ? (

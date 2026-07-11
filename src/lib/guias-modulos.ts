@@ -110,6 +110,7 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
     nombre: "Cuentas por Pagar",
     pasos: [
       { titulo: "Cada compra crea una deuda al proveedor automáticamente" },
+      { titulo: "El 'Vencimiento' es la fecha límite para pagarle", detalle: "por defecto 30 días desde la compra; se puede cambiar el plazo en la ficha del proveedor" },
       { titulo: "¿Le debías de antes? Usa el botón 'Deuda anterior'", detalle: "registra el saldo que tenías con el proveedor antes del sistema" },
       { titulo: "Cuando pagues, toca la deuda y registra el pago", detalle: "el dinero sale de la cuenta o caja que elijas" },
     ],
