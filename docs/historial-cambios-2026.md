@@ -1265,3 +1265,12 @@ por `id` intacta) ni el esquema. La tarjeta "Venta de hoy" ahora muestra **produ
 `MovimientoAvicola`); el botón "Vender" del héroe se rotula "Agregar a la guía" cuando ya hay venta.
 Verificado en dev: la query detecta la venta del día y el historial trae el usuario. Datos verificados
 en prod: 99% ya era una venta/día (1 de 86 con 2). tsc/eslint/build limpios.
+
+### Addendum C3 — la guía del día también en la pantalla de VENDER (11 jul 2026)
+El equipo entra a vender por el botón "Vender" de la lista (`lista-client.tsx:250` → `/[id]/venta`
+directo, no a la ficha). Se agregó el panel "Guía de hoy" al TOPE de esa pantalla cuando ya hay una
+venta de hoy: N.º de guía, fecha, **hora de creación** y **usuario que la creó** (el `page.tsx` ahora
+trae `created_at` + `creado_por_nombre` vía JOIN users en `ventaExistente`); los productos/pesos ya se
+precargan y el total está en el footer. Si se edita una venta de un día pasado (`?edit` del
+historial), el copy sigue siendo "Editando la guía … del DD/MM". Verificado por psql (detección +
+hora/usuario/items). La ficha ya tenía la tarjeta; esto cubre el camino de "Vender".

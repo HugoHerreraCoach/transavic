@@ -156,9 +156,11 @@ export default async function VentaAvicolaPage({
   let ventaExistente = null;
   if (effectiveEditId) {
     const ventaRow = await sql`
-      SELECT id, numero_guia, fecha::text as fecha, observaciones
-      FROM ventas_avicola
-      WHERE id = ${effectiveEditId} AND NOT anulada AND cliente_id = ${id}
+      SELECT v.id, v.numero_guia, v.fecha::text as fecha, v.observaciones,
+             v.created_at::text AS created_at, u.name AS creado_por_nombre
+      FROM ventas_avicola v
+      LEFT JOIN users u ON u.id = v.creado_por
+      WHERE v.id = ${effectiveEditId} AND NOT v.anulada AND v.cliente_id = ${id}
     `;
     if (ventaRow.length > 0) {
       const itemsRows = await sql`
@@ -176,6 +178,8 @@ export default async function VentaAvicolaPage({
         numero_guia: ventaRow[0].numero_guia,
         fecha: ventaRow[0].fecha,
         observaciones: ventaRow[0].observaciones,
+        created_at: ventaRow[0].created_at,
+        creado_por_nombre: ventaRow[0].creado_por_nombre ?? null,
         items: (itemsRows as Array<{
           producto_id: string | null;
           producto_nombre: string;

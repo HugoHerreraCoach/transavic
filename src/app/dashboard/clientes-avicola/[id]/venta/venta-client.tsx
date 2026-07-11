@@ -28,6 +28,7 @@ import {
   FiX,
   FiStar,
   FiRotateCcw,
+  FiFileText,
 } from "react-icons/fi";
 
 /** Productos que el GG fija a mano para verlos siempre arriba (por dispositivo). */
@@ -46,6 +47,8 @@ export interface VentaExistenteProps {
   numero_guia: number;
   fecha: string;
   observaciones: string | null;
+  created_at: string;
+  creado_por_nombre: string | null;
   items: Array<{
     producto_id: string | null;
     producto_nombre: string;
@@ -222,6 +225,22 @@ export default function VentaAvicolaClient({
       }).format(new Date(`${fecha}T12:00:00`)),
     [fecha]
   );
+
+  // ¿La venta en edición es la GUÍA DEL DÍA (de hoy)? → panel destacado.
+  // Si es una venta de un día pasado (?edit de historial), va el copy de "Editando".
+  const esGuiaDeHoy = !!ventaExistente && ventaExistente.fecha.slice(0, 10) === hoyLima;
+  const horaCreacion = useMemo(() => {
+    if (!ventaExistente?.created_at) return "";
+    const raw = ventaExistente.created_at;
+    const d = new Date(raw.includes("T") ? raw : raw.replace(" ", "T"));
+    if (isNaN(d.getTime())) return "";
+    return new Intl.DateTimeFormat("es-PE", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone: "America/Lima",
+    }).format(d);
+  }, [ventaExistente?.created_at]);
   const [guardando, setGuardando] = useState(false);
   const [busqueda, setBusqueda] = useState("");
   /** Productos fijados a mano (estrella). Se guardan por dispositivo. */
@@ -655,12 +674,34 @@ export default function VentaAvicolaClient({
         </div>
       </header>
 
-      {/* Banner de modo edición: deja claro que corrige una venta ya registrada. */}
-      {ventaExistente && (
+      {/* GUÍA DEL DÍA: cuando ya hay una guía de HOY, se muestra arriba con su
+          número, hora y quién la creó. Todo lo que se agregue va a ESTA guía
+          (una sola por día — pedido del equipo, 11 jul 2026). */}
+      {ventaExistente && esGuiaDeHoy && (
+        <div className="mt-3 rounded-2xl border-2 border-red-200 bg-red-50/70 px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm font-black text-red-700 flex items-center gap-1.5">
+              <FiFileText size={16} />
+              Guía de hoy N.º {String(ventaExistente.numero_guia).padStart(8, "0")}
+            </p>
+          </div>
+          <p className="mt-0.5 text-xs text-gray-600">
+            {fechaCorta}
+            {horaCreacion ? ` · creada ${horaCreacion}` : ""}
+            {ventaExistente.creado_por_nombre ? ` · por ${ventaExistente.creado_por_nombre.trim()}` : ""}
+          </p>
+          <p className="mt-1.5 text-xs font-semibold text-gray-500">
+            Agrega, edita o quita productos aquí — todo va en esta misma guía.
+          </p>
+        </div>
+      )}
+
+      {/* Edición de una venta de un día PASADO (?edit de historial): copy distinto. */}
+      {ventaExistente && !esGuiaDeHoy && (
         <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
           <FiEdit2 size={15} className="mt-0.5 shrink-0 text-amber-600" />
           <p className="text-xs font-semibold leading-snug text-amber-800">
-            Editando la guía N.º {String(ventaExistente.numero_guia).padStart(8, "0")}.
+            Editando la guía N.º {String(ventaExistente.numero_guia).padStart(8, "0")} del {fechaCorta}.
             Enviar la guía corregida es opcional.
           </p>
         </div>
