@@ -196,7 +196,6 @@ export default function CuentasPorPagarClient() {
 
     const montoVal = Number(montoPago);
     const restante = selectedDeuda.monto_deuda - selectedDeuda.monto_pagado;
-    const cuentaSel = cuentas.find(c => c.id === cuentaBancariaId);
 
     if (isNaN(montoVal) || montoVal <= 0) {
       alert("El monto de pago debe ser positivo.");
@@ -206,10 +205,10 @@ export default function CuentasPorPagarClient() {
       alert("El monto a pagar excede el saldo pendiente.");
       return;
     }
-    if (cuentaSel && cuentaSel.saldo < montoVal) {
-      alert(`Fondos insuficientes en la cuenta "${cuentaSel.nombre}".`);
-      return;
-    }
+    // NO se bloquea por saldo de la cuenta: las cuentas del banco figuran en ~0 en el
+    // sistema (no se registran los ingresos), así que exigir fondos trababa TODOS los
+    // pagos. El registro se hace igual y la cuenta puede quedar en negativo (es solo un
+    // registro de lo que salió, no el saldo real del banco). Decisión de Hugo, 11 jul 2026.
 
     setActionLoading(true);
     setSuccessMsg(null);

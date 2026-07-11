@@ -101,22 +101,19 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `El monto a pagar (S/ ${montoPago.toFixed(2)}) supera el saldo restante de la deuda (S/ ${restante.toFixed(2)})` }, { status: 400 });
     }
 
-    // 2. Obtener la cuenta bancaria de origen
+    // 2. La cuenta de origen debe existir y estar activa (pero NO se exige saldo:
+    // las cuentas del banco figuran en ~0 en el sistema —no se registran los
+    // ingresos— así que bloquear por fondos trababa TODOS los pagos. El pago se
+    // registra igual y el saldo puede quedar negativo: es un registro de lo que
+    // salió, no el saldo real del banco. Decisión de Hugo, 11 jul 2026.
     const cuentaRows = await sql`
-      SELECT id, nombre, saldo::float8 AS saldo
+      SELECT id, nombre
       FROM cuentas_bancarias
       WHERE id = ${cuentaBancariaId} AND activa = true
     `;
 
     if (cuentaRows.length === 0) {
       return NextResponse.json({ error: "Cuenta bancaria de origen no encontrada o inactiva" }, { status: 404 });
-    }
-
-    const cuenta = cuentaRows[0];
-    const saldoActual = Number(cuenta.saldo);
-
-    if (saldoActual < montoPago) {
-      return NextResponse.json({ error: `Fondos insuficientes en la cuenta "${cuenta.nombre}" (Saldo actual: S/ ${saldoActual.toFixed(2)})` }, { status: 400 });
     }
 
     // 3. Ejecutar la actualización atómica con el CTE encadenado
