@@ -13,6 +13,8 @@ import {
   FiChevronLeft,
   FiChevronRight,
   FiEdit2,
+  FiEye,
+  FiEyeOff,
   FiRefreshCw,
   FiShoppingCart,
   FiTrash2,
@@ -98,6 +100,8 @@ export default function VentasPlantaClient() {
   const [motivo, setMotivo] = useState("");
   const [procesando, setProcesando] = useState(false);
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  // Las anuladas se OCULTAN por defecto (no hacen ruido visual); se pueden mostrar a demanda.
+  const [mostrarAnuladas, setMostrarAnuladas] = useState(false);
 
   const rango = useMemo(() => {
     if (modo === "semana") return { desde: lunesDeSemana(fecha), hasta: fecha === hoy ? hoy : sumarDias(lunesDeSemana(fecha), 6) };
@@ -143,6 +147,12 @@ export default function VentasPlantaClient() {
       anuladas: ventas.filter((v) => v.anulada).length,
     };
   }, [ventas]);
+
+  // Lista visible: sin anuladas por defecto (para que no hagan ruido).
+  const ventasVisibles = useMemo(
+    () => (mostrarAnuladas ? ventas : ventas.filter((v) => !v.anulada)),
+    [ventas, mostrarAnuladas]
+  );
 
   async function confirmarAnular() {
     if (!anulando) return;
@@ -281,6 +291,22 @@ export default function VentasPlantaClient() {
         </div>
       </div>
 
+      {/* Toggle de anuladas: ocultas por defecto para no hacer ruido visual. */}
+      {resumen.anuladas > 0 && (
+        <div className="flex justify-end mb-3">
+          <button
+            onClick={() => setMostrarAnuladas((v) => !v)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-200 bg-white text-gray-500 hover:bg-gray-50 transition"
+          >
+            {mostrarAnuladas ? (
+              <><FiEyeOff size={13} /> Ocultar anuladas</>
+            ) : (
+              <><FiEye size={13} /> Ver {resumen.anuladas} {resumen.anuladas === 1 ? "anulada" : "anuladas"}</>
+            )}
+          </button>
+        </div>
+      )}
+
       {/* Lista */}
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 mb-4">{error}</div>
@@ -289,9 +315,16 @@ export default function VentasPlantaClient() {
         <div className="py-16 text-center text-gray-400">Cargando ventas…</div>
       ) : ventas.length === 0 ? (
         <div className="py-16 text-center text-gray-400">No hay ventas registradas en este período.</div>
+      ) : ventasVisibles.length === 0 ? (
+        <div className="py-16 text-center text-gray-400">
+          Todas las ventas de este período están anuladas.{" "}
+          <button onClick={() => setMostrarAnuladas(true)} className="text-violet-600 font-semibold hover:underline">
+            Verlas
+          </button>
+        </div>
       ) : (
         <div className="space-y-2">
-          {ventas.map((v) => (
+          {ventasVisibles.map((v) => (
             <div
               key={v.id}
               className={`rounded-xl border bg-white px-3 py-3 sm:px-4 ${v.anulada ? "border-gray-150 opacity-60" : "border-gray-200"}`}
