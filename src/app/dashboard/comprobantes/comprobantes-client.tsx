@@ -5,6 +5,7 @@ import { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  FiArrowLeft,
   FiFileText,
   FiPlus,
   FiRefreshCw,
@@ -39,6 +40,7 @@ import EmitirGuiaModal, { ComprobanteInfo } from "../guias/emitir-guia-modal";
 import EmitirGuiaDirectaModal from "../guias/emitir-guia-directa-modal";
 import { Pedido } from "@/lib/types";
 import { mensajeSunatAmigable, mensajeEstadoSinDetalle } from "@/lib/sunat/mensajes-amigables";
+import { OPERACIONES, operacionDeComprobante, labelOperacion, type OperacionVenta } from "@/lib/operaciones-venta";
 
 
 interface Comprobante {
@@ -54,6 +56,10 @@ interface Comprobante {
   mensaje_sunat: string | null;
   pedido_id: string | null;
   pedido_cliente: string | null;
+  // Origen de la venta (para el chip de OPERACIÓN): venta_avicola_id lo marca como
+  // Campo; pedido_origen='pos_planta' como Planta; el resto Ejecutivas.
+  venta_avicola_id: string | null;
+  pedido_origen: string | null;
   // Quién emitió el comprobante (asesora/admin). Null en los sueltos viejos.
   emitido_por: string | null;
   // Vínculo NC ↔ comprobante original (lo devuelve GET /api/comprobantes):
@@ -65,8 +71,8 @@ interface Comprobante {
   referencia_cliente_razon_social: string | null;
   referencia_monto_total: string | number | null;
   tiene_nc: boolean;
-  // Para una NC: serie-número de OTRA NC aceptada que ya acredita la misma factura
-  // (→ esta NC rechazada ya fue "reemplazada"). Null si no hay reemplazo.
+  // Serie-número que reemplaza esta fila: otra NC aceptada para la misma
+  // referencia, o el CPE 01/03 nuevo que corrige un rechazo de Campo.
   reemplazada_por: string | null;
   // Campos extra para Guías de Remisión (tipo='09'). Null en CPEs.
   peso_bruto_total: string | number | null;
@@ -357,14 +363,12 @@ function ModalEnviarEmail({
   const [incluirXML, setIncluirXML] = useState(true);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cargandoDetalle, setCargandoDetalle] = useState(false);
 
   // Al abrir el modal, traer el detalle para pre-llenar el email del cliente si lo tenemos
   useEffect(() => {
     let cancel = false;
     if (defaultEmail || !comprobanteId) return;
     (async () => {
-      setCargandoDetalle(true);
       try {
         const d = await fetchDetalle(comprobanteId);
         if (!cancel && d.cliente && (d.cliente as { email?: string }).email) {
@@ -372,8 +376,6 @@ function ModalEnviarEmail({
         }
       } catch {
         // Silencioso — el usuario igual puede tipear
-      } finally {
-        if (!cancel) setCargandoDetalle(false);
       }
     })();
     return () => {
@@ -524,11 +526,7 @@ function ModalNotaCredito({
   const motivosNC = [
     { v: "01", label: "Anulación de la operación" },
     { v: "02", label: "Anulación por error en el RUC" },
-    { v: "03", label: "Corrección por error en la descripción" },
     { v: "06", label: "Devolución total" },
-    { v: "07", label: "Devolución por ítem" },
-    { v: "09", label: "Disminución en el valor" },
-    { v: "10", label: "Otros conceptos" },
   ];
 
   async function emitir() {
@@ -2021,10 +2019,12 @@ type PresetExcel = "mes" | "mesAnterior" | "hoy" | "todo" | "custom";
 function ModalExportarExcel({
   filtroTipo,
   filtroEmpresa,
+  filtroOperacion,
   onClose,
 }: {
   filtroTipo: string;
   filtroEmpresa: string;
+  filtroOperacion: string;
   onClose: () => void;
 }) {
   const hoy = fechaLima(0);
@@ -2055,6 +2055,7 @@ function ModalExportarExcel({
     const params = new URLSearchParams();
     if (filtroTipo !== "all") params.set("tipo", filtroTipo);
     if (filtroEmpresa !== "all") params.set("empresa", filtroEmpresa);
+    if (filtroOperacion !== "all") params.set("operacion", filtroOperacion);
     if (preset !== "todo" && desde) params.set("desde", desde);
     if (preset !== "todo" && hasta) params.set("hasta", hasta);
     window.location.assign(`/api/comprobantes/export-xlsx?${params.toString()}`);
@@ -2069,7 +2070,8 @@ function ModalExportarExcel({
     { id: "custom", label: "Rango personalizado" },
   ];
 
-  const hayFiltros = filtroTipo !== "all" || filtroEmpresa !== "all";
+  const hayFiltros =
+    filtroTipo !== "all" || filtroEmpresa !== "all" || filtroOperacion !== "all";
   const rangoInvalido =
     preset !== "todo" && desde && hasta && desde > hasta;
 
@@ -2161,6 +2163,14 @@ function ModalExportarExcel({
                 {filtroTipo !== "all" && <strong> Tipo = {tipoLabel(filtroTipo)}</strong>}
                 {filtroTipo !== "all" && filtroEmpresa !== "all" && " ·"}
                 {filtroEmpresa !== "all" && <strong> Empresa = {empresaLabel(filtroEmpresa)}</strong>}
+                {(filtroTipo !== "all" || filtroEmpresa !== "all") &&
+                  filtroOperacion !== "all" &&
+                  " ·"}
+                {filtroOperacion !== "all" && (
+                  <strong>
+                    {" "}Operación = {labelOperacion(filtroOperacion as OperacionVenta)}
+                  </strong>
+                )}
                 . Quita los filtros en la lista si quieres exportar todo.
               </span>
             </div>
@@ -2188,7 +2198,15 @@ function ModalExportarExcel({
   );
 }
 
-export default function ComprobantesClient({ userRole }: { userRole: string }) {
+export default function ComprobantesClient({
+  userRole,
+  operacionFija,
+}: {
+  userRole: string;
+  // Si se fija (vistas dedicadas por operación): la lista queda amarrada a esa
+  // operación, se oculta el filtro de Operación y el header se adapta.
+  operacionFija?: OperacionVenta;
+}) {
   const [comprobantes, setComprobantes] = useState<Comprobante[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -2202,13 +2220,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   const tipoParam = searchParams?.get("tipo") || "all";
   const [filtroTipo, setFiltroTipo] = useState<string>(tipoParam);
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>("all");
+  // Operación de venta (ejecutivas/campo/planta) — va al API (?operacion=).
+  // Si la vista está amarrada a una operación (operacionFija), esa manda.
+  const operacionParam = operacionFija ?? searchParams?.get("operacion") ?? "all";
+  const [filtroOperacion, setFiltroOperacion] = useState<string>(operacionParam);
   // Estado se filtra en cliente (tipo/empresa van al API); evita re-fetch.
   const [filtroEstado, setFiltroEstado] = useState<string>("all");
   // Búsqueda local sobre lo ya traído: matchea serie_numero, cliente y doc.
   // El usuario escribe "F001-23" o "Lucy" o "20123…" y filtra al toque.
-  const [busqueda, setBusqueda] = useState<string>("");
+  const busquedaParam = searchParams?.get("search")?.trim() ?? "";
+  const [busqueda, setBusqueda] = useState<string>(busquedaParam);
   // Búsqueda SERVER-SIDE (toda la BD, no solo lo cargado) con debounce + rango de fechas.
-  const [searchDebounced, setSearchDebounced] = useState<string>("");
+  const [searchDebounced, setSearchDebounced] = useState<string>(busquedaParam);
   const [filtroDesde, setFiltroDesde] = useState<string>(""); // YYYY-MM-DD | ""
   const [filtroHasta, setFiltroHasta] = useState<string>("");
   const [alcanzoTope, setAlcanzoTope] = useState<boolean>(false);
@@ -2335,6 +2358,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
       const params = new URLSearchParams();
       if (filtroTipo !== "all") params.set("tipo", filtroTipo);
       if (filtroEmpresa !== "all") params.set("empresa", filtroEmpresa);
+      if (filtroOperacion !== "all") params.set("operacion", filtroOperacion);
       // Si vinimos con ?pedido_id= (ej. link del badge "Facturado"), filtramos.
       if (pedidoIdFiltro) params.set("pedido_id", pedidoIdFiltro);
       // Búsqueda en toda la BD (≥2 chars) + rango de fechas → se resuelven en el server.
@@ -2362,7 +2386,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroTipo, filtroEmpresa, pedidoIdFiltro, searchDebounced, filtroDesde, filtroHasta]);
+  }, [filtroTipo, filtroEmpresa, filtroOperacion, pedidoIdFiltro, searchDebounced, filtroDesde, filtroHasta]);
 
   // Debounce de la búsqueda server-side: no dispara un fetch en cada tecla.
   useEffect(() => {
@@ -2373,7 +2397,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   // Volver a la página 1 cuando cambia cualquier filtro (incluida la búsqueda y fechas).
   useEffect(() => {
     setPagina(1);
-  }, [filtroTipo, filtroEmpresa, filtroEstado, busqueda, filtroDesde, filtroHasta]);
+  }, [filtroTipo, filtroEmpresa, filtroOperacion, filtroEstado, busqueda, filtroDesde, filtroHasta]);
 
   useEffect(() => {
     if (!toast) return;
@@ -2382,7 +2406,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
   }, [toast]);
 
   // Recalcular posición del menú de acciones al hacer scroll o resize en lugar de cerrarlo
-  const [scrollTrigger, setScrollTrigger] = useState(0);
+  const [, setScrollTrigger] = useState(0);
   useEffect(() => {
     if (!menuAcciones) return;
     const handleUpdate = () => setScrollTrigger((prev) => prev + 1);
@@ -2661,29 +2685,67 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             (Excel, Resumen, Refrescar) bajan a la toolbar de la tabla. ── */}
       <header className="mb-4 flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+          {operacionFija && (
+            <Link
+              href={operacionFija === "campo" ? "/dashboard/clientes-avicola" : "/dashboard"}
+              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors mb-1"
+            >
+              <FiArrowLeft size={14} />{" "}
+              {operacionFija === "campo" ? "Venta en Campo" : "Ventas Ejecutivas"}
+            </Link>
+          )}
+          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2 flex-wrap">
             <FiFileText className="text-red-600" />
-            Comprobantes SUNAT
+            {operacionFija === "campo"
+              ? "Comprobantes de Campo"
+              : operacionFija === "ejecutivas"
+                ? "Comprobantes — Ejecutivas"
+                : operacionFija === "planta"
+                  ? "Comprobantes — Planta"
+                  : "Comprobantes SUNAT"}
+            {operacionFija && (
+              <span
+                className={`text-xs font-bold px-2 py-0.5 rounded-full ${OPERACIONES[operacionFija].chipClass}`}
+              >
+                {labelOperacion(operacionFija)}
+              </span>
+            )}
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            Facturas, boletas, notas de crédito y guías de remisión emitidas a SUNAT
+            {operacionFija === "campo"
+              ? "Solo los comprobantes emitidos desde ventas en campo."
+              : operacionFija === "ejecutivas"
+                ? "Solo los comprobantes de las ventas de las ejecutivas."
+                : "Facturas, boletas, notas de crédito y guías de remisión emitidas a SUNAT"}
           </p>
         </div>
         <div className="flex items-center gap-2.5 flex-wrap">
-          <button
-            onClick={() => setShowEmitirGuiaDirecta(true)}
-            className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors cursor-pointer"
-          >
-            <FiTruck />
-            Emitir guía
-          </button>
-          <Link
-            href="/dashboard/comprobantes/nuevo"
-            className="px-4 py-2.5 bg-red-600 text-white hover:bg-red-700 rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors"
-          >
-            <FiPlus />
-            Emitir comprobante
-          </Link>
+          {operacionFija === "campo" ? (
+            <Link
+              href="/dashboard/clientes-avicola/ventas"
+              className="px-4 py-2.5 bg-amber-600 text-white hover:bg-amber-700 rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors"
+            >
+              <FiPlus />
+              Facturar venta de campo
+            </Link>
+          ) : (
+            <>
+              <button
+                onClick={() => setShowEmitirGuiaDirecta(true)}
+                className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors cursor-pointer"
+              >
+                <FiTruck />
+                Emitir guía
+              </button>
+              <Link
+                href="/dashboard/comprobantes/nuevo"
+                className="px-4 py-2.5 bg-red-600 text-white hover:bg-red-700 rounded-lg flex items-center gap-2 font-semibold shadow-sm transition-colors"
+              >
+                <FiPlus />
+                Emitir comprobante
+              </Link>
+            </>
+          )}
         </div>
       </header>
 
@@ -2862,6 +2924,19 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
             { v: "avicola", l: "Avícola de Tony", swatch: "bg-teal-500" },
           ]}
         />
+        {!operacionFija && (
+          <GrupoFiltro
+            titulo="Operación"
+            activo={filtroOperacion}
+            onChange={setFiltroOperacion}
+            opciones={[
+              { v: "all", l: "Todas" },
+              { v: "ejecutivas", l: "🛵 Ejecutivas", swatch: "bg-blue-500" },
+              { v: "campo", l: "🏪 Campo", swatch: "bg-amber-500" },
+              { v: "planta", l: "🏭 Planta", swatch: "bg-violet-500" },
+            ]}
+          />
+        )}
         <GrupoFiltro
           titulo="Estado"
           activo={filtroEstado}
@@ -2985,6 +3060,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                       ya reemplazada por {serieCorta(c.reemplazada_por)}
                     </button>
                   )}
+                  {(c.tipo === "01" || c.tipo === "03") &&
+                    c.estado === "rechazado" &&
+                    c.venta_avicola_id &&
+                    c.reemplazada_por && (
+                      <button
+                        onClick={() => setBusqueda(c.reemplazada_por ?? "")}
+                        title={`Este rechazo se conservó y fue corregido por ${c.reemplazada_por}`}
+                        className="mt-1 block text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                      >
+                        corregido por {serieCorta(c.reemplazada_por)}
+                      </button>
+                    )}
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     {(() => {
                       const t = tipoUI(c.tipo);
@@ -3000,6 +3087,14 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     >
                       {empresaLabel(c.empresa)}
                     </span>
+                    {(() => {
+                      const e = OPERACIONES[operacionDeComprobante({ venta_avicola_id: c.venta_avicola_id, pedido_origen: c.pedido_origen })];
+                      return (
+                        <span className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-full ${e.chipClass}`}>
+                          {e.emoji} {e.label}
+                        </span>
+                      );
+                    })()}
                     {c.tipo !== "07" && c.tiene_nc && (
                       <span className="inline-flex items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
                         <FiCornerUpLeft size={10} className="flex-shrink-0" />
@@ -3166,6 +3261,18 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                         ya reemplazada por {serieCorta(c.reemplazada_por)}
                       </button>
                     )}
+                    {(c.tipo === "01" || c.tipo === "03") &&
+                      c.estado === "rechazado" &&
+                      c.venta_avicola_id &&
+                      c.reemplazada_por && (
+                        <button
+                          onClick={() => setBusqueda(c.reemplazada_por ?? "")}
+                          title={`Este rechazo se conservó y fue corregido por ${c.reemplazada_por}`}
+                          className="mt-1 block text-[10px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                        >
+                          corregido por {serieCorta(c.reemplazada_por)}
+                        </button>
+                      )}
                     {c.tipo !== "07" && c.tiene_nc && (
                       <span className="mt-0.5 flex w-fit items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
                         <FiCornerUpLeft size={10} className="flex-shrink-0" />
@@ -3281,11 +3388,21 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
                     })()}
                   </td>
                   <td className="px-3 py-2">
-                    <span
-                      className={`text-[10px] px-2 py-0.5 rounded border font-medium ${empresaBadgeColor(c.empresa)}`}
-                    >
-                      {empresaLabel(c.empresa)}
-                    </span>
+                    <div className="flex flex-col items-start gap-1">
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded border font-medium ${empresaBadgeColor(c.empresa)}`}
+                      >
+                        {empresaLabel(c.empresa)}
+                      </span>
+                      {(() => {
+                        const e = OPERACIONES[operacionDeComprobante({ venta_avicola_id: c.venta_avicola_id, pedido_origen: c.pedido_origen })];
+                        return (
+                          <span className={`inline-flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded-full ${e.chipClass}`}>
+                            {e.emoji} {e.label}
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </td>
                   <td className="px-3 py-2">
                     {c.emitido_por ? (
@@ -3763,6 +3880,7 @@ export default function ComprobantesClient({ userRole }: { userRole: string }) {
         <ModalExportarExcel
           filtroTipo={filtroTipo}
           filtroEmpresa={filtroEmpresa}
+          filtroOperacion={filtroOperacion}
           onClose={() => setModalExcel(false)}
         />
       )}

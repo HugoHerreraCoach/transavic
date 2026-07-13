@@ -8,7 +8,11 @@
 // Columnas: Fecha · Venta del día · Peso/Producto · Monto del día · Saldo anterior
 // · Abonos · Saldo actual. Al pie: totales del período. EXCLUYE los anulados.
 
-import type { ClienteAvicolaConSaldo, MovimientoAvicola } from "@/lib/avicola/types";
+import {
+  ETIQUETA_MEDIO_PAGO,
+  type ClienteAvicolaConSaldo,
+  type MovimientoAvicola,
+} from "@/lib/avicola/types";
 import { construirEstadoCuenta, type DiaEstadoCuenta } from "@/lib/avicola/estado-cuenta";
 
 const ROJO: [number, number, number] = [220, 38, 38];
@@ -25,6 +29,18 @@ function soles(n: number): string {
 function fechaCorta(fecha: string): string {
   const [y, m, d] = fecha.slice(0, 10).split("-");
   return `${d}/${m}/${y}`;
+}
+
+/** Hora real del registro en Lima. El abono conserva su fecha de negocio aparte. */
+function horaCorta(createdAt: string): string {
+  const d = new Date(createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
 }
 
 const kg = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
@@ -46,6 +62,26 @@ function textoProductos(dia: DiaEstadoCuenta, conPrecio: boolean): string {
 function textoGuias(dia: DiaEstadoCuenta): string {
   if (dia.guias.length === 0) return dia.hay_abono ? "Abono" : "—";
   return dia.guias.map((g) => `Guía ${g}`).join(", ");
+}
+
+/** Cada abono se imprime como bloque independiente. No volver a reemplazar esta
+ * lista por `abonos_del_dia`: Antonio necesita que el cliente vea cada pago. */
+function textoAbonos(dia: DiaEstadoCuenta): string {
+  return dia.abonos
+    .map((abono) => {
+      const hora = horaCorta(abono.created_at);
+      const medio = abono.medio_pago
+        ? ETIQUETA_MEDIO_PAGO[abono.medio_pago]
+        : "Otro";
+      const nota = abono.observaciones?.trim().replace(/\s+/g, " ");
+      return [
+        `${hora ? `${hora} - ` : ""}${medio}`,
+        `- ${soles(abono.monto)}`,
+        `Saldo: ${soles(abono.saldo_posterior)}`,
+        ...(nota ? [`Nota: ${nota}`] : []),
+      ].join("\n");
+    })
+    .join("\n------\n");
 }
 
 export interface OpcionesEstadoCuenta {
@@ -119,7 +155,7 @@ export async function generarPdfEstadoCuenta(
     textoProductos(d, conPrecio),
     d.hay_venta ? soles(d.venta_del_dia) : "",
     soles(d.saldo_anterior),
-    d.hay_abono ? soles(d.abonos_del_dia) : "",
+    d.hay_abono ? textoAbonos(d) : "",
     soles(d.saldo_actual),
   ]);
   if (body.length === 0) {
@@ -136,7 +172,7 @@ export async function generarPdfEstadoCuenta(
       "Peso / Producto",
       "Monto del día",
       "Saldo anterior",
-      "Abonos",
+      "Abonos separados",
       "Saldo actual",
     ]],
     body,
@@ -148,8 +184,8 @@ export async function generarPdfEstadoCuenta(
       2: { cellWidth: "auto" },
       3: { halign: "right", cellWidth: 22 },
       4: { halign: "right", cellWidth: 23 },
-      5: { halign: "right", cellWidth: 18, textColor: [22, 130, 60] },
-      6: { halign: "right", cellWidth: 23, fontStyle: "bold" },
+      5: { halign: "left", cellWidth: 31, textColor: [22, 130, 60] },
+      6: { halign: "right", cellWidth: 21, fontStyle: "bold" },
     },
   });
 

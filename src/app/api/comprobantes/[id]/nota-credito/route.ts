@@ -1,20 +1,23 @@
 // src/app/api/comprobantes/[id]/nota-credito/route.ts
-// POST { motivo, tipoNotaCredito? } — emite una Nota de Crédito (07) que
-// modifica/anula un comprobante (factura o boleta) ya aceptado.
+// POST { motivo, tipoNotaCredito? } — emite una Nota de Crédito (07) de
+// anulación/devolución TOTAL de un comprobante ya aceptado.
 //
 // A diferencia de la Comunicación de Baja (/anular, solo facturas, ≤7 días),
 // la Nota de Crédito sirve para facturas Y boletas y es el mecanismo general.
 //
-// V1: reconstruye el crédito como una línea consolidada por el neto del original
-// (la tabla comprobantes guarda monto_subtotal/igv/total). Suficiente para
-// anulación total (motivo 01). La emite el admin o la ASESORA dueña del
+// V1 acredita todos los ítems y el total del XML original. Por eso solo admite
+// códigos SUNAT de anulación/devolución total (01, 02, 06); una corrección
+// parcial requiere seleccionar ítems/montos y todavía no está modelada. La emite el admin o la ASESORA dueña del
 // comprobante (de sus pedidos) — las asesoras son las que facturan.
 
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { emitirComprobante } from "@/lib/sunat";
+import {
+  emitirComprobante,
+  NotaCreditoYaReservadaError,
+} from "@/lib/sunat";
 import {
   TipoComprobante,
   TipoNotaCredito,
@@ -27,6 +30,7 @@ import {
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 import { anularCobranzasDeComprobante } from "@/lib/cobranzas";
+import { anularCobranzasPlantaDeComprobante } from "@/lib/planta/saldos";
 import { parseCpeItems } from "@/lib/sunat/parse-cpe-items";
 
 export const dynamic = "force-dynamic";
@@ -38,8 +42,8 @@ const Schema = z.object({
     .min(5, "Motivo mínimo 5 caracteres")
     .max(250, "Motivo máximo 250 caracteres"),
   tipoNotaCredito: z
-    .enum(["01", "02", "03", "04", "05", "06", "07", "08", "09", "10"])
-    .default("01"), // 01 = Anulación de la operación (catálogo 09)
+    .enum(["01", "02", "06"])
+    .default("01"), // solo anulación/devolución TOTAL en esta versión
 });
 
 interface RouteParams {
@@ -67,8 +71,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const sql = neon(process.env.DATABASE_URL!);
   const rows = (await sql`
     SELECT c.empresa, c.tipo, c.serie, c.numero, c.serie_numero, c.estado,
-           c.monto_subtotal, c.cliente_doc_num, c.cliente_razon_social,
-           c.observaciones, c.pedido_id, c.emitido_por, c.xml_firmado_base64, p.asesor_id
+           c.monto_subtotal, c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
+           c.observaciones, c.pedido_id, c.emitido_por, c.xml_firmado_base64,
+           c.venta_avicola_id, p.asesor_id, p.origen AS pedido_origen
     FROM comprobantes c
     LEFT JOIN pedidos p ON c.pedido_id = p.id
     WHERE c.id = ${id}::uuid LIMIT 1
@@ -80,13 +85,16 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     serie_numero: string;
     estado: string;
     monto_subtotal: string | number;
+    cliente_doc_tipo: string | null;
     cliente_doc_num: string | null;
     cliente_razon_social: string | null;
     observaciones: string | null;
     pedido_id: string | null;
     emitido_por: string | null;
     xml_firmado_base64: string | null;
+    venta_avicola_id: string | null;
     asesor_id: string | null;
+    pedido_origen: string | null;
   }>;
   if (rows.length === 0)
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
@@ -120,23 +128,36 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       { status: 409 }
     );
 
-  // Anti-duplicado: bloquear una SEGUNDA nota de crédito si el comprobante ya tiene
-  // una NC aceptada/observada que lo acredita. (Pasó en prod: una factura quedó con
-  // DOS NC por el total → doble anulación.) Se detecta por la referencia estructurada
-  // (NC emitidas con el sistema nuevo) y por las observaciones del comprobante (NC
-  // históricas, anteriores a la columna referencia_comprobante_id).
+  // Anti-duplicado: una NC válida/en curso bloquea otra. Una NC en `error` que
+  // YA tiene XML también bloquea: el transporte fue ambiguo y debe reintentarse
+  // con el mismo correlativo. Solo `rechazado`, `anulado` o un error anterior a
+  // firmar (sin XML) permiten crear una NC nueva.
   const ncPrevias = (await sql`
-    SELECT serie_numero FROM comprobantes
+    SELECT id, serie_numero, estado, (xml_firmado_base64 IS NOT NULL) AS tiene_xml
+    FROM comprobantes
     WHERE referencia_comprobante_id = ${id}::uuid
-      AND tipo = '07' AND estado IN ('aceptado', 'observado')
+      AND tipo = '07'
+      AND (
+        estado NOT IN ('error', 'rechazado', 'anulado')
+        OR (estado = 'error' AND xml_firmado_base64 IS NOT NULL)
+      )
     ORDER BY created_at LIMIT 1
-  `) as Array<{ serie_numero: string }>;
+  `) as Array<{ id: string; serie_numero: string; estado: string; tiene_xml: boolean }>;
   const ncHistorica = /nota de cr[eé]dito\s+(\S+)\s+\(ACEPTADA/i.exec(c.observaciones ?? "");
   if (ncPrevias.length > 0 || ncHistorica) {
     const ncRef = ncPrevias[0]?.serie_numero ?? ncHistorica?.[1] ?? "una previa";
+    const ncPrevia = ncPrevias[0];
     return NextResponse.json(
       {
-        error: `Este comprobante (${c.serie_numero}) ya tiene la nota de crédito ${ncRef}; no se puede emitir otra sobre el mismo comprobante. Si hay un caso especial, coordínalo con el admin.`,
+        codigo:
+          ncPrevia?.estado === "error" && ncPrevia.tiene_xml
+            ? "nota_credito_error_reintentable"
+            : "nota_credito_ya_existente",
+        notaCreditoId: ncPrevia?.id ?? null,
+        error:
+          ncPrevia?.estado === "error" && ncPrevia.tiene_xml
+            ? `La Nota de Crédito ${ncRef} quedó con error después de firmarse. Reintenta esa misma nota; no emitas otro correlativo.`
+            : `Este comprobante (${c.serie_numero}) ya tiene la Nota de Crédito ${ncRef}; no se puede emitir otra sobre el mismo comprobante.`,
       },
       { status: 409 }
     );
@@ -146,8 +167,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   if (!Number.isFinite(subtotalNeto) || subtotalNeto <= 0)
     return NextResponse.json({ error: "El comprobante no tiene monto válido." }, { status: 400 });
 
-  const docNum = c.cliente_doc_num ?? "00000000";
-  const esRuc = /^\d{11}$/.test(docNum);
+  const docNum = c.cliente_doc_num ?? "0";
+  // La NC debe repetir EXACTAMENTE el tipo de documento del comprobante base.
+  // Esto es especialmente importante para boletas sin documento (tipo 0,
+  // número 0): convertirlas a DNI "0" genera un XML inválido para SUNAT.
+  const tipoDocCliente = (() => {
+    if (c.cliente_doc_tipo === TipoDocIdentidad.SIN_DOCUMENTO) {
+      return TipoDocIdentidad.SIN_DOCUMENTO;
+    }
+    if (c.cliente_doc_tipo === TipoDocIdentidad.RUC) {
+      return TipoDocIdentidad.RUC;
+    }
+    if (c.cliente_doc_tipo === TipoDocIdentidad.DNI) {
+      return TipoDocIdentidad.DNI;
+    }
+    // Fallback solo para filas históricas sin cliente_doc_tipo.
+    if (/^\d{11}$/.test(docNum)) return TipoDocIdentidad.RUC;
+    if (/^\d{8}$/.test(docNum)) return TipoDocIdentidad.DNI;
+    return TipoDocIdentidad.SIN_DOCUMENTO;
+  })();
   const refNumero = String(c.numero).padStart(8, "0");
 
   // Las líneas de la NC = las MISMAS de la factura (de su XML firmado) → el total de
@@ -195,13 +233,64 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     ];
   }
 
+  // Claim del CPE base ANTES de pedir un correlativo de NC. Dos pestañas no
+  // consumen dos números ni llegan al SOAP; el índice de NC activa queda como
+  // segunda barrera. Claims huérfanos se recuperan tras 15 minutos.
+  const claimToken = crypto.randomUUID();
+  const claim = (await sql`
+    UPDATE comprobantes base
+    SET nota_credito_claim_token = ${claimToken}::uuid,
+        nota_credito_claim_at = NOW()
+    WHERE base.id = ${id}::uuid
+      AND (
+        base.nota_credito_claim_token IS NULL
+        OR base.nota_credito_claim_at < NOW() - INTERVAL '15 minutes'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM comprobantes nc
+        WHERE nc.referencia_comprobante_id = base.id
+          AND nc.tipo = '07'
+          AND (
+            nc.estado NOT IN ('error', 'rechazado', 'anulado')
+            OR (nc.estado = 'error' AND nc.xml_firmado_base64 IS NOT NULL)
+          )
+      )
+    RETURNING base.id
+  `) as Array<{ id: string }>;
+  if (claim.length === 0) {
+    const activa = (await sql`
+      SELECT id, serie_numero, estado
+      FROM comprobantes
+      WHERE referencia_comprobante_id = ${id}::uuid
+        AND tipo = '07'
+        AND (
+          estado NOT IN ('error', 'rechazado', 'anulado')
+          OR (estado = 'error' AND xml_firmado_base64 IS NOT NULL)
+        )
+      ORDER BY created_at DESC LIMIT 1
+    `) as Array<{ id: string; serie_numero: string; estado: string }>;
+    return NextResponse.json(
+      {
+        codigo: "nota_credito_ya_reservada",
+        notaCreditoId: activa[0]?.id ?? null,
+        serieNumero: activa[0]?.serie_numero ?? null,
+        estado: activa[0]?.estado ?? "emitiendo",
+        error: activa[0]
+          ? `El comprobante ya tiene la Nota de Crédito ${activa[0].serie_numero} en estado ${activa[0].estado}.`
+          : "Este comprobante ya está siendo acreditado en otra pestaña.",
+      },
+      { status: 409 }
+    );
+  }
+
   try {
     const resultado = await emitirComprobante({
       empresa: c.empresa as EmpresaId,
       tipo: TipoComprobante.NOTA_CREDITO,
       cliente: {
-        tipoDocumento: esRuc ? TipoDocIdentidad.RUC : TipoDocIdentidad.DNI,
-        numDocumento: docNum,
+        tipoDocumento: tipoDocCliente,
+        numDocumento:
+          tipoDocCliente === TipoDocIdentidad.SIN_DOCUMENTO ? "0" : docNum,
         razonSocial: c.cliente_razon_social ?? "CLIENTE",
       },
       items: itemsNC,
@@ -216,6 +305,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       // guarda en `comprobantes.referencia_comprobante_id`. Sirve para mostrar el
       // enlace "anula F001-5" en la lista y para que la factura aparezca "con N. Crédito".
       referenciaComprobanteId: id,
+      // Hereda el origen Campo del comprobante acreditado. Así la NC permanece
+      // en la vista de Campo y nunca contamina facturación/metas de ejecutivas.
+      ventaAvicolaId: c.venta_avicola_id,
       // Rastro: quién emitió esta nota de crédito (cualquier asesora/admin puede).
       emitidoPor: session.user.name?.trim() || undefined,
     });
@@ -235,18 +327,39 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     // NC fue aceptada/observada (no rechazada/erró) y la cobranza NO está pagada
     // (una pagada implica devolución → la revisa una persona). No bloqueante: si
     // algo falla, la NC igual quedó emitida.
+    const esAnulacionTotal = ["01", "02", "06"].includes(parsed.data.tipoNotaCredito);
     if (
-      resultado.estado !== EstadoSunat.RECHAZADA &&
-      resultado.estado !== EstadoSunat.ERROR
+      esAnulacionTotal &&
+      (resultado.estado === EstadoSunat.ACEPTADA ||
+        resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES)
     ) {
       try {
-        const anuladas = await anularCobranzasDeComprobante({
-          comprobanteId: id,
-          pedidoId: c.pedido_id ?? null,
-          serieNumero: c.serie_numero,
-          motivo: `Anulada por Nota de Crédito ${resultado.serieNumero ?? ""}`.trim(),
-          anuladaPor: session.user.name?.trim() || "Sistema (NC)",
-        });
+        const motivoCobranza = `Anulada por Nota de Crédito ${resultado.serieNumero ?? ""}`.trim();
+        const anuladas = c.venta_avicola_id
+          ? ((await sql`
+              UPDATE ventas_avicola
+              SET anulada = TRUE,
+                  anulada_at = NOW(),
+                  anulada_por = ${session.user.id}::uuid,
+                  anulacion_motivo = ${motivoCobranza}
+              WHERE id = ${c.venta_avicola_id}::uuid
+                AND NOT anulada
+              RETURNING id
+            `) as Array<{ id: string }>).length
+          : c.pedido_origen === "pos_planta"
+            ? await anularCobranzasPlantaDeComprobante(sql, {
+                comprobanteId: id,
+                pedidoId: c.pedido_id,
+                motivo: motivoCobranza,
+                anuladaPor: session.user.id,
+              })
+            : await anularCobranzasDeComprobante({
+                comprobanteId: id,
+                pedidoId: c.pedido_id ?? null,
+                serieNumero: c.serie_numero,
+                motivo: motivoCobranza,
+                anuladaPor: session.user.name?.trim() || "Sistema (NC)",
+              });
         if (anuladas > 0) {
           console.log(`NC ${resultado.serieNumero}: ${anuladas} cobranza(s) anulada(s).`);
         }
@@ -276,8 +389,47 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(resultado);
   } catch (err) {
+    if (err instanceof NotaCreditoYaReservadaError) {
+      const existentes = (await sql`
+        SELECT id, serie_numero, estado
+        FROM comprobantes
+        WHERE referencia_comprobante_id = ${err.referenciaComprobanteId}::uuid
+          AND tipo = '07'
+          AND (
+            estado NOT IN ('error', 'rechazado', 'anulado')
+            OR (estado = 'error' AND xml_firmado_base64 IS NOT NULL)
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+      `) as Array<{ id: string; serie_numero: string; estado: string }>;
+      const existente = existentes[0];
+      return NextResponse.json(
+        {
+          codigo: "nota_credito_ya_reservada",
+          notaCreditoId: existente?.id ?? null,
+          serieNumero: existente?.serie_numero ?? null,
+          estado: existente?.estado ?? "emitiendo",
+          error: existente
+            ? `El comprobante ya tiene la Nota de Crédito ${existente.serie_numero} en estado ${existente.estado}. No se enviará otra a SUNAT.`
+            : "Este comprobante ya está siendo acreditado. No se enviará otra Nota de Crédito a SUNAT.",
+        },
+        { status: 409 }
+      );
+    }
     console.error("Error emitiendo nota de crédito:", err);
     const mensaje = err instanceof Error ? err.message : "Error al emitir nota de crédito";
     return NextResponse.json({ error: mensaje }, { status: 500 });
+  } finally {
+    try {
+      await sql`
+        UPDATE comprobantes
+        SET nota_credito_claim_token = NULL,
+            nota_credito_claim_at = NULL
+        WHERE id = ${id}::uuid
+          AND nota_credito_claim_token = ${claimToken}::uuid
+      `;
+    } catch (error) {
+      console.error("No se pudo liberar el claim de Nota de Crédito:", error);
+    }
   }
 }

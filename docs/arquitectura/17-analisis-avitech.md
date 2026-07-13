@@ -85,7 +85,7 @@ Aquí se registra la mercadería línea por línea.
 #### Acordeón D: Auditoría (Tracking)
 - Campos de solo lectura: `Creado por`, `Fecha de creación`, `Última modificación`.
 
-**Regla de Negocio Crítica detectada:** 
+**Regla de Negocio Crítica detectada:**
 La merma *operativa* (el peso que se pierde porque el pollo gotea agua, merma de sangre o al despresar) NO se registra en este formulario inicial. Este formulario solo registra el peso de entrada al almacén. Las mermas posteriores se manejan ajustando el Kardex o reportando salida por merma en otro módulo.
 
 ---

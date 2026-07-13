@@ -1,8 +1,8 @@
 # 02 — Modelo de Datos (Esquema y Relaciones)
 
-> **Última verificación contra código:** 2026-07-05
-> **Commit del proyecto:** `9f29f5a` (+ cambios locales de la expansión ERP)
-> **Archivos clave:** `src/lib/types.ts`, `scripts/migrate-produccion-2026-05-29.sql` (esquema consolidado original), `scripts/migrate-produccion-fase-2-3-consolidado.sql` (expansión ERP 2026)
+> **Última verificación contra código:** 2026-07-12
+> **Estado:** ERP/CRM y separación Campo/Planta en producción; facturación de Campo pendiente de desplegar
+> **Archivos clave:** `src/lib/types.ts`, `scripts/migrate-produccion-2026-05-29.sql`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-clientes-avicola-2026-07-07.sql`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql` y las tres migraciones de Campo/NC del 12 jul listadas en §4
 
 Este documento define la estructura física de la base de datos Neon Postgres del proyecto Transavic.
 
@@ -24,37 +24,52 @@ erDiagram
     users ||--o{ metas_asesoras : "asesor_id"
     users ||--o{ notificaciones : "user_id"
     users ||--o{ rider_locations : "repartidor_id"
+    clientes_avicola ||--o{ ventas_avicola : "cliente_id"
+    ventas_avicola ||--o{ venta_avicola_items : "venta_id"
+    clientes_avicola ||--o{ abonos_avicola : "cliente_id"
+    ventas_avicola ||--o{ comprobantes : "venta_avicola_id"
+    clientes_planta ||--o{ cobranzas_planta : "cliente_planta_id"
+    pedidos ||--o{ cobranzas_planta : "pedido_id"
+    cobranzas_planta ||--o{ abonos_planta : "cobranza_id"
+    productos ||--o{ inventario_lotes : "producto_id"
+    productos ||--o{ inventario_movimientos : "producto_id"
+    proveedores ||--o{ compras : "proveedor_id"
+    compras ||--o{ compra_items : "compra_id"
+    cuentas_bancarias ||--o{ transacciones : "cuenta_id"
 ```
 
 ---
 
-## 2. Diccionario de las 17 Tablas Activas
+## 2. Diccionario por dominios
 
-1. **`users`**: Directorio de usuarios y credenciales (admin, asesor, repartidor, produccion).
-2. **`clientes`**: Cartera de clientes recurrentes (RUC/DNI, dirección, plazo de pago, asesor responsable).
-3. **`pedidos`**: Tabla central que almacena la cabecera del pedido (datos denormalizados del cliente al momento de la venta).
-4. **`pedido_items`**: Detalle de productos solicitados por pedido, precios estimados y pesos reales.
-5. **`productos`**: Catálogo de productos (Pollo, Gallina, Res, Cerdo, Huevos) con precios base.
-6. **`settings`**: Parámetros JSONB del sistema (ubicación del almacén, configuración de incentivos).
-7. **`comprobantes`**: Comprobantes de pago electrónicos emitidos ante SUNAT (Boletas, Facturas, Notas de Crédito).
-8. **`comprobantes_contador`**: Contadores atómicos correlativos por serie de comprobante (ej: F001, B001, T001).
-9. **`correlativos`**: Contador de la orden de pedido interna (correlativo único no legal).
-10. **`facturas`**: Cuentas por cobrar (cobranzas) generadas por cada comprobante emitido.
-11. **`metas_asesoras`**: Overrides mensuales de metas de ventas individuales y bonos.
-12. **`notificaciones`**: Mensajería in-app para alertas automáticas entre áreas.
-13. **`precios_productos`**: Historial de cambios de precio base de productos (precio_compra y precio_venta).
-14. **`resumenes_diarios`**: Paquetes de envío diario SUNAT (RC-) de boletas y resúmenes de baja (RA-).
-15. **`pedido_ediciones`**: Log de auditoría de modificaciones de pedidos por parte de las asesoras.
-16. **`rider_locations`**: Última ubicación GPS conocida y estado del sensor de los repartidores activos.
-17. **`ia_insights_cache`**: Caché en Postgres de los reportes e insights comerciales generados por Gemini/Groq.
+El esquema actual ya no cabe en una lista de 17 tablas. Las migraciones SQL del repositorio declaran
+40 tablas y el core inicial agrega `users`, `clientes`, `pedidos`, `pedido_items`, `productos` y
+`settings`. El inventario debe entenderse por dominio:
 
-> **Nota:** estas 17 tablas son las que existen en **producción**. La expansión ERP 2026 agrega **15 tablas más** que hoy solo existen en la rama de desarrollo `dev-hugo` — ver §5.
+| Dominio | Tablas principales |
+|---|---|
+| Identidad/configuración | `users`, `settings` |
+| Ejecutivas | `clientes`, `pedidos`, `pedido_items`, `pedido_ediciones`, `facturas`, `metas_asesoras` |
+| Campo | `clientes_avicola`, `ventas_avicola`, `venta_avicola_items`, `abonos_avicola` |
+| Planta | `clientes_planta`, `cobranzas_planta`, `abonos_planta`; la venta sigue en `pedidos` con origen POS |
+| Catálogo/precios | `productos`, `precios_productos`, `precios_audit_log`, `autorizaciones_precio` |
+| SUNAT | `comprobantes`, `comprobantes_guias`, `comprobantes_contador`, `correlativos`, `resumenes_diarios` |
+| Compras/proveedores | `proveedores`, `compras`, `compra_items`, `cuentas_por_pagar` |
+| Inventario/producción | `inventario_lotes`, `inventario_movimientos`, `mermas_diarias`, `prestamos_saldos`, `prestamos_transacciones` |
+| Tesorería | `caja_diaria`, `cuentas_bancarias`, `transacciones`, `gastos`, `pago_imagenes` |
+| CRM/comunicación | `leads`, `lead_mensajes`, `notificaciones`, `comunicados`, `comunicado_imagenes`, `comunicado_lecturas` |
+| Operación/IA/GPS | `ia_insights_cache`, `rider_locations` |
+
+No uses este conteo como prueba de que una base concreta está migrada: verifica `information_schema`
+en el entorno objetivo. El estado de pases vive en [20](./20-migracion-produccion.md).
 
 ---
 
-## 3. Esquema DDL Consolidado (Producción)
+## 3. DDL del core original (referencia, no manifiesto completo)
 
-A continuación se detalla el esquema actual completo de la base de datos, incluyendo tipos de datos y restricciones:
+El bloque siguiente conserva el DDL de referencia del core. **No es el esquema completo actual**:
+las extensiones ERP/Campo/Planta/SUNAT se definen en migraciones posteriores y en §5. Para
+inspección exacta usa la base objetivo y los scripts de `scripts/`.
 
 ```sql
 -- Extensiones requeridas
@@ -166,48 +181,54 @@ CREATE TABLE settings (
 CREATE TABLE comprobantes (
     id                      UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     pedido_id               UUID REFERENCES pedidos(id) ON DELETE SET NULL,
-    empresa                 VARCHAR(100) NOT NULL,
-    ruc_emisor              VARCHAR(20) NOT NULL,
-    tipo_comprobante        VARCHAR(2) NOT NULL,         -- '01' factura, '03' boleta, '07' NC
-    serie                   VARCHAR(4) NOT NULL,         -- ej: B001, F001
-    correlativo             INTEGER NOT NULL,
-    fecha_emision           DATE NOT NULL,
-    cliente_doc_tipo        VARCHAR(1) NOT NULL,
-    cliente_doc_num         VARCHAR(20) NOT NULL,
-    cliente_nombre          VARCHAR(255) NOT NULL,
-    cliente_direccion       TEXT,
-    monto_subtotal          NUMERIC(12, 2) NOT NULL,     -- Neto sin IGV
-    monto_igv               NUMERIC(12, 2) NOT NULL,
-    monto_total             NUMERIC(12, 2) NOT NULL,     -- Con IGV
-    estado_sunat            VARCHAR(50) NOT NULL,        -- 'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA' | 'ERROR'
+    ruc_emisor              VARCHAR(11) NOT NULL,
+    empresa                 VARCHAR(50) NOT NULL,
+    tipo                    VARCHAR(20) NOT NULL,         -- '01' factura, '03' boleta, '07' NC
+    serie                   VARCHAR(10) NOT NULL,
+    numero                  INTEGER NOT NULL,
+    serie_numero            VARCHAR(50) NOT NULL,
+    cliente_doc_tipo        VARCHAR(2),
+    cliente_doc_num         VARCHAR(20),
+    cliente_razon_social    VARCHAR(255),
+    monto_subtotal          NUMERIC(12, 2),
+    monto_igv               NUMERIC(12, 2),
+    monto_total             NUMERIC(12, 2),
+    moneda                  VARCHAR(3) DEFAULT 'PEN',
+    estado                  VARCHAR(50) NOT NULL,
+    hash_cpe                TEXT,
+    observaciones           TEXT,
     mensaje_sunat           TEXT,
     xml_firmado_base64      TEXT,
     cdr_base64              TEXT,
-    pdf_base64              TEXT,
-    items_json              JSONB,                       -- resguardo fiel de líneas de venta
-    comprobante_referencia  VARCHAR(20),                 -- para notas de crédito (documento que modifica)
-    codigo_referencia       VARCHAR(2),                  -- catálogo SUNAT 09
-    motivo_referencia       TEXT,
-    observacion_comprobante TEXT,                        -- nota libre opcional
+    forma_pago              VARCHAR(20),
+    fecha_vencimiento       DATE,
+    items_json              JSONB,
+    referencia_comprobante_id UUID REFERENCES comprobantes(id) ON DELETE SET NULL,
+    emitido_por             TEXT,
+    fecha_emision           DATE,
+    observacion_comprobante TEXT,
+    venta_avicola_id        UUID REFERENCES ventas_avicola(id), -- NO ACTION por defecto
+    nota_credito_claim_token UUID,
+    nota_credito_claim_at   TIMESTAMP WITH TIME ZONE,
+    reemplaza_comprobante_id UUID REFERENCES comprobantes(id), -- NO ACTION por defecto
     created_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    emitido_por             UUID REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT unique_comprobante UNIQUE (ruc_emisor, tipo_comprobante, serie, correlativo)
+    CONSTRAINT unique_comprobante UNIQUE (ruc_emisor, serie, numero)
 );
 
 -- 8. Contadores SUNAT
 CREATE TABLE comprobantes_contador (
-    empresa           VARCHAR(100) NOT NULL,
-    tipo_comprobante  VARCHAR(2) NOT NULL,
-    serie             VARCHAR(4) NOT NULL,
-    ultimo_correlativo INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (empresa, tipo_comprobante, serie)
+    ruc             VARCHAR(11) NOT NULL,
+    serie           VARCHAR(10) NOT NULL,
+    ultimo_numero   INTEGER NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (ruc, serie)
 );
 
 -- 9. Correlativos Internos
 CREATE TABLE correlativos (
-    key       VARCHAR(50) PRIMARY KEY,               -- 'orden_pedido'
-    ultimo_val INTEGER NOT NULL DEFAULT 0
+    tipo           VARCHAR(50) PRIMARY KEY,          -- 'guia_remision' | 'guia_avicola'
+    ultimo_numero  INTEGER NOT NULL DEFAULT 0,
+    updated_at     TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 10. Facturas (Cobranzas)
@@ -215,24 +236,25 @@ CREATE TABLE facturas (
     id              UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     pedido_id       UUID REFERENCES pedidos(id) ON DELETE SET NULL,
     comprobante_id  UUID REFERENCES comprobantes(id) ON DELETE SET NULL,
-    numero_factura  VARCHAR(50) NOT NULL,            -- ej: F001-00000101
-    cliente         VARCHAR(255) NOT NULL,
     cliente_id      UUID REFERENCES clientes(id) ON DELETE SET NULL,
+    cliente_nombre  VARCHAR(255) NOT NULL,
+    asesor_id       UUID REFERENCES users(id),
     monto           NUMERIC(12, 2) NOT NULL,
-    estado          VARCHAR(50) DEFAULT 'Pendiente', -- 'Pendiente' | 'Vencida' | 'Pagada' | 'Anulada'
-    fecha_emision   DATE NOT NULL,
-    fecha_vence     DATE NOT NULL,
-    fecha_pago      TIMESTAMP WITH TIME ZONE,
-    metodo_pago     VARCHAR(50),                     -- 'Transferencia' | 'Efectivo' | 'Yape'
-    pago_detalle    TEXT,                            -- N° operación o glosa
-    pago_img_base64 TEXT,                            -- Evidencia fotográfica
-    pago_img_mime   VARCHAR(100),
-    anulada_por     UUID REFERENCES users(id) ON DELETE SET NULL,
+    plazo_dias      INTEGER NOT NULL DEFAULT 0,
+    fecha_emision   DATE NOT NULL DEFAULT (NOW() AT TIME ZONE 'America/Lima')::date,
+    fecha_vencimiento DATE NOT NULL,
+    fecha_pago      DATE,
+    estado          VARCHAR(20) NOT NULL DEFAULT 'Pendiente',
+    numero_comprobante VARCHAR(50),
+    notas           TEXT,
+    metodo_pago     VARCHAR(20),
+    pago_detalle    TEXT,
+    pago_img_base64 TEXT,
+    pago_img_mime   VARCHAR(50),
     anulada_at      TIMESTAMP WITH TIME ZONE,
+    anulada_por     TEXT,
     anulada_motivo  TEXT,
-    asesor_id       UUID REFERENCES users(id) ON DELETE SET NULL,
-    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 11. Metas Mensuales
@@ -345,15 +367,25 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 | `migrate-unidad-pedido.sql` | Agrega `pedido_items.unidad_pedido` para la preventa vs pesaje físico. |
 | `migrate-rider-gps-enforcement.sql` | Agrega `simulated`, `gps_status` y `gps_status_changed_at` a `rider_locations`. |
 | `migrate-observacion-comprobante.sql` | Agrega `observacion_comprobante` en facturas y guías. |
-| `migrate-produccion-fase-2-3-consolidado.sql` | **Expansión ERP 2026 (solo dev-hugo por ahora):** crea las 13 tablas de compras/tesorería/inventario del §5 y las extensiones a `pedidos` y `pedido_items`. |
-| `migrate-crm.sql` / `migrate-crm-extensions.sql` / `migrate-crm-rotacion.mjs` | **Expansión ERP 2026 (solo dev-hugo):** crean `leads` y `lead_mensajes`, sus extensiones (`tags`, `unread_count`) y las columnas de rotación en `users`. |
+| `migrate-produccion-fase-2-3-consolidado.sql` | **Expansión ERP 2026:** crea las 13 tablas de compras/tesorería/inventario del §5 y extensiones a `pedidos`/`pedido_items`. Aplicada a producción el 5 jul. |
+| `migrate-crm.sql` / `migrate-crm-extensions.sql` / SQL de rotación | Crean `leads`/`lead_mensajes`, `tags`, `unread_count` y columnas de rotación en `users`. Aplicadas a producción el 5 jul. |
+| `migrate-clientes-avicola-2026-07-07.sql` | Crea clientes, ventas, ítems y abonos propios de Campo. Aplicada a producción el 8 jul. |
+| `migrate-planta-clientes-cobranzas-2026-07-08.sql` | Crea clientes, cobranzas y abonos propios de Planta. Aplicada a producción el 8 jul. |
+| `migrate-caja-operacion-2026-07-08.sql` | Agrega `caja_diaria.operacion` e índices por operación; la UI actual usa Planta. |
+| `migrate-flexibilizacion-2026-07-10.sql` | Desactivación de usuarios/proveedores/cuentas, fechas y correcciones operativas. |
+| `migrate-facturacion-campo-2026-07-12.sql` | Nexo Campo→CPE, RUC, claims, índices de CPE/NC y exclusión de Campo en `ventas_facturadas`. Solo `dev-hugo` al corte. |
+| `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql` | Agrega `reemplaza_comprobante_id` e índices para corregir un CPE rechazado con otro correlativo sin perder auditoría. Solo `dev-hugo`. |
+| `migrate-nc-error-reintento-unico-2026-07-12.sql` | Mantiene ocupada la unicidad de NC cuando el estado es `error` y ya existe XML firmado; obliga a reintentar la misma fila. Solo `dev-hugo`. |
 
 ---
 
-## 5. Tablas de la expansión ERP 2026 (Fases 2-5 — en desarrollo, solo dev-hugo)
+## 5. Tablas de la expansión ERP 2026 (en producción, marcadas Beta)
 
-> [!WARNING]
-> **Estas 15 tablas NO existen en producción** (verificado por SQL el 5 jul 2026: existen en la rama Neon `dev-hugo` / `ep-super-violet`, no en `ep-cool-sound`). Las crea la migración consolidada **`scripts/migrate-produccion-fase-2-3-consolidado.sql`** (13 tablas + extensiones) junto con **`scripts/migrate-crm.sql`** (las 2 del CRM). Se aplican por **psql ANTES del deploy del código nuevo** — NUNCA con scripts `.mjs` (bug DNS de Node 26, gotcha #13 de CLAUDE.md). Guía de despliegue: [20-migracion-produccion.md](./20-migracion-produccion.md).
+> [!IMPORTANT]
+> La expansión ERP/CRM se migró a producción el 5 jul 2026 y Campo/Planta el 8 jul. Las
+> pantallas siguen marcadas Beta por validación operativa, no porque falte el esquema. Cambios
+> posteriores del 12 jul (facturación de Campo) continúan solo en `dev-hugo`. Toda migración se
+> aplica por **psql antes del deploy**; consulta [20](./20-migracion-produccion.md).
 
 ### 5.1 Compras / Proveedores
 
@@ -371,7 +403,7 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 | Tabla | Propósito y FKs clave |
 |---|---|
 | **`gastos`** | Egresos operativos (gasolina, viáticos, etc.): fecha, categoría, monto, método de pago, `created_by` → users. |
-| **`caja_diaria`** | Apertura/cierre de la caja del día (`fecha` UNIQUE): montos de apertura, ingresos, egresos, cierre calculado vs real; `abierta_por`/`cerrada_por` → users. |
+| **`caja_diaria`** | Apertura/cierre por `fecha + operacion`; hoy la UI usa Planta. Guarda apertura, ingresos, egresos, cierre calculado/real y usuarios. |
 | **`cuentas_bancarias`** | Cuentas de tesorería dinámicas (`nombre` UNIQUE, tipo `efectivo`/`banco`/`billetera`, saldo). El seed crea 4: Caja Efectivo Planta, Yape/BCP/BBVA Antonio. |
 | **`transacciones`** | Movimientos de dinero por cuenta: `cuenta_id` → cuentas_bancarias (CASCADE), `usuario_id` → users, tipo `ingreso`/`egreso`, `referencia_id` libre (pedido, gasto, etc.). |
 
@@ -380,6 +412,7 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 | Tabla | Propósito y FKs clave |
 |---|---|
 | **`inventario_lotes`** | Stock actual por producto (`producto_id` UNIQUE → productos, CASCADE). Modelo **flexible**: permite cantidades negativas (se vende sin stock registrado y se regulariza después). |
+| **`inventario_movimientos`** | Kardex inmutable de compra, venta POS, entrega, reversión y ajuste; referencia al evento origen. |
 | **`mermas_diarias`** | Registro diario de mermas de producción: peso bruto, limpio, menudencia, merma y % de merma; `usuario_id` → users (RESTRICT). |
 
 ### 5.4 CRM (Leads WhatsApp)
@@ -406,3 +439,30 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 | `users` | `orden_rotacion INT DEFAULT 1` | Posición en la rueda de asignación de leads. |
 | `users` | `leads_recibidos_hoy INT DEFAULT 0` | Contador diario para balancear la rotación. |
 | `leads` | `tags TEXT[]`, `unread_count INT` | Etiquetas del kanban y contador de mensajes sin leer (`migrate-crm-extensions.sql`). |
+
+### 5.7 Ventas y carteras separadas
+
+| Operación | Tablas y relaciones |
+|---|---|
+| Campo | `clientes_avicola` → `ventas_avicola` → `venta_avicola_items`; pagos en `abonos_avicola`. Saldo calculado, no persistido. |
+| Planta | `clientes_planta` → `cobranzas_planta` → `abonos_planta`; la venta fuente sigue en `pedidos` con `origen='pos_planta'`. |
+| Ejecutivas | `clientes` → `pedidos` → `pedido_items`; cobranza en `facturas`. |
+
+Detalles: [21-clientes-avicola.md](./21-clientes-avicola.md), [25-clientes-cobranzas-planta.md](./25-clientes-cobranzas-planta.md) y mapa transversal [22](./22-operaciones-ventas-facturacion.md).
+
+### 5.8 Extensiones de facturación de Campo (pendientes de producción)
+
+| Tabla | Campo/índice | Propósito |
+|---|---|---|
+| `comprobantes` | `venta_avicola_id` | FK a la venta de Campo; clasifica CPE, NC y GRE sin crear pedido. |
+| `comprobantes` | `nota_credito_claim_token/at` | Serializa NC antes de reservar su fila/correlativo. |
+| `comprobantes` | `reemplaza_comprobante_id` | Encadena un CPE nuevo con el CPE de Campo rechazado que corrige, sin reutilizar la referencia de NC. |
+| `ventas_avicola` | `facturacion_claim_token/at` | Bloquea editar/anular/duplicar mientras se factura. |
+| `clientes_avicola` | `ruc_dni` | Reutiliza el documento, pero el servidor revalida datos oficiales al facturar. |
+| `comprobantes` | `ux_comprobantes_venta_avicola_cpe` | Evita dos CPE no rechazados para la misma venta. |
+| `comprobantes` | `ux_comprobantes_reemplaza_cpe` | Un CPE rechazado solo puede tener un reemplazo directo. |
+| `comprobantes` | `ux_comprobantes_nc_referencia_activa` | Evita dos NC activas para el mismo CPE base y considera activo un `error` que ya tiene XML firmado. |
+| `ventas_facturadas` | filtros por `venta_avicola_id` | Excluye Campo y su NC de la métrica atribuible a asesoras. |
+
+La relación de reemplazo se agrega mediante `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql`
+y es deliberadamente distinta de `referencia_comprobante_id` (reservada para NC).

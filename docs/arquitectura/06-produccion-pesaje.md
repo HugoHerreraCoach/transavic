@@ -1,7 +1,7 @@
 # 06 — Flujo de Producción y Pesaje
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** core en producción
 > **Archivos clave:** `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/api/produccion/pedidos/route.ts`, `src/lib/parse-detalle-pedido.ts`
 
 Este documento describe el módulo de producción y pesaje real, la lógica del pesaje en balanza física y el proceso de conversión de unidades y desagrupación de líneas de venta.

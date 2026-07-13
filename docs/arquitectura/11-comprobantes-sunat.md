@@ -1,92 +1,211 @@
 # 11 — Módulo de Facturación y SUNAT (CPE)
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
-> **Archivos clave:** `src/lib/sunat/index.ts`, `src/lib/sunat/xml-builder.ts`, `src/lib/sunat/xml-signer.ts`, `src/lib/sunat/soap-client.ts`, `src/lib/sunat/parse-cpe-items.ts`, `src/lib/sunat/fechas.ts`
+> **Última verificación contra código:** 2026-07-12
+> **Estado:** `main` + cambios locales pendientes; facturación de Campo migrada solo en `dev-hugo`
+> **Archivos clave:** `src/lib/sunat/index.ts`, `xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `parse-cpe-items.ts`, `fechas.ts`, `src/app/api/comprobantes/`
 
-Este documento describe la arquitectura y el flujo de integración tributaria con SUNAT para la emisión de Comprobantes de Pago Electrónicos (CPE).
-
----
-
-## 1. Configuración Multi-Empresa
-
-El sistema soporta dos empresas emisoras mediante variables de entorno configuradas directamente en Vercel (Producción):
-- **Transavic** (`20612806901` - RUC 20) $\rightarrow$ Usa credenciales de usuario SOL secundario `APIFACTU`.
-- **Avícola de Tony** (`10710548841` - RUC 10) $\rightarrow$ Mismo usuario SOL `APIFACTU`.
-
-La clase `getSunatConfig(empresa)` en `config-transavic.ts` retorna de forma dinámica las contraseñas, claves SOL y certificados en base64 según el emisor seleccionado en el pedido.
+Este documento describe la emisión de facturas (01), boletas (03) y Notas de Crédito (07), incluida la concurrencia, los reintentos y la relación con las tres operaciones de venta.
 
 ---
 
-## 2. El Flujo de Emisión de un CPE
+## 1. Empresa emisora y operación de venta
 
-La emisión de una Boleta (03) o Factura (01) en `src/lib/sunat/index.ts` sigue una secuencia atómica de 6 pasos:
+Son conceptos independientes:
 
+- **Empresa:** Transavic o Avícola de Tony. Determina RUC, serie, credenciales SOL, certificado, domicilio fiscal y logo.
+- **Operación:** Ejecutivas, Campo o Planta. Determina venta fuente, cartera, permisos, vistas y reportes.
+
+`getSunatConfig(empresa)` en `config-transavic.ts` resuelve la configuración tributaria. La operación se deriva así:
+
+1. `comprobantes.venta_avicola_id` o el del CPE referenciado → Campo.
+2. Pedido con `origen='pos_planta'` → Planta.
+3. Resto → Ejecutivas.
+
+Consulta el mapa completo en [22-operaciones-ventas-facturacion.md](./22-operaciones-ventas-facturacion.md).
+
+---
+
+## 2. Entradas al motor compartido
+
+| Flujo | Endpoint | Venta fuente |
+|---|---|---|
+| Desde pedido de Ejecutiva/Planta | `/api/comprobantes/emitir` | `pedidos` + `pedido_items` |
+| Emisión manual | `/api/comprobantes/emitir-manual` | datos validados del formulario |
+| Campo | `/api/comprobantes/emitir-manual` con `ventaAvicolaId` | `ventas_avicola` + `venta_avicola_items` |
+| Autoemisión al entregar | `/api/pedidos/[id]/entregar` | pedido entregado; controlado por flag |
+| Nota de Crédito | `/api/comprobantes/[id]/nota-credito` | XML del CPE base |
+| Reintento | `/api/comprobantes/[id]/reintentar` | misma fila/XML o `items_json` |
+
+Campo reutiliza el formulario y motor, pero el servidor vuelve a leer la venta, sus ítems y el cliente. No confía en peso, precio, total, empresa ni receptor enviados por el navegador.
+
+---
+
+## 3. Ciclo de emisión y reserva previa
+
+```mermaid
+sequenceDiagram
+    participant API as Endpoint de emisión
+    participant DB as Neon
+    participant XML as Motor XML/firma
+    participant SUNAT as SOAP SUNAT
+
+    API->>DB: Autenticar, scopear y validar fuente
+    API->>DB: Adquirir claim cuando aplica
+    API->>DB: Consumir correlativo atómico
+    API->>XML: Construir y firmar XML UBL 2.1
+    API->>DB: Insertar/reservar comprobante en estado emitiendo
+    API->>SUNAT: Enviar ZIP por SOAP
+    SUNAT-->>API: CDR o error
+    API->>DB: Actualizar la misma fila con XML/CDR/estado
+    API->>DB: Crear/actualizar la cartera correcta y liberar claim
 ```
-[Datos Pedido] 
-      │
-      ▼
-1. Construir XML UBL 2.1 (xml-builder.ts)
-      │
-      ▼
-2. Firmar XML (xml-signer.ts usando cert .p12 y xml-crypto)
-      │
-      ▼
-3. Comprimir XML firmado en PKZip (.zip)
-      │
-      ▼
-4. Enviar a Webservice SOAP de SUNAT (soap-client.ts)
-      │
-      ▼
-5. Recibir y persistir respuesta (CDR en base64)
-      │
-      ▼
-6. Descomprimir CDR y clasificar estado (fflate)
-```
+
+La fila `emitiendo` existe **antes** de la llamada externa. Esto evita que un doble clic consuma dos correlativos o cree dos documentos mientras SUNAT tarda. La lista sanea reservas atascadas con más de 15 minutos y las convierte en error recuperable.
+
+Los errores de unicidad se traducen a conflictos de dominio (409), no a un 500 genérico.
 
 ---
 
-## 3. Manejo y Clasificación de Respuestas SUNAT (Constancia de Recepción - CDR)
+## 4. Claims e índices de concurrencia
 
-Para evitar clasificar erróneamente comprobantes que fueron rechazados u observados:
+### Campo
 
-- **Descompresión en Servidor (`soap-client.ts`):** SUNAT responde con un archivo ZIP que contiene la constancia CDR. El helper `descomprimirCDR` utiliza **`fflate.unzipSync`** para extraer y parsear el XML del CDR.
-- **Clasificación Fail-Safe (Segura):**
-  - Si el CDR es ilegible o el código SOAP no es entero, el estado se clasifica como **`ERROR`** (nunca `ACEPTADA` por defecto).
-  - Códigos entre `100` y `3999` definen un **`RECHAZADA`** duro.
-  - El mensaje de estado oficial de SUNAT se persiste en `mensaje_sunat` (útil para auditoría si contiene observaciones como la 4095/4260).
+- `ventas_avicola.facturacion_claim_token/at` serializa desde antes de leer/validar la venta hasta que la fila CPE queda reservada.
+- Editar o anular la venta durante el claim devuelve conflicto.
+- `ux_comprobantes_venta_avicola_cpe` impide dos CPE 01/03 activos para una venta.
+- El token garantiza que una solicitud antigua no libere el claim de otra.
 
----
+### Nota de Crédito
 
-## 4. Redondeo de Totales e IGV (Anclaje al Precio con IGV)
+- `comprobantes.nota_credito_claim_token/at` se adquiere en el CPE base antes de consumir el correlativo.
+- `ux_comprobantes_nc_referencia_activa` permite una sola NC activa por CPE base.
+- Una NC `error` **con XML firmado** ocupa el cupo hasta reintentar la misma fila/correlativo. Un error
+  anterior a tener XML o una NC `rechazado` puede liberar una emisión corregida; la fila anterior
+  conserva auditoría.
 
-Por convención de negocio, los precios se teclean e ingresan **CON IGV** (ej: S/100.00). El método estándar de cálculo tributario (dividir entre 1.18 y aplicar 18%) generaba descuadres de céntimos en el total (S/100.01) rechazados por SUNAT o rechazados por clientes en cobranza.
-
-**La solución (`xml-builder.ts:calcularTotales`):**
-- Por cada línea se calcula el importe bruto con IGV: `bruto = r2(precioConIgv * cantidad)`.
-- Se deriva el valor de venta neto: `valorVenta = r2(bruto / 1.18)`.
-- El IGV se obtiene restando directamente el valor de venta del bruto: **`IGV = bruto - valorVenta`** (en lugar de calcular `r2(base * 0.18)`).
-- Esto asegura que el total cuadre exactamente con el bruto ingresado por el usuario (100.00) y se mantenga dentro de la tolerancia de redondeo exigida por SUNAT.
+Los claims vencen tras 15 minutos. El índice es la barrera definitiva; el claim cierra la ventana de negocio antes de insertar.
 
 ---
 
-## 5. El PDF y Correo como Representaciones Fieles (`parse-cpe-items.ts`)
+## 5. Construcción, unidades, IGV y fecha
 
-Para evitar inconsistencias visuales en el PDF del comprobante o en el reporte de facturación Excel:
-- **Regla de Oro:** El generador de PDF (`pdf-comprobante.ts`) y el envío de correo **no leen los ítems de las tablas de pedidos de la base de datos**.
-- **Fuente de verdad única:** Utilizan el helper `parseCpeItems(xml_firmado_base64)` para deserializar directamente el XML enviado y firmado. Esto garantiza que lo que visualiza el cliente sea exactamente lo que la SUNAT validó y aprobó legalmente.
+1. El XML UBL 2.1 se construye en `xml-builder.ts`.
+2. Se firma con el certificado `.p12` en `xml-signer.ts`.
+3. Se comprime y envía por SOAP mediante `soap-client.ts`.
+
+Reglas:
+
+- Los precios de `productos`, `pedido_items` y Campo se interpretan **con IGV incluido**.
+- Por línea: `bruto = round2(precioConIgv * cantidad)`, `base = round2(bruto / 1.18)`, `IGV = bruto - base`. El total queda anclado al precio cobrado.
+- Las unidades legales son `KGM` y `NIU`; el helper compartido no debe degradar `KGM` a `NIU`.
+- `IssueDate` usa `fechaHoyLima()`; nunca `toISOString()` para definir el día tributario.
+- `CitySubdivisionName` se omite si urbanización está vacía; emitirla vacía genera observación 4095.
 
 ---
 
-## 6. Operaciones Secundarias
+## 6. Respuesta SUNAT y estados internos
 
-### 6.1 Reintentar Envío (`/[id]/reintentar`)
-Si un comprobante queda en estado `ERROR` (caída del web service de SUNAT, etc.), el admin o la asesora dueña de la venta pueden reintentar la emisión. El endpoint lee la columna `comprobantes.items_json` (una copia estructurada de seguridad creada durante el intento original) y reconstruye el XML sin fabricar datos nuevos, utilizando el **mismo número correlativo**.
+`soap-client.ts` descomprime el CDR con `fflate`. La clasificación es fail-safe:
 
-### 6.2 Notas de Crédito (07)
-Modifican facturas o boletas para anulación o corrección. Copian las líneas de ítem de forma exacta desde el XML de la factura original usando el parser, recalculando el IGV de forma anclada para evitar descuadres.
+- CDR legible y aceptación → `aceptado` u `observado`.
+- Código de rechazo → `rechazado`.
+- CDR/SOAP ilegible o transporte incierto → `error`, nunca aceptado por defecto.
+- Reserva en curso → `emitiendo`.
 
-### 6.3 Comunicación de Baja (RA-) y Resumen Diario (RC-)
-- **Baja:** Se genera para anulación de facturas (01) dentro del plazo legal. Envía un XML especial y genera un ticket de consulta de estado.
-- **Resumen Diario (RC-):** Proceso automático que agrupa todas las boletas de venta (03) del día anterior y las envía a SUNAT en un lote consolidado. Se ejecuta mediante el cron `/api/cron/resumen-diario-sunat` a las 02:00 Lima.
-- **Fechas tributarias:** La fecha oficial de los comprobantes se calcula utilizando `fechaHoyLima()` de `fechas.ts` (evitando desajustes horarias de Vercel UTC que generaban el error de fecha futura 2329).
+`mensaje_sunat` y `cdr_base64` se conservan para auditoría. El ZIP CDR se descarga crudo; no se reconstruye con un parser ZIP casero.
+
+---
+
+## 7. Cartera después de emitir
+
+| Operación | Efecto de un CPE 01/03 aceptado/observado |
+|---|---|
+| Ejecutivas | crea o enlaza `facturas` una sola vez |
+| Campo | **no crea `facturas`**; la deuda ya vive en saldo Avícola |
+| Planta | usa/enlaza `cobranzas_planta`; no crea `facturas` |
+
+El mismo criterio se aplica al reintento. Es insuficiente verificar solo `venta_avicola_id`: también debe leerse `pedido.origen` para no contaminar la cartera de Ejecutivas con un POS.
+
+Una NC total aceptada anula la deuda activa en la cartera correspondiente. En Planta, las cobranzas ya pagadas no se anulan automáticamente porque requieren una devolución de dinero controlada.
+
+Detalle de carteras: [13-cobranzas-facturas.md](./13-cobranzas-facturas.md).
+
+---
+
+## 8. Reintentos
+
+El reintento opera sobre la **misma fila y el mismo correlativo** cuando el estado es `error`:
+
+1. Si existe `xml_firmado_base64`, reenvía exactamente ese XML.
+2. Si no existe, reconstruye desde `items_json`.
+3. Si tampoco hay `items_json`/fuente confiable, aborta; nunca fabrica una línea genérica.
+4. Al aceptar SUNAT, crea/enlaza solo la cartera que corresponde a la operación.
+
+Un CPE rechazado por SUNAT no se reenvía ciegamente como si fuera un error de red. Para una
+factura/boleta 01/03 de **Campo**, se conserva XML/CDR y se emite otro correlativo enlazado mediante
+`reemplaza_comprobante_id`. Esa cadena no se usa en Ejecutivas, Planta ni NC. Una NC 07 rechazada
+conserva su fila y permite emitir otra NC corregida contra el mismo `referencia_comprobante_id`.
+
+---
+
+## 9. Notas de Crédito
+
+La NC:
+
+- toma receptor, moneda e ítems desde el XML firmado del CPE base;
+- usa `referencia_comprobante_id` exclusivamente para la relación tributaria CPE→NC;
+- hereda `venta_avicola_id` cuando el CPE base es Campo;
+- hereda la operación en lista, filtro, Excel y cartera;
+- adquiere claim y reserva `emitiendo` antes del SOAP;
+- si es total y SUNAT la acepta con código `01`, `02` o `06`, anula automáticamente la venta de
+  Campo y la retira de su cartera; el endpoint de anulación también reconoce esa NC como evidencia.
+
+La versión actual acredita el XML completo y por eso solo admite los códigos totales `01`
+(anulación), `02` (anulación por RUC) y `06` (devolución total). Los códigos parciales no se
+habilitan hasta modelar ítems/montos y el ajuste proporcional de cada cartera.
+
+No reutilices `referencia_comprobante_id` para representar el reemplazo de un CPE rechazado; es una relación distinta.
+
+Una NC en `error` que ya tiene XML firmado **no libera el cupo** para crear otra NC: debe reintentarse
+la misma fila y correlativo. Solo un error anterior a firmar/reservar XML puede dar paso a una emisión
+nueva. Esta regla vive también en `ux_comprobantes_nc_referencia_activa`.
+
+---
+
+## 10. PDF, correo, XML, CDR y Excel
+
+El XML firmado es la fuente legal inmutable:
+
+- `parseCpeItems(xml_firmado_base64)` alimenta PDF y correo.
+- Los CPE manuales no dependen de que exista `pedido_items`.
+- El PDF no debe reconstruir líneas desde una venta que luego pudo cambiar.
+- La exportación usa `fecha_emision` con fallback legacy a `created_at` y deriva la operación también desde el CPE referenciado.
+- Las vistas fijas de Campo/Ejecutivas reutilizan `ComprobantesClient`; el backend sigue aplicando el filtro y el scoping.
+
+---
+
+## 11. Comunicación de Baja y Resumen Diario
+
+- **Baja RA:** anulación de facturas dentro de las reglas SUNAT, con ticket de consulta.
+- **Resumen Diario RC:** agrupa boletas y se ejecuta por `/api/cron/resumen-diario-sunat`.
+- Ambos deben conservar fecha Lima, empresa y estado de auditoría.
+
+La existencia de una NC no equivale por sí sola a borrar el CPE original: el documento base y su relación permanecen.
+
+---
+
+## 12. Impacto de cambios y pruebas
+
+Si cambias emisión, revisa siempre:
+
+- los dos endpoints de emisión, autoemisión y reintento;
+- Campo, POS y Ejecutivas;
+- NC, GRE y CPE de referencia;
+- claims, índices, correlativos y recuperación de `emitiendo`;
+- cartera correcta y no duplicada;
+- PDF/correo/Excel;
+- metas y `ventas_facturadas`;
+- roles/scoping;
+- migración, rollback y orden de despliegue.
+
+Ejecuta el runbook de [24-pruebas-regresion-despliegue.md](./24-pruebas-regresion-despliegue.md).

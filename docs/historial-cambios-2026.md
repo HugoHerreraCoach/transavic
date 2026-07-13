@@ -8,6 +8,103 @@
 
 ---
 
+## 12 jul 2026 — Facturación SUNAT de la Venta en Campo (reutilizando el motor)
+
+**Contexto / pedido de Antonio:** Antonio (dueño/GG) es quien hace la venta en campo
+(módulo Clientes Avícola). Pidió (a) **ver** las ventas de campo como una lista tipo *Lista
+de Pedidos* (día/día anterior/fecha), (b) **facturar** las ventas que elija (factura/boleta,
+y sobre ellas GRE/NC) **reutilizando el motor** de las ejecutivas (no duplicar código; a futuro
+también Planta), y (c) que se entienda **dónde está la facturación general y las ventas
+generales** de las 3 operaciones, diferenciadas por color.
+
+**Diagnóstico (exploración):** el motor ya era reutilizable — `emitir-manual` emite comprobantes
+"sueltos" (sin pedido) y `emitir-client.tsx` ya postea ahí cuando no hay `pedidoId`;
+`GET /api/avicola/ventas` ya listaba por rango de fechas y `GET /api/avicola/ventas/[id]` ya
+devolvía los ítems. El único acoplamiento a resolver era el mismo que el POS (gotcha #42
+`esPos`): `emitir-manual` SIEMPRE creaba cobranza en `facturas` (duplicaría la deuda de campo),
+y `comprobantes` no tenía cómo saber que un comprobante nació en campo (solo `pedido_id`).
+
+**Solución (mínima y aditiva):**
+- **Esquema** (`scripts/migrate-facturacion-campo-2026-07-12.sql`, aplicado a `dev-hugo` por psql
+  usando explícitamente la URL de `.env.local`; producción sin cambios):
+  `comprobantes.venta_avicola_id` (FK + índice único parcial), índice único de NC activa por
+  `referencia_comprobante_id`, `clientes_avicola.ruc_dni`, y recrear la vista
+  `ventas_facturadas` con `AND venta_avicola_id IS NULL` (campo NO cuenta para metas de asesoras).
+- **Motor** (`src/lib/sunat/index.ts`): Campo adquiere un claim en la venta y NC en el CPE base
+  **antes del contador**; luego reservan una fila `emitiendo` antes del SOAP y actualizan esa misma
+  fila. Los índices
+  hacen duro el guard concurrente (409; nunca sale un segundo CPE externo). `emitir-manual` no crea
+  factura de ejecutivas para Campo y guarda el RUC consultado en `clientes_avicola.ruc_dni`.
+- **Formulario compartido** (`emitir-client.tsx`): prop `ventaAvicolaIdProp` / `?ventaAvicola=`,
+  efecto de precarga que mapea `venta_avicola_items` (peso_kg→cantidad KGM, precio_kg→precio CON
+  IGV) + cliente/empresa; incluye `ventaAvicolaId` en el POST; maneja el 409 `yaFacturada`.
+- **Vista nueva** `/dashboard/clientes-avicola/ventas` (`ventas-campo-client.tsx`): lista por
+  fecha, badge de facturación (LEFT JOIN LATERAL a `comprobantes`), botón **Facturar** (modal con
+  el form compartido) + selección múltiple (cola 1:1).
+- **Facturación general**: `/api/comprobantes` deriva la **operación** (campo/planta/ejecutivas)
+  y acepta `?operacion=`; `comprobantes-client.tsx` muestra chip + filtro.
+- **Ventas generales**: `/api/ventas-generales` + `/dashboard/ventas-generales` (3 tarjetas por
+  operación, por fecha); Consolidado ahora incluye Campo (ventas de hoy + cartera avícola).
+- **Colores por operación** (`src/lib/operaciones-venta.ts`, fuente única): 🛵 azul / 🏪 ámbar /
+  🏭 violeta — chips de comprobantes, tarjetas de Ventas Generales, puntos en el sidebar.
+
+**NC/GRE:** una vez que el comprobante de campo está en la lista, sus botones usan el flujo
+compartido. La NC hereda `venta_avicola_id` y conserva el tipo de documento del CPE base (incluido
+tipo 0/número 0 para boleta sin documento). **Verificación:** typecheck, lint, pruebas SUNAT y estado
+de cuenta pasan; migración + rollback verificados y aplicada en `dev-hugo`; guardas concurrentes
+probadas en transacción. Falta la validación E2E en SUNAT beta con una venta de Campo.
+Resumen operativo en **gotcha #47**; detalle de diseño en [doc 21 §6b](./arquitectura/21-clientes-avicola.md).
+
+**Adenda (mismo día) — vistas de comprobantes separadas por operación:** Hugo pidió que el menú lateral
+tuviera entradas dedicadas (no solo el hub general mezclado). Se agregó el prop `operacionFija` a
+`ComprobantesClient` (amarra la lista a una operación, oculta el filtro de Operación, adapta header/CTA)
+y dos páginas envoltorio que lo reusan: `/dashboard/clientes-avicola/comprobantes` (🏪 solo campo, admin)
+y `/dashboard/comprobantes/ejecutivas` (🛵 solo ejecutivas, admin+asesor). Sidebar: cada operación tiene su
+entrada; la de Finanzas pasó a "Comprobantes (todos)". Los filtros de API y XLSX derivan Campo/Planta/
+Ejecutivas también para NC y GRE desde su comprobante referenciado.
+
+**Adenda de revisión integral (12 jul 2026):** se cerraron los hallazgos antes de subir a `main`:
+(a) claim pre-contador + reserva pre-SOAP, recuperación de `emitiendo` y claim de reintento; (b) validación
+server-side de empresa, cliente, ítems, pesos, precios y total contra la venta; (c) edición/anulación
+bloqueadas según el ciclo SUNAT; (d) RUC con razón social fiscal; (e) cancelar con X detiene la cola
+de facturación; (f) razón social fiscal revalidada server-side; y (g) estado de cuenta de Antonio
+conserva **cada abono del mismo día por separado**.
+El PDF se generó, extrajo y renderizó a PNG: 3 abonos visibles con hora, medio, monto, nota y saldo
+posterior, una página A4 sin cortes ni glifos rotos.
+
+**Adenda de código + documentación integral (12 jul 2026):** la trazabilidad entre módulos
+descubrió y corrigió cuatro huecos adicionales: (1) reintentar un CPE POS ya no crea `facturas`,
+y emisión/reintento enlazan `cobranzas_planta.comprobante_id`; una NC total aceptada anula solo
+deuda activa de Planta, nunca una pagada; (2) un CPE de Campo `rechazado` ya no entra en el reintento
+ciego del mismo XML: se conserva y se emite otro correlativo enlazado por
+`reemplaza_comprobante_id` (migración adicional
+`migrate-reemision-cpe-campo-rechazado-2026-07-12.sql`, aplicada solo en `dev-hugo`); (3) las NC
+quedaron restringidas a los tipos totales 01/02/06 mientras no exista modelado de ítems/montos
+parciales; y (4) POS filtra clientes/cuentas inactivos y el servidor rechaza una cuenta inactiva
+antes de registrar pedido/inventario. La lista de Planta deriva `Vencida` por fecha Lima aunque el
+estado aún no haya sido persistido por un movimiento.
+
+La documentación se reorganizó con fuentes transversales nuevas: doc 22 (tres operaciones), 23
+(dependencias/impacto), 24 (regresión/despliegue) y 25 (clientes/cobranzas de Planta), además de
+actualizar modelo de datos, roles, SUNAT, GRE, carteras, metas, POS, plan y migraciones.
+
+**Adenda de cierre adversarial (12 jul 2026):** dos riesgos P1 adicionales quedaron corregidos antes
+de subir a `main`. Primero, una NC en `error` que ya tiene XML firmado sigue ocupando el índice de
+unicidad y solo puede reintentarse con la misma fila/correlativo; un timeout ambiguo ya no habilita
+una segunda NC. Esto se respalda con
+`migrate-nc-error-reintento-unico-2026-07-12.sql`, aplicada solo en `dev-hugo`. Segundo, una NC total
+aceptada (`01`, `02` o `06`) de Campo anula automáticamente `ventas_avicola` con auditoría, de modo
+que la venta deja de sumar al estado de cuenta. El endpoint de anulación reconoce esa NC como
+evidencia e idempotencia, pero nunca permite anular una venta con CPE vigente sin NC total.
+El reintento de una NC aceptada replica el efecto en las tres operaciones: `facturas` de Ejecutivas,
+`ventas_avicola` de Campo o `cobranzas_planta` de Planta. Los fallos posteriores al resultado legal
+(enlace de cartera/notificación) son no bloqueantes y nunca degradan un CPE aceptado a `error`.
+
+Quedó documentado el orden de despliegue pendiente: migración base de Campo → reemisión auditada
+de rechazados → unicidad de NC en error → código. Producción no fue modificada durante esta revisión.
+
+---
+
 ## Gotchas 18–32 — texto original completo
 
 18. **El PDF y el correo del comprobante leen los ítems del XML firmado, NO de la DB** (fix 31 may 2026 — `src/lib/sunat/parse-cpe-items.ts`, usado en `GET /api/comprobantes/[id]`). Las facturas/boletas **standalone** (sin pedido) NO guardan sus líneas en ninguna tabla — solo viven en `comprobantes.xml_firmado_base64`. Antes, sin `pedido_id`, el endpoint **fabricaba una línea genérica** (`"Venta a <cliente>"`, cantidad 1, "UNIDAD", sin código, valor=subtotal) → el PDF salía con datos equivocados. Ahora el endpoint **parsea los ítems del XML firmado** (cantidad, unidad `unitCode`, código `SellersItemIdentification`, descripción, valor unitario sin IGV de `cac:Price`), que es **fiel a lo emitido y aceptado por SUNAT**. Orden de fuentes: (1) XML firmado → (2) `pedido_items` (comprobante sin XML) → (3) línea global (último recurso). Funciona para **factura (01), boleta (03) y NC (07)** y **ambas empresas** (la boleta usa `cac:InvoiceLine` igual que la factura; la NC usa `cac:CreditNoteLine` — ambos los maneja el parser; la empresa solo cambia el emisor, no las líneas). **CDR**: `GET /[id]/cdr` ahora sirve el **ZIP crudo de SUNAT** (`Buffer.from(cdr_base64,'base64')`) en vez de extraer el XML con el parser PKZip casero `descomprimirCDR`, que devolvía **vacío (0 bytes)** con el ZIP "data descriptor" de SUNAT. Ambos botones de descarga nombran el archivo `.zip`. **El XML firmado NO se toca** (es el documento legal, ya aceptado).
@@ -180,7 +277,7 @@ Una asesora no podía anular cobranzas cuya factura **ya tenía Nota de Crédito
 ### Tres fixes de UI + limpieza de usuario de prueba (4 jun 2026 — ✅ EN PRODUCCIÓN, PRs #35–#37)
 1. **IA: caché persistente + respaldo Groq (PR #35).** Resuelve el 429 de Gemini. Ver **gotcha #16** (ya marcado RESUELTO) + §4 (`GROQ_API_KEY`/`GROQ_MODEL`). Caché en tabla `ia_insights_cache`; `callIA()` reintenta con Groq si Gemini falla. Verificado E2E: miss 7s → hit 151ms; fallback Groq probado rompiendo la key de Gemini.
 2. **Selector "¿Quién realizó la entrega?" → solo repartidores (PR #36).** En `dashboard-content.tsx` la lista `usuarios` (que alimenta ese modal en `table.tsx`) ahora filtra `role === 'repartidor'` (antes listaba admin + asesoras + repartidores). Una línea; la lista `asesoras` (impresión) queda igual. Sin backend.
-3. **Traductor de Chrome desactivado (PR #36).** El root layout decía `<html lang="en">` aunque la app es 100% en español → Chrome la auto-traducía y alteraba nombres propios ("Clever"→"Inteligente", "Wilder"→"Salvaje", **"Alas"→"¡Ay!"**). Fix global en `layout.tsx`: **`lang="es" translate="no"`** + `metadata.other = { google: "notranslate" }`. Apaga la traducción para todo el ERP (protege nombres/direcciones/productos). Si una pestaña ya estaba traducida, requiere recarga a fondo una vez. (También documentado en `docs/arquitectura/01-vision-general.md §3.4`.)
+3. **Traductor de Chrome desactivado (PR #36).** El root layout decía `<html lang="en">` aunque la app es 100% en español → Chrome la auto-traducía y alteraba nombres propios ("Clever"→"Inteligente", "Wilder"→"Salvaje", **"Alas"→"¡Ay!"**). Fix global en `layout.tsx`: **`lang="es" translate="no"`** + `metadata.other = { google: "notranslate" }`. Apaga la traducción para todo el ERP (protege nombres/direcciones/productos). Si una pestaña ya estaba traducida, requiere recarga a fondo una vez. (También documentado en `docs/arquitectura/01-negocio-avicola.md`.)
 4. **Eliminar usuario: pre-check de historial completo + mensaje real (PR #37).** Borrar un usuario daba siempre "No se pudo eliminar el usuario." sin explicar. Causa: (a) el guard de `api/users/[id]/route.ts` solo miraba `pedidos.asesor_id`, así que un **repartidor** con pedidos pasaba el chequeo y el DELETE fallaba por FK (`pedidos.repartidor_id` es NO ACTION) → 500 genérico; (b) el frontend descartaba el mensaje del backend. Fix: el guard cuenta TODAS las refs que bloquean (pedidos asesor **o** repartidor, `facturas.asesor_id`, `precios_productos.created_by`) → **409 con motivo claro** ("tiene N pedido(s) en su historial…"); catch de FK (`23503`) → 409 amable; el frontend muestra el `error` real. Un usuario **sin** historial se borra (refs CASCADE/SET NULL se limpian solas). Verificado: Yoiclin (281 pedidos) → bloqueado con mensaje; RepartidorTest (0) → se borra. Sin migración. (Docs 03 §7.4 y 05 actualizados.)
 5. **Limpieza de `repartidorprueba` (data op en prod, NO va a git).** La cuenta de prueba tenía **6 pedidos reales** (clientes reales de abril, marcados con la cuenta de prueba; sin comprobante ni cobranza) que impedían borrarla. Decisión de Antonio: **desvincular** (los 6 pedidos `repartidor_id = NULL`, se conservan en historial/reportes — cero ventas perdidas) y luego **borrar** la cuenta. Ensayo+ROLLBACK (UPDATE 6, DELETE 1) → COMMIT. Verificado: 0 usuarios, 0 pedidos ligados, los 6 pedidos siguen vivos. (Nota: el texto `entregado_por='repartidorprueba'` quedó en varios pedidos de abril — es solo etiqueta histórica, no FK, no afecta.)
 
@@ -401,7 +498,9 @@ Plan: `docs/superpowers/plans/2026-05-22-sistema-incentivos.md`. Motiva a las as
 **Casos que quedan cubiertos automáticamente** (la vista se evalúa al vuelo, `/api/metas` es `force-dynamic`):
 - **NC anula factura** → resta en el período de la NC, no de la factura (correcto contablemente).
 - **"Cambiar asesora" traslada el dinero** → se reescribe `emitido_por`; la vista lo recoge al instante; el monto se mueve al período correcto de la fecha original del comprobante (útil para metas día/semana/mes).
-- **Reintento de comprobante rechazado** → es `UPDATE` de la misma fila (no `INSERT`) → sin duplicación.
+- **Regla vigente de reintento:** un `error` reutiliza la misma fila/correlativo; un CPE 01/03 de
+  Campo `rechazado` conserva la fila y se corrige con un `INSERT` nuevo enlazado, sin contar dos
+  ventas activas. Esta regla reemplaza el comportamiento original de junio.
 - **Vincular/desvincular a pedido** → cambia el fallback `pedido.asesor_id`, también al instante.
 
 **Regla importante — meta de equipo:** solo cuenta comprobantes con `asesora_id IS NOT NULL` → ventas del admin sin asignar no inflan el equipo.

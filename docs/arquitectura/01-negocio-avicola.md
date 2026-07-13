@@ -1,7 +1,7 @@
 # 01 — El Negocio Avícola y su Operativa
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** `main` + cambios locales pendientes
 > **Archivos clave:** `src/components/PedidoForm.tsx`, `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/dashboard/despacho/despacho-content.tsx`, `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`
 
 Este documento describe el **funcionamiento real del negocio avícola de Antonio Resurrección** en Lima, Perú, y cómo se traduce este flujo comercial y operativo en el sistema Transavic.
@@ -15,12 +15,22 @@ El dueño y cliente final del sistema es **Antonio Resurrección**. Su empresa o
 - **Transavic** — Marca principal (pollo, gallinas, menudencia).
 - **Avícola de Tony** — Segunda marca comercial.
 
-En el sistema, el campo `empresa` del pedido puede ser `"Transavic"` o `"Avícola de Tony"`, lo cual determina la plantilla visual, los logotipos de los tickets, la serie de los comprobantes electrónicos (SUNAT) y las cuentas de cobranza asociadas.
+En el sistema, `empresa` puede ser `"Transavic"` o `"Avícola de Tony"`; determina RUC/serie/certificado y presentación visual. **No determina la cartera.** La operación de venta (Ejecutivas, Campo o Planta) determina clientes, deuda y pagos.
 
 ### 1.2 Catálogo de Productos y Precios Dinámicos
-El negocio vende pollo (entero, despresado, filetes), carnes (res, cerdo) y huevos. 
+El negocio vende pollo (entero, despresado, filetes), carnes (res, cerdo) y huevos.
 - **Volatilidad de precios:** Los precios de las aves y carnes frescas en Lima fluctúan diariamente según la escasez del mercado mayorista y los acuerdos específicos con cada cliente.
 - **Unidades de Medida:** Coexisten unidades de conteo (`uni` o `NIU` para SUNAT) y unidades de peso (`kg` o `KGM` para SUNAT). La asesora vende de forma estimada (ej. "3 pollos enteros" o "12 chuletas de cerdo"), pero el cobro final se realiza en función del **peso real obtenido en balanza**.
+
+### 1.3 Las tres operaciones de venta
+
+| Operación | Quién vende | Ciclo operativo | Cartera |
+|---|---|---|---|
+| Ejecutivas | asesoras por WhatsApp | pedido → producción → despacho → reparto | `facturas` |
+| Campo | Antonio visitando mercados/avícolas | venta por peso → guía interna → abonos | saldo derivado + `abonos_avicola` |
+| Planta | admin/producción en mostrador | POS → inventario/caja o crédito | `cobranzas_planta` + `abonos_planta` |
+
+Las tres comparten catálogo y motor SUNAT, pero no deben compartir clientes ni deuda por accidente. Ver [22-operaciones-ventas-facturacion.md](./22-operaciones-ventas-facturacion.md).
 
 ---
 
@@ -41,7 +51,7 @@ La operación diaria de Transavic se divide en cinco etapas interconectadas, den
 [ Repartidor ] ─────────────> [ Viaje GPS Obligatorio ──> Entrega con Firma/Foto ]
                                     │
                                     ▼
-[ Facturación/SUNAT ] ──────> [ Emisión CPE (Boleta/Factura) + Crea Cobranza ]
+[ Facturación/SUNAT ] ──────> [ Emisión CPE + actualiza la cartera de la operación ]
 ```
 
 ### 2.1 Preventa y Registro (Asesoras)
@@ -65,6 +75,8 @@ Los motorizados cargan los pedidos físicos en sus vehículos y abren la aplicac
 - **Salida:** En el destino, el motorizado cobra (si es pago contra entrega), hace firmar la orden impresa y sube una foto de la orden firmada desde la cámara del celular. El pedido pasa a `Entregado`.
 
 ### 2.5 Facturación y Conciliación (Cobranzas)
-Una vez entregado el pedido, la asesora o el admin proceden a emitir el comprobante legal a SUNAT (Boleta o Factura electrónica).
-- **Acción:** La emisión de la factura/boleta **congela el saldo legal** de la transacción y crea automáticamente una cuenta por cobrar (cobranza) en la tabla `facturas`.
-- **Salida:** El admin o la asesora concilian la cobranza cargando las evidencias de transferencias bancarias (BCP, BBVA, Yape, Plin) o efectivo, cerrando formalmente el ciclo.
+Una vez definida la venta, se puede emitir el comprobante legal a SUNAT.
+- **Ejecutivas:** el CPE crea/enlaza la cuenta por cobrar en `facturas`.
+- **Campo:** el CPE no crea deuda nueva; el saldo ya proviene de ventas y abonos.
+- **Planta:** el contado ya movió caja/cuenta y el crédito vive en `cobranzas_planta`; emitir o reintentar no debe duplicarlo en `facturas`.
+- **Salida:** cada operación concilia en su propio circuito, aunque PDF/XML/CDR/NC/GRE reutilicen infraestructura tributaria.

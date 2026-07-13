@@ -17,7 +17,6 @@ import { neon } from "@neondatabase/serverless";
 import { siguienteNumeroComprobante, formatSerieNumero } from "./contador";
 import {
   getSunatConfig,
-  generarNombreArchivo,
   CATALOGO,
 } from "./config-transavic";
 import { generarXMLComprobante, calcularTotales, r2 } from "./xml-builder";
@@ -79,6 +78,63 @@ export interface OpcionesEmision {
    * `session.user.name`.
    */
   emitidoPor?: string;
+  /**
+   * Para VENTA EN CAMPO (módulo Clientes Avícola): id de la fila `ventas_avicola`
+   * que se está facturando. Se persiste en `comprobantes.venta_avicola_id` — único
+   * nexo comprobante ↔ venta de campo. Su presencia hace que el endpoint NO cree
+   * cobranza en `facturas` (la deuda ya vive en el saldo avícola) y excluye el
+   * comprobante de la vista `ventas_facturadas` (metas de asesoras). Ver gotcha #47.
+   */
+  ventaAvicolaId?: string | null;
+  /**
+   * Reemisión de Campo después de un rechazo definitivo de SUNAT. Apunta al
+   * CPE rechazado inmediato; el nuevo comprobante consume OTRO correlativo y
+   * conserva intactos XML/CDR de toda la cadena.
+   */
+  reemplazaComprobanteId?: string | null;
+}
+
+/** Conflicto de concurrencia: otra solicitud ya reservó/facturó esta venta. */
+export class VentaCampoYaFacturadaError extends Error {
+  readonly ventaAvicolaId: string;
+
+  constructor(ventaAvicolaId: string) {
+    super("La venta de campo ya tiene un comprobante reservado o emitido.");
+    this.name = "VentaCampoYaFacturadaError";
+    this.ventaAvicolaId = ventaAvicolaId;
+  }
+}
+
+/** Conflicto de concurrencia: otra solicitud ya reservó una NC para la referencia. */
+export class NotaCreditoYaReservadaError extends Error {
+  readonly referenciaComprobanteId: string;
+
+  constructor(referenciaComprobanteId: string) {
+    super("El comprobante ya tiene una Nota de Crédito reservada o emitida.");
+    this.name = "NotaCreditoYaReservadaError";
+    this.referenciaComprobanteId = referenciaComprobanteId;
+  }
+}
+
+function esDuplicadoVentaCampo(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string; message?: string };
+  return (
+    e?.code === "23505" &&
+    (e.constraint === "ux_comprobantes_venta_avicola_cpe" ||
+      e.constraint === "ux_comprobantes_reemplaza_cpe" ||
+      (e.message ?? "").includes("ux_comprobantes_venta_avicola_cpe") ||
+      (e.message ?? "").includes("ux_comprobantes_reemplaza_cpe") ||
+      (e.message ?? "").includes("venta_avicola_id"))
+  );
+}
+
+function esDuplicadoNotaCredito(error: unknown): boolean {
+  const e = error as { code?: string; constraint?: string; message?: string };
+  return (
+    e?.code === "23505" &&
+    (e.constraint === "ux_comprobantes_nc_referencia_activa" ||
+      (e.message ?? "").includes("ux_comprobantes_nc_referencia_activa"))
+  );
 }
 
 /**
@@ -229,24 +285,34 @@ export async function emitirComprobante(
   }
 
   if (!hayCertificado) {
-    await sql`
-      INSERT INTO comprobantes (
-        pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
-        cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
-        monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
-        observacion_comprobante
-      ) VALUES (
-        ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
-        ${serie}, ${numero}, ${serieNumero},
-        ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
-        ${subtotal}, ${igv}, ${total}, 'pendiente',
-        ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
-        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
-        ${observacionComprobante}
-      )
-    `;
+    try {
+      await sql`
+        INSERT INTO comprobantes (
+          pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
+          cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
+          monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
+          forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
+          venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
+        ) VALUES (
+          ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
+          ${serie}, ${numero}, ${serieNumero},
+          ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
+          ${subtotal}, ${igv}, ${total}, 'pendiente',
+          ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
+          ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
+          ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+          ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
+        )
+      `;
+    } catch (error) {
+      if (opts.ventaAvicolaId && esDuplicadoVentaCampo(error)) {
+        throw new VentaCampoYaFacturadaError(opts.ventaAvicolaId);
+      }
+      if (opts.referenciaComprobanteId && esDuplicadoNotaCredito(error)) {
+        throw new NotaCreditoYaReservadaError(opts.referenciaComprobanteId);
+      }
+      throw error;
+    }
     if (opts.pedidoId) {
       await sql`
         UPDATE facturas SET numero_comprobante = ${serieNumero}
@@ -264,6 +330,7 @@ export async function emitirComprobante(
   }
 
   // 3) Hay certificado → flujo SUNAT real
+  let reservaPreSunatId: string | null = null;
   try {
     // 3.1) Construir XML UBL 2.1 (formaPago/fechaVencimiento ya calculados arriba).
     const xmlSinFirma = generarXMLComprobante(
@@ -290,6 +357,52 @@ export async function emitirComprobante(
     // 3.2) Firmar XML
     const { xmlFirmado, hashCpe } = firmarXML(xmlSinFirma, config);
 
+    // Campo/NC: reservar la fila en DB ANTES de llamar al SOAP. Los claims del
+    // endpoint ya serializaron el contador; estos índices son la segunda barrera
+    // y la fila `emitiendo` conserva XML/correlativo para recuperación.
+    const debeReservarAntesDeSunat =
+      !!opts.ventaAvicolaId ||
+      (opts.tipo === TipoComprobante.NOTA_CREDITO &&
+        !!opts.referenciaComprobanteId);
+    if (debeReservarAntesDeSunat) {
+      try {
+        const reservas = (await sql`
+          INSERT INTO comprobantes (
+            pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
+            cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
+            monto_subtotal, monto_igv, monto_total, estado,
+            hash_cpe, xml_firmado_base64, mensaje_sunat,
+            forma_pago, fecha_vencimiento, fecha_emision, items_json,
+            referencia_comprobante_id, emitido_por, venta_avicola_id,
+            reemplaza_comprobante_id,
+            observacion_comprobante
+          ) VALUES (
+            ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
+            ${serie}, ${numero}, ${serieNumero},
+            ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
+            ${subtotal}, ${igv}, ${total}, 'emitiendo',
+            ${hashCpe ?? null}, ${Buffer.from(xmlFirmado).toString("base64")},
+            ${"Enviando comprobante a SUNAT. No emitas otro para esta venta."},
+            ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date,
+            ${JSON.stringify(itemsNorm)}::jsonb,
+            ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+            ${opts.ventaAvicolaId}, ${opts.reemplazaComprobanteId ?? null},
+            ${observacionComprobante}
+          )
+          RETURNING id
+        `) as Array<{ id: string }>;
+        reservaPreSunatId = reservas[0]?.id ?? null;
+      } catch (error) {
+        if (opts.ventaAvicolaId && esDuplicadoVentaCampo(error)) {
+          throw new VentaCampoYaFacturadaError(opts.ventaAvicolaId);
+        }
+        if (opts.referenciaComprobanteId && esDuplicadoNotaCredito(error)) {
+          throw new NotaCreditoYaReservadaError(opts.referenciaComprobanteId);
+        }
+        throw error;
+      }
+    }
+
     // 3.3) Enviar a SUNAT vía SOAP
     const resultadoEnvio = await enviarComprobante(
       xmlFirmado,
@@ -311,29 +424,42 @@ export async function emitirComprobante(
 
     const observacionesStr = resultadoEnvio.observaciones?.join(" | ") ?? null;
 
-    await sql`
-      INSERT INTO comprobantes (
-        pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
-        cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
-        monto_subtotal, monto_igv, monto_total, estado,
-        hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
-        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
-        observacion_comprobante
-      ) VALUES (
-        ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
-        ${serie}, ${numero}, ${serieNumero},
-        ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
-        ${subtotal}, ${igv}, ${total}, ${estadoDB},
-        ${hashCpe ?? null},
-        ${Buffer.from(xmlFirmado).toString("base64")},
-        ${resultadoEnvio.cdrBase64 ?? null},
-        ${observacionesStr},
-        ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
-        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
-        ${observacionComprobante}
-      )
-    `;
+    if (reservaPreSunatId) {
+      await sql`
+        UPDATE comprobantes SET
+          estado = ${estadoDB},
+          hash_cpe = ${hashCpe ?? null},
+          xml_firmado_base64 = ${Buffer.from(xmlFirmado).toString("base64")},
+          cdr_base64 = ${resultadoEnvio.cdrBase64 ?? null},
+          observaciones = ${observacionesStr},
+          mensaje_sunat = ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null}
+        WHERE id = ${reservaPreSunatId}::uuid
+      `;
+    } else {
+      await sql`
+        INSERT INTO comprobantes (
+          pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
+          cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
+          monto_subtotal, monto_igv, monto_total, estado,
+          hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
+          forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
+          venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
+        ) VALUES (
+          ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
+          ${serie}, ${numero}, ${serieNumero},
+          ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
+          ${subtotal}, ${igv}, ${total}, ${estadoDB},
+          ${hashCpe ?? null},
+          ${Buffer.from(xmlFirmado).toString("base64")},
+          ${resultadoEnvio.cdrBase64 ?? null},
+          ${observacionesStr},
+          ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null},
+          ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
+          ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+          ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
+        )
+      `;
+    }
 
     // Solo asociar el número a la factura si SUNAT lo ACEPTÓ (aceptado u
     // observado son válidos; rechazado/error NO debe ensuciar la cobranza).
@@ -355,26 +481,52 @@ export async function emitirComprobante(
       xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
     };
   } catch (err) {
+    if (
+      err instanceof VentaCampoYaFacturadaError ||
+      err instanceof NotaCreditoYaReservadaError
+    ) {
+      throw err;
+    }
     const mensaje = err instanceof Error ? err.message : String(err);
-    // Igual registrar el intento fallido para auditoría
-    await sql`
-      INSERT INTO comprobantes (
-        pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
-        cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
-        monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
-        forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
-        observacion_comprobante
-      ) VALUES (
-        ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
-        ${serie}, ${numero}, ${serieNumero},
-        ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
-        ${subtotal}, ${igv}, ${total}, 'error',
-        ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
-        ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
-        ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
-        ${observacionComprobante}
-      )
-    `;
+    // Igual registrar el intento fallido para auditoría. Si ya había una
+    // reserva, se actualiza ESA fila (mismo correlativo) en vez de insertar.
+    if (reservaPreSunatId) {
+      await sql`
+        UPDATE comprobantes
+        SET estado = 'error',
+            mensaje_sunat = ${`Error de emisión: ${mensaje.slice(0, 1000)}`}
+        WHERE id = ${reservaPreSunatId}::uuid
+      `;
+    } else {
+      try {
+        await sql`
+          INSERT INTO comprobantes (
+            pedido_id, ruc_emisor, empresa, tipo, serie, numero, serie_numero,
+            cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
+            monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
+            forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
+            venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
+          ) VALUES (
+            ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
+            ${serie}, ${numero}, ${serieNumero},
+            ${opts.cliente.tipoDocumento}, ${opts.cliente.numDocumento}, ${opts.cliente.razonSocial},
+            ${subtotal}, ${igv}, ${total}, 'error',
+            ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
+            ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
+            ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+            ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
+          )
+        `;
+      } catch (insertError) {
+        if (opts.ventaAvicolaId && esDuplicadoVentaCampo(insertError)) {
+          throw new VentaCampoYaFacturadaError(opts.ventaAvicolaId);
+        }
+        if (opts.referenciaComprobanteId && esDuplicadoNotaCredito(insertError)) {
+          throw new NotaCreditoYaReservadaError(opts.referenciaComprobanteId);
+        }
+        throw insertError;
+      }
+    }
     return {
       exito: false,
       estado: EstadoSunat.ERROR,

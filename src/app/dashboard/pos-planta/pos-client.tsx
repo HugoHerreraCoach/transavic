@@ -29,6 +29,7 @@ type Cuenta = {
   id: string;
   nombre: string;
   tipo?: string;
+  activa?: boolean;
 };
 
 type Cliente = {
@@ -123,7 +124,7 @@ export default function PosClient({
   // Recarga el directorio de clientes de planta tras crear uno.
   const recargarClientesPlanta = async () => {
     try {
-      const res = await fetch("/api/clientes-planta");
+      const res = await fetch("/api/clientes-planta?activo=true");
       const data = await res.json();
       if (data && Array.isArray(data.clientes)) setClientes(data.clientes);
     } catch {
@@ -229,17 +230,18 @@ export default function PosClient({
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
-          setCuentas(data);
-          if (data.length > 0) {
+          const activas = (data as Cuenta[]).filter((cuenta) => cuenta.activa !== false);
+          setCuentas(activas);
+          if (activas.length > 0) {
             // Preseleccionar la caja de EFECTIVO: es el caso normal del mostrador.
-            const efectivo = (data as Cuenta[]).find((c) => c.tipo === "efectivo");
-            setSelectedCuenta((efectivo ?? data[0]).id);
+            const efectivo = activas.find((c) => c.tipo === "efectivo");
+            setSelectedCuenta((efectivo ?? activas[0]).id);
           }
         }
       });
 
     // Cargar clientes de PLANTA (directorio propio del POS, aislado de ejecutivas)
-    fetch("/api/clientes-planta")
+    fetch("/api/clientes-planta?activo=true")
       .then(res => res.json())
       .then(data => {
         if (data && Array.isArray(data.clientes)) {

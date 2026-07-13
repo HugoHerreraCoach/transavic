@@ -86,10 +86,13 @@ export async function POST(req: NextRequest) {
       const clientRows = await sql`
         SELECT nombre, razon_social, ruc_dni, plazo_pago_dias
         FROM clientes_planta
-        WHERE id = ${cliente_planta_id}
+        WHERE id = ${cliente_planta_id} AND activo
       `;
       if (clientRows.length === 0) {
-        return NextResponse.json({ error: "Cliente de planta no encontrado" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Cliente de planta no encontrado o inactivo" },
+          { status: 404 }
+        );
       }
       clienteNombre = clientRows[0].nombre;
       razonSocial = clientRows[0].razon_social;
@@ -105,6 +108,23 @@ export async function POST(req: NextRequest) {
       return `${i.cantidad} ${i.unidad} ${i.nombre}` + (i.notas ? ` (${i.notas})` : '');
     });
     const detalleDerivado = detallesItems.join(", ") + (notas_generales ? ` | NOTAS: ${notas_generales}` : "");
+
+    // Una cuenta inactiva no puede recibir ventas. Sin esta validación, el CTE
+    // de contado podría no actualizar ninguna cuenta mientras el resto del batch
+    // sí registra pedido/inventario, dejando una venta sin ingreso de tesorería.
+    if (tipo_pago === "Contado" && cuenta_id) {
+      const cuentasActivas = await sql`
+        SELECT id FROM cuentas_bancarias
+        WHERE id = ${cuenta_id}::uuid AND activa
+        LIMIT 1
+      `;
+      if (cuentasActivas.length === 0) {
+        return NextResponse.json(
+          { error: "La cuenta seleccionada no existe o está inactiva" },
+          { status: 409 }
+        );
+      }
+    }
 
     // Venta COMPLETA en una sola transacción: pedido + items + inventario + cobro/deuda.
     // Un fallo a mitad no puede dejar un pedido sin stock descontado ni una venta sin

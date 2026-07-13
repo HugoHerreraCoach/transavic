@@ -13,9 +13,23 @@
 // PDF viejo lo anclaba a saldo_actual all-time → daba mal con topes pasados).
 import type {
   ClienteAvicolaConSaldo,
+  MedioPagoAvicola,
   MovimientoAvicola,
   VentaAvicolaItem,
 } from "@/lib/avicola/types";
+
+/** Un abono individual dentro del día. Se conserva separado para que el cliente
+ * pueda auditar cada pago en pantalla y en el PDF, aunque los totales sigan
+ * calculándose por día. */
+export interface AbonoDiaEstadoCuenta {
+  id: string;
+  created_at: string;
+  monto: number;
+  medio_pago: MedioPagoAvicola | null;
+  observaciones: string | null;
+  /** Saldo inmediatamente después de aplicar este movimiento en orden cronológico. */
+  saldo_posterior: number;
+}
 
 /** Una fila = un DÍA con actividad (venta, abono, o ambos). */
 export interface DiaEstadoCuenta {
@@ -26,6 +40,8 @@ export interface DiaEstadoCuenta {
   items: VentaAvicolaItem[];
   venta_del_dia: number; // Σ ventas del día
   abonos_del_dia: number; // Σ abonos del día
+  /** Cada abono permanece visible por separado, ordenado por created_at. */
+  abonos: AbonoDiaEstadoCuenta[];
   saldo_anterior: number; // saldo al inicio del día
   saldo_actual: number; // saldo al cierre del día
   hay_venta: boolean;
@@ -106,6 +122,29 @@ export function construirEstadoCuenta(
       .filter((n): n is number => n != null);
 
     const saldoAnterior = saldo;
+
+    // Saldo corriente dentro del día. `lista` ya está ordenada por created_at,
+    // por lo que tres abonos del mismo cliente conservan su orden y su saldo
+    // posterior individual en vez de colapsarse en una sola cifra.
+    let saldoMovimiento = saldoAnterior;
+    const abonosDetalle: AbonoDiaEstadoCuenta[] = [];
+    for (const movimiento of lista) {
+      saldoMovimiento = r2(
+        saldoMovimiento +
+          (movimiento.tipo === "venta" ? movimiento.monto : -movimiento.monto)
+      );
+      if (movimiento.tipo === "abono") {
+        abonosDetalle.push({
+          id: movimiento.id,
+          created_at: movimiento.created_at,
+          monto: movimiento.monto,
+          medio_pago: movimiento.medio_pago,
+          observaciones: movimiento.observaciones,
+          saldo_posterior: saldoMovimiento,
+        });
+      }
+    }
+
     saldo = r2(saldo + ventaDelDia - abonosDelDia);
     totalVendido = r2(totalVendido + ventaDelDia);
     totalAbonado = r2(totalAbonado + abonosDelDia);
@@ -116,6 +155,7 @@ export function construirEstadoCuenta(
       items,
       venta_del_dia: ventaDelDia,
       abonos_del_dia: abonosDelDia,
+      abonos: abonosDetalle,
       saldo_anterior: saldoAnterior,
       saldo_actual: saldo,
       hay_venta: ventas.length > 0,

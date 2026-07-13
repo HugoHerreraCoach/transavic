@@ -78,7 +78,14 @@ export async function listaCobranzasPlanta(
       co.monto::float8 AS monto, co.plazo_dias,
       co.fecha_emision::text AS fecha_emision,
       co.fecha_vencimiento::text AS fecha_vencimiento,
-      co.estado, co.comprobante_id, co.empresa, co.notas, co.anulada,
+      CASE
+        WHEN NOT co.anulada
+          AND co.estado = 'Pendiente'
+          AND co.fecha_vencimiento < (NOW() AT TIME ZONE 'America/Lima')::date
+        THEN 'Vencida'
+        ELSE co.estado
+      END AS estado,
+      co.comprobante_id, co.empresa, co.notas, co.anulada,
       co.anulacion_motivo, co.created_at::text AS created_at,
       COALESCE(ab.total_abonado, 0)::float8 AS total_abonado,
       (co.monto - COALESCE(ab.total_abonado, 0))::float8 AS saldo
@@ -153,4 +160,69 @@ export async function recalcularEstadoCobranza(
     SET estado = ${estado}, updated_at = NOW()
     WHERE id = ${cobranzaId}
   `;
+}
+
+/**
+ * Enlaza el CPE emitido desde un pedido POS con la deuda de planta que ya nació
+ * al vender a crédito. Para contado no habrá fila y el UPDATE retorna 0.
+ * Nunca crea una deuda ni toca `facturas`.
+ */
+export async function vincularCobranzaPlantaAComprobante(
+  sql: Sql,
+  params: { pedidoId: string; comprobanteId: string }
+): Promise<number> {
+  const rows = (await sql`
+    UPDATE cobranzas_planta
+    SET comprobante_id = ${params.comprobanteId}::uuid,
+        updated_at = NOW()
+    WHERE pedido_id = ${params.pedidoId}::uuid
+      AND (
+        comprobante_id IS NULL
+        OR comprobante_id = ${params.comprobanteId}::uuid
+      )
+    RETURNING id
+  `) as Array<{ id: string }>;
+  return rows.length;
+}
+
+/**
+ * Anula las deudas de planta asociadas a un CPE que acaba de recibir una Nota
+ * de Crédito total aceptada. Esta operación nunca toca `facturas`: la cartera
+ * del POS vive exclusivamente en `cobranzas_planta`.
+ *
+ * Se enlaza por `comprobante_id` cuando existe y también por `pedido_id`, porque
+ * las cobranzas POS históricas se crearon antes de emitir el CPE y pueden no
+ * tener todavía guardado el id del comprobante. Las cobranzas pagadas no se
+ * anulan automáticamente: requieren gestionar la devolución manualmente.
+ */
+export async function anularCobranzasPlantaDeComprobante(
+  sql: Sql,
+  params: {
+    comprobanteId: string;
+    pedidoId?: string | null;
+    motivo: string;
+    anuladaPor: string;
+  }
+): Promise<number> {
+  const rows = (await sql`
+    UPDATE cobranzas_planta
+    SET anulada = TRUE,
+        anulada_at = NOW(),
+        anulada_por = ${params.anuladaPor}::uuid,
+        anulacion_motivo = ${params.motivo},
+        estado = 'Anulada',
+        comprobante_id = COALESCE(comprobante_id, ${params.comprobanteId}::uuid),
+        updated_at = NOW()
+    WHERE NOT anulada
+      AND estado IN ('Pendiente', 'Parcial', 'Vencida')
+      AND (
+        comprobante_id = ${params.comprobanteId}::uuid
+        OR (
+          ${params.pedidoId ?? null}::uuid IS NOT NULL
+          AND pedido_id = ${params.pedidoId ?? null}::uuid
+        )
+      )
+    RETURNING id
+  `) as Array<{ id: string }>;
+  return rows.length;
 }

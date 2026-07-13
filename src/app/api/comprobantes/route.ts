@@ -34,6 +34,21 @@ export async function GET(request: Request) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
+    // Una fila `emitiendo` se reserva ANTES del SOAP para impedir dobles CPE/NC.
+    // Si la función murió y pasaron 15 min, se vuelve reintentable con el MISMO
+    // correlativo; nunca se habilita crear otro comprobante para la misma venta.
+    try {
+      await sql`
+        UPDATE comprobantes
+        SET estado = 'error',
+            mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
+        WHERE estado = 'emitiendo'
+          AND created_at < NOW() - INTERVAL '15 minutes'
+      `;
+    } catch (e) {
+      console.error("No se pudieron sanear CPE atascados en 'emitiendo':", e);
+    }
+
     // ── Saneo lazy: una guía en 'emitiendo' por más de 15 min es una emisión
     // INTERRUMPIDA (la función murió a mitad del polling SUNAT — caso T002-10,
     // 10 jun 2026). Se marca 'error' con instrucción de usar "Reintentar emisión"
@@ -75,6 +90,20 @@ export async function GET(request: Request) {
       params.push(empresa);
     }
 
+    // Filtro por OPERACIÓN de venta (derivada de los vínculos, no de una columna
+    // aparte): campo = venta_avicola_id; planta = pedido origen pos_planta; ejecutivas
+    // = el resto (pedido de asesora o suelto). Sin params (condiciones literales).
+    const operacion = searchParams.get("operacion");
+    if (operacion === "campo") {
+      outerConditions.push(`t.venta_avicola_id IS NOT NULL`);
+    } else if (operacion === "planta") {
+      outerConditions.push(`t.venta_avicola_id IS NULL AND p.origen = 'pos_planta'`);
+    } else if (operacion === "ejecutivas") {
+      outerConditions.push(
+        `t.venta_avicola_id IS NULL AND (p.origen IS NULL OR p.origen <> 'pos_planta')`
+      );
+    }
+
     if (clienteDocNum && /^\d{8,11}$/.test(clienteDocNum)) {
       outerConditions.push(`t.cliente_doc_num = $${ctx.i++}`);
       params.push(clienteDocNum);
@@ -105,38 +134,8 @@ export async function GET(request: Request) {
         ? `WHERE ${outerConditions.join(" AND ")}`
         : "";
 
-    // ── Columnas comunes de la subconsulta (misma forma para ambas tablas) ────
-    // comprobantes tiene: monto_total, estado, mensaje_sunat, referencia_comprobante_id, emitido_por
-    // comprobantes_guias: peso_bruto_total, total_bultos (extras); sin monto real
-    const cpeSelect = `
-      SELECT
-        c.id,
-        c.serie_numero,
-        c.tipo,
-        c.empresa,
-        c.cliente_razon_social,
-        c.cliente_doc_num,
-        c.monto_total::numeric             AS monto_total,
-        c.estado,
-        c.created_at,
-        c.mensaje_sunat,
-        c.pedido_id,
-        c.emitido_por,
-        c.referencia_comprobante_id,
-        NULL::text                          AS referencia_serie_numero,
-        NULL::text                          AS referencia_tipo,
-        NULL::text                          AS referencia_cliente_razon_social,
-        NULL::numeric                       AS referencia_monto_total,
-        FALSE                               AS tiene_nc,
-        NULL::numeric                       AS peso_bruto_total,
-        NULL::integer                       AS total_bultos,
-        (
-          SELECT string_agg(g.serie_numero, ', ')
-          FROM comprobantes_guias g
-          WHERE g.comprobante_id = c.id
-        )                                   AS guia_serie_numero
-      FROM comprobantes c`;
-
+    // Columnas comunes de CPE/GRE se mantienen alineadas en las dos
+    // subconsultas que siguen para que el UNION ALL sea estable.
     const guiaSelect = `
       SELECT
         g.id,
@@ -149,8 +148,9 @@ export async function GET(request: Request) {
         g.estado,
         g.created_at,
         g.mensaje_sunat,
-        g.pedido_id,
+        COALESCE(g.pedido_id, ref.pedido_id) AS pedido_id,
         g.emitido_por,
+        ref.venta_avicola_id                AS venta_avicola_id,
         g.comprobante_id                    AS referencia_comprobante_id,
         ref.serie_numero                    AS referencia_serie_numero,
         ref.tipo                            AS referencia_tipo,
@@ -175,7 +175,7 @@ export async function GET(request: Request) {
     if (tipo === "09") {
       // Solo guías
       query = `
-        SELECT t.*, p.cliente AS pedido_cliente
+        SELECT t.*, p.cliente AS pedido_cliente, p.origen AS pedido_origen
         FROM (${guiaSelect}) t
         LEFT JOIN pedidos p ON t.pedido_id = p.id
         ${outerWhere}
@@ -192,7 +192,10 @@ export async function GET(request: Request) {
         SELECT
           c.id, c.serie_numero, c.tipo, c.empresa, c.cliente_razon_social,
           c.cliente_doc_num, c.monto_total::numeric AS monto_total, c.estado,
-          c.created_at, c.mensaje_sunat, c.pedido_id, c.emitido_por,
+          c.created_at, c.mensaje_sunat,
+          COALESCE(c.pedido_id, ref.pedido_id) AS pedido_id,
+          c.emitido_por,
+          COALESCE(c.venta_avicola_id, ref.venta_avicola_id) AS venta_avicola_id,
           c.referencia_comprobante_id,
           ref.serie_numero AS referencia_serie_numero,
           ref.tipo         AS referencia_tipo,
@@ -212,17 +215,23 @@ export async function GET(request: Request) {
             WHERE g.comprobante_id = c.id
           )              AS guia_serie_numero,
           COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro,
-          (SELECT nc2.serie_numero FROM comprobantes nc2
-             WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
-               AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
-             ORDER BY nc2.created_at DESC LIMIT 1) AS reemplazada_por
+          COALESCE(
+            (SELECT hijo.serie_numero FROM comprobantes hijo
+               WHERE hijo.reemplaza_comprobante_id = c.id
+                 AND hijo.tipo IN ('01','03')
+               ORDER BY hijo.created_at DESC, hijo.id DESC LIMIT 1),
+            (SELECT nc2.serie_numero FROM comprobantes nc2
+               WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
+                 AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
+               ORDER BY nc2.created_at DESC LIMIT 1)
+          ) AS reemplazada_por
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id
         WHERE c.tipo = $${ctx.i++}`;
       params.push(tipo);
 
       query = `
-        SELECT t.*, p.cliente AS pedido_cliente
+        SELECT t.*, p.cliente AS pedido_cliente, p.origen AS pedido_origen
         FROM (${cpeSelectWithTipo}) t
         LEFT JOIN pedidos p ON t.pedido_id = p.id
         ${outerWhere}
@@ -236,7 +245,10 @@ export async function GET(request: Request) {
         SELECT
           c.id, c.serie_numero, c.tipo, c.empresa, c.cliente_razon_social,
           c.cliente_doc_num, c.monto_total::numeric AS monto_total, c.estado,
-          c.created_at, c.mensaje_sunat, c.pedido_id, c.emitido_por,
+          c.created_at, c.mensaje_sunat,
+          COALESCE(c.pedido_id, ref.pedido_id) AS pedido_id,
+          c.emitido_por,
+          COALESCE(c.venta_avicola_id, ref.venta_avicola_id) AS venta_avicola_id,
           c.referencia_comprobante_id,
           ref.serie_numero AS referencia_serie_numero,
           ref.tipo         AS referencia_tipo,
@@ -256,15 +268,21 @@ export async function GET(request: Request) {
             WHERE g.comprobante_id = c.id
           )              AS guia_serie_numero,
           COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) AS fecha_filtro,
-          (SELECT nc2.serie_numero FROM comprobantes nc2
-             WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
-               AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
-             ORDER BY nc2.created_at DESC LIMIT 1) AS reemplazada_por
+          COALESCE(
+            (SELECT hijo.serie_numero FROM comprobantes hijo
+               WHERE hijo.reemplaza_comprobante_id = c.id
+                 AND hijo.tipo IN ('01','03')
+               ORDER BY hijo.created_at DESC, hijo.id DESC LIMIT 1),
+            (SELECT nc2.serie_numero FROM comprobantes nc2
+               WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
+                 AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
+               ORDER BY nc2.created_at DESC LIMIT 1)
+          ) AS reemplazada_por
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id`;
 
       query = `
-        SELECT t.*, p.cliente AS pedido_cliente
+        SELECT t.*, p.cliente AS pedido_cliente, p.origen AS pedido_origen
         FROM (
           ${cpeSelectFull}
           UNION ALL

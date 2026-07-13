@@ -1,7 +1,7 @@
 # 03 — Autenticación, Roles y Scoping
 
-> **Última verificación contra código:** 2026-07-05
-> **Commit del proyecto:** `9f29f5a` (+ cambios locales de la expansión ERP)
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** `main` + cambios locales pendientes
 > **Archivos clave:** `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/roles.ts`, `src/lib/data.ts`
 
 Este documento describe la arquitectura de seguridad, la gestión de sesiones y la aplicación del control de acceso (scoping) en el sistema Transavic.
@@ -28,7 +28,7 @@ El login redirige automáticamente al usuario según su rol a su pantalla de ini
 | **`asesor`** | `/dashboard` | Preventa y cobranza. Puede crear pedidos y clientes, emitir comprobantes/Notas de Crédito y ver reportes de metas. Sus datos están estrictamente restringidos a los de su autoría (scoping). **Despacho:** Puede visualizar la pantalla `/dashboard/despacho` en modo **solo lectura con alcance total** (ve a todos los motorizados). |
 | **`repartidor`** | `/dashboard/mi-ruta` | Reparto físico. Solo tiene acceso a la pantalla `/dashboard/mi-ruta` para gestionar sus entregas asignadas para el día de hoy. |
 | **`produccion`** | `/dashboard/produccion` | Preparación y pesaje. Solo tiene acceso a la pantalla de `/dashboard/produccion` para visualizar la cola de pedidos de producción y registrar los pesos reales antes de despacho. Con la expansión ERP 2026 también gestiona **compras, mermas y el POS de planta**. |
-| **`facturacion`** | `/dashboard/facturacion` | **Preparado, NO activo:** el rol está declarado en `roles.ts` (tipo `Role` y mapa `PERMISSIONS`) para la expansión ERP 2026, pero **aún no hay usuarios creados** con este rol. Está pensado para caja/gastos, facturación y reportes sin acceso de administración. |
+| **`facturacion`** | `/dashboard/facturacion` | **Preparado, NO utilizable:** el rol está declarado en `roles.ts`, pero la API de usuarios no permite crearlo y la ruta/pantalla todavía no existe. Una fila legacy con este rol recibiría 404 al iniciar. Antes de activarlo hay que implementar la página, guards/API/scoping/sidebar y recién ampliar el zod de usuarios. |
 
 ---
 
@@ -67,6 +67,24 @@ Al agregar una pantalla o endpoint nuevo, **preferir `hasPermission()`** en luga
 | Compras, proveedores, mermas, POS de planta, caja diaria | `admin` + `produccion` |
 | CRM de leads (kanban + chat WhatsApp) | `admin` + `asesor` |
 | Consolidado gerencial, rentabilidad, cuentas bancarias/transacciones | `admin` |
+| Ventas, clientes, comprobantes y estado de cuenta de Campo | `admin` |
+| Clientes/cobranzas de Planta | `admin` + `produccion` |
+| Ventas Generales | `admin` |
+
+### Visibilidad de ventas y facturación por operación
+
+| Ruta | Roles | Scoping adicional |
+|---|---|---|
+| `/dashboard/comprobantes/ejecutivas` | `admin`, `asesor` | la asesora solo recibe sus comprobantes desde la API |
+| `/dashboard/clientes-avicola/ventas` | `admin` | Campo pertenece a la operación de Antonio |
+| `/dashboard/clientes-avicola/comprobantes` | `admin` | filtro fijo `operacion=campo` |
+| `/dashboard/pos-planta` | `admin`, `produccion` | venta de Planta; no atribuir a asesora |
+| `/dashboard/clientes-planta` / `cobranzas-planta` | `admin`, `produccion` | cartera propia de Planta |
+| `/dashboard/comprobantes` | `admin`, `asesor` | hub general; asesor sigue scopeado aunque cambie filtros |
+| `/dashboard/ventas-generales` | `admin` | lectura transversal de las tres operaciones |
+
+Las páginas aplican guard server-side y las APIs repiten auth/rol/scoping. El filtrado de
+`DashboardLayout.tsx` es solo navegación, nunca la barrera de seguridad.
 
 ---
 

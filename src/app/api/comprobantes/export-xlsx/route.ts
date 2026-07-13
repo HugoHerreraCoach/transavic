@@ -2,7 +2,8 @@
 // Exporta comprobantes como reporte contable .xlsx multi-hoja (para el contador).
 //
 // Reporte "inteligente" (mayo 2026, portado de conexipema-eventos):
-//   - Filtra por RANGO DE FECHAS (?desde&hasta en zona Lima, sobre created_at).
+//   - Filtra por RANGO DE FECHAS (?desde&hasta) sobre fecha_emision; usa
+//     created_at en Lima solo como fallback para registros legacy sin esa fecha.
 //   - Respeta los filtros de la lista (tipo, empresa, cliente_doc_num).
 //   - Hojas: Resumen · Registro de Ventas · Boletas · Facturas · Notas de Crédito.
 //   - NC restan; rechazado/error/anulado fuera de las sumas.
@@ -46,6 +47,22 @@ export async function GET(req: NextRequest) {
   const clienteDocNum = searchParams.get("cliente_doc_num")?.trim();
   const desdeRaw = searchParams.get("desde"); // YYYY-MM-DD | null
   const hastaRaw = searchParams.get("hasta"); // YYYY-MM-DD | null
+  const operacionRaw = searchParams.get("operacion");
+  const operacionesValidas = ["ejecutivas", "campo", "planta"] as const;
+  if (
+    operacionRaw !== null &&
+    !operacionesValidas.includes(
+      operacionRaw as (typeof operacionesValidas)[number]
+    )
+  ) {
+    return NextResponse.json(
+      { error: "Filtro de operación inválido." },
+      { status: 400 }
+    );
+  }
+  const operacion = operacionRaw as
+    | (typeof operacionesValidas)[number]
+    | null;
 
   const sql = neon(process.env.DATABASE_URL!);
 
@@ -56,9 +73,12 @@ export async function GET(req: NextRequest) {
 
   if (role === "asesor") {
     conditions.push(
-      `c.pedido_id IN (SELECT id FROM pedidos WHERE asesor_id = $${i++})`
+      `(COALESCE(c.pedido_id, ref.pedido_id) IN
+          (SELECT id FROM pedidos WHERE asesor_id = $${i})
+        OR LOWER(TRIM(c.emitido_por)) = LOWER(TRIM($${i + 1})))`
     );
-    params.push(userId);
+    params.push(userId, session.user.name ?? "");
+    i += 2;
   }
   if (tipo && (tipo === "01" || tipo === "03" || tipo === "07" || tipo === "08")) {
     conditions.push(`c.tipo = $${i++}`);
@@ -71,6 +91,22 @@ export async function GET(req: NextRequest) {
   if (clienteDocNum && /^\d{8,11}$/.test(clienteDocNum)) {
     conditions.push(`c.cliente_doc_num = $${i++}`);
     params.push(clienteDocNum);
+  }
+  // El origen se deriva igual que en GET /api/comprobantes. Las NC heredan del
+  // comprobante referenciado; Campo prima sobre cualquier pedido accidental.
+  const ventaCampoExpr =
+    "COALESCE(c.venta_avicola_id, ref.venta_avicola_id)";
+  const origenPedidoExpr = "COALESCE(p.origen, pref.origen)";
+  if (operacion === "campo") {
+    conditions.push(`${ventaCampoExpr} IS NOT NULL`);
+  } else if (operacion === "planta") {
+    conditions.push(
+      `${ventaCampoExpr} IS NULL AND ${origenPedidoExpr} = 'pos_planta'`
+    );
+  } else if (operacion === "ejecutivas") {
+    conditions.push(
+      `${ventaCampoExpr} IS NULL AND (${origenPedidoExpr} IS NULL OR ${origenPedidoExpr} <> 'pos_planta')`
+    );
   }
   // Rango de fechas: comparamos por la fecha de emisión REAL del comprobante
   // (fecha_emision, que puede ser retroactiva) con fallback a created_at en zona
@@ -96,6 +132,9 @@ export async function GET(req: NextRequest) {
             c.monto_subtotal, c.monto_igv, c.monto_total,
             c.estado, c.mensaje_sunat, c.created_at, c.fecha_emision, c.forma_pago, c.fecha_vencimiento
      FROM comprobantes c
+     LEFT JOIN comprobantes ref ON ref.id = c.referencia_comprobante_id
+     LEFT JOIN pedidos p ON p.id = c.pedido_id
+     LEFT JOIN pedidos pref ON pref.id = ref.pedido_id
      ${where}
      ORDER BY COALESCE(c.fecha_emision, (c.created_at AT TIME ZONE 'America/Lima')::date) ASC, c.created_at ASC
      LIMIT 10000`,
@@ -127,7 +166,7 @@ export async function GET(req: NextRequest) {
     periodo.desde === "todo"
       ? new Date().toISOString().slice(0, 10)
       : `${periodo.desde}_al_${periodo.hasta}`;
-  const filename = `reporte-comprobantes-${slug}.xlsx`;
+  const filename = `reporte-comprobantes${operacion ? `-${operacion}` : ""}-${slug}.xlsx`;
 
   return new NextResponse(new Uint8Array(buf), {
     status: 200,

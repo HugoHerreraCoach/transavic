@@ -1,13 +1,13 @@
 # 12 — Guías de Remisión Electrónicas (GRE REST)
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
-> **Archivos clave:** 
-> - [src/lib/sunat/xml-builder-guia.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/xml-builder-guia.ts)
-> - [src/lib/sunat/rest-client.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/lib/sunat/rest-client.ts)
-> - [src/app/api/guias/emitir/route.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/api/guias/emitir/route.ts)
-> - [src/app/dashboard/guias/emitir-guia-modal.tsx](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/dashboard/guias/emitir-guia-modal.tsx)
-> - [src/app/api/sunat/entorno/route.ts](file:///Users/hugoherrera/Programación/proyectos/transavic/src/app/api/sunat/entorno/route.ts)
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Archivos clave:**
+> - `src/lib/sunat/xml-builder-guia.ts`
+> - `src/lib/sunat/rest-client.ts`
+> - `src/app/api/guias/emitir/route.ts`
+> - `src/app/dashboard/guias/emitir-guia-modal.tsx`
+> - `src/app/api/sunat/entorno/route.ts`
 
 Este documento detalla la integración con la API REST de la SUNAT para la emisión de Guías de Remisión Electrónicas (GRE Remitente, tipo de comprobante "09").
 
@@ -58,3 +58,18 @@ Esta regla es fundamental para Transavic, ya que la mayoría de los repartos se 
 Es crucial distinguir las dos numeraciones:
 - **Orden de Pedido Interna:** Se genera para control de almacén en `/pedidos/[id]/guia` (imprimible en tiquetera de 80mm). Su número correlativo es autogestionado por la tabla `correlativos.orden_pedido` (ej: `0004523`). Históricamente se le llamaba "Guía", pero **no** tiene validez SUNAT.
 - **Guía de Remisión Electrónica (GRE):** Es el documento tributario oficial. Utiliza una serie legal de 4 caracteres (ej: `T001` o `T002`) y correlativos atómicos administrados en la tabla `comprobantes_contador` al momento de la transmisión REST exitosa.
+
+---
+
+## 6. Operación de origen: Ejecutivas, Campo o Planta
+
+La GRE se asocia al CPE mediante `comprobantes_guias.comprobante_id`. Su operación no se decide
+por empresa ni por la presencia de un pedido aislado, sino por el **CPE de referencia**:
+
+1. `comprobantes.venta_avicola_id` → Campo.
+2. En otro caso, pedido con `origen='pos_planta'` → Planta.
+3. El resto → Ejecutivas.
+
+Para Campo, la dirección del receptor se obtiene del XML firmado del comprobante, porque no existe
+un `pedido_id`. Esta misma herencia debe conservarse en filtros, listado y exportación. Si se cambia
+la clasificación de operaciones, revisar también [22 §3–5](./22-operaciones-ventas-facturacion.md).

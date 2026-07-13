@@ -1,7 +1,7 @@
 # 08 — Aplicación del Repartidor, Offline y GPS Obligatorio
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** app/GPS en producción; cron cada 10 minutos
 > **Archivos clave:** `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`, `src/app/dashboard/mi-ruta/seguimiento-nativo.tsx`, `src/lib/offline-queue.ts`, `src/lib/repartidor-jornada.ts`, `src/lib/repartidor-oscuro.ts`, `src/app/api/cron/repartidores-oscuros/route.ts`
 
 Este documento describe el funcionamiento de la vista del repartidor, la aplicación móvil híbrida (Capacitor), el motor offline-first y la lógica de rastreo GPS obligatorio con detección de repartidores oscuros.
@@ -54,4 +54,4 @@ El sistema distingue entre la falta de señal física (involuntaria) y la evasi�
 
 1. **Beacon Inmediato (`POST /api/repartidor/beacon`):** Si el motorizado apaga el GPS del dispositivo o revoca los permisos de ubicación a la aplicación Capacitor, la app intercepta el evento e intenta enviar un beacon al servidor registrando `gps_status = 'permiso_revocado'`. Si tiene pedidos activos en ruta, se notifica inmediatamente al administrador en Despacho (con marca roja).
 2. **GPS Simulado (Mock GPS):** Si el repartidor intenta usar aplicaciones para simular ubicaciones falsas, el servidor detecta el flag `simulated = true` en el POST. El backend descarta la coordenada (para no alterar el mapa de despacho), actualiza el estado del rider a `mock` (rojo en el mapa) y retorna un status 200 envenenando la cola offline para evitar que la app móvil se trabe reintentando.
-3. **Cron de inactividad (`/api/cron/repartidores-oscuros`):** Un cron job diario corre cada 10 minutos comprobando los motorizados que tienen pedidos activos asignados. Si un motorizado no reporta coordenadas en más de 10 minutos (estado `sin_senal`, pintado de ámbar), envía una notificación in-app al admin de tipo `repartidor_oscuro`, aplicando un debounce de control en `settings.gps_oscuros_alertados` para no spamear alertas.
+3. **Cron de inactividad (`/api/cron/repartidores-oscuros`):** El job programado corre cada 10 minutos y comprueba los motorizados con pedidos activos. Si no reportan coordenadas en más de 10 minutos (estado `sin_senal`, ámbar), envía una notificación `repartidor_oscuro` al admin con debounce en `settings.gps_oscuros_alertados`.

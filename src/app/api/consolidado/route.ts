@@ -6,6 +6,8 @@ import {
   listaClientesPlantaConSaldo,
   UMBRAL_DEUDA_PLANTA,
 } from "@/lib/planta/saldos";
+import { listaClientesConSaldo, UMBRAL_DEUDA } from "@/lib/avicola/saldos";
+import { resumenVentasGeneralesPorFecha } from "@/lib/ventas-generales";
 
 export const dynamic = "force-dynamic";
 
@@ -74,30 +76,37 @@ export async function GET() {
       LIMIT 10
     `;
 
-    // 5. Ventas de Hoy (Planta y Asesoras)
-    const ventasHoyRows = await sql`
-      SELECT 
-        COALESCE(SUM(im.monto), 0)::float8 AS total_ventas,
-        COALESCE(SUM(im.monto) FILTER (WHERE p.origen = 'pos_planta'), 0)::float8 AS ventas_pos,
-        COALESCE(SUM(im.monto) FILTER (WHERE p.origen IS NULL OR p.origen != 'pos_planta'), 0)::float8 AS ventas_asesor
-      FROM pedidos p
-      LEFT JOIN (
-        SELECT pedido_id, SUM(COALESCE(subtotal_real, subtotal, 0)) AS monto
-        FROM pedido_items
-        GROUP BY pedido_id
-      ) im ON im.pedido_id = p.id
-      WHERE p.fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
-        AND p.estado = 'Entregado'
-    `;
-    const ventasHoy = ventasHoyRows[0] || { total_ventas: 0, ventas_pos: 0, ventas_asesor: 0 };
+    // 5. Ventas registradas HOY de las tres operaciones. Misma fuente y criterio
+    // que /api/ventas-generales: nunca mezclar fecha de entrega con fecha de venta.
+    const hoyRows = (await sql`
+      SELECT (NOW() AT TIME ZONE 'America/Lima')::date::text AS hoy
+    `) as Array<{ hoy: string }>;
+    const resumenVentas = await resumenVentasGeneralesPorFecha(sql, hoyRows[0].hoy);
+
+    // 5c. Cartera por Cobrar de CAMPO (saldos avícola positivos) — reutiliza la
+    //     aritmética central de saldos (no duplicar). Un saldo a favor no netea deuda ajena.
+    const clientesCampo = await listaClientesConSaldo(sql);
+    const carteraCampo = clientesCampo.reduce(
+      (acc, c) => acc + (c.saldo_actual > UMBRAL_DEUDA ? c.saldo_actual : 0),
+      0
+    );
+
+    const ventasHoy = {
+      total_ventas: resumenVentas.total,
+      ventas_pos: resumenVentas.operaciones.planta.total,
+      ventas_asesor: resumenVentas.operaciones.ejecutivas.total,
+      ventas_campo: resumenVentas.operaciones.campo.total,
+      total_todas: resumenVentas.total,
+    };
 
     return NextResponse.json({
       cuentas,
       totalCobrar, // cartera de ejecutivas (facturas Pendiente/Vencida)
       carteraPlanta, // cartera de planta (POS): saldos de cobranzas_planta
+      carteraCampo, // cartera de campo (Clientes Avícola): saldos avícola positivos
       totalPagar,
       transacciones,
-      ventasHoy
+      ventasHoy,
     });
   } catch (error: unknown) {
     console.error("Error en GET /api/consolidado:", error);

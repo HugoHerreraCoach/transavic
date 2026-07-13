@@ -39,12 +39,15 @@ type ConsolidadoData = {
   cuentas: Cuenta[];
   totalCobrar: number; // cartera de ejecutivas (facturas)
   carteraPlanta: number; // cartera de planta (POS)
+  carteraCampo: number; // cartera de campo (Clientes Avícola)
   totalPagar: number;
   transacciones: Transaccion[];
   ventasHoy: {
-    total_ventas: number;
+    total_ventas: number; // total de las tres operaciones (alias de total_todas)
     ventas_pos: number;
     ventas_asesor: number;
+    ventas_campo: number;
+    total_todas: number; // ejecutivas + planta + campo
   };
 };
 
@@ -116,10 +119,10 @@ export default function ConsolidadoClient() {
     return data.cuentas.reduce((acc, c) => acc + c.saldo, 0);
   }, [data]);
 
-  // Cartera total por cobrar = ejecutivas (facturas) + planta (POS).
+  // Cartera total por cobrar = ejecutivas (facturas) + planta (POS) + campo (avícola).
   const carteraTotal = useMemo(() => {
     if (!data) return 0;
-    return (data.totalCobrar || 0) + (data.carteraPlanta || 0);
+    return (data.totalCobrar || 0) + (data.carteraPlanta || 0) + (data.carteraCampo || 0);
   }, [data]);
 
   // Balance Neto Comercial (Lo que te deben en total - Cuentas por Pagar)
@@ -192,23 +195,29 @@ export default function ConsolidadoClient() {
             <FiTrendingUp className="text-indigo-600" /> Monitoreo de Ventas de Hoy
           </h3>
           
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100/50">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Venta Total</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Venta Total (3 op.)</span>
               <span className="text-lg font-black text-gray-800 mt-1 block">
-                {formatSoles(data?.ventasHoy.total_ventas || 0)}
+                {formatSoles(data?.ventasHoy.total_todas || 0)}
               </span>
             </div>
-            <div className="bg-orange-50/40 p-4 rounded-2xl border border-orange-100/30">
-              <span className="text-[10px] font-bold text-orange-500 uppercase tracking-wider block">Venta Rápida (Mostrador)</span>
-              <span className="text-lg font-black text-orange-600 mt-1 block">
-                {formatSoles(data?.ventasHoy.ventas_pos || 0)}
-              </span>
-            </div>
-            <div className="bg-indigo-50/40 p-4 rounded-2xl border border-indigo-100/30">
-              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Asesoras (WhatsApp)</span>
-              <span className="text-lg font-black text-indigo-600 mt-1 block">
+            <div className="bg-blue-50/40 p-4 rounded-2xl border border-blue-100/40">
+              <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">🛵 Ejecutivas</span>
+              <span className="text-lg font-black text-blue-600 mt-1 block">
                 {formatSoles(data?.ventasHoy.ventas_asesor || 0)}
+              </span>
+            </div>
+            <div className="bg-amber-50/40 p-4 rounded-2xl border border-amber-100/40">
+              <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">🏪 Campo</span>
+              <span className="text-lg font-black text-amber-600 mt-1 block">
+                {formatSoles(data?.ventasHoy.ventas_campo || 0)}
+              </span>
+            </div>
+            <div className="bg-violet-50/40 p-4 rounded-2xl border border-violet-100/40">
+              <span className="text-[10px] font-bold text-violet-500 uppercase tracking-wider block">🏭 Planta (POS)</span>
+              <span className="text-lg font-black text-violet-600 mt-1 block">
+                {formatSoles(data?.ventasHoy.ventas_pos || 0)}
               </span>
             </div>
           </div>
@@ -256,7 +265,7 @@ export default function ConsolidadoClient() {
           })()}
 
           <div className="text-[10px] text-gray-400 leading-relaxed bg-gray-50 p-3.5 rounded-xl border border-gray-100/50">
-            * Se consideran únicamente pedidos en estado <strong>Entregado</strong> cuya fecha programada de entrega coincide con el día de hoy, utilizando pesos y subtotales definitivos.
+            * Venta del día = registro realizado hoy en Lima. Ejecutivas excluye pedidos fallidos; Campo excluye ventas anuladas. Es la misma cifra de <strong>Ventas Generales</strong>.
           </div>
         </div>
 
@@ -321,9 +330,13 @@ export default function ConsolidadoClient() {
                     <span className="text-gray-500 font-semibold">Cartera planta (POS)</span>
                     <span className="font-bold text-gray-700">{formatSoles(data?.carteraPlanta || 0)}</span>
                   </div>
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-gray-500 font-semibold">Cartera campo (avícola)</span>
+                    <span className="font-bold text-gray-700">{formatSoles(data?.carteraCampo || 0)}</span>
+                  </div>
                 </div>
               </div>
-              <span className="text-[9px] text-gray-400 mt-3 block">Facturas de ejecutivas + saldos de planta</span>
+              <span className="text-[9px] text-gray-400 mt-3 block">Facturas de ejecutivas + saldos de planta + saldos de campo</span>
             </div>
 
             <div className="bg-red-50/30 p-4 rounded-2xl border border-red-100/30 flex flex-col justify-between">

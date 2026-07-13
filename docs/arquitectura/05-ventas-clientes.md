@@ -1,10 +1,16 @@
 # 05 — Ventas y Directorio de Clientes
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** `main` + cambios locales pendientes
 > **Archivos clave:** `src/components/PedidoForm.tsx`, `src/components/ClienteAutocomplete.tsx`, `src/lib/clientes-duplicados.ts`, `src/lib/parse-detalle-pedido.ts`, `src/app/api/clientes/verificar/route.ts`
 
 Este documento describe la vista de preventa de pedidos, la lógica de autocompletado del directorio de clientes y los mecanismos de prevención de duplicados de carteras comerciales.
+
+> [!IMPORTANT]
+> Este documento cubre **Ventas Ejecutivas**. Campo usa `clientes_avicola`/`ventas_avicola`
+> ([doc 21](./21-clientes-avicola.md)) y Planta usa POS + clientes/cartera propios
+> ([docs 10](./10-pos-caja-tesoreria.md) y [25](./25-clientes-cobranzas-planta.md)). Las tres
+> se unen solo en vistas/reportes y motor CPE conforme al [mapa 22](./22-operaciones-ventas-facturacion.md).
 
 ---
 

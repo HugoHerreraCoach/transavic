@@ -1,14 +1,15 @@
 // src/app/api/comprobantes/[id]/reintentar/route.ts
-// Reintenta enviar un comprobante a SUNAT cuando quedó en estado 'error' o
-// 'rechazado'. Reutiliza el MISMO correlativo (serie+numero) — esto evita
-// huecos en la numeración correlativa que SUNAT exige sin saltos.
+// Reintenta enviar un comprobante a SUNAT SOLO cuando quedó en estado 'error'.
+// Reutiliza el MISMO correlativo (serie+numero) porque un error de transporte no
+// confirma que SUNAT lo haya evaluado. Un 'rechazado' ya tiene respuesta definitiva:
+// su XML/CDR se conserva y se corrige con un CPE NUEVO, nunca reenviando lo mismo.
 //
 // Pueden reintentar: el ADMIN y la ASESORA DUEÑA del comprobante (scope de
 // `lib/comprobante-scope.ts` — mismo criterio que las guías; abierto el
 // 12 jun 2026 por el caso F002-83, antes era solo-admin).
 //
 // Flujo:
-//   1. Validar que el comprobante existe y está en estado error/rechazado
+//   1. Validar que el comprobante existe y está en estado error
 //   2. Reconstruir items desde pedido_items (si tiene pedido asociado)
 //   3. Regenerar XML con MISMO serie+numero
 //   4. Firmar + enviar a SUNAT
@@ -33,6 +34,7 @@ import {
 } from "@/lib/sunat/types";
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
+import { esNotaCreditoTotalXml } from "@/lib/sunat/nota-credito";
 
 export const dynamic = "force-dynamic";
 // El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
@@ -70,10 +72,17 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       c.monto_subtotal, c.monto_igv, c.monto_total, c.estado, c.created_at, c.fecha_emision,
       c.hash_cpe, c.xml_firmado_base64, c.items_json, c.emitido_por,
       c.forma_pago, c.fecha_vencimiento, c.observacion_comprobante,
+      c.venta_avicola_id, c.referencia_comprobante_id,
       p.asesor_id AS pedido_asesor_id, p.cliente_id AS pedido_cliente_id,
-      p.cliente AS pedido_cliente
+      p.cliente AS pedido_cliente, p.origen AS pedido_origen,
+      ref.pedido_id AS referencia_pedido_id,
+      ref.venta_avicola_id AS referencia_venta_avicola_id,
+      ref.serie_numero AS referencia_serie_numero,
+      pr.origen AS referencia_pedido_origen
     FROM comprobantes c
     LEFT JOIN pedidos p ON p.id = c.pedido_id
+    LEFT JOIN comprobantes ref ON ref.id = c.referencia_comprobante_id
+    LEFT JOIN pedidos pr ON pr.id = ref.pedido_id
     WHERE c.id = ${id}::uuid LIMIT 1
   `) as Array<{
     id: string;
@@ -99,9 +108,16 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     forma_pago: string | null;
     fecha_vencimiento: string | Date | null;
     observacion_comprobante: string | null;
+    venta_avicola_id: string | null;
+    referencia_comprobante_id: string | null;
     pedido_asesor_id: string | null;
     pedido_cliente_id: string | null;
     pedido_cliente: string | null;
+    pedido_origen: string | null;
+    referencia_pedido_id: string | null;
+    referencia_venta_avicola_id: string | null;
+    referencia_serie_numero: string | null;
+    referencia_pedido_origen: string | null;
   }>;
   if (rows.length === 0) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
@@ -119,9 +135,43 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
 
-  if (c.estado !== "error" && c.estado !== "rechazado") {
+  // Recién DESPUÉS del scope se puede mutar una reserva interrumpida. Antes,
+  // una asesora con un UUID ajeno podía cambiar `emitiendo`→`error` aunque luego
+  // recibiera 404. Si aún no pasaron 15 min, sigue siendo una llamada activa.
+  if (c.estado === "emitiendo") {
+    const creado = new Date(c.created_at).getTime();
+    const estaAtascado =
+      Number.isFinite(creado) && creado < Date.now() - 15 * 60 * 1000;
+    if (!estaAtascado) {
+      return NextResponse.json(
+        { error: "Este comprobante todavía se está enviando a SUNAT." },
+        { status: 409 }
+      );
+    }
+    await sql`
+      UPDATE comprobantes
+      SET estado = 'error',
+          mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
+      WHERE id = ${id}::uuid AND estado = 'emitiendo'
+    `;
+    c.estado = "error";
+  }
+
+  if (c.estado === "rechazado") {
     return NextResponse.json(
-      { error: `Solo se puede reintentar comprobantes en estado error/rechazado. Estado actual: ${c.estado}` },
+      {
+        codigo: "cpe_rechazado_no_reintentable",
+        error:
+          c.venta_avicola_id && (c.tipo === "01" || c.tipo === "03")
+            ? "SUNAT ya rechazó este comprobante. Corrige la venta y usa \"Corregir y emitir nuevo\" para conservar el XML/CDR anterior y generar otro correlativo."
+            : "SUNAT ya rechazó este comprobante. No se puede reenviar el mismo XML; emite un comprobante nuevo con los datos corregidos.",
+      },
+      { status: 409 }
+    );
+  }
+  if (c.estado !== "error") {
+    return NextResponse.json(
+      { error: `Solo se puede reintentar comprobantes en estado error. Estado actual: ${c.estado}` },
       { status: 409 }
     );
   }
@@ -202,11 +252,53 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       ? c.created_at.slice(0, 10)
       : c.created_at.toISOString().slice(0, 10);
 
+  // Reintentar una NC compite con emitir una NC nueva sobre el mismo CPE base.
+  // Ambos adquieren el MISMO claim para que la ruta nueva no consuma un
+  // correlativo mientras la anterior se está reenviando.
+  let claimNcBase: { baseId: string; token: string } | null = null;
+  if (c.tipo === "07") {
+    if (!c.referencia_comprobante_id) {
+      return NextResponse.json(
+        { error: "La Nota de Crédito no tiene comprobante de referencia vinculado." },
+        { status: 422 }
+      );
+    }
+    const token = crypto.randomUUID();
+    const claimed = (await sql`
+      UPDATE comprobantes base
+      SET nota_credito_claim_token = ${token}::uuid,
+          nota_credito_claim_at = NOW()
+      WHERE base.id = ${c.referencia_comprobante_id}::uuid
+        AND (
+          base.nota_credito_claim_token IS NULL
+          OR base.nota_credito_claim_at < NOW() - INTERVAL '15 minutes'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM comprobantes otra
+          WHERE otra.referencia_comprobante_id = base.id
+            AND otra.tipo = '07'
+            AND otra.id <> ${id}::uuid
+            AND (
+              otra.estado NOT IN ('error', 'rechazado', 'anulado')
+              OR (otra.estado = 'error' AND otra.xml_firmado_base64 IS NOT NULL)
+            )
+        )
+      RETURNING base.id
+    `) as Array<{ id: string }>;
+    if (claimed.length === 0) {
+      return NextResponse.json(
+        { error: "El comprobante base ya tiene otra Nota de Crédito activa o en proceso." },
+        { status: 409 }
+      );
+    }
+    claimNcBase = { baseId: c.referencia_comprobante_id, token };
+  }
+
   try {
     // 3+4. Obtener el XML firmado a enviar:
     //   (a) Si el comprobante YA tiene su XML firmado original → reenviarlo TAL
     //       CUAL (no se reconstruye → es IMPOSIBLE alterar los ítems). Cubre los
-    //       casos típicos de reintento: rechazado, o error con respuesta SUNAT.
+    //       casos típicos de reintento: error con XML ya firmado/respuesta parcial.
     //   (b) Si NO hay XML (error por excepción antes de firmar) → reconstruir
     //       desde los ítems guardados. Si no hay ítems, se ABORTA con error
     //       claro — NUNCA se fabrica una línea genérica equivocada.
@@ -216,6 +308,15 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       xmlFirmado = Buffer.from(c.xml_firmado_base64, "base64").toString("utf-8");
       hashCpe = c.hash_cpe ?? null;
     } else {
+      if (c.tipo === "07") {
+        return NextResponse.json(
+          {
+            error:
+              "Esta Nota de Crédito falló antes de guardar su XML y no se puede reconstruir de forma legal. Emite una nueva Nota de Crédito desde el comprobante original.",
+          },
+          { status: 422 }
+        );
+      }
       if (items.length === 0) {
         return NextResponse.json(
           {
@@ -251,6 +352,50 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       xmlFirmado = firmado.xmlFirmado;
       hashCpe = firmado.hashCpe;
     }
+
+    // Si una NC anterior falló pero ya existe otra NC activa/aceptada para la
+    // misma referencia, la fallida no debe volver a enviarse.
+    if (c.tipo === "07" && c.referencia_comprobante_id) {
+      const otraNc = (await sql`
+        SELECT id, serie_numero, estado
+        FROM comprobantes
+        WHERE referencia_comprobante_id = ${c.referencia_comprobante_id}::uuid
+          AND tipo = '07'
+          AND id <> ${id}::uuid
+          AND (
+            estado NOT IN ('error', 'rechazado', 'anulado')
+            OR (estado = 'error' AND xml_firmado_base64 IS NOT NULL)
+          )
+        ORDER BY created_at DESC
+        LIMIT 1
+      `) as Array<{ id: string; serie_numero: string; estado: string }>;
+      if (otraNc.length > 0) {
+        return NextResponse.json(
+          {
+            error: `La referencia ya tiene la Nota de Crédito ${otraNc[0].serie_numero} en estado ${otraNc[0].estado}. No se reenviará esta nota anterior.`,
+          },
+          { status: 409 }
+        );
+      }
+    }
+    // Claim atómico del reintento: dos pestañas nunca reenvían el mismo XML a
+    // SUNAT al mismo tiempo. El catch lo devuelve a `error` si la llamada falla.
+    const claim = (await sql`
+      UPDATE comprobantes
+      SET estado = 'emitiendo',
+          mensaje_sunat = 'Reintentando envío a SUNAT con el mismo correlativo.'
+      WHERE id = ${id}::uuid
+        AND estado = ${c.estado}
+        AND estado = 'error'
+      RETURNING id
+    `) as Array<{ id: string }>;
+    if (claim.length === 0) {
+      return NextResponse.json(
+        { error: "Este comprobante ya está siendo reintentado en otra pestaña." },
+        { status: 409 }
+      );
+    }
+
     const resultadoEnvio = await enviarComprobante(
       xmlFirmado,
       c.tipo,
@@ -281,25 +426,126 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       WHERE id = ${id}::uuid
     `;
 
-    // Si esta vez aceptó, asociar a factura
+    const esPosPlanta =
+      c.pedido_origen === "pos_planta" ||
+      c.referencia_pedido_origen === "pos_planta";
+    const esCampo = !!(c.venta_avicola_id || c.referencia_venta_avicola_id);
+
+    // Si esta vez aceptó una factura/boleta de ejecutivas, asociarla a su
+    // cobranza. POS y Campo tienen carteras propias y nunca deben tocar
+    // `facturas`; una NC tampoco debe reemplazar el número del CPE original.
     const sunatAcepto =
       resultadoEnvio.estado === EstadoSunat.ACEPTADA ||
       resultadoEnvio.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
-    if (sunatAcepto && c.pedido_id) {
-      await sql`
-        UPDATE facturas SET numero_comprobante = ${c.serie_numero}
-        WHERE pedido_id = ${c.pedido_id}::uuid AND numero_comprobante IS NULL
-      `;
+    if (
+      sunatAcepto &&
+      c.pedido_id &&
+      !esPosPlanta &&
+      !esCampo &&
+      (c.tipo === "01" || c.tipo === "03")
+    ) {
+      try {
+        await sql`
+          UPDATE facturas SET numero_comprobante = ${c.serie_numero}
+          WHERE pedido_id = ${c.pedido_id}::uuid AND numero_comprobante IS NULL
+        `;
+      } catch (errorCobranza) {
+        console.error(
+          "Reintento aceptado pero no se pudo enlazar la cobranza de Ejecutivas:",
+          errorCobranza
+        );
+      }
     }
 
-    // Regla "TODA venta crea cobranza": la emisión original falló y por eso NO
-    // creó cobranza; el reintento exitoso debe crearla (gap detectado con
+    // El CPE POS aceptado se enlaza a la cobranza de planta, sin crear ni
+    // actualizar filas en `facturas`. Solo existe cobranza POS para ventas a
+    // crédito; en contado este UPDATE simplemente no encuentra filas.
+    if (
+      sunatAcepto &&
+      esPosPlanta &&
+      c.pedido_id &&
+      (c.tipo === "01" || c.tipo === "03")
+    ) {
+      try {
+        await sql`
+          UPDATE cobranzas_planta
+          SET comprobante_id = ${id}::uuid,
+              updated_at = NOW()
+          WHERE pedido_id = ${c.pedido_id}::uuid
+            AND comprobante_id IS NULL
+        `;
+      } catch (errorCobranzaPlanta) {
+        console.error(
+          "Reintento aceptado pero no se pudo enlazar la cobranza de Planta:",
+          errorCobranzaPlanta
+        );
+      }
+    }
+
+    // Una NC total aceptada en reintento debe producir el mismo efecto interno
+    // que una NC aceptada en el primer envío. La operación del CPE base decide
+    // qué cartera/venta retirar; este paso es idempotente y no toca pagadas.
+    if (
+      sunatAcepto &&
+      c.tipo === "07" &&
+      esNotaCreditoTotalXml(xmlFirmado) &&
+      c.referencia_comprobante_id
+    ) {
+      try {
+        const motivoNc = `Anulada por Nota de Crédito ${c.serie_numero}`;
+        const ventaCampoId =
+          c.venta_avicola_id ?? c.referencia_venta_avicola_id;
+        if (ventaCampoId) {
+          await sql`
+            UPDATE ventas_avicola
+            SET anulada = TRUE,
+                anulada_at = NOW(),
+                anulada_por = ${session.user.id}::uuid,
+                anulacion_motivo = ${motivoNc}
+            WHERE id = ${ventaCampoId}::uuid
+              AND NOT anulada
+          `;
+        } else if (esPosPlanta) {
+          const { anularCobranzasPlantaDeComprobante } =
+            await import("@/lib/planta/saldos");
+          await anularCobranzasPlantaDeComprobante(sql, {
+            comprobanteId: c.referencia_comprobante_id,
+            pedidoId: c.referencia_pedido_id,
+            motivo: motivoNc,
+            anuladaPor: session.user.id,
+          });
+        } else {
+          const { anularCobranzasDeComprobante } =
+            await import("@/lib/cobranzas");
+          await anularCobranzasDeComprobante({
+            comprobanteId: c.referencia_comprobante_id,
+            pedidoId: c.referencia_pedido_id,
+            serieNumero: c.referencia_serie_numero ?? "",
+            motivo: motivoNc,
+            anuladaPor: session.user.name?.trim() || "Sistema (NC)",
+          });
+        }
+      } catch (errEfectoNc) {
+        console.error(
+          "Reintento de NC aceptado pero no se pudo aplicar su efecto interno:",
+          errEfectoNc
+        );
+      }
+    }
+
+    // Regla de Ejecutivas: la emisión original falló y por eso NO creó
+    // cobranza; el reintento exitoso debe crearla (gap detectado con
     // F002-83, 12 jun 2026 — quedó aceptada sin deuda registrada). Solo
     // facturas/boletas (una NC no es deuda). `vincularCobranzaAComprobante` es
     // idempotente ("un pedido = una cobranza"); el caso standalone se guarda
     // contra duplicados por `comprobante_id`. Misma cascada de asesor que la
     // emisión: pedido → emisora asesora → cartera del cliente.
-    if (sunatAcepto && (c.tipo === "01" || c.tipo === "03")) {
+    if (
+      sunatAcepto &&
+      !c.venta_avicola_id &&
+      !esPosPlanta &&
+      (c.tipo === "01" || c.tipo === "03")
+    ) {
       try {
         const { vincularCobranzaAComprobante, crearFacturaStandalone, plazoDeCobranza } =
           await import("@/lib/cobranzas");
@@ -363,23 +609,27 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       resultadoEnvio.estado === EstadoSunat.RECHAZADA ||
       resultadoEnvio.estado === EstadoSunat.ERROR
     ) {
-      let asesorIdPedido: string | null = null;
-      if (c.pedido_id) {
-        const rows = (await sql`
-          SELECT asesor_id FROM pedidos WHERE id = ${c.pedido_id}::uuid
-        `) as Array<{ asesor_id: string | null }>;
-        asesorIdPedido = rows[0]?.asesor_id ?? null;
+      try {
+        let asesorIdPedido: string | null = null;
+        if (c.pedido_id) {
+          const rows = (await sql`
+            SELECT asesor_id FROM pedidos WHERE id = ${c.pedido_id}::uuid
+          `) as Array<{ asesor_id: string | null }>;
+          asesorIdPedido = rows[0]?.asesor_id ?? null;
+        }
+        await notificarComprobanteConProblema({
+          comprobanteId: id,
+          serieNumero: c.serie_numero,
+          tipo: c.tipo,
+          estado: resultadoEnvio.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
+          mensajeSunat: resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null,
+          pedidoId: c.pedido_id ?? null,
+          empresa: c.empresa,
+          asesorId: asesorIdPedido,
+        });
+      } catch (errorNotificacion) {
+        console.error("No se pudo notificar el resultado del reintento:", errorNotificacion);
       }
-      await notificarComprobanteConProblema({
-        comprobanteId: id,
-        serieNumero: c.serie_numero,
-        tipo: c.tipo,
-        estado: resultadoEnvio.estado === EstadoSunat.RECHAZADA ? "RECHAZADA" : "ERROR",
-        mensajeSunat: resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null,
-        pedidoId: c.pedido_id ?? null,
-        empresa: c.empresa,
-        asesorId: asesorIdPedido,
-      });
     }
 
     return NextResponse.json({
@@ -388,7 +638,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       serieNumero: c.serie_numero,
       sunatCaido: resultadoEnvio.sunatCaido,
       mensaje: resultadoEnvio.sunatCaido
-        ? "SUNAT no está respondiendo (problema de sus servidores, no del sistema). El comprobante NO se emitió — intentá más tarde o emitilo manualmente desde el portal de SUNAT."
+        ? "SUNAT no está respondiendo (problema de sus servidores, no del sistema). El comprobante NO se emitió; intenta más tarde o emítelo manualmente desde el portal de SUNAT."
         : sunatAcepto
           ? "✅ SUNAT aceptó el comprobante en el reintento."
           : "SUNAT volvió a rechazar. Revisar mensaje_sunat para detalle.",
@@ -396,15 +646,46 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       observaciones: resultadoEnvio.observaciones,
     });
   } catch (err) {
+    const dbError = err as { code?: string; constraint?: string };
+    if (
+      dbError?.code === "23505" &&
+      dbError.constraint === "ux_comprobantes_nc_referencia_activa"
+    ) {
+      return NextResponse.json(
+        { error: "La referencia ya tiene otra Nota de Crédito activa o en emisión." },
+        { status: 409 }
+      );
+    }
     const mensaje = err instanceof Error ? err.message : String(err);
     await sql`
       UPDATE comprobantes SET
-        mensaje_sunat = ${`Reintento fallido: ${mensaje.slice(0, 1000)}`}
+        estado = CASE
+          WHEN estado IN ('aceptado', 'observado', 'rechazado') THEN estado
+          ELSE 'error'
+        END,
+        mensaje_sunat = CASE
+          WHEN estado IN ('aceptado', 'observado', 'rechazado') THEN mensaje_sunat
+          ELSE ${`Reintento fallido: ${mensaje.slice(0, 1000)}`}
+        END
       WHERE id = ${id}::uuid
     `;
     return NextResponse.json(
       { error: "Reintento fallido", detalle: mensaje },
       { status: 500 }
     );
+  } finally {
+    if (claimNcBase) {
+      try {
+        await sql`
+          UPDATE comprobantes
+          SET nota_credito_claim_token = NULL,
+              nota_credito_claim_at = NULL
+          WHERE id = ${claimNcBase.baseId}::uuid
+            AND nota_credito_claim_token = ${claimNcBase.token}::uuid
+        `;
+      } catch (error) {
+        console.error("No se pudo liberar el claim del reintento de NC:", error);
+      }
+    }
   }
 }

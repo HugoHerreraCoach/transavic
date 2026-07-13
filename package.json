@@ -12,7 +12,9 @@
     "app:open": "cap open android",
     "app:build": "cap sync android && cd android && ./gradlew assembleDebug",
     "app:build:prod": "CAP_SERVER_URL=https://app.transavic.com cap sync android && cd android && ./gradlew bundleRelease",
-    "test:observaciones": "node scripts/test-observaciones-sunat.mjs"
+    "test:observaciones": "node scripts/test-observaciones-sunat.mjs",
+    "test:estado-cuenta-avicola": "node scripts/test-estado-cuenta-avicola.mjs",
+    "test:operaciones-facturacion": "node scripts/test-operaciones-facturacion.mjs"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

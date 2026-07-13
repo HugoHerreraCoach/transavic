@@ -1,7 +1,7 @@
 # 10 — POS de Planta, Caja Diaria y Tesorería (Expansión ERP 2026)
 
-> **Última verificación contra código:** 2026-07-05
-> **Commit del proyecto:** `9f29f5a` (los módulos de este documento viven como código local aún sin commit a `main`; operan contra la rama Neon `dev-hugo` — ver [20-migracion-produccion.md](./20-migracion-produccion.md) para el despliegue)
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** Beta en producción; fixes transversales del 12 jul pendientes de subir a `main`
 > **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/caja-diaria/route.ts`, `src/app/api/cuentas/route.ts`, `src/app/api/transacciones/route.ts`, `src/app/api/gastos/route.ts`, `src/app/api/cuentas-por-pagar/route.ts`, `src/app/dashboard/pos-planta/pos-client.tsx`, `scripts/migrate-caja-unica-abierta.sql`
 
 Este documento describe la venta de mostrador en planta (POS), el ciclo de la caja física del día (apertura → movimientos → cierre con arqueo) y la tesorería simple de cuentas (`cuentas_bancarias` + `transacciones`). Cierra con la tabla de **qué dinero registra el sistema y cuál queda deliberadamente fuera**.
@@ -29,23 +29,23 @@ const PosSaleSchema = z.object({
   items: z.array(PosItemSchema).min(1),
   tipo_pago: z.enum(["Contado", "Credito"]),
   cuenta_id: z.string().uuid().optional().nullable(),
-  cliente_id: z.string().uuid().optional().nullable(),
+  cliente_planta_id: z.string().uuid().optional().nullable(),
   notas_generales: z.string().optional().nullable(),
 }).refine((data) => {
   if (data.tipo_pago === "Contado" && !data.cuenta_id) return false;
-  if (data.tipo_pago === "Credito" && !data.cliente_id) return false;
+  if (data.tipo_pago === "Credito" && !data.cliente_planta_id) return false;
   return true;
 }, { message: "Debe seleccionar una cuenta bancaria/caja para pagos al Contado, o un cliente registrado para ventas al Crédito.", path: ["cuenta_id"] });
 ```
 
-La regla cruzada: **contado exige `cuenta_id`** (a qué caja/cuenta entra el dinero) y **crédito exige `cliente_id`** (a quién se le fía — no se fía a desconocidos).
+La regla cruzada: **contado exige `cuenta_id`** (a qué caja/cuenta entra el dinero) y **crédito exige `cliente_planta_id`** (a quién se le fía — no se fía a desconocidos). El cliente pertenece a `clientes_planta`, no al directorio de Ejecutivas.
 
 ### 2.2 La transacción atómica
 
 Todos los efectos van en un solo `sql.transaction([...])`; el `pedido_id` se genera con `crypto.randomUUID()` porque el batch del driver HTTP de Neon no permite encadenar `RETURNING`. Un fallo a mitad no puede dejar un pedido sin stock descontado ni una venta sin cobro/cobranza.
 
 1. **Pedido:** `INSERT INTO pedidos` con `origen='pos_planta'`, **estado `'Entregado'` directo** (no pasa por la máquina de estados de reparto), `fecha_pedido` = hoy Lima, `detalle`/`detalle_final` derivados del carrito (`"2 kg Molleja (limpia), ..."`), `entregado_por` = nombre del usuario POS, `lat/lng` NULL (no hay ruta).
-2. **Asesor en cascada:** si la venta es a un cliente del directorio, `asesor_id` toma `clientes.asesor_id` (la cartera se respeta); si no, el usuario del POS.
+2. **Cliente denormalizado:** si se selecciona `clientes_planta`, el pedido copia nombre, razón social y RUC/DNI para poder facturar. `pedidos.cliente_id` queda `NULL` porque esa FK apunta al directorio de Ejecutivas; `asesor_id` identifica al usuario POS, no a una asesora comercial.
 3. **Ítems + inventario + kardex** por cada línea: `INSERT pedido_items` (con `subtotal_real` ya igual al subtotal — la venta de mostrador se pesa en el momento), `UPDATE inventario_lotes SET cantidad = cantidad - X` (resta directa, **puede quedar negativo** — modelo flexible, regla 8) e `INSERT inventario_movimientos` con `tipo='venta_pos'` y `referencia_id = pedido_id`.
 4. **Cobro (Contado):** CTE atómico que suma el saldo de la cuenta elegida y registra la transacción de tesorería en el mismo statement:
 
@@ -61,11 +61,21 @@ SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta POS - Pedido ' || ${
 FROM update_cuenta
 ```
 
-5. **Deuda (Crédito):** en lugar de tocar tesorería, inserta la cobranza en `facturas` con `numero_comprobante = 'POS-CREDITO'`, estado `Pendiente` y vencimiento = hoy + `clientes.plazo_pago_dias`.
+5. **Deuda (Crédito):** en lugar de tocar tesorería, inserta la deuda en `cobranzas_planta`, enlazada por `pedido_id` y `cliente_planta_id`, con vencimiento = hoy + `clientes_planta.plazo_pago_dias`.
 
-> **Matiz vs. la regla "la cobranza la crea SOLO la emisión del comprobante"** (decisión de Antonio, jun 2026 — doc [13](./13-cobranzas-facturas.md)): esa regla gobierna el flujo de pedidos normales. La venta POS **a crédito** crea su cobranza interna directamente (`POS-CREDITO`) porque no hay comprobante SUNAT de por medio; es deuda de mostrador que igual hay que cobrar.
+> La deuda de Planta nace con la venta POS a crédito, aunque el comprobante SUNAT se emita después. El CPE y sus reintentos deben enlazar esta cartera; nunca deben duplicarla en `facturas`.
 
 > **Nota sobre el descuento de inventario del POS:** a diferencia de compras/ajustes (upsert `ON CONFLICT`), el POS hace `UPDATE` directo — asume que la fila de `inventario_lotes` existe (la migración consolidada siembra todas en 0). El kardex sí se inserta siempre.
+
+### 2.3 Relación con CPE y reportes generales
+
+- El CPE se clasifica como **Planta** por `pedidos.origen='pos_planta'`, aunque use el motor SUNAT compartido.
+- Emitir o reintentar no crea `facturas`; enlaza la deuda propia de Planta cuando existe.
+- Una NC total aceptada anula deuda activa de `cobranzas_planta`; una deuda ya pagada requiere devolución manual.
+- Ventas Generales, Consolidado y Hoy/Ayer leen la venta POS desde `pedidos.created_at` Lima y `pedido_items`; las metas de asesoras la excluyen.
+- La vista general de comprobantes permite `?operacion=planta`. No hay todavía una página fija exclusiva de comprobantes de Planta.
+
+Ver [22](./22-operaciones-ventas-facturacion.md) para la comparación de las tres operaciones y [25](./25-clientes-cobranzas-planta.md) para la cartera de Planta.
 
 ---
 
@@ -151,7 +161,7 @@ El movimiento en sí es un **CTE triple atómico**: actualiza la deuda (estado `
 
 ## 7. DECISIÓN DE NEGOCIO: las cobranzas NO pasan por la caja (Hugo, 5 jul 2026)
 
-Los cobros de las cobranzas (tabla `facturas`, doc [13](./13-cobranzas-facturas.md)) llegan casi siempre por **transferencia bancaria o Yape directo a las cuentas de Antonio**, no en efectivo por la planta. Por eso, **marcar una factura como pagada (`POST /api/facturas/[id]/pago`) NO crea ninguna transacción en la tesorería** — verificado en código: ese endpoint registra fecha, método (`efectivo/transferencia/yape/plin/otro`), notas y vouchers, pero no toca `transacciones` ni `cuentas_bancarias`.
+Los cobros de las carteras (Ejecutivas en `facturas` y Planta en `cobranzas_planta`) llegan casi siempre por **transferencia bancaria o Yape directo a las cuentas de Antonio**, no en efectivo por la planta. Por eso, registrar el pago de una cobranza NO crea automáticamente una transacción de tesorería.
 
 **Es deliberado, no es un bug.** Duplicar esos cobros en la caja física inflaría el arqueo con dinero que nunca pasó por el cajón. La conciliación de las cuentas bancarias reales se hace fuera del sistema (extracto del banco/Yape).
 
@@ -164,13 +174,13 @@ Consecuencia conocida: el efectivo que un repartidor cobra en ruta tampoco entra
 | Movimiento | ¿Toca tesorería (`transacciones` + saldo)? | Dónde |
 |---|---|---|
 | Venta POS al **contado** | ✅ Ingreso a la cuenta elegida (CTE atómico) | `POST /api/pos` |
-| Venta POS a **crédito** | ❌ Crea cobranza `facturas` (`POS-CREDITO`); el dinero entra cuando se pague — y ese pago tampoco toca caja (fila de abajo) | `POST /api/pos` |
+| Venta POS a **crédito** | ❌ Crea deuda propia en `cobranzas_planta`; el dinero entra cuando se pague y ese pago no toca caja automáticamente | `POST /api/pos` |
 | Apertura de caja | ✅ Fija el saldo de "Caja Efectivo Planta" + ingreso `'Apertura de Caja'` | `POST /api/caja-diaria` |
 | Cierre de caja | ✅ Sincroniza el saldo al efectivo REAL contado (arqueo) | `PUT /api/caja-diaria` |
 | Gasto operativo | ✅ Egreso de la cuenta elegida | `POST /api/gastos` |
 | Pago a proveedor (CxP) | ✅ Egreso con validación de fondos | `POST /api/cuentas-por-pagar` |
 | Movimiento manual | ✅ Ingreso/egreso libre con concepto | `POST /api/transacciones` |
-| **Cobro de una cobranza** (factura marcada pagada) | ❌ **DELIBERADO** — va por transferencia/Yape fuera de la caja física (§7) | `POST /api/facturas/[id]/pago` |
+| **Cobro de una cobranza** de Ejecutivas/Planta | ❌ **DELIBERADO** — va por transferencia/Yape fuera de la caja física (§7) | APIs de pago de cada cartera |
 | Venta de pedido normal (asesora + reparto) | ❌ El dinero entra vía cobranza (fila anterior) | — |
 | Efectivo cobrado por el repartidor en ruta | ❌ Fuera del sistema — liquidación de ruta = diseño futuro (doc 18) | — |
 | Préstamos de mercadería | ❌ NUNCA dinero — en especie (doc [09 §8](./09-compras-inventario-mermas.md)) | `prestamos_*` |
@@ -184,6 +194,6 @@ Consecuencia conocida: el efectivo que un repartidor cobra en ruta tampoco entra
 | `/api/pos` | POST | admin+produccion | Venta de mostrador atómica (pedido + stock + kardex + cobro/deuda) |
 | `/api/caja-diaria` | GET / POST / PUT | sesión / admin+produccion | Estado en vivo / apertura atómica (409 si ya hay abierta) / cierre con arqueo |
 | `/api/cuentas` | GET / POST | sesión / admin | Listar / crear cuentas de tesorería |
-| `/api/transacciones` | POST | sesión (pendiente scopear) | Movimiento manual atómico por CTE |
+| `/api/transacciones` | POST | admin | Movimiento manual atómico por CTE |
 | `/api/gastos` | GET / POST | admin+produccion | Gastos con egreso en la cuenta de origen |
 | `/api/cuentas-por-pagar` | GET / POST | admin | Deudas con proveedores / pago con CTE triple y validación de fondos |

@@ -76,10 +76,13 @@ const navItems: NavItem[] = [
   { href: "/dashboard/crm-leads", label: "CRM Leads", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"], isBeta: true },
   { href: "/dashboard/despacho", label: "Despacho", icon: <FiTruck className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/cobranzas", label: "Cobranzas", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
+  { href: "/dashboard/comprobantes/ejecutivas", label: "Comprobantes", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
 
-  // ── 🏪 VENTA EN CAMPO (Avícola de Tony) ──
+  // ── 🏪 VENTA EN CAMPO (puede emitir Transavic o Avícola de Tony) ──
   // La lead: se entra aquí, se elige el cliente y se toca "Vender" (venta + cobranza + guía en una página).
   { href: "/dashboard/clientes-avicola", label: "Vender en Campo", icon: <FiShoppingBag className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isPrimary: true, isBeta: true },
+  { href: "/dashboard/clientes-avicola/ventas", label: "Ventas en Campo", icon: <FiList className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
+  { href: "/dashboard/clientes-avicola/comprobantes", label: "Comprobantes de Campo", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/clientes-avicola/liquidacion", label: "Liquidación del día", icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/clientes-avicola/panel", label: "Panel Campo", icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
 
@@ -98,13 +101,14 @@ const navItems: NavItem[] = [
   { href: "/dashboard/prestamos", label: "Préstamos", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
   // ── FINANZAS ── (Cobranzas de ejecutivas vive en su bloque 🛵)
-  { href: "/dashboard/caja-diaria", label: "Caja Diaria", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
+  { href: "/dashboard/caja-diaria", label: "Caja Diaria", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/gastos", label: "Gastos", icon: <FiDollarSign className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
-  { href: "/dashboard/comprobantes", label: "Comprobantes", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
+  { href: "/dashboard/comprobantes", label: "Comprobantes (todos)", icon: <FiFileText className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/cuentas-por-pagar", label: "Cuentas por Pagar", icon: <FiList className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/cuentas", label: "Cuentas Bancarias", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
 
   // ── REPORTES & ANALYTICS ──
+  { href: "/dashboard/ventas-generales", label: "Ventas Generales", icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
   { href: "/dashboard/mis-metas", label: "Mis Metas", icon: <FiAward className="h-5 w-5 flex-shrink-0" />, roles: ["asesor", "admin"] },
   { href: "/dashboard/reportes", label: "Reportes", icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "asesor"] },
   { href: "/dashboard/rentabilidad", label: "Rentabilidad Real", icon: <FiBarChart2 className="h-5 w-5 flex-shrink-0" />, adminOnly: true, isBeta: true },
@@ -130,6 +134,14 @@ const GROUP_ORDER = [
   "Configuración",
 ];
 
+// Punto de color por OPERACIÓN de venta (mismo sistema azul/ámbar/violeta que los
+// chips de comprobantes y Ventas Generales — ver src/lib/operaciones-venta.ts).
+const GROUP_DOT: Record<string, string> = {
+  "🛵 Ventas Ejecutivas": "bg-blue-500",
+  "🏪 Venta en Campo": "bg-amber-500",
+  "🏭 Venta en Planta": "bg-violet-500",
+};
+
 const GROUP_BY_HREF: Record<string, string> = {
   // 🛵 Ventas Ejecutivas (el sistema original: pedidos, CRM, despacho, cobranzas de ejecutivas)
   "/dashboard/nuevo-pedido": "🛵 Ventas Ejecutivas",
@@ -139,9 +151,13 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/crm-leads": "🛵 Ventas Ejecutivas",
   "/dashboard/despacho": "🛵 Ventas Ejecutivas",
   "/dashboard/cobranzas": "🛵 Ventas Ejecutivas",
+  "/dashboard/comprobantes/ejecutivas": "🛵 Ventas Ejecutivas",
 
-  // 🏪 Venta en Campo (Avícola de Tony): vender + liquidación + panel
+  // 🏪 Venta en Campo: vender + ventas (lista/facturar) + liquidación + panel.
+  // Operación y empresa emisora son dimensiones distintas.
   "/dashboard/clientes-avicola": "🏪 Venta en Campo",
+  "/dashboard/clientes-avicola/ventas": "🏪 Venta en Campo",
+  "/dashboard/clientes-avicola/comprobantes": "🏪 Venta en Campo",
   "/dashboard/clientes-avicola/liquidacion": "🏪 Venta en Campo",
   "/dashboard/clientes-avicola/panel": "🏪 Venta en Campo",
 
@@ -165,6 +181,7 @@ const GROUP_BY_HREF: Record<string, string> = {
   "/dashboard/cuentas-por-pagar": "Finanzas",
   "/dashboard/cuentas": "Finanzas",
 
+  "/dashboard/ventas-generales": "Reportes & Análisis",
   "/dashboard/mis-metas": "Reportes & Análisis",
   "/dashboard/reportes": "Reportes & Análisis",
   "/dashboard/rentabilidad": "Reportes & Análisis",
@@ -412,7 +429,10 @@ export default function DashboardLayout({
             {sinGrupo.map(mobileLink)}
             {grupos.map((g) => (
               <div key={g.nombre} className="pt-2">
-                <p className="px-4 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400">{g.nombre}</p>
+                <p className="px-4 pt-2 pb-1 text-[11px] font-bold uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
+                  {GROUP_DOT[g.nombre] && <span className={`inline-block h-2 w-2 rounded-full ${GROUP_DOT[g.nombre]}`} />}
+                  {g.nombre}
+                </p>
                 {g.items.map(mobileLink)}
               </div>
             ))}
@@ -483,7 +503,8 @@ export default function DashboardLayout({
                         title={isSidebarCollapsed ? g.nombre : undefined}
                       >
                         {!isSidebarCollapsed && (
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 group-hover:text-gray-600 transition-colors">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 group-hover:text-gray-600 transition-colors flex items-center gap-1.5">
+                            {GROUP_DOT[g.nombre] && <span className={`inline-block h-2 w-2 rounded-full ${GROUP_DOT[g.nombre]}`} />}
                             {g.nombre}
                           </span>
                         )}

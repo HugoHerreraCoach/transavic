@@ -1,7 +1,7 @@
 # 07 — Panel de Despacho y Optimización de Rutas
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** core en producción
 > **Archivos clave:** `src/app/dashboard/despacho/despacho-content.tsx`, `src/app/dashboard/despacho/mapa-despacho.tsx`, `src/app/api/despacho/route.ts`, `src/app/api/despacho/asignar/route.ts`, `src/app/api/despacho/optimizar-ruta/route.ts`
 
 Este documento describe el panel de logística y control de despachos, la integración de drag-and-drop para asignación de motorizados, el algoritmo de optimización de rutas y el mapa interactivo de monitoreo.

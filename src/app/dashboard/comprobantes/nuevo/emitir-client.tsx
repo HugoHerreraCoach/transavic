@@ -117,13 +117,6 @@ function formatFechaLegible(iso: string): string {
   return `${d}/${m}/${y}`;
 }
 
-/** Días (>=0) entre hoy y una fecha ISO. Lo que el backend espera como plazoDias. */
-function diasHasta(iso: string): number {
-  const hoy = isoLocalMasDias(0);
-  const ms = new Date(iso + "T00:00:00").getTime() - new Date(hoy + "T00:00:00").getTime();
-  return Math.max(0, Math.round(ms / 86_400_000));
-}
-
 /** Días (>=0) entre dos fechas ISO (hasta - desde). Para el plazo de crédito cuando
  *  la emisión NO es hoy: el vencimiento del XML se cuenta desde la fecha de emisión. */
 function diasEntre(desde: string, hasta: string): number {
@@ -161,6 +154,7 @@ interface ResultadoEmision {
   descripcion?: string;
   error?: string;
   mensaje?: string;
+  clienteRazonSocial?: string;
 }
 
 const IGV_FACTOR = 1.18;
@@ -169,7 +163,10 @@ const money = (n: number) => `S/ ${(Number.isFinite(n) ? n : 0).toFixed(2)}`;
 export default function EmitirComprobanteClient({
   empresas,
   pedidoIdProp,
+  ventaAvicolaIdProp,
+  reemplazaComprobanteIdProp,
   onClose,
+  onCancel,
   userRole = "asesor",
 }: {
   // `empresas` es opcional: cuando el form se usa embebido (ej. modal desde la
@@ -177,14 +174,34 @@ export default function EmitirComprobanteClient({
   empresas?: Record<Empresa, EmpresaInfo>;
   // Cuando se abre desde un pedido (modal): vincula la emisión a ese pedido.
   pedidoIdProp?: string | null;
+  // VENTA EN CAMPO: cuando se abre desde una venta de campo (módulo Clientes Avícola),
+  // precarga ítems/cliente/empresa de esa venta y vincula el comprobante a ella (sin
+  // pedido → emite por /emitir-manual con ventaAvicolaId, sin crear cobranza de ejecutivas).
+  ventaAvicolaIdProp?: string | null;
+  // Reemisión de Campo: id del último CPE rechazado. El formulario carga la
+  // venta corregida y el backend genera OTRO correlativo conservando el anterior.
+  reemplazaComprobanteIdProp?: string | null;
   // Si está embebido en un modal: cerrar en vez de navegar.
   onClose?: () => void;
+  // Cierre voluntario antes de emitir. En la cola de Campo cancela el lote en
+  // vez de avanzar silenciosamente a la siguiente venta.
+  onCancel?: () => void;
   // Rol del usuario: el admin está EXENTO del control de precio mínimo (igual
   // que en el server). Default "asesor" = comportamiento conservador.
   userRole?: string;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const pedidoIdOrigen = pedidoIdProp ?? searchParams.get("pedido");
+  // El nexo con Campo existe desde el primer render. No depende de que la
+  // precarga termine: así una falla de red jamás convierte el formulario en
+  // una emisión manual suelta por accidente.
+  const ventaAvicolaId = pedidoIdOrigen
+    ? null
+    : (ventaAvicolaIdProp ?? searchParams.get("ventaAvicola"));
+  const reemplazaComprobanteId = ventaAvicolaId
+    ? (reemplazaComprobanteIdProp ?? searchParams.get("reemplazaComprobante"))
+    : null;
   // Embebido en un modal (vino de un pedido con onClose) → el form va en UNA
   // columna apilada (un modal es más angosto que la página); como página, 3 columnas.
   const esModal = !!onClose;
@@ -193,6 +210,12 @@ export default function EmitirComprobanteClient({
   // /api/comprobantes/emitir.
   const [pedidoId, setPedidoId] = useState<string | null>(null);
   const [pedidoCliente, setPedidoCliente] = useState<string | null>(null);
+  const [pedidoEsPos, setPedidoEsPos] = useState(false);
+  const [cargaVentaCampo, setCargaVentaCampo] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >(ventaAvicolaId ? "loading" : "idle");
+  const [errorCargaVentaCampo, setErrorCargaVentaCampo] = useState<string | null>(null);
+  const [intentoCargaVentaCampo, setIntentoCargaVentaCampo] = useState(0);
   // Empresas: del prop (página) o traídas del endpoint (modal embebido).
   const [empresasMap, setEmpresasMap] = useState<Record<Empresa, EmpresaInfo>>(
     empresas ?? {
@@ -221,6 +244,7 @@ export default function EmitirComprobanteClient({
     serieNumero: string;
     fecha: string;
     mensaje: string;
+    bloqueante?: boolean;
   } | null>(null);
   const [docInfo, setDocInfo] = useState<{ estado?: string | null; condicion?: string | null } | null>(null);
   
@@ -284,7 +308,7 @@ export default function EmitirComprobanteClient({
   // pedido y los cargamos en este MISMO formulario (la única interfaz de
   // emisión). El pedidoId queda guardado para vincular el comprobante al pedido.
   useEffect(() => {
-    const pid = pedidoIdProp ?? searchParams.get("pedido");
+    const pid = pedidoIdOrigen;
     if (!pid) return;
     let active = true;
     (async () => {
@@ -298,6 +322,7 @@ export default function EmitirComprobanteClient({
         const pedItems = Array.isArray(data.items) ? data.items : [];
         setPedidoId(pid);
         setPedidoCliente(ped.cliente || ped.razon_social || null);
+        setPedidoEsPos(ped.origen === "pos_planta");
         const esAvicola = (ped.empresa || "").trim().toLowerCase().startsWith("av");
         setEmpresa(esAvicola ? "avicola" : "transavic");
         const doc = (ped.ruc_dni || "").trim();
@@ -350,7 +375,120 @@ export default function EmitirComprobanteClient({
     return () => {
       active = false;
     };
-  }, [searchParams, pedidoIdProp]);
+  }, [pedidoIdOrigen]);
+
+  // Precarga al venir de "Facturar" en una VENTA EN CAMPO: traemos ítems + cliente de
+  // la venta y los cargamos en este MISMO formulario. Sin pedidoId → emite por
+  // /emitir-manual con ventaAvicolaId (comprobante enlazado, sin cobranza de ejecutivas).
+  useEffect(() => {
+    const vid = ventaAvicolaId;
+    if (!vid) {
+      setCargaVentaCampo("idle");
+      setErrorCargaVentaCampo(null);
+      return;
+    }
+    let active = true;
+    setCargaVentaCampo("loading");
+    setErrorCargaVentaCampo(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/avicola/ventas/${vid}`);
+        const data = await res.json().catch(() => null);
+        if (!active) return;
+        if (!res.ok) {
+          throw new Error(
+            typeof data?.error === "string"
+              ? data.error
+              : "No se pudo cargar la venta de campo."
+          );
+        }
+        const venta = data?.venta;
+        if (!venta || typeof venta !== "object") {
+          throw new Error("La venta de campo no devolvió datos válidos.");
+        }
+        if (venta.anulada) {
+          throw new Error("Esta venta de campo está anulada y no se puede facturar.");
+        }
+        if (
+          venta.comprobante?.serie_numero &&
+          !(
+            reemplazaComprobanteId &&
+            venta.comprobante.id === reemplazaComprobanteId &&
+            venta.comprobante.estado === "rechazado"
+          )
+        ) {
+          throw new Error(
+            `Esta venta ya está vinculada al comprobante ${venta.comprobante.serie_numero}. Revísalo desde Comprobantes de Campo.`
+          );
+        }
+        const cli = venta.cliente || {};
+        const ventaItems = Array.isArray(venta.items) ? venta.items : [];
+        if (!String(cli.nombre || "").trim() || ventaItems.length === 0) {
+          throw new Error(
+            "La venta no tiene cliente o productos válidos. Corrígela antes de facturar."
+          );
+        }
+        // Empresa desde la ficha del cliente de campo (define la serie F001/F002…).
+        const esAvicola = String(cli.empresa || "")
+          .trim()
+          .toLowerCase()
+          .startsWith("av");
+        setEmpresa(esAvicola ? "avicola" : "transavic");
+        // Cliente: nombre → razón social; RUC/DNI guardado (si existe); dirección.
+        const doc = String(cli.ruc_dni || "").trim();
+        setNumDoc(doc);
+        // Con RUC, la razón social y dirección del comprobante deben venir de
+        // SUNAT, no del nombre informal del puesto. Dejarlas vacías activa la
+        // consulta automática; con DNI/sin documento sí usamos la ficha local.
+        if (doc.length === 11) {
+          setRazonSocial("");
+          setDireccionCliente("");
+        } else {
+          setRazonSocial(String(cli.nombre || "").trim());
+          setDireccionCliente(String(cli.direccion || "").trim());
+        }
+        setDocInfo(null);
+        const tipoVenta: Tipo = doc.length === 11 ? "01" : "03";
+        setTipo(tipoVenta);
+        // Fecha de emisión sugerida = la de la venta, recortada al rango válido.
+        const fv = String(venta.fecha || "").slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(fv)) {
+          const { min, max } = rangoEmisionLocal(tipoVenta);
+          setFechaEmision(clampFecha(fv, min, max));
+        }
+        if (ventaItems.length > 0) {
+          setItems(
+            ventaItems.map(
+              (it: {
+                producto_nombre?: string;
+                peso_kg?: number | string;
+                precio_kg?: number | string;
+              }) => ({
+                // La venta de campo es por PESO: peso_kg → cantidad, unidad KGM (kilos),
+                // precio_kg → precio (CON IGV, gotcha #10; el motor divide entre 1.18).
+                descripcion: it.producto_nombre || "",
+                cantidad: Number(it.peso_kg) || 0,
+                unidad: "KGM",
+                precio: Number(it.precio_kg) || 0,
+              })
+            )
+          );
+        }
+        setCargaVentaCampo("ready");
+      } catch (error) {
+        if (!active) return;
+        setCargaVentaCampo("error");
+        setErrorCargaVentaCampo(
+          error instanceof Error
+            ? error.message
+            : "No se pudo cargar la venta de campo."
+        );
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [ventaAvicolaId, reemplazaComprobanteId, intentoCargaVentaCampo]);
 
   // Al cambiar factura↔boleta cambia el límite de retroactividad (3↔7 días). Si la
   // fecha de emisión quedó fuera del nuevo rango, la recortamos.
@@ -709,9 +847,24 @@ export default function EmitirComprobanteClient({
       itemsCount,
       itemsConPrecioBajo,
       necesitaAutorizacion,
-      puedeEmitir: itemsValidos && clienteValido && !necesitaAutorizacion,
+      puedeEmitir:
+        itemsValidos &&
+        clienteValido &&
+        !necesitaAutorizacion &&
+        (!ventaAvicolaId || cargaVentaCampo === "ready"),
     };
-  }, [items, numDoc, razonSocial, tipo, boletaGrande, productos, autorizacionId, userRole]);
+  }, [
+    items,
+    numDoc,
+    razonSocial,
+    tipo,
+    boletaGrande,
+    productos,
+    autorizacionId,
+    userRole,
+    ventaAvicolaId,
+    cargaVentaCampo,
+  ]);
 
   const puedeEmitir = reqs.puedeEmitir;
 
@@ -846,6 +999,14 @@ export default function EmitirComprobanteClient({
   async function emitir(confirmarDuplicado = false) {
     setErrorMsg(null);
     setResultado(null);
+    if (ventaAvicolaId && cargaVentaCampo !== "ready") {
+      setErrorMsg(
+        cargaVentaCampo === "error"
+          ? "No se puede emitir: la venta de campo no se cargó correctamente. Reintenta la carga."
+          : "Espera a que termine de cargar la venta de campo."
+      );
+      return;
+    }
     if (tipo === "01" && !docEsRuc) {
       setErrorMsg("Para FACTURA el cliente debe tener RUC (11 dígitos). Para personas naturales emite BOLETA.");
       return;
@@ -914,6 +1075,12 @@ export default function EmitirComprobanteClient({
               observacionComprobante: observacionComprobante.trim() || undefined,
               confirmarDuplicado,
               autorizacion_id: autorizacionId ?? undefined,
+              // Si viene de una venta de campo: enlaza el comprobante y activa el
+              // guard anti-cobranza en el server (no se crea factura de ejecutivas).
+              ventaAvicolaId: ventaAvicolaId ?? undefined,
+              // Si SUNAT rechazó el CPE anterior, este id demuestra qué fila se
+              // corrige. El servidor exige que sea el último rechazo sin hijo.
+              reemplazaComprobanteId: reemplazaComprobanteId ?? undefined,
             }),
           });
       const j = await res.json();
@@ -925,6 +1092,30 @@ export default function EmitirComprobanteClient({
           serieNumero: j.duplicado.serieNumero,
           fecha: j.duplicado.fecha,
           mensaje: typeof j.mensaje === "string" ? j.mensaje : "Ya existe un comprobante igual.",
+        });
+      } else if (
+        res.status === 409 &&
+        (j?.yaFacturada || j?.codigo === "venta_campo_ya_facturada")
+      ) {
+        // La guarda de Campo es dura. `error` se reintenta sobre la misma fila;
+        // `rechazado` solo se reemplaza desde la acción explícita que envía el id
+        // del rechazo (nunca con el bypass genérico "emitir igual").
+        setDuplicado({
+          id: typeof j?.comprobanteId === "string" ? j.comprobanteId : "",
+          serieNumero:
+            typeof j?.serieNumero === "string"
+              ? j.serieNumero
+              : typeof j?.yaFacturada === "string"
+                ? j.yaFacturada
+                : "",
+          fecha: "",
+          bloqueante: true,
+          mensaje:
+            typeof j.error === "string"
+              ? j.error
+              : typeof j.mensaje === "string"
+                ? j.mensaje
+              : "Esta venta de campo ya tiene un comprobante emitido.",
         });
       } else if (!res.ok) {
         // Códigos del control de precios → mensajes claros (no el código crudo).
@@ -980,6 +1171,73 @@ export default function EmitirComprobanteClient({
     bgLight: empresa === "transavic" ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200",
   };
 
+  if (ventaAvicolaId && cargaVentaCampo !== "ready") {
+    return (
+      <div className="mx-auto max-w-2xl px-3 pb-10 sm:px-4">
+        <button
+          type="button"
+          onClick={onCancel ?? onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas"))}
+          className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-gray-500 transition-colors hover:text-gray-800"
+        >
+          <FiArrowLeft /> {onClose ? "Cerrar" : "Volver a ventas de campo"}
+        </button>
+        <div
+          className={`rounded-2xl border p-5 shadow-sm sm:p-7 ${
+            cargaVentaCampo === "error"
+              ? "border-red-200 bg-red-50"
+              : "border-amber-200 bg-amber-50"
+          }`}
+          role={cargaVentaCampo === "error" ? "alert" : "status"}
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-3">
+            <span
+              className={`mt-0.5 flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-white shadow-sm ${
+                cargaVentaCampo === "error" ? "text-red-600" : "text-amber-600"
+              }`}
+            >
+              {cargaVentaCampo === "error" ? (
+                <FiAlertCircle size={20} />
+              ) : (
+                <FiLoader size={20} className="animate-spin" />
+              )}
+            </span>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg font-black text-gray-900 sm:text-xl">
+                {cargaVentaCampo === "error"
+                  ? "No se pudo preparar la facturación"
+                  : "Cargando venta de campo…"}
+              </h1>
+              <p className="mt-1 text-sm leading-relaxed text-gray-700">
+                {cargaVentaCampo === "error"
+                  ? errorCargaVentaCampo
+                  : "Estamos cargando el cliente, la empresa y los productos de esta venta. La emisión permanecerá bloqueada hasta terminar."}
+              </p>
+              {cargaVentaCampo === "error" && (
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                  <button
+                    type="button"
+                    onClick={() => setIntentoCargaVentaCampo((n) => n + 1)}
+                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 active:scale-[0.98]"
+                  >
+                    <FiLoader size={16} /> Reintentar carga
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onCancel ?? onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas"))}
+                    className="inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                  >
+                    Volver a ventas de campo
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Segmented Control Premium estilo iOS con micro-animaciones fluidas
   const SegmentedControl = <T extends string>({
     options,
@@ -1016,7 +1274,7 @@ export default function EmitirComprobanteClient({
     <div className="max-w-6xl mx-auto pb-16 px-4">
       {/* Volver y Título */}
       <button
-        onClick={onClose ?? (() => router.push("/dashboard/comprobantes"))}
+        onClick={onCancel ?? onClose ?? (() => router.push("/dashboard/comprobantes"))}
         className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-4 transition-colors font-semibold cursor-pointer"
       >
         <FiArrowLeft /> {onClose ? "Cerrar" : "Volver a comprobantes"}
@@ -1025,12 +1283,23 @@ export default function EmitirComprobanteClient({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-gray-150 pb-5">
         <div>
           <h1 className="text-3xl font-black text-gray-900 flex items-center gap-2 tracking-tight">
-            <FiFileText className={theme.text} /> {pedidoId ? "Facturar pedido" : "Emitir comprobante"}
+            <FiFileText className={theme.text} />{" "}
+            {pedidoId
+              ? "Facturar pedido"
+              : ventaAvicolaId
+                ? reemplazaComprobanteId
+                  ? "Corregir comprobante rechazado"
+                  : "Facturar venta de campo"
+                : "Emitir comprobante"}
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             {pedidoId
               ? `Facturando el pedido de ${pedidoCliente ?? "—"}. Al emitir, el comprobante queda vinculado al pedido. Puedes ajustar cantidades y precios abajo.`
-              : "Generación manual de factura o boleta electrónica suelta (sin pedido asociado)."}
+              : ventaAvicolaId
+                ? reemplazaComprobanteId
+                  ? "Corrige los datos que causaron el rechazo. Se emitirá un comprobante con correlativo nuevo; el XML y CDR rechazados permanecen intactos en el historial."
+                  : "Facturando una venta en campo. El comprobante queda enlazado a la venta y no genera cobranza de ejecutivas. Los productos, pesos y precios son los de la venta registrada."
+                : "Generación manual de factura o boleta electrónica suelta (sin pedido asociado)."}
           </p>
         </div>
 
@@ -1051,13 +1320,23 @@ export default function EmitirComprobanteClient({
           </p>
           <div className="flex gap-2 mt-4">
             <button
-              onClick={reset}
+              onClick={
+                ventaAvicolaId
+                  ? (onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas")))
+                  : reset
+              }
               className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 cursor-pointer"
             >
               Entendido
             </button>
             <button
-              onClick={() => router.push("/dashboard/comprobantes")}
+              onClick={() =>
+                router.push(
+                  ventaAvicolaId
+                    ? "/dashboard/clientes-avicola/comprobantes"
+                    : "/dashboard/comprobantes"
+                )
+              }
               className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer"
             >
               Ver comprobantes
@@ -1125,12 +1404,12 @@ export default function EmitirComprobanteClient({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px]">Fecha Emisión:</span>
-                  <span className="font-semibold text-gray-800">{formatFechaLegible(isoLocalMasDias(0))}</span>
+                  <span className="font-semibold text-gray-800">{formatFechaLegible(fechaEmision)}</span>
                 </div>
                 <div className="flex justify-between items-start gap-4">
                   <span className="text-gray-400 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap">Cliente:</span>
-                  <span className="font-bold text-gray-800 truncate text-right text-xs" title={razonSocial || "CLIENTES VARIOS"}>
-                    {razonSocial || "CLIENTES VARIOS"}
+                  <span className="font-bold text-gray-800 truncate text-right text-xs" title={resultado.clienteRazonSocial || razonSocial || "CLIENTES VARIOS"}>
+                    {resultado.clienteRazonSocial || razonSocial || "CLIENTES VARIOS"}
                   </span>
                 </div>
                 {numDoc && (
@@ -1208,13 +1487,23 @@ export default function EmitirComprobanteClient({
                 
                 <div className="flex gap-2">
                   <button
-                    onClick={reset}
+                    onClick={
+                      ventaAvicolaId
+                        ? (onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas")))
+                        : reset
+                    }
                     className={`flex-1 py-2.5 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl text-xs font-black shadow-sm transition-all active:scale-[0.97] cursor-pointer`}
                   >
-                    Emitir otro
+                    {ventaAvicolaId ? "Cerrar y continuar" : "Emitir otro"}
                   </button>
                   <button
-                    onClick={() => router.push("/dashboard/comprobantes")}
+                    onClick={() =>
+                      router.push(
+                        ventaAvicolaId
+                          ? "/dashboard/clientes-avicola/comprobantes"
+                          : "/dashboard/comprobantes"
+                      )
+                    }
                     className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-200 transition-all active:scale-[0.97] cursor-pointer"
                   >
                     Ver comprobantes
@@ -1284,7 +1573,8 @@ export default function EmitirComprobanteClient({
                         key={emp}
                         type="button"
                         onClick={() => setEmpresa(emp)}
-                        className={`relative flex items-center gap-3 rounded-xl border-2 p-3 text-left transition-all active:scale-[0.98] duration-200 cursor-pointer ${
+                        disabled={!!ventaAvicolaId}
+                        className={`relative flex items-center gap-3 rounded-xl border-2 p-3 text-left transition-all active:scale-[0.98] duration-200 cursor-pointer disabled:cursor-not-allowed disabled:opacity-70 ${
                           activo ? `${ui.ring} ${ui.bg}` : "border-gray-200 bg-white hover:border-gray-300 hover:scale-[1.01]"
                         }`}
                       >
@@ -1327,8 +1617,9 @@ export default function EmitirComprobanteClient({
                       type="text"
                       value={busquedaCliente}
                       onChange={(e) => setBusquedaCliente(e.target.value)}
+                      disabled={!!ventaAvicolaId}
                       placeholder="Escribe el nombre, RUC o DNI del cliente..."
-                      className={`w-full pl-9 pr-10 p-2.5 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring}`}
+                      className={`w-full pl-9 pr-10 p-2.5 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500 ${theme.ring}`}
                     />
                     {busquedaCliente && (
                       <button
@@ -1491,7 +1782,8 @@ export default function EmitirComprobanteClient({
                 <button
                   type="button"
                   onClick={addItem}
-                  className={`flex items-center gap-1 text-xs font-black ${theme.text} hover:${theme.textHover} transition-all duration-200 cursor-pointer active:scale-95`}
+                  disabled={!!ventaAvicolaId}
+                  className={`flex items-center gap-1 text-xs font-black ${theme.text} hover:${theme.textHover} transition-all duration-200 cursor-pointer active:scale-95 disabled:cursor-not-allowed disabled:opacity-40`}
                 >
                   <FiPlus /> Agregar ítem
                 </button>
@@ -1519,9 +1811,10 @@ export default function EmitirComprobanteClient({
                         <input
                           value={it.codigo ?? ""}
                           onChange={(e) => updateItem(i, { codigo: e.target.value })}
+                          disabled={!!ventaAvicolaId}
                           placeholder="Cód."
                           title="Código interno del producto"
-                          className={`w-full p-2 border rounded-lg text-sm bg-white text-gray-600 font-semibold focus:ring-2 focus:outline-none ${theme.ring} ${
+                          className={`w-full p-2 border rounded-lg text-sm bg-white text-gray-600 font-semibold focus:ring-2 focus:outline-none disabled:bg-gray-100 disabled:text-gray-500 ${theme.ring} ${
                             pulseIndex === i ? "animate-pulse ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/10" : ""
                           }`}
                         />
@@ -1534,8 +1827,9 @@ export default function EmitirComprobanteClient({
                           value={it.descripcion}
                           list="catalogo-productos"
                           onChange={(e) => onDescripcion(i, e.target.value)}
+                          disabled={!!ventaAvicolaId}
                           placeholder="Escribe el nombre del producto..."
-                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring}`}
+                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none disabled:bg-gray-100 disabled:text-gray-600 ${theme.ring}`}
                         />
                         {it.cantidad_pedido !== undefined && (
                           <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-gray-500 font-medium">
@@ -1562,7 +1856,8 @@ export default function EmitirComprobanteClient({
                           min={0}
                           step="0.01"
                           onChange={(e) => updateItem(i, { cantidad: parseFloat(e.target.value) || 0 })}
-                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black text-center font-bold focus:ring-2 focus:outline-none ${theme.ring}`}
+                          disabled={!!ventaAvicolaId}
+                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black text-center font-bold focus:ring-2 focus:outline-none disabled:bg-gray-100 disabled:text-gray-600 ${theme.ring}`}
                         />
                       </div>
 
@@ -1572,7 +1867,8 @@ export default function EmitirComprobanteClient({
                         <select
                           value={it.unidad}
                           onChange={(e) => updateItem(i, { unidad: e.target.value })}
-                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none ${theme.ring} ${
+                          disabled={!!ventaAvicolaId}
+                          className={`w-full p-2 border rounded-lg text-sm bg-white text-black font-semibold focus:ring-2 focus:outline-none disabled:bg-gray-100 disabled:text-gray-600 ${theme.ring} ${
                             pulseIndex === i ? "animate-pulse ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/10" : ""
                           }`}
                         >
@@ -1600,8 +1896,9 @@ export default function EmitirComprobanteClient({
                                   min={0}
                                   step="0.01"
                                   onChange={(e) => updateItem(i, { precio: parseFloat(e.target.value) || 0 })}
+                                  disabled={!!ventaAvicolaId}
                                   placeholder="0.00"
-                                  className={`w-full pl-6 p-2 border rounded-lg text-sm bg-white text-black font-bold focus:ring-2 focus:outline-none ${theme.ring} ${
+                                  className={`w-full pl-6 p-2 border rounded-lg text-sm bg-white text-black font-bold focus:ring-2 focus:outline-none disabled:bg-gray-100 disabled:text-gray-600 ${theme.ring} ${
                                     pulseIndex === i ? "animate-pulse ring-2 ring-emerald-400 border-emerald-400 bg-emerald-50/10" : ""
                                   } ${bajoDMinimo ? "border-red-400 bg-red-50/40" : ""}`}
                                 />
@@ -1624,7 +1921,7 @@ export default function EmitirComprobanteClient({
                       <button
                         type="button"
                         onClick={() => removeItem(i)}
-                        disabled={items.length === 1}
+                        disabled={items.length === 1 || !!ventaAvicolaId}
                         className="p-2 text-gray-455 hover:text-red-650 disabled:opacity-30 transition-colors rounded-lg hover:bg-red-50 cursor-pointer"
                         title="Quitar ítem"
                       >
@@ -1646,8 +1943,19 @@ export default function EmitirComprobanteClient({
                 ))}
               </datalist>
 
-              <p className="text-[11px] text-gray-400 mt-2 font-medium bg-gray-50 p-2.5 rounded-lg border border-gray-100 leading-normal">
-                💡 <strong>Consejo del catálogo:</strong> Al seleccionar un producto del catálogo se autocompletan el <strong>precio y la unidad</strong> solos. Los precios incluyen IGV y puedes editarlos a mano.
+              <p className="text-[11px] text-gray-500 mt-2 font-medium bg-gray-50 p-2.5 rounded-lg border border-gray-100 leading-normal">
+                {ventaAvicolaId ? (
+                  <>
+                    <strong>Detalle protegido:</strong> el comprobante debe coincidir con la venta de
+                    campo y su saldo. Si necesitas cambiar productos, pesos o precios, cierra esta
+                    ventana, edita la venta y vuelve a facturarla.
+                  </>
+                ) : (
+                  <>
+                    <strong>Consejo del catálogo:</strong> al seleccionar un producto se autocompletan
+                    el precio y la unidad. Los precios incluyen IGV y puedes editarlos a mano.
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -1732,16 +2040,35 @@ export default function EmitirComprobanteClient({
                         ))}
                       </div>
                       <p className="text-[10px] text-gray-500 font-medium leading-normal pt-1.5 border-t border-gray-200">
-                        🗓️ Vence el <strong>{formatFechaLegible(fechaVenc)}</strong> ({diasEntre(fechaEmision, fechaVenc)} días). Crea deuda automática en Cobranzas.
+                        🗓️ Vence el <strong>{formatFechaLegible(fechaVenc)}</strong> ({diasEntre(fechaEmision, fechaVenc)} días).{" "}
+                        {ventaAvicolaId
+                          ? "La deuda permanece en el estado de cuenta de Campo."
+                          : pedidoEsPos
+                            ? "La deuda ya está registrada en Cobranzas de Planta."
+                            : "Crea deuda automática en Cobranzas de Ejecutivas."}
                       </p>
                     </div>
                   )}
 
-                  {/* Toda venta crea cobranza (sin excepción). Si el cliente ya
-                      pagó, la asesora la marca como pagada en /cobranzas. */}
+                  {/* Solo Ejecutivas crea `facturas`. Campo y POS conservan sus
+                      carteras propias aunque compartan este formulario SUNAT. */}
                   {formaPago === "Contado" && (
                     <p className="mt-2 text-[11px] text-gray-500 font-medium leading-normal bg-gray-50 p-2.5 rounded-xl border border-gray-100">
-                      Se registrará una <strong>cobranza pendiente</strong> para seguir el pago. Si el cliente ya pagó, márcala como pagada en <strong>Cobranzas</strong>.
+                      {ventaAvicolaId ? (
+                        <>
+                          El pago y la deuda permanecen en el <strong>estado de cuenta de Campo</strong>.
+                          Este comprobante no creará una cobranza de ejecutivas.
+                        </>
+                      ) : pedidoEsPos ? (
+                        <>
+                          El pago ya se registró en <strong>Caja de Planta</strong>. Este comprobante no
+                          creará una cobranza de ejecutivas.
+                        </>
+                      ) : (
+                        <>
+                          Se registrará una <strong>cobranza pendiente</strong> para seguir el pago. Si el cliente ya pagó, márcala como pagada en <strong>Cobranzas</strong>.
+                        </>
+                      )}
                     </p>
                   )}
                 </div>
@@ -1973,26 +2300,36 @@ export default function EmitirComprobanteClient({
               <span className="flex items-center justify-center w-9 h-9 rounded-full bg-amber-100 text-amber-600 flex-shrink-0">
                 <FiAlertCircle size={18} />
               </span>
-              <h3 className="font-bold text-gray-900">Ya existe un comprobante igual</h3>
+              <h3 className="font-bold text-gray-900">
+                {duplicado.bloqueante
+                  ? "Esta venta ya tiene comprobante"
+                  : "Ya existe un comprobante igual"}
+              </h3>
             </div>
             <div className="px-5 py-4 space-y-3 text-sm">
               <p className="text-gray-700">{duplicado.mensaje}</p>
-              <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-gray-600">
-                <span className="font-mono font-bold text-gray-900">{duplicado.serieNumero}</span>
-                <span className="text-gray-400">
-                  {" "}· emitido{" "}
-                  {new Intl.DateTimeFormat("es-PE", {
-                    timeZone: "America/Lima",
-                    day: "2-digit",
-                    month: "2-digit",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: true,
-                  }).format(new Date(duplicado.fecha))}
-                </span>
-              </div>
+              {duplicado.serieNumero && (
+                <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-gray-600">
+                  <span className="font-mono font-bold text-gray-900">{duplicado.serieNumero}</span>
+                {duplicado.fecha && !Number.isNaN(new Date(duplicado.fecha).getTime()) && (
+                  <span className="text-gray-400">
+                    {" "}· emitido{" "}
+                    {new Intl.DateTimeFormat("es-PE", {
+                      timeZone: "America/Lima",
+                      day: "2-digit",
+                      month: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true,
+                    }).format(new Date(duplicado.fecha))}
+                  </span>
+                )}
+                </div>
+              )}
               <p className="text-gray-500">
-                Si es una venta distinta, puedes emitirlo igual. Si fue por error, revisa el que ya existe.
+                {duplicado.bloqueante
+                  ? "No se creará otro correlativo para la misma venta. Revisa o reintenta el comprobante existente desde Comprobantes de Campo."
+                  : "Si es una venta distinta, puedes emitirlo igual. Si fue por error, revisa el que ya existe."}
               </p>
             </div>
             <div className="flex flex-col-reverse gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 sm:flex-row sm:items-center sm:justify-between">
@@ -2004,20 +2341,37 @@ export default function EmitirComprobanteClient({
               </button>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <button
-                  onClick={() => window.open("/dashboard/comprobantes", "_blank")}
+                  onClick={() =>
+                    window.open(
+                      ventaAvicolaId
+                        ? `/dashboard/clientes-avicola/comprobantes${
+                            duplicado.serieNumero
+                              ? `?search=${encodeURIComponent(duplicado.serieNumero)}`
+                              : ""
+                          }`
+                        : `/dashboard/comprobantes${
+                            duplicado.serieNumero
+                              ? `?search=${encodeURIComponent(duplicado.serieNumero)}`
+                              : ""
+                          }`,
+                      "_blank"
+                    )
+                  }
                   className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 active:scale-95 transition"
                 >
                   <FiFileText size={15} /> Ver comprobante
                 </button>
-                <button
-                  onClick={() => {
-                    setDuplicado(null);
-                    void emitir(true);
-                  }}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 active:scale-95 transition shadow-sm"
-                >
-                  Sí, emitir igual
-                </button>
+                {!duplicado.bloqueante && (
+                  <button
+                    onClick={() => {
+                      setDuplicado(null);
+                      void emitir(true);
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 active:scale-95 transition shadow-sm"
+                  >
+                    Sí, emitir igual
+                  </button>
+                )}
               </div>
             </div>
           </div>

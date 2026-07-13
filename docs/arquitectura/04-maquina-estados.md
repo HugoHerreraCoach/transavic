@@ -1,7 +1,7 @@
 # 04 — Máquina de Estados del Pedido
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** core en producción
 > **Archivos clave:** `src/lib/types.ts` (`EstadoPedido`), `src/app/api/pedidos/[id]/route.ts`, `src/app/api/pedidos/[id]/entregar/route.ts`
 
 Este documento detalla los estados por los que transita un pedido, las reglas de negocio de cada cambio de estado y sus efectos colaterales en la base de datos.
@@ -15,21 +15,21 @@ El ciclo de vida del pedido se compone de **7 estados** (PascalCase con guión b
 ```mermaid
 stateDiagram-v2
     [*] --> Pendiente : Asesora crea pedido
-    
+
     Pendiente --> En_Produccion : Producción inicia pesaje
-    
+
     En_Produccion --> Listo_Para_Despacho : Producción confirma pesos
-    
+
     Listo_Para_Despacho --> Asignado : Admin asigna a motorizado/ruta
-    
+
     Asignado --> En_Camino : Motorizado inicia viaje
-    
+
     En_Camino --> Entregado : Motorizado entrega pedido
     En_Camino --> Fallido : Motorizado reporta problema
-    
+
     Asignado --> Entregado : Entrega mostrador/local (salto directo)
     Asignado --> Fallido : Cancelación antes de salir
-    
+
     Entregado --> Asignado : Admin/Repartidor revierte entrega (reverso)
     Fallido --> Asignado : Admin/Repartidor revierte entrega (reverso)
 ```

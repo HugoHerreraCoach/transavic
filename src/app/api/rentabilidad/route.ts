@@ -3,8 +3,16 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { leerParametrosNegocio } from "@/lib/parametros-negocio";
+import { fechaHoyLima } from "@/lib/sunat/fechas";
+import { resumenVentasGeneralesPorFecha } from "@/lib/ventas-generales";
 
 export const dynamic = "force-dynamic";
+
+function sumarDiasIso(fecha: string, delta: number): string {
+  const [y, m, d] = fecha.split("-").map(Number);
+  const valor = new Date(Date.UTC(y, m - 1, d + delta));
+  return valor.toISOString().slice(0, 10);
+}
 
 export async function GET(req: NextRequest) {
   const session = await auth();
@@ -121,32 +129,18 @@ export async function GET(req: NextRequest) {
       ORDER BY fecha ASC
     `;
 
-    // Comparativo "Hoy vs Ayer": ventas totales del negocio (todas las categorías,
-    // pedidos Entregado incluyendo POS) por fecha de REGISTRO en zona Lima. Responde
-    // de un vistazo "¿vendí más que ayer?" sin cambiar el filtro de fechas.
-    const comparativoRows = await sql`
-      SELECT
-        CASE
-          WHEN (p.created_at AT TIME ZONE 'America/Lima')::date = (NOW() AT TIME ZONE 'America/Lima')::date THEN 'hoy'
-          ELSE 'ayer'
-        END AS dia,
-        COALESCE(SUM(COALESCE(pi.subtotal_real, pi.subtotal)), 0) AS monto,
-        COUNT(DISTINCT p.id) AS pedidos
-      FROM pedidos p
-      JOIN pedido_items pi ON p.id = pi.pedido_id
-      WHERE p.estado = 'Entregado'
-        AND (p.created_at AT TIME ZONE 'America/Lima')::date
-            >= (NOW() AT TIME ZONE 'America/Lima')::date - 1
-      GROUP BY 1
-    `;
+    // Comparativo "Hoy vs Ayer": exactamente la misma definición de las tres
+    // operaciones usada por Ventas Generales y Consolidado.
+    const hoyIso = fechaHoyLima();
+    const ayerIso = sumarDiasIso(hoyIso, -1);
+    const [ventasHoy, ventasAyer] = await Promise.all([
+      resumenVentasGeneralesPorFecha(sql, hoyIso),
+      resumenVentasGeneralesPorFecha(sql, ayerIso),
+    ]);
     const comparativo = {
-      hoy: { monto: 0, pedidos: 0 },
-      ayer: { monto: 0, pedidos: 0 },
+      hoy: { monto: ventasHoy.total, pedidos: ventasHoy.totalVentas },
+      ayer: { monto: ventasAyer.total, pedidos: ventasAyer.totalVentas },
     };
-    for (const r of comparativoRows) {
-      const clave = r.dia === "hoy" ? "hoy" : "ayer";
-      comparativo[clave] = { monto: Number(r.monto), pedidos: Number(r.pedidos) };
-    }
 
     return NextResponse.json({
       comparativo,

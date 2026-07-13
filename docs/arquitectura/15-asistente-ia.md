@@ -1,7 +1,7 @@
 # 15 — Módulo del Asistente de IA Comercial
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** caché persistente y fallback en producción; WhatsApp saliente sigue pendiente
 > **Archivos clave:** `src/lib/gemini.ts`, `src/lib/insights.ts`, `src/app/api/asistente-ia/route.ts`, `src/app/dashboard/asistente-ia/asistente-ia-client.tsx`
 
 Este documento describe el funcionamiento de la inteligencia artificial de análisis comercial, la anonimización de datos de clientes, el mecanismo de caché persistente y el respaldo de API ante caídas de cuotas.

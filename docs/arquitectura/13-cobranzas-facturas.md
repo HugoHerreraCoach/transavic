@@ -1,70 +1,140 @@
-# 13 — Gestión de Cobranzas y Facturas
+# 13 — Cobranzas y Carteras por Operación
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
-> **Archivos clave:** `src/lib/cobranzas.ts`, `src/app/api/facturas/route.ts`, `src/app/api/facturas/[id]/route.ts`
+> **Última verificación contra código:** 2026-07-12
+> **Archivos clave:** `src/lib/cobranzas.ts`, `src/lib/avicola/saldos.ts`, `src/lib/avicola/estado-cuenta.ts`, `src/lib/planta/saldos.ts`, `src/app/api/facturas/`, `src/app/api/avicola/`, `src/app/api/cobranzas-planta/`
 
-Este documento describe el funcionamiento de las cuentas por cobrar (cobranzas), la lógica de estados de pago, la conciliación de evidencias y el reporte de antigüedad de deuda (aging).
-
----
-
-## 1. El Ciclo de Vida de una Cobranza
-
-En Transavic, **toda emisión de boleta o factura genera automáticamente una cobranza** (una fila en la tabla `facturas`).
-
-- **Regla de negocio:** El proceso de "Entregar" un pedido por el motorizado **no** crea la cobranza. Es la **emisión exitosa del CPE ante SUNAT** la que congela el saldo final y gatilla el registro en `facturas` (tanto para ventas al contado como a crédito).
-- **Monto de la deuda:** La cobranza se inicializa con el valor `monto_total` (neto + IGV) retornado del XML firmado del comprobante, lo que garantiza cuadres exactos al céntimo.
-- **Asignación de asesora:** La cobranza se asocia al `asesor_id` en cascada (`pedido` $\rightarrow$ `comprobante` $\rightarrow$ `facturas.asesor_id`), permitiendo a las asesoras realizar el seguimiento de sus propios cobros en el panel.
+Transavic tiene tres carteras independientes. Compartir el motor SUNAT **no significa compartir la tabla de deuda**.
 
 ---
 
-## 2. Los 4 Estados de Cobranza
+## 1. Mapa de carteras
 
-1. **`Pendiente`**: La factura ha sido emitida pero aún no vence ni se ha pagado.
-2. **`Vencida`**: La fecha actual supera la `fecha_vence` (calculada como `fecha_emision + plazo_pago_dias`). El cron job `/api/cron/facturas-vencidas` actualiza este estado diariamente a las 08:00 Lima.
-3. **`Pagada`**: La asesora o el admin confirman la recepción del dinero y registran el pago.
-4. **`Anulada`**: La cobranza ha sido cancelada por algún motivo administrativo o por la emisión de una Nota de Crédito.
+| Operación | Nace de | Deuda | Pagos | Vistas |
+|---|---|---|---|---|
+| Ejecutivas | CPE de pedido/manual atribuible a Ejecutivas | `facturas` | campos de pago/voucher en `facturas` | `/dashboard/cobranzas` |
+| Campo | venta visitando mercados/avícolas | saldo calculado desde `ventas_avicola` | `abonos_avicola` | ficha/estado de cuenta/Panel Campo |
+| Planta | POS a crédito | `cobranzas_planta` | `abonos_planta` | `/dashboard/cobranzas-planta` |
+
+Invariantes:
+
+- Un CPE de Campo no crea `facturas`.
+- Un CPE/reintento de Planta no crea `facturas`.
+- Una misma deuda no debe existir en dos carteras.
+- Marcar una cobranza de Ejecutivas como pagada no crea una transacción bancaria/caja: es una decisión vigente documentada en [10 §7](./10-pos-caja-tesoreria.md).
 
 ---
 
-## 3. Reglas Técnicas de Consulta y Deuda (Exclusión Crítica)
+## 2. Ejecutivas: tabla `facturas`
+
+El CPE aceptado/observado crea o enlaza una fila de cobranza una sola vez. La entrega del pedido no debe crear una segunda deuda.
+
+Campos funcionales principales:
+
+- comprobante/pedido/asesora;
+- cliente y monto total tomado del CPE;
+- fecha de emisión, vencimiento y plazo;
+- estado de cobranza;
+- fecha/método/detalle de pago;
+- voucher en base64/mime;
+- auditoría de anulación.
+
+### Estados
+
+1. `Pendiente`: deuda activa no vencida.
+2. `Vencida`: deuda activa cuyo plazo terminó; el cron la actualiza.
+3. `Pagada`: pago confirmado.
+4. `Anulada`: fuera de cartera por anulación/NC según el flujo.
 
 > [!WARNING]
-> **Regla de exclusión de Anuladas:** Al calcular saldos, deudas acumuladas o reportes de aging, **nunca** se debe usar la condición `estado <> 'Pagada'`. Se debe filtrar explícitamente usando `estado IN ('Pendiente', 'Vencida')` para excluir los montos de las facturas que fueron anuladas o canceladas por Nota de Crédito.
+> Para calcular deuda usa `estado IN ('Pendiente','Vencida')`. `estado <> 'Pagada'` incluiría anuladas.
 
-```typescript
-// Lógica de cálculo en queries de cobranza
-const result = await sql`
-  SELECT COALESCE(SUM(monto), 0) AS saldo_deudora
-  FROM facturas
-  WHERE cliente_id = ${clienteId}
-    AND estado IN ('Pendiente', 'Vencida')
-`;
+Las asesoras solo ven/gestionan cobranzas de su alcance; el admin ve todas.
+
+---
+
+## 3. Campo: saldo derivado y abonos
+
+Campo no persiste un "saldo actual". La fuente canónica es `src/lib/avicola/saldos.ts`:
+
+```text
+saldo_actual = saldo_anterior
+             + suma(ventas no anuladas)
+             - suma(abonos no anulados)
 ```
 
+Un saldo negativo es dinero a favor del cliente. Para cartera gerencial solo se suman saldos positivos.
+
+### Abonos individuales
+
+`abonos_avicola` registra cada pago con fecha, hora de creación, medio, nota, monto y evidencia opcional. `src/lib/avicola/estado-cuenta.ts` ordena ventas y abonos y calcula el saldo posterior de cada movimiento.
+
+Si el mismo cliente entrega tres abonos el mismo día:
+
+| Hora | Medio | Monto | Saldo posterior |
+|---|---|---:|---:|
+| 09:15 | Yape | S/ 100 | S/ 400 |
+| 13:40 | Efectivo | S/ 150 | S/ 250 |
+| 18:05 | Transferencia | S/ 50 | S/ 200 |
+
+Pantalla y PDF deben mostrar las tres filas. El total diario puede usarse en el libro mayor; la guía
+de una venta usa la ventana de abonos posteriores hasta la siguiente venta no anulada. Ningún resumen
+debe sustituir el detalle que Antonio entrega al cliente.
+
+Reglas adicionales:
+
+- PK generada en frontend y reutilizada en reintentos para idempotencia.
+- Sobrepago requiere confirmación y puede dejar saldo a favor.
+- Anulación es soft-delete con motivo; el movimiento anulado no modifica el saldo.
+- Un CPE activo/error/aceptado vuelve inmutable la venta; si todos los CPE 01/03 fueron rechazados,
+  puede corregirse para emitir un reemplazo auditado. La NC total aceptada anula la venta.
+
 ---
 
-## 4. Conciliación de Pagos y Evidencia Visual
+## 4. Planta: cartera propia
 
-Cuando el cliente realiza el pago (usualmente por transferencias bancarias BCP/BBVA o billeteras digitales Yape/Plin), la asesora abre la cobranza y registra:
-- `metodo_pago` $\rightarrow$ 'Transferencia', 'Yape', 'Efectivo', etc.
-- `pago_detalle` $\rightarrow$ Número de operación bancaria o glosa.
-- **Resguardo fotográfico:** Se sube la captura de pantalla del voucher (`pago_img_base64` y `pago_img_mime`). Esto proporciona al administrador la evidencia física para contrastar contra el estado de cuenta real del banco.
+Las ventas POS a crédito usan `cobranzas_planta` y sus pagos parciales viven en `abonos_planta`. No pasan por `facturas`.
 
----
+Una emisión o reintento CPE de Planta debe reconocer `pedidos.origen='pos_planta'` y enlazar la cartera propia. Una NC total aceptada anula de forma automática solo deudas activas de Planta; si ya está pagada, la devolución se gestiona manualmente para no ocultar una salida real de dinero.
 
-## 5. Anulaciones
-
-- **Anulación Manual (Admin):** El administrador puede anular una cobranza sin emitir Notas de Crédito, registrando el motivo en `anulada_motivo` y marcando `anulada_por` / `anulada_at`.
-- **Anulación Automática (Nota de Crédito):** Cuando una asesora emite una Nota de Crédito (CPE tipo "07") que afecta a una factura o boleta, el sistema busca la cobranza asociada mediante el `comprobante_id` y actualiza automáticamente su estado a `Anulada`, previniendo que figure como deuda activa.
+El detalle del modelo y flujos está en [25-clientes-cobranzas-planta.md](./25-clientes-cobranzas-planta.md).
 
 ---
 
-## 6. Reporte de Antigüedad de Deuda (Aging)
+## 5. Notas de Crédito y anulaciones
 
-El panel de finanzas calcula las cuentas por cobrar agrupándolas en 4 cubos de tiempo basados en la diferencia de días entre la `fecha_vence` y el día de hoy:
-- **0–7 días:** Deuda muy reciente.
-- **8–15 días:** Requiere primer contacto de cobranza.
-- **16–30 días:** Alerta de atraso comercial.
-- **Más de 30 días:** Deuda crítica (bloqueo potencial de futuros pedidos del cliente).
-- El endpoint `GET /api/cobranzas/aging` provee la data consolidada para el panel del administrador.
+La operación del CPE base decide qué cartera se afecta:
+
+| CPE base | Efecto de NC total aceptada |
+|---|---|
+| Ejecutivas | anula la fila activa de `facturas` |
+| Campo | anula automáticamente `ventas_avicola` con auditoría y retira la venta del saldo; no existe `facturas` que anular |
+| Planta | anula deuda activa de `cobranzas_planta`; pagada requiere devolución manual |
+
+No basta con mirar `venta_avicola_id`: para Planta se debe cargar el origen del pedido, incluso en reintentos y NC.
+
+---
+
+## 6. Consolidado y aging
+
+`/api/consolidado` muestra por separado:
+
+- `totalCobrar`: Ejecutivas (`facturas` activas);
+- `carteraCampo`: suma de saldos positivos de Campo;
+- `carteraPlanta`: saldos activos de Planta.
+
+El aging clásico de `/api/cobranzas/aging` pertenece a Ejecutivas. No debe presentarse como aging total del negocio salvo que se integren explícitamente las fechas/reglas de las otras dos carteras.
+
+---
+
+## 7. Impacto de cambios
+
+| Si cambias… | Revisa también… |
+|---|---|
+| creación de cobranza al emitir/reintentar | operación del CPE, idempotencia y las tres tablas de cartera |
+| estados de deuda | Consolidado, aging, crons y filtros activos |
+| NC | cartera del CPE base, pagos ya realizados y anulación de venta Campo |
+| abonos de Campo | saldos, historial, guía, modal, PDF y prueba de tres abonos |
+| abonos de Planta | saldo parcial, estados, POS y devoluciones |
+| tesorería | caja/cuentas; no asumas que una cobranza pagada mueve dinero automáticamente |
+
+Pruebas obligatorias: [24 §6–9](./24-pruebas-regresion-despliegue.md).

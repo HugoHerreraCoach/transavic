@@ -1,8 +1,8 @@
 # 18 — Plan Maestro de Implementación (Sistema Integral Transavic)
 
-> **Fecha:** 2026-06-28
+> **Fecha original:** 2026-06-28 · **Estado actualizado:** 2026-07-12
 > **Alcance:** Implementación del paquete "Sistema Completo S/ 12,000" (Excluye integración de balanzas IoT).
-> **Estrategia:** Desarrollo 100% en entorno local usando una rama de desarrollo en Neon Postgres para evitar romper producción. Despliegue fase por fase.
+> **Estrategia vigente:** probar en `dev-hugo`, migrar por psql y desplegar por fases; ERP/CRM y separación Campo/Planta ya están en producción.
 
 Este plan detalla la hoja de ruta técnica para construir los 19 módulos (agrupados en 7 áreas) de la cotización.
 
@@ -56,17 +56,19 @@ El enfoque será construir de atrás hacia adelante en la cadena de suministro (
 
 ---
 
-## 📊 Estado real (auditoría 5 jul 2026)
+## 📊 Estado real (auditoría 12 jul 2026)
 
-En la práctica, las fases **NO se construyeron de forma secuencial sino EN PARALELO**: todos los módulos existen como código local (untracked, aún sin commit a `main`) trabajando contra la rama Neon `dev-hugo`. Producción no tiene ninguna de las 15 tablas nuevas (ver [02-modelo-datos.md §5](./02-modelo-datos.md)). Las reglas 4, 5 y 7 de este plan quedaron **ratificadas y precisadas el 5 jul 2026** como la métrica oficial de ventas por pedidos (atribución por `created_at` Lima, dos variantes de estado) — la definición canónica vive en [14-metas-incentivos.md §2](./14-metas-incentivos.md).
+Las fases se construyeron en paralelo y ya tuvieron dos pases principales a producción: la expansión ERP/CRM del 5 jul y la separación Campo/Planta del 8 jul. Los módulos siguen marcados **Beta** mientras se validan en operación real. Los cambios de facturación de Campo y vistas generales del 12 jul permanecen locales y con esquema aplicado solo en `dev-hugo`; requieren migración previa al próximo deploy.
+
+Las métricas se separan en dos fuentes canónicas: metas de asesoras en [14 §2](./14-metas-incentivos.md) y ventas totales de las tres operaciones en [22 §6](./22-operaciones-ventas-facturacion.md).
 
 | Fase | Avance aprox. | Detalle |
 |---|---|---|
-| **F1 — Cimientos/RBAC** | ✅ Completa | `PERMISSIONS`/`hasPermission()` en `roles.ts`, rol `facturacion` declarado (sin usuarios), `precios_audit_log`. |
-| **F2 — Compras/Mermas** | ~80% | Compras, proveedores, cuentas por pagar, préstamos de mercadería, mermas e inventario flexible operativos en local. |
-| **F3 — POS/Caja** | ~70% | POS de planta (crea pedidos `origen='pos_planta'` con estado `Entregado` directo), caja diaria, gastos, cuentas bancarias y transacciones. |
-| **F4 — CRM/Bot** | ~50% | Kanban + chat + rotación de leads con webhook de Meta y chatbot Gemini/Groq; **el envío SALIENTE de WhatsApp sigue siendo MOCK** (`console.log`). |
-| **F5 — Gerencial** | ~40% | Consolidado y rentabilidad funcionales pero básicos. |
+| **F1 — Cimientos/RBAC** | ✅ Producción | `PERMISSIONS`/`hasPermission()`, rol `facturacion` preparado (sin usuarios), auditoría de precios. |
+| **F2 — Compras/Mermas** | 🟣 Beta en producción | Compras, proveedores, CxP, préstamos, mermas, inventario flexible y kardex. |
+| **F3 — POS/Caja** | 🟣 Beta en producción | POS, caja, gastos, cuentas/transacciones y cartera propia de Planta. |
+| **F4 — CRM/Bot** | 🟣 Parcial en producción | Kanban/chat/rotación; **WhatsApp saliente sigue MOCK** y faltan credenciales/checklist Meta. |
+| **F5 — Gerencial** | 🟣 Beta + cambios locales | Consolidado/rentabilidad desplegados; Ventas Generales y Campo en los comparativos están pendientes del próximo deploy. |
 
 ### Optimización operativa (Fase B, 5 jul 2026)
 
@@ -78,14 +80,16 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 - **Inventario:** ajustes manuales con **motivo de lista cerrada** (detalle obligatorio si "Otro") + mini-kardex por producto (`GET /api/inventario?movimientos=<id>`).
 - **Mermas:** validación física `limpio + menudencia ≤ bruto` (zod refine, cierra el ítem del backlog original) y **merma por lote** — vínculo opcional `mermas_diarias.compra_id` con selector de las cargas de HOY en la UI.
 - **Préstamos:** kardex/historial por proveedor (`GET /api/prestamos/transacciones?proveedorId=`) sobre la semántica de signo documentada (positivo = el proveedor nos debe).
-- **Hoy vs Ayer:** comparativo de ventas totales del negocio (Entregado incluyendo POS, por fecha de registro Lima) en `/api/rentabilidad` — responde "¿vendí más que ayer?" sin tocar filtros.
+- **Hoy vs Ayer (actualizado 12 jul):** comparativo de ventas registradas de Ejecutivas, Campo y Planta mediante `src/lib/ventas-generales.ts`; Ejecutivas/Planta usan `created_at` Lima y excluyen `Fallido`, Campo usa `ventas_avicola.fecha` y excluye anuladas. No exige `Entregado`.
 - **Toasts y polling:** reemplazo de `alert()` por `useToast`/`ToastContainer` y adopción de `usePollingVisible` (pausa con pestaña oculta — optimización de cómputo Neon) extendiéndose a las vistas de la expansión (al corte de esta verificación: toasts en compras, inventario, préstamos, mermas y POS; polling en inventario y cobranzas; caja y las vistas de finanzas restantes en despliegue ese mismo día — verificar cobertura por vista antes de asumirla).
 
-### Fase C (5 jul 2026) — paso a producción
+### Fase C (5–12 jul 2026) — despliegues y siguiente pase
 
 - **Marcador visual de beta:** los módulos nuevos llevan chip índigo **"Beta"** — el azul índigo es el marcador deliberado de fase beta en la app (sidebar y banners de guía); los elementos primarios vuelven al **rojo de marca** al aprobarse el módulo.
 - **Guías de pasos removibles:** cada módulo beta muestra un banner colapsable "¿Cómo funciona este módulo?" (componente `src/components/GuiaModulo.tsx`, chip "Beta" incluido; recuerda su estado por módulo en `localStorage`). El contenido de TODAS las guías vive centralizado en **`src/lib/guias-modulos.ts`** (compras, mermas, pos-planta, caja-diaria, inventario, préstamos, proveedores, cuentas-por-pagar, cuentas, rentabilidad, consolidado, crm-leads) — al aprobar un módulo se borra su entrada de ese archivo y la guía desaparece sola, sin tocar la vista.
-- **Runbook de despliegue:** las migraciones se aplican a producción **por psql ANTES del push** (gotchas #13/#17), en este orden: `migrate-produccion-fase-2-3-consolidado.sql` → `migrate-crm.sql` → `migrate-crm-extensions.sql` → rotación CRM (`migrate-crm-rotacion.mjs`, aplicar su SQL por psql) → `migrate-caja-unica-abierta.sql` → `migrate-inventario-movimientos.sql` → seed de inventario en cero (inicializar `inventario_lotes` a 0 para todo producto sin fila — el DML viene al final del consolidado).
+- **Despliegue 5 jul:** migraciones ERP/CRM aplicadas por psql y esquema verificado antes del código.
+- **Despliegue 8 jul:** Clientes Avícola, clientes/cobranzas de Planta, caja por operación y proveedores aplicados antes del código.
+- **Siguiente pase:** aplicar las migraciones de facturación/corrección de CPE de Campo antes de desplegar las vistas y APIs del 12 jul. El orden y las verificaciones viven en [20](./20-migracion-produccion.md) y [24](./24-pruebas-regresion-despliegue.md).
 
 ### Backlog priorizado (benchmark de industria, 5 jul 2026)
 
@@ -109,7 +113,7 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 - **Feature flags / `BetaPlaceholder` para módulos beta:** hoy NO hay flags de apagado; el marcador beta es visual (chip índigo + `GuiaModulo`); `BetaPlaceholder.tsx` solo se usa en `/dashboard/reportes`.
 - **Envío real de WhatsApp saliente** (hoy mock en el webhook y en `/api/crm/leads/[id]/mensajes`) — ver el checklist de seguridad en [15-asistente-ia.md](./15-asistente-ia.md).
 - **Rate limiting del webhook de Meta.**
-- **Scopear `POST /api/transacciones` por rol** (hoy solo exige sesión) y **permitir tipo `billetera`** en el zod de `POST /api/cuentas` — pendientes menores detectados al documentar [10-pos-caja-tesoreria.md §4](./10-pos-caja-tesoreria.md).
+- **Fortalecer Planta:** evaluar `UNIQUE(cobranzas_planta.pedido_id)`, UI completa de historial de abonos y flujo de contra-asientos para devolución integral del POS (ver [25 §13](./25-clientes-cobranzas-planta.md)).
 
 ---
 
@@ -117,11 +121,11 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 1. **Documentación:** Cada avance técnico se actualizará en los documentos `.md` de `docs/arquitectura/`.
 2. **Responsive:** Absolutamente todas las nuevas vistas (POS, Compras, Caja) estarán diseñadas `mobile-first` (TailwindCSS) para ser usadas en tablets y celulares.
 3. **Cero código a ciegas:** Se discutirá la lógica de cada bloque (ej. cómo calcular el costo) antes de programarlo.
-4. **Métricas Comerciales (Esfuerzo de Venta):** Toda venta cuenta para las comisiones y bonos de la asesora en el instante en que el motorizado marca el pedido como `Entregado` en su aplicación de ruta, basándose en el **peso real** que despachó Producción. No importa si el cliente pagó al contado, a crédito, o si se emitió factura electrónica o nota de venta. JAMÁS se atan los bonos comerciales a las facturas de SUNAT.
-5. **Pedidos Fallidos:** Los pedidos con estado `Fallido` NO suman a la cuota ni al bono mensual de la asesora (para evitar fraudes o registros inflados). Solo se contabilizarán excepcionalmente para mantener la "Racha Diaria" (gamificación motivacional del día), pero se descuentan del volumen real mensual.
+4. **Métricas Comerciales (Esfuerzo de Venta):** se atribuyen por `pedidos.created_at` Lima y monto `pedido_items.cantidad * precio_unitario`. Meta mensual/ranking exigen `Entregado`; rachas/meta de equipo usan pedidos vigentes (`estado <> 'Fallido'`). No dependen del pago ni del CPE. Fuente única: `src/lib/ventas-metricas.ts` y doc 14.
+5. **Pedidos Fallidos:** NO suman a metas, ranking, rachas ni meta de equipo. Si un indicador en curso ya los contó, dejan de contar cuando pasan a `Fallido`.
 6. **Flexibilidad de Precios:** Los precios al registrar el pedido inicial pueden ser 0 o nulos (ej: mercadería agotada, cortesía). Producción y Despacho son la barrera final que regulariza pesos reales y montos.
 7. **Aislamiento de Ventas Rápidas (POS):** Todas las ventas del POS en planta deben registrarse con la etiqueta `origen = 'pos_planta'` en la tabla `pedidos` para excluirlas automáticamente del ranking y bonos de las asesoras comerciales.
 8. **Modelo de Inventario Flexible:** Como el local de producción es prestado/compartido y a veces se compra mercadería sobre la marcha, el inventario no debe ser estricto ni bloqueante. La "Venta Rápida" (POS) debe permitir vender incluso sin stock previo registrado, asumiendo una regularización posterior (préstamo/compra).
 9. **Cuentas y Métodos de Pago:** Todo ingreso de dinero (especialmente en POS) debe asociarse a una "Cuenta" o "Caja" (ej. Efectivo, BCP Antonio, Yape Empresa, Interbank). Debe ser un sistema de tesorería sencillo, permitiendo crear múltiples cuentas bancarias de forma dinámica.
 10. **Proceso de Mermas (Pollo Muerto):** Transavic trabaja actualmente con pollo ya beneficiado (muerto), no vivo. Las mermas se calculan sobre la pérdida de frío (agua/sangre) o el trozado. El sistema debe calcular estas mermas actuales, pero su arquitectura debe estar preparada (desacoplada) para soportar conversión de "pollo vivo a eviscerado" si el negocio crece en un futuro.
-11. **Modo Offline en Producción:** Aunque hay señal en planta, todas las vistas críticas de Producción (POS y pesado de pedidos) heredarán el sistema de `offline-queue` de los repartidores. Si Ariana pierde la conexión, el POS y los pesos guardados se encolan y se sincronizan al volver el internet, garantizando fluidez ininterrumpida.
+11. **Modo Offline:** el POS usa `offline-queue` con UUID idempotente (`pos-venta`) y el repartidor encola sus transiciones. El guardado de pesos de Producción todavía usa `fetch` directo; no documentarlo como offline hasta implementar su cola.

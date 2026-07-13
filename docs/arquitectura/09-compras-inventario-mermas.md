@@ -1,7 +1,7 @@
 # 09 — Compras, Inventario y Mermas (Expansión ERP 2026)
 
-> **Última verificación contra código:** 2026-07-05
-> **Commit del proyecto:** `9f29f5a` (los módulos de este documento viven como código local aún sin commit a `main`; operan contra la rama Neon `dev-hugo` — ver [20-migracion-produccion.md](./20-migracion-produccion.md) para el despliegue)
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** Beta en producción desde el 5 jul 2026
 > **Archivos clave:** `src/app/api/compras/route.ts`, `src/lib/inventario.ts`, `src/app/api/inventario/route.ts`, `src/app/api/mermas/route.ts`, `src/app/api/prestamos/saldos/route.ts`, `src/app/api/prestamos/transacciones/route.ts`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-inventario-movimientos.sql`, `scripts/migrate-prestamos.mjs`
 
 Este documento describe el ciclo de abastecimiento de la madrugada (compras a granjas, pesaje bruto/tara, mermas de procesamiento) y la **política de inventario** decidida el 5 jul 2026: qué movimientos tocan el stock, cómo se garantiza la idempotencia frente a la cola offline del repartidor, y por qué la merma es (por ahora) solo informativa.

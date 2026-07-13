@@ -1,7 +1,7 @@
 # 14 — Sistema de Metas e Incentivos Comerciales
 
-> **Última verificación contra código:** 2026-07-05
-> **Commit del proyecto:** `9f29f5a` (+ cambios locales de la expansión ERP)
+> **Última verificación contra código:** 2026-07-12
+> **Estado del proyecto:** `main` + cambios locales pendientes
 > **Archivos clave:** `src/lib/ventas-metricas.ts` (módulo unificado de la métrica), `src/lib/metas.ts`, `src/lib/incentivos.ts`, `src/app/dashboard/mis-metas/mis-metas-client.tsx`
 
 Este documento describe el funcionamiento de los reportes comerciales para las asesoras, los algoritmos de cálculo de metas, rachas de consistencia, metas grupales y el ranking de ventas.
@@ -20,7 +20,7 @@ Ubicado en `/dashboard/mis-metas`, es el panel motivacional de las asesoras. Pre
 > **Definición de Venta para Metas (regla vigente, ratificada por Hugo el 5 jul 2026):** las cifras comerciales de las asesoras (metas individuales, rachas, ranking y meta de equipo) se miden por **PEDIDOS**, no por comprobantes:
 > - **Monto:** `SUM(pedido_items.cantidad × precio_unitario)` de los ítems del pedido.
 > - **Atribución temporal:** la fecha en que la asesora **REGISTRÓ** el pedido (`pedidos.created_at`, zona horaria Lima), no la fecha de entrega ni la de emisión del comprobante.
-> - **Exclusión:** las ventas del POS de planta (`pedidos.origen = 'pos_planta'`) NUNCA suman a metas, rachas ni bonos.
+> - **Exclusión por operación:** las ventas del POS de Planta (`pedidos.origen = 'pos_planta'`) y las ventas de Campo (`ventas_avicola`) NUNCA suman a metas, rachas ni bonos de las asesoras.
 
 La regla tiene **dos variantes** según el horizonte temporal:
 
@@ -33,7 +33,19 @@ El cálculo se está unificando en el módulo **`src/lib/ventas-metricas.ts`** (
 
 ### Historial de la métrica
 
-Hasta junio de 2026 las metas se midieron por **comprobantes electrónicos** mediante la vista SQL `ventas_facturadas` (boletas y facturas aceptadas u observadas por SUNAT, restando las Notas de Crédito del periodo, con atribución `emitido_por` → `pedido.asesor_id`). Esa regla nació cuando el catálogo aún no tenía precios cargados (los pedidos nacían con S/0) y la facturación era el único monto confiable. Con los precios ya cargados en el catálogo, se volvió a medir **lo realmente vendido y entregado por la asesora**: los pedidos reflejan mejor su esfuerzo comercial y no dependen de quién ni cuándo emite el comprobante. La vista `ventas_facturadas` **sigue existiendo** como fuente **histórica y de facturación** (reportes de admin y análisis), pero ya no alimenta los incentivos.
+Hasta junio de 2026 las metas se midieron por **comprobantes electrónicos** mediante la vista SQL `ventas_facturadas` (boletas y facturas aceptadas u observadas por SUNAT, restando las Notas de Crédito del periodo, con atribución `emitido_por` → `pedido.asesor_id`). Esa regla nació cuando el catálogo aún no tenía precios cargados (los pedidos nacían con S/0) y la facturación era el único monto confiable. Con los precios ya cargados en el catálogo, se volvió a medir **lo realmente vendido y entregado por la asesora**: los pedidos reflejan mejor su esfuerzo comercial y no dependen de quién ni cuándo emite el comprobante. La vista `ventas_facturadas` **sigue existiendo** como fuente **histórica y de facturación** (reportes de admin y análisis), pero ya no alimenta los incentivos. Campo y sus NC se excluyen explícitamente de esa vista.
+
+### 2.1 No confundir metas con Ventas Generales
+
+`src/lib/ventas-metricas.ts` y `src/lib/ventas-generales.ts` responden preguntas distintas:
+
+| Helper | Pregunta | Operaciones | Estado principal |
+|---|---|---|---|
+| `ventas-metricas.ts` | ¿Cuánto esfuerzo/venta atribuible hizo cada asesora? | solo Ejecutivas | confirmado `Entregado` o en curso `!= Fallido` según indicador |
+| `ventas-generales.ts` | ¿Cuánto registró el negocio en una fecha? | Ejecutivas + Campo + Planta | pedidos `!= Fallido`; Campo no anulada |
+
+Consolidado y el comparativo Hoy/Ayer usan `ventas-generales.ts`; metas, rachas y ranking usan
+`ventas-metricas.ts`. No intentes hacer coincidir ambas cifras cambiando filtros aislados.
 
 ---
 

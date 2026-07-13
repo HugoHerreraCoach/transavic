@@ -9,7 +9,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { FiDownload, FiLoader, FiShare2, FiX } from "react-icons/fi";
-import type { ClienteAvicolaConSaldo, FichaClienteAvicola } from "@/lib/avicola/types";
+import {
+  ETIQUETA_MEDIO_PAGO,
+  type ClienteAvicolaConSaldo,
+  type FichaClienteAvicola,
+} from "@/lib/avicola/types";
 import { UMBRAL_DEUDA } from "@/lib/avicola/saldos";
 import { construirEstadoCuenta } from "@/lib/avicola/estado-cuenta";
 
@@ -22,6 +26,17 @@ const kg = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 }
 function fechaCorta(fecha: string): string {
   const [y, m, d] = fecha.slice(0, 10).split("-");
   return `${d}/${m}/${y}`;
+}
+
+function horaCorta(createdAt: string): string {
+  const d = new Date(createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T"));
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
 }
 
 function slugNombre(nombre: string): string {
@@ -303,7 +318,7 @@ export default function EstadoCuentaModal({
                       <p className="font-bold text-gray-800">{d.hay_venta ? soles(d.venta_del_dia) : "—"}</p>
                     </div>
                     <div>
-                      <p className="text-gray-400">Abonos</p>
+                      <p className="text-gray-400">Total abonos</p>
                       <p className="font-bold text-green-600">{d.hay_abono ? `− ${soles(d.abonos_del_dia)}` : "—"}</p>
                     </div>
                     <div className="text-right">
@@ -311,6 +326,41 @@ export default function EstadoCuentaModal({
                       <p className="font-bold text-gray-900">{soles(d.saldo_actual)}</p>
                     </div>
                   </div>
+                  {d.abonos.length > 0 && (
+                    <div className="mt-2 rounded-lg border border-green-100 bg-green-50/60 px-3 py-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-green-700">
+                        Abonos separados
+                      </p>
+                      <ul className="mt-1 divide-y divide-green-100">
+                        {d.abonos.map((abono) => (
+                          <li
+                            key={abono.id}
+                            className="grid grid-cols-[1fr_auto] gap-3 py-2 text-xs"
+                          >
+                            <div className="min-w-0 text-gray-700">
+                              <p className="font-semibold">
+                                {horaCorta(abono.created_at)}
+                                {abono.medio_pago
+                                  ? ` · ${ETIQUETA_MEDIO_PAGO[abono.medio_pago]}`
+                                  : ""}
+                              </p>
+                              {abono.observaciones?.trim() && (
+                                <p className="mt-0.5 text-gray-500 break-words">
+                                  {abono.observaciones.trim()}
+                                </p>
+                              )}
+                              <p className="mt-0.5 text-[11px] text-gray-400">
+                                Saldo después del abono: {soles(abono.saldo_posterior)}
+                              </p>
+                            </div>
+                            <p className="font-bold text-green-700 whitespace-nowrap">
+                              − {soles(abono.monto)}
+                            </p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

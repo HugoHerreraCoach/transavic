@@ -78,7 +78,7 @@ export async function GET(request: Request) {
         userId: f.asesor_id,
         tipo: "factura_por_vencer",
         titulo: "📅 Factura vence mañana",
-        mensaje: `${f.cliente_nombre}: S/ ${Number(f.monto).toFixed(2)} vence mañana — coordiná cobranza`,
+        mensaje: `${f.cliente_nombre}: S/ ${Number(f.monto).toFixed(2)} vence mañana — coordina la cobranza`,
         link: "/dashboard/cobranzas",
       });
     }

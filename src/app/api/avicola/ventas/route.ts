@@ -254,6 +254,53 @@ export async function GET(req: NextRequest) {
     const desde = desdeParam ?? hoyRows[0].hoy;
     const hasta = hastaParam ?? hoyRows[0].hoy;
 
+    // Liberar claims huérfanos anteriores a 15 min (función interrumpida antes
+    // de crear la reserva CPE). Un claim activo nunca se toca.
+    await sql`
+      UPDATE ventas_avicola
+      SET facturacion_claim_token = NULL,
+          facturacion_claim_at = NULL
+      WHERE facturacion_claim_token IS NOT NULL
+        AND facturacion_claim_at < NOW() - INTERVAL '15 minutes'
+    `;
+
+    // La reserva pre-SOAP puede quedar `emitiendo` si la función se corta. Tras
+    // 15 min se marca error para que Antonio reintente el MISMO comprobante.
+    await sql`
+      UPDATE comprobantes
+      SET estado = 'error',
+          mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
+      WHERE estado = 'emitiendo'
+        AND venta_avicola_id IS NOT NULL
+        AND created_at < NOW() - INTERVAL '15 minutes'
+    `;
+
+    // Reconciliación de "deuda fantasma": una NC ACEPTADA sobre un CPE de campo (01/03)
+    // implica que la venta está anulada — en V1 TODA NC es TOTAL (schema solo permite
+    // códigos 01/02/06). La anulación normal ocurre al emitir/reintentar la NC, pero si
+    // ese UPDATE falló transitoriamente (timeout/cold-start de Neon) DESPUÉS de que SUNAT
+    // aceptó, la venta quedaría como deuda pendiente indefinida (gotcha #47). Este saneo
+    // lazy idempotente la reconcilia; el guard `NOT anulada` lo hace seguro de re-ejecutar.
+    await sql`
+      UPDATE ventas_avicola v
+      SET anulada = TRUE,
+          anulada_at = NOW(),
+          anulacion_motivo = 'Anulada por Nota de Crédito aceptada (reconciliación automática).'
+      WHERE NOT v.anulada
+        AND EXISTS (
+          SELECT 1
+          FROM comprobantes cpe
+          JOIN comprobantes nc ON nc.referencia_comprobante_id = cpe.id
+          WHERE cpe.venta_avicola_id = v.id
+            AND cpe.tipo IN ('01', '03')
+            AND nc.tipo = '07'
+            AND nc.estado IN ('aceptado', 'observado')
+        )
+    `;
+
+    // Estado de FACTURACIÓN por venta: el CPE más reciente de toda la cadena.
+    // `error` se reintenta sobre la misma fila; `rechazado` habilita una nueva
+    // emisión explícita que lo enlaza como reemplazado y consume otro correlativo.
     const ventas = await sql`
       SELECT
         v.id,
@@ -266,9 +313,29 @@ export async function GET(req: NextRequest) {
         v.anulacion_motivo,
         v.created_at::text AS created_at,
         c.nombre,
-        c.mercado
+        c.mercado,
+        c.empresa,
+        co.id           AS comprobante_id,
+        co.serie_numero AS comprobante_serie_numero,
+        co.tipo         AS comprobante_tipo,
+        co.estado       AS comprobante_estado,
+        co.mensaje_sunat AS comprobante_mensaje_sunat,
+        EXISTS (
+          SELECT 1 FROM comprobantes nc
+          WHERE nc.referencia_comprobante_id = co.id
+            AND nc.tipo = '07'
+            AND nc.estado IN ('aceptado', 'observado')
+        ) AS comprobante_tiene_nc
       FROM ventas_avicola v
       JOIN clientes_avicola c ON c.id = v.cliente_id
+      LEFT JOIN LATERAL (
+        SELECT id, serie_numero, tipo, estado, mensaje_sunat
+        FROM comprobantes cc
+        WHERE cc.venta_avicola_id = v.id
+          AND cc.tipo IN ('01', '03')
+        ORDER BY cc.created_at DESC, cc.id DESC
+        LIMIT 1
+      ) co ON TRUE
       WHERE v.fecha BETWEEN ${desde}::date AND ${hasta}::date
         AND (${clienteId ?? null}::uuid IS NULL OR v.cliente_id = ${clienteId ?? null}::uuid)
         AND (${mercado ?? null}::text IS NULL OR c.mercado = ${mercado ?? null}::text)

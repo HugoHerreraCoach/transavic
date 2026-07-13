@@ -1,7 +1,7 @@
 # 16 — Sistema de Notificaciones e Hilos de Cron
 
-> **Última verificación contra código:** 2026-06-28
-> **Commit del proyecto:** `9f29f5a`
+> **Última verificación contra código:** 2026-07-12
+> **Fuente de horarios:** `vercel.json`
 > **Archivos clave:** `src/lib/notificaciones.ts`, `src/components/NotificationBell.tsx`, `src/app/api/cron/**/route.ts`, `vercel.json`
 
 Este documento describe el motor de mensajería in-app para alertas operativas interconectadas y la ejecución programada de procesos en segundo plano (cron jobs).
@@ -18,7 +18,9 @@ Para mantener comunicadas las 4 áreas sin necesidad de recargar la página:
   - `pedido_por_llegar` / `pedido_llegado` $\rightarrow$ Alerta a la asesora que el motorizado está a 5 min o arribó a la dirección del cliente.
   - `repartidor_oscuro` $\rightarrow$ Alerta al admin de un posible apagado de GPS por parte del repartidor.
   - `factura_vencida` $\rightarrow$ Alerta a la asesora que una cobranza superó su plazo límite.
-  - `recordatorio_meta` $\rightarrow$ Alerta motivacional de retraso de meta diaria.
+  - `factura_por_vencer` $\rightarrow$ Recordatorio anticipado de una cobranza próxima a vencer.
+  - `meta_atrasada` $\rightarrow$ Alerta motivacional cuando el avance mensual va por debajo del ritmo.
+  - `cliente_inactivo` $\rightarrow$ Sugiere reactivar un cliente recurrente sin compras recientes.
 
 ---
 
@@ -30,7 +32,7 @@ Schedules y comportamientos configurados en `vercel.json`:
 
 | Ruta de Endpoint | Frecuencia (UTC) | Hora Lima | Tarea Ejecutada |
 |---|---|---|---|
-| `/api/cron/facturas-vencidas` | `0 13 * * *` | 08:00 | Compara `fecha_vence` contra hoy. Cambia estado a `'Vencida'` e inserta la notificación `factura_vencida` a la asesora de la cobranza. |
+| `/api/cron/facturas-vencidas` | `0 13 * * *` | 08:00 | Compara `fecha_vencimiento` contra hoy. Cambia estado a `'Vencida'`, inserta `factura_vencida` y recuerda con `factura_por_vencer` las que vencen mañana. |
 | `/api/cron/daily-digest-admin` | `30 13 * * *` | 08:30 | Envía un reporte diario consolidado al admin (facturas vencidas, comprobantes con error SUNAT y pedidos sin motorizado). **Además, realiza la purga de notificaciones leídas >30 días** para ahorrar espacio en la base de datos. |
 | `/api/cron/recordatorios-asesoras` | `0 17 * * *` | 12:00 | Analiza el desempeño de cada asesora: si su meta acumulada a la fecha va por debajo del 50%, o si posee clientes con inactividad (sin compras en 14–21 días), dispara alertas de motivación. |
 | `/api/cron/resumen-diario-sunat` | `0 7 * * *` | 02:00 | Agrupa de forma atómica todas las boletas de venta (03) emitidas el día de ayer y transmite el Resumen Diario (RC-) consolidado a SUNAT. |

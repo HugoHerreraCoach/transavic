@@ -1,94 +1,106 @@
 # Documentación de Arquitectura y Negocio — Transavic
 
-> **Última actualización:** 2026-07-05
-> **Commit base:** `9f29f5a` (post-mejoras GPS e inconsistencias corregidas; + expansión ERP 2026 en desarrollo local)
-> **Estado:** Proyecto **EN PRODUCCIÓN** desde el 30 may 2026 — dominio `app.transavic.com` desde el 6 jul 2026 (`transavic.vercel.app` redirige)
+> **Última actualización:** 2026-07-12
+> **Base revisada:** `main` (`2b21926`) + cambios locales pendientes de ventas/facturación
+> **Producción:** `app.transavic.com`; ERP y separación Campo/Planta desplegados, facturación de Campo pendiente del siguiente pase
 
-Esta carpeta contiene la **referencia técnica y de negocio de verdad** del sistema Transavic, estructurada de forma quirúrgica en pequeños documentos granulares para facilitar la contextualización de desarrolladores e inteligencias artificiales (IAs).
+Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos temáticos explican cada módulo; los docs 22–24 conectan los módulos, muestran el impacto de cambios y definen las pruebas de regresión.
 
 ---
 
-## 📚 Índice de Documentos
+## 📚 Índice de documentos
 
 | # | Documento | Cuándo leerlo |
 |---|---|---|
-| 01 | **[01-negocio-avicola.md](./01-negocio-avicola.md)** | Quieres entender la operativa real de Antonio en Lima Metropolitana, las marcas comerciales y las 5 áreas operativas. |
-| 02 | **[02-modelo-datos.md](./02-modelo-datos.md)** | Vas a modificar el esquema físico de Postgres, revisar tipos de datos o consultar el historial de scripts de migración. |
-| 03 | **[03-roles-permisos.md](./03-roles-permisos.md)** | Vas a añadir un rol, modificar los permisos o entender cómo se aplica el scoping a nivel de SQL. |
-| 04 | **[04-maquina-estados.md](./04-maquina-estados.md)** | Vas a tocar los estados del pedido, sus transiciones en el backend o las reglas de reversión de entregas. |
-| 05 | **[05-ventas-clientes.md](./05-ventas-clientes.md)** | Vas a modificar el formulario de preventa, el buscador de clientes recurrentes o la lógica anti-duplicados. |
-| 06 | **[06-produccion-pesaje.md](./06-produccion-pesaje.md)** | Vas a tocar el panel de pesaje físico de producción, la conversión de unidades uni $\rightarrow$ kg o la desagrupación de ítems. |
-| 07 | **[07-despacho-rutas.md](./07-despacho-rutas.md)** | Vas a modificar el tablero Kanban, la optimización de Directions API o el bloqueo y persistencia de rutas. |
-| 08 | **[08-repartidores-gps.md](./08-repartidores-gps.md)** | Vas a tocar la pantalla móvil `/mi-ruta`, Capacitor, la cola offline o la detección de evasión de GPS (repartidores oscuros). |
-| 09 | **[09-compras-inventario-mermas.md](./09-compras-inventario-mermas.md)** | Vas a tocar el registro de compras de la madrugada, la política de inventario y el kardex, los ajustes de stock, las mermas o los préstamos de mercadería. |
-| 10 | **[10-pos-caja-tesoreria.md](./10-pos-caja-tesoreria.md)** | Vas a tocar el POS de planta, la caja diaria (apertura/arqueo/cierre), las cuentas bancarias, transacciones, gastos o cuentas por pagar. |
-| 11 | **[11-comprobantes-sunat.md](./11-comprobantes-sunat.md)** | Vas a modificar la generación de XML UBL 2.1, firmado digital, SOAP fflate, Notas de Crédito, Comunicaciones de Baja o Resumen Diario. |
-| 12 | **[12-guias-remision.md](./12-guias-remision.md)** | Vas a emitir o modificar la transmisión REST 2.0 de Guías de Remisión Electrónicas (GRE Remitente). |
-| 13 | **[13-cobranzas-facturas.md](./13-cobranzas-facturas.md)** | Vas a modificar el flujo de cuentas por cobrar, estados de deuda, aging o la subida de vouchers de pago. |
-| 14 | **[14-metas-incentivos.md](./14-metas-incentivos.md)** | Vas a tocar las metas comerciales individuales, rachas consistentes, ranking o la métrica de ventas por pedidos (`ventas-metricas.ts`). |
-| 15 | **[15-asistente-ia.md](./15-asistente-ia.md)** | Vas a modificar el módulo asistente de Gemini, respaldo de Groq o el caché persistente. |
-| 16 | **[16-notificaciones-cron.md](./16-notificaciones-cron.md)** | Vas a editar los 5 cron jobs automatizados en `vercel.json` o la campanita de notificaciones in-app. |
-| 17 | **[17-analisis-avitech.md](./17-analisis-avitech.md)** | Quieres entender el sistema Avitech que usa Ariana (compras, pesaje, mermas, kardex, caja) y qué se replicó/mejoró en Transavic. |
-| 18 | **[18-plan-implementacion-maestro.md](./18-plan-implementacion-maestro.md)** | Vas a trabajar en la expansión ERP 2026 (compras, POS, caja, CRM, gerencial): fases, reglas de negocio y estado real de la auditoría. |
-| 19 | **[19-arquitectura-modular-transavic.md](./19-arquitectura-modular-transavic.md)** | Vas a agregar módulos nuevos sin romper el core de pedidos: patrón de aislamiento y estrategia de despliegue seguro. |
-| 20 | **[20-migracion-produccion.md](./20-migracion-produccion.md)** | Guía de migración técnica consolidada de las Fases 2 y 3 para su despliegue seguro a producción. |
-| 21 | **[21-clientes-avicola.md](./21-clientes-avicola.md)** | Vas a tocar la venta en campo del Gerente General (clientes de mercados, saldos/abonos, guía por WhatsApp, liquidación del día). |
+| 01 | **[Negocio avícola](./01-negocio-avicola.md)** | Entender marcas, tres operaciones de venta y flujo físico. |
+| 02 | **[Modelo de datos](./02-modelo-datos.md)** | Modificar tablas, columnas, FKs, índices o vistas. |
+| 03 | **[Roles y permisos](./03-roles-permisos.md)** | Cambiar auth, RBAC, guards o scoping SQL. |
+| 04 | **[Máquina de estados](./04-maquina-estados.md)** | Cambiar estados/transiciones del pedido y efectos laterales. |
+| 05 | **[Ventas y clientes de Ejecutivas](./05-ventas-clientes.md)** | Tocar preventa, directorio o duplicados de clientes. |
+| 06 | **[Producción y pesaje](./06-produccion-pesaje.md)** | Cambiar pesos reales, unidades o cola de producción. |
+| 07 | **[Despacho y rutas](./07-despacho-rutas.md)** | Tocar kanban, asignación, Directions o bloqueo de rutas. |
+| 08 | **[Repartidores y GPS](./08-repartidores-gps.md)** | Tocar mi-ruta, offline, Capacitor o GPS obligatorio. |
+| 09 | **[Compras, inventario y mermas](./09-compras-inventario-mermas.md)** | Cambiar abastecimiento, kardex, stock, mermas o préstamos. |
+| 10 | **[POS, caja y tesorería](./10-pos-caja-tesoreria.md)** | Cambiar Venta en Planta, caja, cuentas, gastos o CxP. |
+| 11 | **[Comprobantes SUNAT](./11-comprobantes-sunat.md)** | Tocar XML/firma/SOAP, CPE, claims, NC o reintentos. |
+| 12 | **[Guías de Remisión](./12-guias-remision.md)** | Modificar GRE REST, destino, M1/L o reintento de guía. |
+| 13 | **[Cobranzas por operación](./13-cobranzas-facturas.md)** | Cambiar deuda/pagos/anulación de Ejecutivas, Campo o Planta. |
+| 14 | **[Metas e incentivos](./14-metas-incentivos.md)** | Cambiar metas, rachas, ranking o métrica de asesoras. |
+| 15 | **[Asistente IA](./15-asistente-ia.md)** | Cambiar Gemini/Groq, anonimizado o caché. |
+| 16 | **[Notificaciones y cron](./16-notificaciones-cron.md)** | Cambiar notificaciones o tareas programadas. |
+| 17 | **[Análisis Avitech](./17-analisis-avitech.md)** | Entender el sistema de referencia y decisiones trasladadas. |
+| 18 | **[Plan maestro](./18-plan-implementacion-maestro.md)** | Ver fases, estado real, backlog y decisiones ERP. |
+| 19 | **[Arquitectura modular](./19-arquitectura-modular-transavic.md)** | Agregar módulos sin romper el core. |
+| 20 | **[Migraciones a producción](./20-migracion-produccion.md)** | Aplicar SQL y desplegar en el orden correcto. |
+| 21 | **[Clientes Avícola / Campo](./21-clientes-avicola.md)** | Tocar venta, abonos, guía, CPE o reportes de Campo. |
+| 22 | **[Operaciones, ventas y facturación](./22-operaciones-ventas-facturacion.md)** | Entender cómo se separan y conectan Ejecutivas/Campo/Planta. |
+| 23 | **[Mapa de dependencias e impacto](./23-mapa-dependencias-impacto.md)** | Saber qué módulos revisar cuando cambia una fuente de verdad. |
+| 24 | **[Pruebas y despliegue transversal](./24-pruebas-regresion-despliegue.md)** | Validar concurrencia, CPE, PDF, filtros, roles y migraciones. |
+| 25 | **[Clientes y cobranzas de Planta](./25-clientes-cobranzas-planta.md)** | Tocar directorio, crédito, abonos o relación POS↔CPE de Planta. |
 
 ---
 
-## 🎯 Guía "Si vas a tocar X, lee Y"
+## 🎯 Si vas a tocar X, lee Y
 
-| Área de Trabajo | Documentos a consultar (en orden) |
+| Trabajo | Documentos, en orden |
 |---|---|
-| **Entender el negocio avícola por primera vez** | 01 $\rightarrow$ 04 $\rightarrow$ 02 |
-| **Agregar una columna o tabla nueva** | 02 $\rightarrow$ 05 (conector del backend) |
-| **Tocar el formulario de preventa** | 05 $\rightarrow$ 01 |
-| **Tocar el panel de pesaje y balanza** | 06 $\rightarrow$ 04 (máquina de estados) |
-| **Tocar la asignación de rutas y dnd** | 07 $\rightarrow$ 08 (coordenadas / tracking) |
-| **Tocar la app del motorizado o Capacitor** | 08 $\rightarrow$ 03 (roles de repartidor) |
-| **Tocar boletas, facturas o Notas de Crédito** | 11 $\rightarrow$ 13 (cobranzas) |
-| **Tocar la emisión de Guías de Remisión** | 12 $\rightarrow$ 11 |
-| **Tocar metas o tableros comerciales** | 14 $\rightarrow$ 03 (scoping de asesora) |
-| **Tocar la IA o los reportes Gemini** | 15 $\rightarrow$ 02 (ia_insights_cache) |
-| **Agregar o modificar tareas automáticas** | 16 $\rightarrow$ 03 (auth bypass de cron) |
-| **Tocar compras, inventario/kardex, mermas o préstamos de mercadería** | **09** $\rightarrow$ 18 (reglas de negocio) $\rightarrow$ 02 §5 (esquema) |
-| **Tocar el POS de planta, la caja diaria, cuentas, gastos o cuentas por pagar** | **10** $\rightarrow$ 18 (reglas de negocio) $\rightarrow$ 03 (permisos granulares) |
-| **Tocar el CRM de leads o el chatbot de WhatsApp** | 18 $\rightarrow$ 15 (checklist de seguridad del bot) $\rightarrow$ 02 §5 |
-| **Tocar el consolidado gerencial o rentabilidad** | 18 $\rightarrow$ 14 (métrica de ventas) |
-| **Desplegar los módulos nuevos a producción** | 20 $\rightarrow$ 19 (aislamiento) $\rightarrow$ 02 §5 (tablas faltantes) |
-| **Tocar la venta en campo (Clientes Avícola)** | **21** $\rightarrow$ 01 (operativa del negocio) |
+| Entender el sistema por primera vez | 01 → 22 → 23 → 02 |
+| Agregar columna, tabla, estado o índice | 23 → 02 → documento temático → 20 → 24 |
+| Venta de Ejecutivas | 05 → 04 → 14 → 22 |
+| Venta/abonos/facturación de Campo | 21 → 22 → 11 → 13 → 24 |
+| POS/clientes/cobranzas de Planta | 10 → 25 → 22 → 13 → 24 |
+| Factura, boleta, NC o reintento | 11 → 22 → 13 → 24 |
+| GRE | 12 → 11 → 22 → 24 |
+| Ventas Generales, Consolidado o Hoy/Ayer | 22 → 14 → 18 → 23 |
+| Estado de cuenta/PDF de Campo | 21 → 13 → 24 |
+| Meta, racha o ranking | 14 → 05 → 03 |
+| Compras/inventario/mermas | 09 → 10 → 18 → 23 |
+| Roles, ruta o sidebar | 03 → 23 → documento temático |
+| Desplegar a producción | 20 → 24 → 02 → 19 |
 
 ---
 
-## 🗺️ Mapa de Relaciones
+## 🗺️ Mapa de relaciones documentales
 
 ```mermaid
 graph TD
-    CM[CLAUDE.md] -->|Puntero| README
-    README --> D01[01. Negocio Avícola]
-    README --> D02[02. Modelo Datos]
-    README --> D03[03. Roles y Permisos]
-    README --> D04[04. Máquina Estados]
-    
-    D01 --> D05[05. Ventas y Clientes]
-    D01 --> D06[06. Producción y Pesaje]
-    D01 --> D07[07. Despacho y Rutas]
-    D01 --> D08[08. Repartidores y GPS]
-    D01 --> D09[09. Compras, Inventario y Mermas]
-    D09 --> D10[10. POS, Caja y Tesorería]
-    
-    D05 --> D11[11. Comprobantes SUNAT]
-    D11 --> D12[12. Guías de Remisión]
-    D11 --> D13[13. Cobranzas y Facturas]
-    D05 --> D14[14. Metas e Incentivos]
-    
-    D02 --> D15[15. Asistente IA]
-    D03 --> D16[16. Notificaciones y Cron]
+    R[README] --> N[01 Negocio]
+    R --> D[02 Datos]
+    R --> P[03 Roles]
+    R --> I[23 Impacto]
 
-    README --> D17[17. Análisis Avitech]
-    D17 --> D18[18. Plan Maestro ERP 2026]
-    D18 --> D09
-    D18 --> D10
-    D18 --> D19[19. Arquitectura Modular]
-    D18 --> D20[20. Migración a Producción]
+    N --> E[05 Ejecutivas]
+    N --> C[21 Campo]
+    N --> POS[10 POS/Planta]
+    POS --> CP[25 Clientes/Cobranzas Planta]
+
+    E --> O[22 Tres operaciones]
+    C --> O
+    CP --> O
+
+    O --> S[11 SUNAT/CPE]
+    S --> G[12 GRE]
+    S --> COB[13 Carteras]
+    O --> M[14 Metas]
+    O --> GER[18 Gerencial/Plan]
+
+    I --> D
+    I --> S
+    I --> COB
+    I --> T[24 Pruebas]
+    T --> DEP[20 Migraciones]
 ```
+
+---
+
+## Regla de mantenimiento
+
+Cada cambio debe actualizar:
+
+1. el documento temático;
+2. el mapa 22/23 si cambia una relación transversal;
+3. el modelo 02 y runbook 20 si cambia esquema;
+4. el historial cuando el cambio queda verificado o desplegado;
+5. las pruebas del doc 24 cuando nace un nuevo invariante.
+
+Nunca describas un cambio local como desplegado. Diferencia siempre código, `dev-hugo` y producción.

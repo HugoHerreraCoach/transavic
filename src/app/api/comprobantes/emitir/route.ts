@@ -404,13 +404,14 @@ export async function POST(request: Request) {
       });
     }
 
-    // Regla del negocio (Transavic, jun 2026): TODA venta —factura O boleta,
-    // Contado o Crédito— crea SIEMPRE una cobranza, sin excepción. El "contado"
+    // Regla de EJECUTIVAS (Transavic, jun 2026): toda factura o boleta,
+    // Contado o Crédito, crea su cobranza. El "contado"
     // casi siempre se cobra días después; si el cliente ya pagó, la asesora marca
     // la cobranza como pagada a mano en /cobranzas. (Se quitó el check "¿ya pagó
     // en el acto?" porque confundía y dejaba ventas sin cobranza.) Solo se crea
     // si SUNAT aceptó (o quedó pendiente por falta de cert); si fue rechazado/
-    // erró, no registramos deuda inválida ni duplicamos al reintentar.
+    // erró, no registramos deuda inválida ni duplicamos al reintentar. Campo y
+    // Planta se excluyen porque tienen carteras propias.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
@@ -500,6 +501,25 @@ export async function POST(request: Request) {
         comprobanteId = idRows[0]?.id;
       } catch {
         // si el lookup falla, el ticket igual ofrece "Ver comprobantes"
+      }
+    }
+
+    // El crédito POS ya creó su deuda en `cobranzas_planta` al vender. Una vez
+    // reservado/emitido el CPE, solo enlazamos esa fila existente para que una
+    // NC posterior encuentre la cartera correcta. Contado no tiene cobranza y
+    // el helper no modifica nada. Nunca crear `facturas` para Planta.
+    if (esPos && comprobanteId && emisionOk) {
+      try {
+        const { vincularCobranzaPlantaAComprobante } = await import("@/lib/planta/saldos");
+        await vincularCobranzaPlantaAComprobante(sql, {
+          pedidoId: parsed.data.pedido_id,
+          comprobanteId,
+        });
+      } catch (errCobranzaPlanta) {
+        console.error(
+          "Comprobante POS emitido pero no se pudo enlazar la cobranza de planta:",
+          errCobranzaPlanta
+        );
       }
     }
 
