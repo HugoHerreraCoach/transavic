@@ -8,6 +8,28 @@
 
 ---
 
+## 13 jul 2026 — POS de planta: catálogo "Principales" + panel "Ventas de hoy"
+
+**Contexto (pedido de Ariana):** el catálogo del POS se veía "muy cargado" de carnes de res/cerdo
+que no se venden de madrugada, y tras hacer pruebas "no se veía dónde se acumula el dinero".
+
+**Solución (rama `feat/pos-planta-principales-historial`, sin migraciones — solo lectura):**
+- **Catálogo "Principales":** `pos-client.tsx` abre en una pestaña nueva "Principales" (primera, default)
+  con solo los productos que se venden temprano (pollo entero/brasa, carcasa, espinazo, molleja, patas de
+  pollo, menudencia mixta, alas). Matcher `PRINCIPALES_PATRONES` (nombre, acotado para no traer res/cerdo).
+  El resto queda en las categorías o en la **búsqueda, que ahora manda sobre la categoría** (busca en todo).
+- **Panel "Ventas de hoy":** barra colapsable arriba del POS que consume `GET /api/pos/resumen-dia` (admin+
+  produccion): total del día, **"DÓNDE CAYÓ EL DINERO"** (por cuenta del contado + por cobrar del crédito) y
+  las últimas ventas (hora/cuenta/monto). Se refresca tras cada venta.
+- **Aclaración del dinero:** el contado del POS suma a la cuenta elegida en "Cobrar en" (`cuentas_bancarias`
+  + `transacciones`); el crédito va a `cobranzas_planta`. No estaba "perdido", solo faltaba verlo junto.
+- **Bug cazado en la prueba:** el desglose por cuenta salía 0 (con la venta igual visible en el historial)
+  porque filtraba por `transaccion.created_at`; cerca de medianoche esa fecha caía un día antes que la del
+  pedido. Fix: filtrar por `p.created_at` (la del pedido, autoritativa). Verificado E2E en beta: venta de
+  S/10.40 → panel muestra "Caja Efectivo Planta S/10.40". Gotcha #48; detalle en [doc 10 §1](./arquitectura/10-pos-caja-tesoreria.md).
+
+---
+
 ## 12 jul 2026 — Facturación SUNAT de la Venta en Campo (reutilizando el motor)
 
 **Contexto / pedido de Antonio:** Antonio (dueño/GG) es quien hace la venta en campo

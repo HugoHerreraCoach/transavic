@@ -1,8 +1,8 @@
 // src/app/dashboard/pos-planta/pos-client.tsx
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { FiTrash2, FiShoppingCart, FiWifiOff, FiCheck, FiUser, FiFileText, FiSearch, FiX, FiStar, FiRefreshCw, FiPrinter, FiPlus } from "react-icons/fi";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { FiTrash2, FiShoppingCart, FiWifiOff, FiCheck, FiUser, FiFileText, FiSearch, FiX, FiStar, FiRefreshCw, FiPrinter, FiPlus, FiChevronDown, FiChevronUp, FiTrendingUp } from "react-icons/fi";
 import { enqueueAction, getQueue, removeAction } from "@/lib/offline-queue";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
@@ -39,8 +39,51 @@ type Cliente = {
   razon_social?: string;
 };
 
+// Shape de GET /api/pos/resumen-dia (panel "Ventas de hoy").
+type ResumenPosDia = {
+  fecha: string;
+  total_dia: number;
+  num_ventas: number;
+  contado: {
+    total: number;
+    ventas: number;
+    por_cuenta: Array<{ cuenta: string; tipo?: string; monto: number; ventas: number }>;
+  };
+  credito: { total: number; ventas: number };
+  ventas: Array<{
+    id: string;
+    cliente: string | null;
+    razon_social: string | null;
+    empresa: string;
+    hora: string;
+    total: number;
+    tipo_pago: string;
+    cuenta_nombre: string | null;
+  }>;
+};
+
 const FAVORITOS_KEY = "transavic_pos_favoritos";
 const MAX_FAVORITOS = 8;
+
+// Productos "Principales" del POS: los que se venden de madrugada (pedido de Ariana,
+// 12 jul 2026 — el catálogo se veía "muy cargado" de carnes que no se venden temprano).
+// El POS abre en la pestaña "Principales" (solo estos + favoritos); el resto queda a un
+// toque en las otras categorías o en la búsqueda. Lista FIJA por ahora — ajustar acá si
+// cambia. Matcher por nombre (case-insensitive), acotado para no capturar res/cerdo.
+const PRINCIPALES_PATRONES: RegExp[] = [
+  /pollo entero/i,          // Pollo entero con/sin menudencia
+  /pollo\s*(brasa|blanco)/i, // Pollo Brasa o blanco
+  /^carcasa/i,
+  /espinazo/i,
+  /molleja/i,
+  /patas?\s+de\s+pollo/i,   // Patas de pollo (NO "Pata de res"/"Patas de cerdo")
+  /menudencia\s+mixta/i,    // Menudencia Mixta (NO "Pollo entero CON menudencia")
+  /^alas\b/i,               // Alas (NO "Pechuga con ala")
+];
+function esPrincipalPos(nombre: string): boolean {
+  const n = (nombre || "").trim();
+  return PRINCIPALES_PATRONES.some((re) => re.test(n));
+}
 
 // Ventas de mostrador encoladas en la cola offline compartida (transavic_offline_queue)
 function contarPendientesPos(): number {
@@ -119,7 +162,25 @@ export default function PosClient({
   // En celular el carrito es una hoja deslizable (bottom sheet); en desktop es la
   // columna derecha fija. Este estado solo controla la hoja móvil.
   const [carritoAbierto, setCarritoAbierto] = useState(false);
+  // Resumen "Ventas de hoy" del POS: total + a qué cuenta cayó cada cobro (contado) +
+  // por cobrar (crédito). Responde "¿a dónde va el dinero?" (pedido de Ariana, 12 jul).
+  const [resumenDia, setResumenDia] = useState<ResumenPosDia | null>(null);
+  const [resumenAbierto, setResumenAbierto] = useState(false);
   const { mostrarToast, toasts } = useToast();
+
+  // Carga el resumen del día del POS (no-bloqueante; si falla, el panel queda en 0).
+  const cargarResumen = useCallback(async () => {
+    try {
+      const res = await fetch("/api/pos/resumen-dia");
+      if (!res.ok) return;
+      setResumenDia((await res.json()) as ResumenPosDia);
+    } catch {
+      /* sin conexión / error → el panel mantiene lo último */
+    }
+  }, []);
+  useEffect(() => {
+    cargarResumen();
+  }, [cargarResumen]);
 
   // Recarga el directorio de clientes de planta tras crear uno.
   const recargarClientesPlanta = async () => {
@@ -176,24 +237,36 @@ export default function PosClient({
 
   // Filtros de Catálogo
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategoria, setSelectedCategoria] = useState("Todos");
+  // Abre en "Principales" para que el POS no arranque cargado con todo el catálogo.
+  const [selectedCategoria, setSelectedCategoria] = useState("Principales");
 
-  // Categorías dinámicas a partir de productosInit
+  // Categorías dinámicas a partir de productosInit. "Principales" (sección curada) va
+  // primera, luego "Todos" y las categorías reales del catálogo.
   const categorias = useMemo(() => {
     const cats = new Set<string>();
     productosInit.forEach(p => {
       if (p.categoria) cats.add(p.categoria);
     });
-    return ["Todos", ...Array.from(cats)];
+    return ["Principales", "Todos", ...Array.from(cats)];
   }, [productosInit]);
 
-  // Filtrado reactivo de productos
+  // Filtrado reactivo de productos. Al BUSCAR, el término manda sobre la categoría
+  // (busca en TODO el catálogo) — así "el resto se busca si se necesita" sin salir de
+  // la pestaña Principales.
   const productosFiltrados = useMemo(() => {
+    const term = searchQuery.trim().toLowerCase();
     return productosInit.filter(p => {
-      const matchesSearch = p.nombre.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            p.categoria.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory = selectedCategoria === "Todos" || p.categoria === selectedCategoria;
-      return matchesSearch && matchesCategory;
+      const matchesSearch =
+        p.nombre.toLowerCase().includes(term) ||
+        p.categoria.toLowerCase().includes(term);
+      if (term) return matchesSearch;
+      const matchesCategory =
+        selectedCategoria === "Todos"
+          ? true
+          : selectedCategoria === "Principales"
+            ? esPrincipalPos(p.nombre)
+            : p.categoria === selectedCategoria;
+      return matchesCategory;
     });
   }, [productosInit, searchQuery, selectedCategoria]);
 
@@ -377,6 +450,7 @@ export default function PosClient({
         // emitir el comprobante sin salir del POS (pedido de Antonio, jul 2026).
         const data = await res.json().catch(() => null);
         resetVenta();
+        void cargarResumen(); // refrescar "Ventas de hoy" tras cada venta
         if (data?.pedido_id) {
           setVentaExitosa(data.pedido_id as string);
         } else {
@@ -468,6 +542,90 @@ export default function PosClient({
   return (
     <div className="flex flex-col lg:h-full flex-1 min-h-0">
       <GuiaModulo modulo="pos-planta" />
+
+      {/* Panel "Ventas de hoy": total + a qué cuenta cayó cada cobro (contado) + por
+          cobrar (crédito) + últimas ventas. Responde "¿a dónde va el dinero?". */}
+      {resumenDia && (
+        <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 overflow-hidden flex-shrink-0">
+          <button
+            onClick={() => setResumenAbierto((v) => !v)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-violet-50/70 transition"
+          >
+            <span className="flex items-center gap-2 text-sm font-bold text-violet-800 flex-wrap">
+              <FiTrendingUp className="flex-shrink-0" /> Ventas de hoy
+              <span className="text-lg font-black text-violet-900">S/ {resumenDia.total_dia.toFixed(2)}</span>
+              <span className="text-xs font-medium text-violet-500">
+                · {resumenDia.num_ventas} venta{resumenDia.num_ventas === 1 ? "" : "s"}
+              </span>
+            </span>
+            <span className="flex items-center gap-2 flex-shrink-0">
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); void cargarResumen(); }}
+                className="p-1.5 rounded-lg text-violet-500 hover:bg-violet-100 transition"
+                title="Actualizar"
+              >
+                <FiRefreshCw size={15} />
+              </span>
+              {resumenAbierto ? <FiChevronUp className="text-violet-500" /> : <FiChevronDown className="text-violet-500" />}
+            </span>
+          </button>
+          {resumenAbierto && (
+            <div className="px-4 pb-4 space-y-3">
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500 mb-1">
+                  Dónde cayó el dinero
+                </p>
+                {resumenDia.contado.por_cuenta.length === 0 && resumenDia.credito.total === 0 ? (
+                  <p className="text-xs text-gray-400">Sin cobros registrados hoy.</p>
+                ) : (
+                  <div className="space-y-1">
+                    {resumenDia.contado.por_cuenta.map((c, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700">
+                          {c.cuenta}{" "}
+                          <span className="text-gray-400 text-xs">· {c.ventas} venta{c.ventas === 1 ? "" : "s"}</span>
+                        </span>
+                        <span className="font-bold text-gray-900 tabular-nums">S/ {c.monto.toFixed(2)}</span>
+                      </div>
+                    ))}
+                    {resumenDia.credito.total > 0 && (
+                      <div className="flex items-center justify-between text-sm pt-1 mt-1 border-t border-violet-100">
+                        <span className="text-amber-700">
+                          Por cobrar (crédito){" "}
+                          <span className="text-gray-400 text-xs">· {resumenDia.credito.ventas}</span>
+                        </span>
+                        <span className="font-bold text-amber-700 tabular-nums">S/ {resumenDia.credito.total.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              {resumenDia.ventas.length > 0 && (
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500 mb-1">Últimas ventas</p>
+                  <div className="max-h-44 overflow-y-auto divide-y divide-violet-100 scrollbar-thin">
+                    {resumenDia.ventas.map((v) => (
+                      <div key={v.id} className="flex items-center gap-2 py-1.5 text-xs">
+                        <span className="text-gray-400 tabular-nums w-9 flex-shrink-0">{v.hora}</span>
+                        <span className="flex-1 truncate text-gray-700">
+                          {v.razon_social || v.cliente || "Venta al paso"}
+                        </span>
+                        <span className="text-gray-400 truncate max-w-[90px] text-right">
+                          {v.tipo_pago === "Crédito" ? "Crédito" : v.cuenta_nombre || "Contado"}
+                        </span>
+                        <span className="font-bold text-gray-900 tabular-nums flex-shrink-0">S/ {v.total.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-col lg:flex-row gap-6 lg:flex-1 lg:min-h-0">
       {/* Catálogo Left Panel */}
       <div className="lg:flex-1 bg-white rounded-3xl shadow-sm border border-gray-100 lg:overflow-hidden flex flex-col">
