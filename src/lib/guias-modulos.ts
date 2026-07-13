@@ -63,16 +63,9 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
       { titulo: "Guarda el registro", detalle: "la merma y el rendimiento se calculan solos" },
     ],
   },
-  "pos-planta": {
-    nombre: "Venta Rápida",
-    pasos: [
-      { titulo: "Toca los productos para armar la venta", detalle: "marca con ★ tus más vendidos y quedan arriba" },
-      { titulo: "Ajusta cantidad y precio en el carrito" },
-      { titulo: "Elige Contado (a qué caja entra el dinero) o Crédito (qué cliente queda debiendo)" },
-      { titulo: "Toca Confirmar Cobro", detalle: "descuenta el stock y registra el dinero al instante" },
-    ],
-    nota: "Si se corta el internet, la venta se guarda en el celular y se reintenta sola.",
-  },
+  // "pos-planta": guía retirada el 13 jul 2026 (pedido de Hugo — el POS es lo bastante
+  // simple y se entiende solo). El componente <GuiaModulo modulo="pos-planta"> queda,
+  // pero al no haber entrada renderiza null y el banner desaparece.
   "caja-diaria": {
     nombre: "Caja Diaria",
     pasos: [
