@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
       JOIN productos prod ON pi.producto_id = prod.id
       WHERE p.fecha_pedido >= ${fechaInicio} AND p.fecha_pedido <= ${fechaFin}
         AND p.estado = 'Entregado'
+        AND NOT COALESCE(p.anulada, FALSE)
         AND prod.categoria = 'Pollo'
     `;
     const polloVentasMonto = Number(ventasRows[0].total_monto);

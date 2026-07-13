@@ -88,6 +88,7 @@ const navItems: NavItem[] = [
 
   // ── 🏭 VENTA EN PLANTA (POS) ──
   { href: "/dashboard/pos-planta", label: "Venta Rápida", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isPrimary: true, isBeta: true },
+  { href: "/dashboard/pos-planta/ventas", label: "Ventas de Planta", icon: <FiList className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/clientes-planta", label: "Clientes Planta", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/cobranzas-planta", label: "Cobranzas Planta", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
@@ -163,6 +164,7 @@ const GROUP_BY_HREF: Record<string, string> = {
 
   // 🏭 Venta en Planta (POS: vender + clientes y cobranzas propios)
   "/dashboard/pos-planta": "🏭 Venta en Planta",
+  "/dashboard/pos-planta/ventas": "🏭 Venta en Planta",
   "/dashboard/clientes-planta": "🏭 Venta en Planta",
   "/dashboard/cobranzas-planta": "🏭 Venta en Planta",
 

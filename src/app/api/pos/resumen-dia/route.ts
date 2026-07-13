@@ -48,6 +48,7 @@ export async function GET(request: Request) {
       JOIN cuentas_bancarias c ON c.id = t.cuenta_id
       WHERE t.tipo = 'ingreso'
         AND (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+        AND NOT COALESCE(p.anulada, FALSE)
       GROUP BY c.id, c.nombre, c.tipo
       ORDER BY monto DESC
     `) as Array<{ id: string; nombre: string; tipo: string; monto: number; ventas: number }>;
@@ -82,6 +83,7 @@ export async function GET(request: Request) {
       LEFT JOIN cuentas_bancarias cta ON cta.id = t.cuenta_id
       WHERE p.origen = 'pos_planta'
         AND (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+        AND NOT COALESCE(p.anulada, FALSE)
       ORDER BY p.created_at DESC
       LIMIT 30
     `) as Array<{

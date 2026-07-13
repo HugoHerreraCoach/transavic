@@ -410,7 +410,7 @@ export default function PosClient({
 
   const handleCheckout = async () => {
     if (cart.length === 0) return mostrarToast("El carrito está vacío", "error");
-    if (tipoPago === "Contado" && !selectedCuenta) return mostrarToast("Selecciona una cuenta bancaria/caja", "error");
+    if (tipoPago === "Contado" && !selectedCuenta) return mostrarToast("Elige a qué caja o cuenta entra el dinero", "error");
     if (tipoPago === "Credito" && !selectedClienteId) return mostrarToast("Selecciona un cliente de planta para ventas al crédito", "error");
 
     const payload = {
@@ -927,13 +927,13 @@ export default function PosClient({
             <div className="space-y-1">
               {tipoPago === "Contado" ? (
                 <>
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Cobrar en:</label>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">El dinero entra a:</label>
                   <select
                     value={selectedCuenta}
                     onChange={(e) => setSelectedCuenta(e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 font-semibold bg-white shadow-sm cursor-pointer"
                   >
-                    <option value="" disabled>Seleccione cuenta</option>
+                    <option value="" disabled>Elige la caja o cuenta</option>
                     {cuentas.map(c => (
                       <option key={c.id} value={c.id}>{c.nombre}</option>
                     ))}
@@ -1013,7 +1013,7 @@ export default function PosClient({
           {/* Motivo por el que el botón está deshabilitado (mismas condiciones del disabled) */}
           {!loading && tipoPago === "Contado" && !selectedCuenta && (
             <p className="text-[10px] text-amber-700 font-semibold text-center">
-              Selecciona la cuenta de cobro
+              Elige a qué caja o cuenta entra el dinero
             </p>
           )}
           {!loading && tipoPago === "Credito" && !selectedClienteId && (

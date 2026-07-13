@@ -56,6 +56,7 @@ export async function resumenVentasGeneralesPorFecha(
       ) im ON im.pedido_id = p.id
       WHERE (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
         AND p.estado <> 'Fallido'
+        AND NOT COALESCE(p.anulada, FALSE)
     ` as unknown as Promise<
       Array<{
         ejecutivas_total: number;
