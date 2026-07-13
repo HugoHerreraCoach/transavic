@@ -8,6 +8,58 @@
 
 ---
 
+## 13 jul 2026 — POS de planta: "Ventas de Planta" (ver por día/semana) + ANULAR una venta
+
+**Contexto (pedido de Ariana/Hugo):** el POS no daba visibilidad de las ventas de planta por
+día/ayer/semana ni tenía apartado en el menú, y **no se podía eliminar/editar una venta** (Ariana hizo
+una de prueba de S/8.90 y no la podía borrar). Es dinero + inventario reales en producción → reversión
+atómica, con guardas y revisada adversarialmente antes de desplegar.
+
+**Entregable (commit `9079949`, buildId prod `B8UkaSPdHE8ip5CZeBFLP`):**
+- **Vista `/dashboard/pos-planta/ventas`** (`ventas-planta-client.tsx`, admin+produccion, chip violeta 🏭):
+  lista el POS por **Hoy / Ayer / Esta semana / fecha** vía `GET /api/pos/ventas?desde=&hasta=` (espejo de
+  `GET /api/avicola/ventas`) — hora, cliente, productos, total, a qué caja/cuenta cayó, badge de comprobante
+  y "· ANULADA". Resumen (Vendido/Ventas) excluye anuladas. Entrada nueva en el sidebar bajo 🏭 Venta en Planta.
+- **Anular = eliminar reversando dinero + stock** (`POST /api/pos/ventas/[id]/anular`). **Diseño atómico
+  (endurecido tras revisión adversarial multi-agente):** la reversión es UNA sola `sql.transaction` y el
+  "claim" (`pedidos.anulada=TRUE`) es su PRIMERA sentencia; si el claim se pierde por una carrera (doble-tap)
+  `SELECT 1/(SELECT COUNT(*) FROM claim)` fuerza `division_by_zero` → ROLLBACK total. Así se elimina la
+  ventana "anulada pero sin reversar" que tendría un claim-fuera + release manual (el diseño inicial la tenía;
+  la revisión la señaló como el hallazgo ALTO). Efectos, todos en esa transacción: `inventario_lotes +=
+  cantidad` + movimiento `anulacion_venta_pos`; por cada `ingreso`, `saldo -= monto` + **EGRESO compensatorio**
+  en la MISMA cuenta del ingreso (ingreso+egreso=0, reversa el monto REAL, no un recálculo de ítems);
+  `cobranzas_planta` → `anulada=TRUE, estado='Anulada'`.
+- **Guardas (409):** comprobante SUNAT vivo → "emite una Nota de Crédito"; **la caja de planta de ese día ya
+  cerrada** (arqueada) si el cobro cayó en su cuenta → ajuste manual (no reventar un arqueo); venta a crédito
+  **con abonos** sin anular → gestionar la devolución primero. `Editar` = anular y rehacer en el POS (v1).
+- **Exclusión de anuladas de TODOS los totales:** `resumenVentasGeneralesPorFecha` (Ventas Generales +
+  Consolidado), `resumen-dia` ("Ventas de hoy") y **`rentabilidad`** (filtraba `estado='Entregado'` sin mirar
+  anulada — el reporte quedaba incoherente con los demás; ahora `AND NOT anulada`). Etiqueta de kardex
+  `anulacion_venta_pos` → "Venta Rápida anulada" en Inventario. Lista muestra "Crédito" aun anulada.
+- **Renombre del selector de cobro del POS** (No me hagas pensar): "Cobrar en:" → **"El dinero entra a:"**,
+  placeholder "Elige la caja o cuenta", y mensajes de validación más claros.
+
+**Revisión adversarial (3 agentes):** confirmó que el núcleo era correcto (reversa el monto real del ingreso,
+claim atómico contra doble-tap, inventario espejo, exclusión consistente en agregados) y encontró: atomicidad
+(hallazgo ALTO — resuelto con el claim-en-transacción), guarda de caja cerrada, guarda de abonos, coherencia
+de rentabilidad, `estado='Anulada'` en la cobranza, y la etiqueta de kardex. Todos aplicados. Se omitió solo
+"saldo negativo sin guarda" (aceptable: la reversión contable es correcta; el efectivo se reconcilia por arqueo).
+
+**Verificación:**
+- **Beta (dev-hugo):** venta contado S/5.00 (Espinazo) → cuenta 11.00→16.00, stock 0→−1; anular → cuenta
+  16.00→11.00, stock −1→0, `anulada=TRUE`, transacciones (ingreso+egreso) neto 0, movimientos (venta_pos +
+  anulacion_venta_pos) neto 0. Re-probado con el diseño atómico ya aplicado: idéntico. Ventas Generales y el
+  panel del POS dejan de contarla.
+- **Migración a producción** (`migrate-pos-anular-2026-07-13.sql`, campos `anulada/anulada_at/anulacion_motivo/
+  anulada_por` en `pedidos`, aditiva/idempotente) aplicada por psql a `ep-cool-sound` ANTES del deploy (gotcha
+  #17). `git push` → Vercel deploy OK.
+- **Prod:** la vista carga logueado como Antonio; se **anuló la venta de prueba de S/8.90** (Patas de pollo,
+  Avícola de Tony) desde la UI nueva → Caja Efectivo Planta −543.40→−552.30, stock Patas −7.00→−6.00,
+  `anulada=TRUE` motivo "Venta de prueba", transacciones y movimientos neto 0. Ventas Generales prod pasa a
+  Planta S/0.00 (excluida). Gotcha #49; detalle en [doc 10 §2.4](./arquitectura/10-pos-caja-tesoreria.md).
+
+---
+
 ## 13 jul 2026 — POS de planta: catálogo "Principales" + panel "Ventas de hoy"
 
 **Contexto (pedido de Ariana):** el catálogo del POS se veía "muy cargado" de carnes de res/cerdo

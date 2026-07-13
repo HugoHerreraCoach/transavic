@@ -79,6 +79,21 @@ FROM update_cuenta
 
 Ver [22](./22-operaciones-ventas-facturacion.md) para la comparación de las tres operaciones y [25](./25-clientes-cobranzas-planta.md) para la cartera de Planta.
 
+### 2.4 Ventas de Planta: ver y ANULAR una venta (13 jul 2026)
+
+Pedido de Ariana/Antonio: el POS no daba visibilidad de las ventas ni permitía eliminarlas. Dos piezas:
+
+- **Vista `/dashboard/pos-planta/ventas` (`ventas-planta-client.tsx`, admin+produccion)** — lista las ventas del POS (`GET /api/pos/ventas?desde=&hasta=`, espejo de `GET /api/avicola/ventas`) por **Hoy / Ayer / Esta semana / fecha**, con total, a qué caja/cuenta cayó, estado de comprobante y badge **Anulada**. Chip violeta 🏭. Entrada en el sidebar bajo 🏭 Venta en Planta. Las anuladas se excluyen del resumen (Vendido/Ventas) y siguen visibles como "· ANULADA".
+
+- **Anular = eliminar reversando dinero + stock (`POST /api/pos/ventas/[id]/anular`)** — reversión **ATÓMICA en UNA sola `sql.transaction`**: el "claim" (marcar `pedidos.anulada=TRUE`) es la **primera sentencia de la misma transacción**, y si se pierde por una carrera (doble-tap) `SELECT 1/(SELECT COUNT(*) FROM claim)` fuerza `division_by_zero` → **ROLLBACK total**. No existe la ventana "anulada pero sin reversar" (no hay claim-fuera + release manual). Efectos, todos en esa transacción:
+  - **Inventario:** por ítem, `inventario_lotes += cantidad` + movimiento `anulacion_venta_pos` (+cantidad) → devuelve el stock.
+  - **Contado:** por cada `ingreso` de la venta, `cuentas_bancarias.saldo -= monto` + **EGRESO compensatorio** ("Anulación Venta Rápida - Pedido X") en la MISMA cuenta del ingreso original (ingreso + egreso = 0, sin borrar historia). Reversa el monto REAL del ingreso, no un recálculo de ítems.
+  - **Crédito:** anula la `cobranzas_planta` del pedido (`anulada=TRUE, estado='Anulada'`).
+  - **Guardas (antes de tocar nada):** existe + `origen='pos_planta'` + NO anulada; **sin comprobante SUNAT vivo** (aceptado/observado/pendiente/emitiendo → 409, "emite una Nota de Crédito"); **la caja de planta de ese día NO cerrada** si el cobro cayó en su cuenta (409 `caja_cerrada` → ajuste manual, no reventar un arqueo); y **la cobranza a crédito sin abonos** sin anular (409 `cobranza_con_abonos` → gestionar la devolución primero).
+  - `Editar` en la UI = **anular y rehacer** en el POS (v1; edición en sitio queda para v2 por seguridad del dinero).
+
+Las anuladas se **excluyen de todos los totales**: `resumenVentasGeneralesPorFecha` (Ventas Generales + Consolidado), `resumen-dia` ("Ventas de hoy" del POS) y `rentabilidad` (que filtra por `estado='Entregado'` — ahora también `AND NOT anulada`). Migración: `scripts/migrate-pos-anular-2026-07-13.sql` (campos `anulada/anulada_at/anulacion_motivo/anulada_por` en `pedidos`, aditiva/idempotente, aplicada a prod por psql ANTES del deploy). Endurecido tras revisión adversarial multi-agente; verificado E2E en beta (reversión cuadra: dinero neto 0, stock restaurado, excluida de todos los totales).
+
 ---
 
 ## 3. Caja diaria — `/dashboard/caja-diaria` + `/api/caja-diaria`
