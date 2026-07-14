@@ -1,5 +1,10 @@
 // src/app/api/pos/route.ts
 import { auth } from "@/auth";
+import {
+  redondearMonedaPos,
+  subtotalVentaPos,
+  totalVentaPos,
+} from "@/lib/planta/ventas-pos";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -66,6 +71,21 @@ export async function POST(req: NextRequest) {
     }
     const sql = neon(connectionString);
 
+    // cantidad, precio y subtotal viven en NUMERIC(...,2). Trabajar con la
+    // misma representación desde el servidor evita que el cobro difiera un
+    // céntimo de la suma del detalle por el redondeo de cada fila.
+    const itemsCanonicos = items.map((item) => ({
+      ...item,
+      cantidad: redondearMonedaPos(item.cantidad),
+      precioUnitario: redondearMonedaPos(item.precioUnitario),
+    }));
+    if (itemsCanonicos.some((item) => item.cantidad <= 0)) {
+      return NextResponse.json(
+        { error: "La cantidad mínima que se puede registrar es 0.01." },
+        { status: 400 }
+      );
+    }
+
     // Idempotencia: id del pedido generado por el cliente (o fallback server-side).
     const pedido_id = bodyId ?? crypto.randomUUID();
     const yaExiste = await sql`SELECT id FROM pedidos WHERE id = ${pedido_id}`;
@@ -101,10 +121,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Calcular totales
-    let total_venta = 0;
-    const detallesItems = items.map(i => {
-      const sub = i.cantidad * i.precioUnitario;
-      total_venta += sub;
+    const total_venta = totalVentaPos(itemsCanonicos);
+    const detallesItems = itemsCanonicos.map(i => {
       return `${i.cantidad} ${i.unidad} ${i.nombre}` + (i.notas ? ` (${i.notas})` : '');
     });
     const detalleDerivado = detallesItems.join(", ") + (notas_generales ? ` | NOTAS: ${notas_generales}` : "");
@@ -155,17 +173,22 @@ export async function POST(req: NextRequest) {
         )
       `,
       // 2. Items e inventario (lote flexible, puede quedar negativo)
-      ...items.flatMap((item) => {
-        const subtotal = item.cantidad * item.precioUnitario;
+      ...itemsCanonicos.flatMap((item) => {
+        const subtotal = subtotalVentaPos(item.cantidad, item.precioUnitario);
         return [
           sql`
             INSERT INTO pedido_items (
               pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido,
-              precio_unitario, subtotal, subtotal_real, notas
+              precio_unitario, subtotal, subtotal_real, costo_unitario_snapshot, notas
             )
             VALUES (
               ${pedido_id}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad},
-              ${item.precioUnitario}, ${subtotal}, ${subtotal}, ${item.notas || null}
+              ${item.precioUnitario}, ${subtotal}, ${subtotal},
+              -- Fuente confiable: costo vigente del catálogo leído por el servidor
+              -- DENTRO de esta misma transacción. El cliente nunca envía el costo y
+              -- los cambios futuros de productos.precio_compra no reescriben el snapshot.
+              (SELECT p.precio_compra FROM productos p WHERE p.id = ${item.productoId}::uuid),
+              ${item.notas || null}
             )
           `,
           // Upsert (no UPDATE a secas): si el producto nunca tuvo fila de lote, el

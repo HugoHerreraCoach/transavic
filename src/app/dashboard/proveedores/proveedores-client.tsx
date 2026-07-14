@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FiSearch, FiPlus, FiEdit2, FiTrash2, FiUsers, FiX, FiPhone, FiMapPin, FiFileText } from "react-icons/fi";
+import { FiSearch, FiPlus, FiEdit2, FiTrash2, FiUsers, FiX, FiPhone, FiMapPin, FiFileText, FiDollarSign } from "react-icons/fi";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
+import Link from "next/link";
 
 interface Proveedor {
   id: string;
@@ -216,7 +217,16 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
                 {filtered.map((p) => (
                   <tr key={p.id} className={`hover:bg-gray-50 transition-colors group ${p.activo === false ? "opacity-55" : ""}`}>
                     <td className="p-4 text-gray-900 font-semibold">
-                      {p.razon_social}
+                      {userRole === "admin" ? (
+                        <Link
+                          href={`/dashboard/proveedores/${p.id}`}
+                          className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                        >
+                          {p.razon_social}
+                        </Link>
+                      ) : (
+                        p.razon_social
+                      )}
                       {p.activo === false && (
                         <span className="ml-2 text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">Inactivo</span>
                       )}
@@ -249,6 +259,16 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
                     </td>
                     <td className="p-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {userRole === "admin" && (
+                          <Link
+                            href={`/dashboard/proveedores/${p.id}`}
+                            className="rounded-lg p-2 text-gray-600 transition-colors hover:bg-emerald-50 hover:text-emerald-700"
+                            title="Ver deuda, pagos y estado de cuenta"
+                            aria-label={`Ver ficha financiera de ${p.razon_social}`}
+                          >
+                            <FiDollarSign className="h-4 w-4" />
+                          </Link>
+                        )}
                         <button 
                           onClick={() => handleOpenEdit(p)}
                           className="p-2 text-gray-600 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"

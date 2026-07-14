@@ -1,8 +1,8 @@
 # 09 — Compras, Inventario y Mermas (Expansión ERP 2026)
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** Beta en producción desde el 5 jul 2026
-> **Archivos clave:** `src/app/api/compras/route.ts`, `src/lib/inventario.ts`, `src/app/api/inventario/route.ts`, `src/app/api/mermas/route.ts`, `src/app/api/prestamos/saldos/route.ts`, `src/app/api/prestamos/transacciones/route.ts`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-inventario-movimientos.sql`, `scripts/migrate-prestamos.mjs`
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** core en producción desde el 5 jul; consumo automático de anticipos de proveedor implementado en `codex/cambios-operativos-julio`, aún sin desplegar
+> **Archivos clave:** `src/app/api/compras/route.ts`, `src/lib/proveedores/pagos.ts`, `src/lib/inventario.ts`, `src/app/api/inventario/route.ts`, `src/app/api/mermas/route.ts`, `src/app/api/prestamos/saldos/route.ts`, `src/app/api/prestamos/transacciones/route.ts`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-inventario-movimientos.sql`
 
 Este documento describe el ciclo de abastecimiento de la madrugada (compras a granjas, pesaje bruto/tara, mermas de procesamiento) y la **política de inventario** decidida el 5 jul 2026: qué movimientos tocan el stock, cómo se garantiza la idempotencia frente a la cola offline del repartidor, y por qué la merma es (por ahora) solo informativa.
 
@@ -328,3 +328,11 @@ El `POST` inserta la transacción y hace upsert del saldo (`ON CONFLICT (proveed
 | `/api/prestamos/saldos` | GET | admin+produccion | Saldos netos en especie por proveedor+producto |
 | `/api/prestamos/transacciones` | GET / POST | admin+produccion | Historial / registrar movimiento + upsert de saldo |
 | `/api/cuentas-por-pagar` | GET / POST | admin | Deudas con proveedores y su pago (detalle en doc [10 §6](./10-pos-caja-tesoreria.md)) |
+
+## Adenda 13 jul 2026 — compra, deuda y anticipos
+
+La transacción de compra crea la CxP y, bajo un bloqueo por proveedor, consume
+automáticamente los anticipos disponibles más antiguos. Esto no crea otro egreso:
+solo crea aplicaciones `anticipo_posterior` y actualiza el caché
+`cuentas_por_pagar.monto_pagado`. La fuente canónica del dinero y sus aplicaciones
+está en el [doc 26](./26-proveedores-cuentas-por-pagar.md).

@@ -114,6 +114,16 @@ export async function DELETE(req: Request, props: { params: Promise<{ id: string
        );
     }
 
+    const movimientosFinancieros = await sql`
+      SELECT id FROM cuentas_por_pagar WHERE proveedor_id = ${id} LIMIT 1
+    `;
+    if (movimientosFinancieros.length > 0) {
+      return NextResponse.json(
+        { error: "No se puede eliminar el proveedor porque tiene deudas o pagos registrados. Desactívalo para conservar la trazabilidad." },
+        { status: 409 }
+      );
+    }
+
     const eliminado = await sql`
       DELETE FROM proveedores WHERE id = ${id} RETURNING id
     `;

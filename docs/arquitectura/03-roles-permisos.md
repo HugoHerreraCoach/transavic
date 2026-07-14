@@ -1,7 +1,7 @@
 # 03 — Autenticación, Roles y Scoping
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** base en `main`; ampliaciones del 13 jul en rama, no desplegadas
 > **Archivos clave:** `src/auth.ts`, `src/auth.config.ts`, `src/middleware.ts`, `src/lib/roles.ts`, `src/lib/data.ts`
 
 Este documento describe la arquitectura de seguridad, la gestión de sesiones y la aplicación del control de acceso (scoping) en el sistema Transavic.
@@ -129,3 +129,17 @@ const finalAsesorId =
   session.user.role === "asesor" ? session.user.id : asesorId;
 ```
 Esto anula el valor `asesorId` enviado en el body si el usuario logueado es una asesora, forzando su propia sesión.
+
+## Adenda 13 jul 2026 — permisos de los nuevos flujos
+
+| Capacidad | admin | asesor | produccion | repartidor |
+|---|---:|---:|---:|---:|
+| Ver ficha financiera/PDF de proveedor | Sí | No | No | No |
+| Registrar o anular pago de proveedor | Sí | No | No | No |
+| Ver detalle y costo histórico POS | Sí | No | Sí | No |
+| Reprogramar cualquier fecha / “más tarde” | Sí | Solo pedido propio | No | No |
+| Reprogramar para mañana desde Producción | Sí | No | Sí, estados productivos | No |
+| Recibir popup `pedido_reprogramado` | Sí, fallback | Sí, pedido propio | No | No |
+
+Producción puede seguir viendo el directorio de proveedores y registrar compras, pero
+los saldos, pagos, anticipos y estados de cuenta permanecen bajo rol `admin`.

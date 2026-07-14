@@ -1,8 +1,8 @@
 # 06 — Flujo de Producción y Pesaje
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** core en producción
-> **Archivos clave:** `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/api/produccion/pedidos/route.ts`, `src/lib/parse-detalle-pedido.ts`
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** core en producción; la reprogramación de §5 está implementada en `codex/cambios-operativos-julio`, aún sin desplegar
+> **Archivos clave:** `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/api/produccion/pedidos/route.ts`, `src/app/api/pedidos/[id]/reprogramar/route.ts`, `src/lib/parse-detalle-pedido.ts`
 
 Este documento describe el módulo de producción y pesaje real, la lógica del pesaje en balanza física y el proceso de conversión de unidades y desagrupación de líneas de venta.
 
@@ -48,3 +48,20 @@ Para pedidos que contienen el mismo producto pero preparados de diferente forma 
 - **La solución (`lib/parse-detalle-pedido.ts`):** La lógica de parsing del detalle detecta las descripciones individuales y, si están especificadas por separado, **crea múltiples líneas en `pedido_items` para el mismo `producto_id`**.
 - **Separación visual en Producción:** En `/api/produccion/pedidos/route.ts`, si existen ítems repetidos con el mismo `producto_id`, se desglosan en tarjetas separadas con su respectiva nota aclaratoria (ej. "octavos", "trozado"), permitiendo al operario pesar cada formato de forma aislada.
 - **Transición final:** Al confirmar el peso de todos los ítems, el pedido cambia automáticamente de estado a `Listo_Para_Despacho`.
+
+## 5. Reprogramar para mañana
+
+> **Estado de esta sección:** probado en desarrollo; requiere desplegar la rama para
+> quedar disponible en producción. No necesita migración de esquema.
+
+El modal de pesos ofrece una acción secundaria naranja. Antes de ejecutarla:
+
+1. compara pesos, unidades y precios locales con los guardados;
+2. si hay cambios, exige guardarlos primero;
+3. muestra cliente, fecha de mañana Lima y motivo opcional;
+4. llama `POST /api/pedidos/[id]/reprogramar`.
+
+El servidor limita al rol `produccion` a mañana y a los tres estados productivos.
+Conserva el avance, retira el pedido de la cola de hoy y lo hace aparecer en la cola
+del nuevo día. La ejecutiva responsable recibe una notificación persistente y popup.
+Cambiar esta función obliga a revisar docs 04, 16, 23 y 24.

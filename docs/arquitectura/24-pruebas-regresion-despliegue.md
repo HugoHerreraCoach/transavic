@@ -1,9 +1,14 @@
 # 24 — Pruebas de Regresión y Despliegue de Cambios Transversales
 
-> **Última verificación:** 2026-07-12
-> **Alcance actual:** separación Ejecutivas/Campo/Planta, CPE de Campo, NC/GRE, vistas generales y abonos individuales en PDF.
+> **Última verificación:** 2026-07-13
+> **Alcance actual:** core desplegado y paquete operativo de `codex/cambios-operativos-julio` todavía no desplegado: proveedores, detalle/costo POS, reprogramación y conciliación de Ejecutivas.
 
-Este runbook convierte los invariantes de los docs [11](./11-comprobantes-sunat.md), [13](./13-cobranzas-facturas.md), [21](./21-clientes-avicola.md), [22](./22-operaciones-ventas-facturacion.md) y [23](./23-mapa-dependencias-impacto.md) en verificaciones repetibles.
+Este runbook convierte los invariantes de los docs [11](./11-comprobantes-sunat.md),
+[13](./13-cobranzas-facturas.md), [21](./21-clientes-avicola.md),
+[22](./22-operaciones-ventas-facturacion.md),
+[23](./23-mapa-dependencias-impacto.md),
+[26](./26-proveedores-cuentas-por-pagar.md) y
+[27](./27-conciliacion-ventas-ejecutivas.md) en verificaciones repetibles.
 
 ---
 
@@ -32,6 +37,10 @@ git diff --check
 npm run test:observaciones
 npm run test:estado-cuenta-avicola
 npm run test:operaciones-facturacion
+npm run test:pos-detalle-costos
+npm run test:ventas-ejecutivas
+npm run test:pagos-proveedores
+npm run test:reprogramacion-produccion
 ```
 
 Reglas:
@@ -51,9 +60,9 @@ Aplicar en desarrollo:
 ```bash
 DB_DEV_URL="$(sed -n 's/^DATABASE_URL_UNPOOLED=//p' .env.local | tail -n 1 | sed -e 's/^"//' -e 's/"$//')"
 test -n "$DB_DEV_URL"
-psql "$DB_DEV_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-facturacion-campo-2026-07-12.sql
-psql "$DB_DEV_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-reemision-cpe-campo-rechazado-2026-07-12.sql
-psql "$DB_DEV_URL" -v ON_ERROR_STOP=1 -f scripts/migrate-nc-error-reintento-unico-2026-07-12.sql
+psql "$DB_DEV_URL" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-facturacion-campo-2026-07-12.sql
+psql "$DB_DEV_URL" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-reemision-cpe-campo-rechazado-2026-07-12.sql
+psql "$DB_DEV_URL" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-nc-error-reintento-unico-2026-07-12.sql
 unset DB_DEV_URL
 ```
 
@@ -230,7 +239,7 @@ Prueba la URL directa y la API; no basta con mirar el sidebar.
 
 1. Congelar y revisar el diff.
 2. Respaldar/consultar conteos clave.
-3. Aplicar migraciones por `psql -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md).
+3. Aplicar migraciones por `psql -1 -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md).
 4. Ejecutar consultas de verificación.
 5. Solo entonces activar el deploy del código.
 6. Realizar smoke test de lectura antes de emitir documentos reales.
@@ -239,3 +248,49 @@ Prueba la URL directa y la API; no basta con mirar el sidebar.
 9. Conservar el rollback solo como plan de contingencia evaluado, no automático.
 
 Registra en el historial qué migración se aplicó, a qué rama/base y con qué verificación. No anotes secretos.
+
+## 11. Matriz de regresión del 13 jul 2026
+
+### Proveedores
+
+- tres pagos del mismo día conservan tres IDs/filas y el PDF no los agrupa;
+- S/18,500 contra una guía de S/3,636.81 requiere confirmar el excedente, cubre
+  deudas FIFO y deja el resto como anticipo;
+- una deuda futura consume el anticipo sin crear otro movimiento bancario;
+- retry/doble clic/concurrencia descuenta la cuenta una sola vez;
+- pago de otro proveedor y fecha futura se rechazan;
+- anular crea contraasiento, revierte aplicaciones y reabre las deudas;
+- pantalla, PDF, aplicaciones y `monto_pagado` coinciden al céntimo.
+
+### POS
+
+- detalle de kg y unidades con precio, subtotal, costo snapshot y subtotal de costo;
+- efectivo/Yape/banco/crédito muestran tipo y cuenta originales;
+- costo faltante produce `costo_total=null`, nunca S/0 ni costo actual;
+- cambiar `productos.precio_compra` no altera una venta anterior;
+- `admin`/`produccion` pueden verlo y `asesor` recibe 403.
+
+### Reprogramación
+
+- Producción solo puede mañana y los tres estados productivos;
+- pesos, unidades, precios, ítems y estado se conservan;
+- pedido desaparece de hoy y aparece mañana;
+- cambio, auditoría y notificación son atómicos;
+- doble clic deja una sola auditoría/notificación;
+- popup aparece antes de 30 s, se cierra por sesión y sigue en la campana.
+
+### Ventas de Ejecutivas
+
+- ejecutar los casos del [doc 27 §9](./27-conciliacion-ventas-ejecutivas.md);
+- validar los cortes del 12 y 13 de julio;
+- comparar API, tarjeta, detalle, Consolidado y Rentabilidad;
+- confirmar que Metas/Incentivos no cambiaron.
+
+### QA visual y documental
+
+- renderizar el PDF A4 a PNG con Poppler e inspeccionar todas las páginas;
+- probar interfaces a 320, 640, 768 y 1024 px, teclado, foco y zoom 200%;
+- ejecutar `npx tsc --noEmit`, lint, pruebas existentes y nuevas;
+- ejecutar `npm run test:pagos-proveedores:db` y
+  `npm run test:operaciones-julio:db` contra `.env.local`/`dev-hugo`;
+- comprobar enlaces Markdown y ausencia de estados “pendiente de main” ya obsoletos.

@@ -1,7 +1,7 @@
 # 22 — Operaciones de Venta, Facturación y Vistas Generales
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado:** cambios locales verificados, pendientes de subir a `main`; la migración de facturación de Campo está aplicada solo en `dev-hugo`
+> **Última verificación contra código:** 2026-07-13
+> **Estado:** separación y facturación de Campo en `main`/producción; conciliación de Ejecutivas del doc 27 en rama, aún no desplegada
 > **Archivos clave:** `src/lib/operaciones-venta.ts`, `src/lib/ventas-generales.ts`, `src/lib/sunat/index.ts`, `src/app/api/comprobantes/`, `src/app/api/ventas-generales/route.ts`, `src/components/DashboardLayout.tsx`
 
 Este documento es la vista transversal de las **tres operaciones de venta**. Explica qué datos comparten, qué datos deben permanecer separados, cómo se clasifica un comprobante y qué reportes se afectan al modificar una operación.
@@ -154,9 +154,9 @@ Cuando se agregue una operación nueva, no basta con crear un filtro visual: hay
 
 | Operación | Fecha de venta | Monto | Exclusión |
 |---|---|---|---|
-| Ejecutivas | `(pedidos.created_at AT TIME ZONE 'America/Lima')::date` | `SUM(cantidad * precio_unitario)` | `estado='Fallido'` y `origen='pos_planta'` |
+| Ejecutivas | `(pedidos.created_at AT TIME ZONE 'America/Lima')::date` | `SUM(subtotal_real)` solo si todos los ítems del pedido están valorizados | `estado='Fallido'`, `anulada=true` u origen distinto de `asesor|NULL` |
 | Campo | `ventas_avicola.fecha` | `ventas_avicola.total` | `anulada=true` |
-| Planta | `pedidos.created_at` en Lima | `SUM(cantidad * precio_unitario)` | `estado='Fallido'`; requiere `origen='pos_planta'` |
+| Planta | `pedidos.created_at` en Lima | `SUM(COALESCE(subtotal_real, subtotal, 0))`, preagrupado por pedido | `estado='Fallido'` o `anulada=true`; requiere `origen='pos_planta'` |
 
 Esta métrica responde **cuánto se vendió/registró en el día**. No es lo mismo que:
 
@@ -223,3 +223,19 @@ El catálogo completo de dependencias y el procedimiento para evaluar cambios es
 6. Probar doble clic/doble pestaña en Campo y NC: debe existir un solo correlativo y un solo CPE activo.
 7. Generar un PDF de Campo con varios abonos del mismo día y confirmar que aparecen separados.
 8. En producción, validar primero con un caso real controlado que `precio_kg` incluye IGV.
+
+## 12. Corrección de Ventas Generales (13 jul 2026)
+
+Ejecutivas se clasifica de forma positiva con
+`COALESCE(pedidos.origen,'asesor')='asesor'`; ya no se define como “todo lo que no
+sea Planta”. La venta pertenece al día de `created_at` Lima y solo aporta importe
+cuando todos sus ítems tienen `subtotal_real`. Campo mantiene `ventas_avicola.total`
+y Planta su subtotal definitivo.
+
+Facturas, boletas, NC y cambios de estado no agregan una segunda venta. El detalle
+conciliable nace de la misma consulta que la tarjeta. La definición completa,
+evidencia de 12/13 julio y límite con Incentivos están en el [doc 27](./27-conciliacion-ventas-ejecutivas.md).
+
+El costo histórico de Planta es otra dimensión: se congela en
+`pedido_items.costo_unitario_snapshot`, no cambia el ingreso vendido y no se expone
+a Ejecutivas.

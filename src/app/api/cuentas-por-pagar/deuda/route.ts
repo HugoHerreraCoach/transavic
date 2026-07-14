@@ -7,6 +7,10 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  consultaBloqueoProveedor,
+  consultasAplicarAnticiposADeuda,
+} from "@/lib/proveedores/pagos";
 
 export const dynamic = "force-dynamic";
 
@@ -52,19 +56,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Proveedor no encontrado" }, { status: 404 });
     }
 
-    const filas = await sql`
-      INSERT INTO cuentas_por_pagar (
-        proveedor_id, compra_id, monto_deuda, monto_pagado, estado,
-        fecha_vencimiento, concepto
-      )
-      VALUES (
-        ${proveedor_id}, NULL, ${monto}, 0, 'Pendiente',
-        ${fecha_vencimiento ?? null}::date, ${concepto?.trim() || "Saldo anterior"}
-      )
-      RETURNING id
+    const deudaId = crypto.randomUUID();
+    const hoyRows = await sql`
+      SELECT (NOW() AT TIME ZONE 'America/Lima')::date::text AS hoy
     `;
+    const fechaAplicacion = String(hoyRows[0].hoy);
+    await sql.transaction(
+      [
+        consultaBloqueoProveedor(sql, proveedor_id),
+        sql`
+          INSERT INTO cuentas_por_pagar (
+            id, proveedor_id, compra_id, monto_deuda, monto_pagado, estado,
+            fecha_vencimiento, concepto
+          )
+          VALUES (
+            ${deudaId}, ${proveedor_id}, NULL, ${monto}, 0, 'Pendiente',
+            ${fecha_vencimiento ?? null}::date, ${concepto?.trim() || "Saldo anterior"}
+          )
+        `,
+        ...consultasAplicarAnticiposADeuda(
+          sql,
+          proveedor_id,
+          deudaId,
+          fechaAplicacion
+        ),
+      ],
+      { isolationLevel: "ReadCommitted" }
+    );
 
-    return NextResponse.json({ success: true, id: filas[0].id }, { status: 201 });
+    return NextResponse.json({ success: true, id: deudaId }, { status: 201 });
   } catch (error: unknown) {
     console.error("Error al registrar deuda manual a proveedor:", error);
     return NextResponse.json({ error: "Error de servidor" }, { status: 500 });

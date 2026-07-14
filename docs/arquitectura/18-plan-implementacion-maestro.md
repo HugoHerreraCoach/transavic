@@ -1,6 +1,6 @@
 # 18 — Plan Maestro de Implementación (Sistema Integral Transavic)
 
-> **Fecha original:** 2026-06-28 · **Estado actualizado:** 2026-07-12
+> **Fecha original:** 2026-06-28 · **Estado actualizado:** 2026-07-13
 > **Alcance:** Implementación del paquete "Sistema Completo S/ 12,000" (Excluye integración de balanzas IoT).
 > **Estrategia vigente:** probar en `dev-hugo`, migrar por psql y desplegar por fases; ERP/CRM y separación Campo/Planta ya están en producción.
 
@@ -56,9 +56,14 @@ El enfoque será construir de atrás hacia adelante en la cadena de suministro (
 
 ---
 
-## 📊 Estado real (auditoría 12 jul 2026)
+## 📊 Estado real (auditoría 13 jul 2026)
 
-Las fases se construyeron en paralelo y ya tuvieron dos pases principales a producción: la expansión ERP/CRM del 5 jul y la separación Campo/Planta del 8 jul. Los módulos siguen marcados **Beta** mientras se validan en operación real. Los cambios de facturación de Campo y vistas generales del 12 jul permanecen locales y con esquema aplicado solo en `dev-hugo`; requieren migración previa al próximo deploy.
+Las fases se construyeron en paralelo y ya tuvieron tres pases principales a
+producción: ERP/CRM el 5 jul, separación Campo/Planta el 8 jul y facturación de
+Campo/vistas generales el 12 jul. Los módulos siguen marcados **Beta** mientras se
+validan en operación real. El lote operativo del 13 jul está aislado en
+`codex/cambios-operativos-julio`: sus migraciones ya se probaron en `dev-hugo`, pero
+producción no se ha migrado ni desplegado.
 
 Las métricas se separan en dos fuentes canónicas: metas de asesoras en [14 §2](./14-metas-incentivos.md) y ventas totales de las tres operaciones en [22 §6](./22-operaciones-ventas-facturacion.md).
 
@@ -68,7 +73,7 @@ Las métricas se separan en dos fuentes canónicas: metas de asesoras en [14 §2
 | **F2 — Compras/Mermas** | 🟣 Beta en producción | Compras, proveedores, CxP, préstamos, mermas, inventario flexible y kardex. |
 | **F3 — POS/Caja** | 🟣 Beta en producción | POS, caja, gastos, cuentas/transacciones y cartera propia de Planta. |
 | **F4 — CRM/Bot** | 🟣 Parcial en producción | Kanban/chat/rotación; **WhatsApp saliente sigue MOCK** y faltan credenciales/checklist Meta. |
-| **F5 — Gerencial** | 🟣 Beta + cambios locales | Consolidado/rentabilidad desplegados; Ventas Generales y Campo en los comparativos están pendientes del próximo deploy. |
+| **F5 — Gerencial** | 🟣 Beta en producción + lote 13 jul en rama | Consolidado, Rentabilidad y Ventas Generales de tres canales están desplegados; la conciliación corregida de Ejecutivas espera despliegue. |
 
 ### Optimización operativa (Fase B, 5 jul 2026)
 
@@ -89,7 +94,12 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 - **Guías de pasos removibles:** cada módulo beta muestra un banner colapsable "¿Cómo funciona este módulo?" (componente `src/components/GuiaModulo.tsx`, chip "Beta" incluido; recuerda su estado por módulo en `localStorage`). El contenido de TODAS las guías vive centralizado en **`src/lib/guias-modulos.ts`** (compras, mermas, pos-planta, caja-diaria, inventario, préstamos, proveedores, cuentas-por-pagar, cuentas, rentabilidad, consolidado, crm-leads) — al aprobar un módulo se borra su entrada de ese archivo y la guía desaparece sola, sin tocar la vista.
 - **Despliegue 5 jul:** migraciones ERP/CRM aplicadas por psql y esquema verificado antes del código.
 - **Despliegue 8 jul:** Clientes Avícola, clientes/cobranzas de Planta, caja por operación y proveedores aplicados antes del código.
-- **Siguiente pase:** aplicar las migraciones de facturación/corrección de CPE de Campo antes de desplegar las vistas y APIs del 12 jul. El orden y las verificaciones viven en [20](./20-migracion-produccion.md) y [24](./24-pruebas-regresion-despliegue.md).
+- **Cierre del pase 12 jul:** las migraciones de facturación/corrección de CPE de
+  Campo se aplicaron antes del código y las vistas/API quedaron desplegadas.
+- **Siguiente pase:** con autorización, aplicar primero las dos migraciones del
+  lote 13 jul (Proveedores y costo POS) y luego desplegar la rama. El orden y las
+  verificaciones viven en [20](./20-migracion-produccion.md) y
+  [24](./24-pruebas-regresion-despliegue.md).
 
 ### Backlog priorizado (benchmark de industria, 5 jul 2026)
 
@@ -129,3 +139,16 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 9. **Cuentas y Métodos de Pago:** Todo ingreso de dinero (especialmente en POS) debe asociarse a una "Cuenta" o "Caja" (ej. Efectivo, BCP Antonio, Yape Empresa, Interbank). Debe ser un sistema de tesorería sencillo, permitiendo crear múltiples cuentas bancarias de forma dinámica.
 10. **Proceso de Mermas (Pollo Muerto):** Transavic trabaja actualmente con pollo ya beneficiado (muerto), no vivo. Las mermas se calculan sobre la pérdida de frío (agua/sangre) o el trozado. El sistema debe calcular estas mermas actuales, pero su arquitectura debe estar preparada (desacoplada) para soportar conversión de "pollo vivo a eviscerado" si el negocio crece en un futuro.
 11. **Modo Offline:** el POS usa `offline-queue` con UUID idempotente (`pos-venta`) y el repartidor encola sus transiciones. El guardado de pesos de Producción todavía usa `fetch` directo; no documentarlo como offline hasta implementar su cola.
+
+## Cierre operativo 13 jul 2026
+
+La siguiente ampliación está implementada en rama y debe desplegarse por fases:
+
+1. libro de pagos, aplicaciones, anticipos y PDF de proveedores;
+2. snapshot de costo y detalle completo de las ventas POS;
+3. reprogramación para mañana iniciada por Producción con popup a la ejecutiva;
+4. conciliación de Ventas de Ejecutivas por importe real pesado e idempotencia.
+
+Los puntos 1 y 2 requieren migraciones previas. Los puntos 3 y 4 reutilizan el
+esquema actual. Metas e incentivos quedan deliberadamente fuera hasta aprobación del
+dueño; ver docs 14 y 27.

@@ -1,7 +1,7 @@
 # 02 — Modelo de Datos (Esquema y Relaciones)
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado:** ERP/CRM y separación Campo/Planta en producción; facturación de Campo pendiente de desplegar
+> **Última verificación contra código:** 2026-07-13
+> **Estado:** ERP/CRM, separación Campo/Planta y esquema de facturación de Campo en producción; migraciones de pagos de proveedores y costo POS del 13 jul pendientes de despliegue
 > **Archivos clave:** `src/lib/types.ts`, `scripts/migrate-produccion-2026-05-29.sql`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-clientes-avicola-2026-07-07.sql`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql` y las tres migraciones de Campo/NC del 12 jul listadas en §4
 
 Este documento define la estructura física de la base de datos Neon Postgres del proyecto Transavic.
@@ -35,6 +35,9 @@ erDiagram
     productos ||--o{ inventario_movimientos : "producto_id"
     proveedores ||--o{ compras : "proveedor_id"
     compras ||--o{ compra_items : "compra_id"
+    proveedores ||--o{ pagos_proveedores : "pagos"
+    pagos_proveedores ||--o{ pagos_proveedores_aplicaciones : "aplicaciones"
+    cuentas_por_pagar ||--o{ pagos_proveedores_aplicaciones : "deuda"
     cuentas_bancarias ||--o{ transacciones : "cuenta_id"
 ```
 
@@ -42,9 +45,10 @@ erDiagram
 
 ## 2. Diccionario por dominios
 
-El esquema actual ya no cabe en una lista de 17 tablas. Las migraciones SQL del repositorio declaran
-40 tablas y el core inicial agrega `users`, `clientes`, `pedidos`, `pedido_items`, `productos` y
-`settings`. El inventario debe entenderse por dominio:
+El esquema actual ya no cabe en una lista de 17 tablas. Las migraciones SQL del
+repositorio declaran 42 tablas y el core inicial agrega `users`, `clientes`,
+`pedidos`, `pedido_items`, `productos` y `settings`. El inventario debe entenderse
+por dominio:
 
 | Dominio | Tablas principales |
 |---|---|
@@ -54,7 +58,7 @@ El esquema actual ya no cabe en una lista de 17 tablas. Las migraciones SQL del 
 | Planta | `clientes_planta`, `cobranzas_planta`, `abonos_planta`; la venta sigue en `pedidos` con origen POS |
 | Catálogo/precios | `productos`, `precios_productos`, `precios_audit_log`, `autorizaciones_precio` |
 | SUNAT | `comprobantes`, `comprobantes_guias`, `comprobantes_contador`, `correlativos`, `resumenes_diarios` |
-| Compras/proveedores | `proveedores`, `compras`, `compra_items`, `cuentas_por_pagar` |
+| Compras/proveedores | `proveedores`, `compras`, `compra_items`, `cuentas_por_pagar`, `pagos_proveedores`, `pagos_proveedores_aplicaciones` |
 | Inventario/producción | `inventario_lotes`, `inventario_movimientos`, `mermas_diarias`, `prestamos_saldos`, `prestamos_transacciones` |
 | Tesorería | `caja_diaria`, `cuentas_bancarias`, `transacciones`, `gastos`, `pago_imagenes` |
 | CRM/comunicación | `leads`, `lead_mensajes`, `notificaciones`, `comunicados`, `comunicado_imagenes`, `comunicado_lecturas` |
@@ -348,7 +352,9 @@ CREATE TABLE ia_insights_cache (
 
 ## 4. Historial de Migraciones (`scripts/`)
 
-El esquema se actualiza aplicando manualmente los siguientes scripts mediante **psql**:
+La tabla conserva scripts legacy `.mjs` como referencia histórica. Toda migración
+nueva de desarrollo/producción se entrega como SQL y se aplica con **psql**; los
+`.mjs` no son el procedimiento de despliegue.
 
 | Script | Propósito |
 |---|---|
@@ -373,9 +379,11 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 | `migrate-planta-clientes-cobranzas-2026-07-08.sql` | Crea clientes, cobranzas y abonos propios de Planta. Aplicada a producción el 8 jul. |
 | `migrate-caja-operacion-2026-07-08.sql` | Agrega `caja_diaria.operacion` e índices por operación; la UI actual usa Planta. |
 | `migrate-flexibilizacion-2026-07-10.sql` | Desactivación de usuarios/proveedores/cuentas, fechas y correcciones operativas. |
-| `migrate-facturacion-campo-2026-07-12.sql` | Nexo Campo→CPE, RUC, claims, índices de CPE/NC y exclusión de Campo en `ventas_facturadas`. Solo `dev-hugo` al corte. |
-| `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql` | Agrega `reemplaza_comprobante_id` e índices para corregir un CPE rechazado con otro correlativo sin perder auditoría. Solo `dev-hugo`. |
-| `migrate-nc-error-reintento-unico-2026-07-12.sql` | Mantiene ocupada la unicidad de NC cuando el estado es `error` y ya existe XML firmado; obliga a reintentar la misma fila. Solo `dev-hugo`. |
+| `migrate-facturacion-campo-2026-07-12.sql` | Nexo Campo→CPE, RUC, claims, índices de CPE/NC y exclusión de Campo en `ventas_facturadas`. Aplicada a producción el 12 jul. |
+| `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql` | Agrega `reemplaza_comprobante_id` e índices para corregir un CPE rechazado con otro correlativo sin perder auditoría. Aplicada a producción el 12 jul. |
+| `migrate-nc-error-reintento-unico-2026-07-12.sql` | Mantiene ocupada la unicidad de NC cuando el estado es `error` y ya existe XML firmado; obliga a reintentar la misma fila/correlativo. Aplicada a producción el 12 jul. |
+| `migrate-pagos-proveedores-estado-cuenta-2026-07-13.sql` | Libro de pagos, aplicaciones, anticipos y vínculo contable. Probada en `dev-hugo`; pendiente de producción. |
+| `migrate-pos-costo-snapshot-2026-07-13.sql` | Agrega el costo histórico nullable por ítem POS. Probada en `dev-hugo`; pendiente de producción. |
 
 ---
 
@@ -384,7 +392,7 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 > [!IMPORTANT]
 > La expansión ERP/CRM se migró a producción el 5 jul 2026 y Campo/Planta el 8 jul. Las
 > pantallas siguen marcadas Beta por validación operativa, no porque falte el esquema. Cambios
-> posteriores del 12 jul (facturación de Campo) continúan solo en `dev-hugo`. Toda migración se
+> posteriores del 12 jul (facturación de Campo) se desplegaron ese día. Toda migración se
 > aplica por **psql antes del deploy**; consulta [20](./20-migracion-produccion.md).
 
 ### 5.1 Compras / Proveedores
@@ -450,7 +458,7 @@ El esquema se actualiza aplicando manualmente los siguientes scripts mediante **
 
 Detalles: [21-clientes-avicola.md](./21-clientes-avicola.md), [25-clientes-cobranzas-planta.md](./25-clientes-cobranzas-planta.md) y mapa transversal [22](./22-operaciones-ventas-facturacion.md).
 
-### 5.8 Extensiones de facturación de Campo (pendientes de producción)
+### 5.8 Extensiones de facturación de Campo (en producción desde el 12 jul)
 
 | Tabla | Campo/índice | Propósito |
 |---|---|---|
@@ -466,3 +474,50 @@ Detalles: [21-clientes-avicola.md](./21-clientes-avicola.md), [25-clientes-cobra
 
 La relación de reemplazo se agrega mediante `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql`
 y es deliberadamente distinta de `referencia_comprobante_id` (reservada para NC).
+
+## 6. Ampliación del 13 jul 2026 (probada en `dev-hugo`, pendiente de producción)
+
+```mermaid
+erDiagram
+    proveedores ||--o{ cuentas_por_pagar : "deudas"
+    proveedores ||--o{ pagos_proveedores : "pagos individuales"
+    cuentas_bancarias ||--o{ pagos_proveedores : "cuenta de origen"
+    pagos_proveedores ||--o{ pagos_proveedores_aplicaciones : "distribuye"
+    cuentas_por_pagar ||--o{ pagos_proveedores_aplicaciones : "recibe"
+    pagos_proveedores ||--o{ transacciones : "egreso / contraasiento"
+    pedidos ||--o{ pedido_items : "detalle POS y Ejecutivas"
+```
+
+### `pagos_proveedores`
+
+Una fila por transferencia/entrega de dinero, aunque existan varias el mismo día.
+Contiene proveedor, cuenta, monto, fecha, nota, deuda prioritaria, UUID idempotente,
+usuario y estado `registrado|anulado`. La diferencia entre `monto` y aplicaciones
+activas es el anticipo disponible.
+
+### `pagos_proveedores_aplicaciones`
+
+Tabla puente pago↔deuda con monto, fecha y origen
+`pago|anticipo_posterior|migracion`. FKs compuestas `(id, proveedor_id)` impiden
+aplicar dinero entre proveedores. `UNIQUE(pago_id,deuda_id)` evita duplicar una
+aplicación por reintento.
+
+`transacciones.pago_proveedor_id` enlaza el egreso y su eventual contraasiento. Los
+índices parciales permiten como máximo un `egreso` y un `ingreso` por pago.
+`cuentas_por_pagar.monto_pagado` queda como caché compatible y debe coincidir con la
+suma de aplicaciones cuyos pagos estén registrados.
+
+### `pedido_items.costo_unitario_snapshot`
+
+`NUMERIC(10,2) NULL CHECK (costo_unitario_snapshot >= 0)`. Se copia del costo de
+catálogo al registrar una venta POS. `NULL` significa que no existe evidencia del
+costo histórico; no significa cero.
+
+Migraciones y rollbacks:
+
+- `migrate-pagos-proveedores-estado-cuenta-2026-07-13.sql`;
+- `rollback-pagos-proveedores-estado-cuenta-2026-07-13.sql`;
+- `migrate-pos-costo-snapshot-2026-07-13.sql`;
+- `rollback-pos-costo-snapshot-2026-07-13.sql`.
+
+El detalle de invariantes financieros está en el [doc 26](./26-proveedores-cuentas-por-pagar.md).

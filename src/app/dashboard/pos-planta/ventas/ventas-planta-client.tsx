@@ -10,6 +10,7 @@ import {
   FiArrowLeft,
   FiCalendar,
   FiCheckCircle,
+  FiChevronDown,
   FiChevronLeft,
   FiChevronRight,
   FiEdit2,
@@ -20,7 +21,9 @@ import {
   FiTrash2,
   FiX,
 } from "react-icons/fi";
+import DetalleVentaPos from "@/components/planta/DetalleVentaPos";
 import { OPERACIONES } from "@/lib/operaciones-venta";
+import type { ItemDetalleVentaPos } from "@/lib/planta/ventas-pos";
 
 // ── Fechas (zona Lima SIEMPRE) ──
 function hoyLima(): string {
@@ -58,13 +61,6 @@ function etiquetaFecha(fecha: string, hoy: string): string {
 const fmtSoles = (n: number) =>
   `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-interface ItemVenta {
-  producto_nombre: string;
-  cantidad: number;
-  unidad: string;
-  precio_unitario: number;
-  subtotal: number;
-}
 interface VentaPlanta {
   id: string;
   cliente: string | null;
@@ -77,12 +73,14 @@ interface VentaPlanta {
   anulada: boolean;
   anulacion_motivo: string | null;
   total: number;
+  costo_total: number | null;
+  costo_completo: boolean;
   tipo_pago: string;
   cuenta_nombre: string | null;
   comprobante_serie_numero: string | null;
   comprobante_tipo: string | null;
   comprobante_estado: string | null;
-  items: ItemVenta[];
+  items: ItemDetalleVentaPos[];
 }
 
 type Modo = "dia" | "semana";
@@ -325,11 +323,11 @@ export default function VentasPlantaClient() {
       ) : (
         <div className="space-y-2">
           {ventasVisibles.map((v) => (
-            <div
+            <details
               key={v.id}
-              className={`rounded-xl border bg-white px-3 py-3 sm:px-4 ${v.anulada ? "border-gray-150 opacity-60" : "border-gray-200"}`}
+              className={`group rounded-xl border bg-white ${v.anulada ? "border-gray-200 opacity-60" : "border-gray-200"}`}
             >
-              <div className="flex items-start gap-3">
+              <summary className="flex min-h-14 cursor-pointer list-none items-start gap-3 rounded-xl px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 sm:px-4 [&::-webkit-details-marker]:hidden">
                 <div className="w-12 flex-shrink-0 text-center">
                   <p className="text-[10px] uppercase text-gray-400 font-bold">Hora</p>
                   <p className="font-mono font-bold text-gray-800 text-sm">{v.hora}</p>
@@ -340,10 +338,14 @@ export default function VentasPlantaClient() {
                     {v.anulada && <span className="ml-2 text-xs text-red-500 font-bold">· ANULADA</span>}
                   </p>
                   <p className="text-xs text-gray-500 truncate">
-                    {v.items.map((it) => `${Number(it.cantidad)} ${it.unidad} ${it.producto_nombre}`).join(" · ") || "—"}
+                    {v.items.length === 0
+                      ? "Sin ítems registrados"
+                      : `${v.items.length} ${v.items.length === 1 ? "producto" : "productos"} · Toca para ver peso, precio y costo`}
                   </p>
                   <p className="text-[11px] text-gray-400 mt-0.5">
-                    {v.tipo_pago === "Credito" ? "Crédito" : v.cuenta_nombre || "Contado"}
+                    {v.tipo_pago === "Credito"
+                      ? "Crédito"
+                      : `Contado · ${v.cuenta_nombre || "Cuenta no disponible"}`}
                     {v.anulada && v.anulacion_motivo ? ` · ${v.anulacion_motivo}` : ""}
                   </p>
                 </div>
@@ -355,25 +357,39 @@ export default function VentasPlantaClient() {
                     </span>
                   )}
                 </div>
+                <FiChevronDown
+                  className="mt-1 flex-shrink-0 text-violet-500 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                  aria-hidden="true"
+                />
+              </summary>
+              <div className="border-t border-gray-100 px-3 pb-3 pt-3 sm:px-4">
+                <DetalleVentaPos
+                  items={v.items}
+                  total={v.total}
+                  costoTotal={v.costo_total}
+                  costoCompleto={v.costo_completo}
+                />
+                {!v.anulada && (
+                  <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(true); }}
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                      title="Anula esta venta y te lleva al POS para volver a hacerla"
+                    >
+                      <FiEdit2 size={13} /> Editar (anular y rehacer)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(false); }}
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                    >
+                      <FiTrash2 size={13} /> Anular
+                    </button>
+                  </div>
+                )}
               </div>
-              {!v.anulada && (
-                <div className="flex items-center justify-end gap-2 mt-2 pt-2 border-t border-gray-100">
-                  <button
-                    onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(true); }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition"
-                    title="Anula esta venta y te lleva al POS para volver a hacerla"
-                  >
-                    <FiEdit2 size={13} /> Editar (anular y rehacer)
-                  </button>
-                  <button
-                    onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(false); }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 transition"
-                  >
-                    <FiTrash2 size={13} /> Anular
-                  </button>
-                </div>
-              )}
-            </div>
+            </details>
           ))}
         </div>
       )}

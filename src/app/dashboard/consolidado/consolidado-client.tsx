@@ -41,11 +41,15 @@ type ConsolidadoData = {
   carteraPlanta: number; // cartera de planta (POS)
   carteraCampo: number; // cartera de campo (Clientes Avícola)
   totalPagar: number;
+  saldoFavorProveedores: number;
   transacciones: Transaccion[];
   ventasHoy: {
     total_ventas: number; // total de las tres operaciones (alias de total_todas)
     ventas_pos: number;
     ventas_asesor: number;
+    ventas_asesor_registradas: number;
+    ventas_asesor_valorizadas: number;
+    ventas_asesor_pendientes: number;
     ventas_campo: number;
     total_todas: number; // ejecutivas + planta + campo
   };
@@ -61,7 +65,7 @@ type RentabilidadData = {
   utilidadProyectada: number;
 };
 
-type ComparativoDia = { monto: number; pedidos: number };
+type ComparativoDia = { monto: number; pedidos: number; ejecutivasPorValorizar: number };
 type Comparativo = { hoy: ComparativoDia; ayer: ComparativoDia };
 
 export default function ConsolidadoClient() {
@@ -128,7 +132,7 @@ export default function ConsolidadoClient() {
   // Balance Neto Comercial (Lo que te deben en total - Cuentas por Pagar)
   const balanceNeto = useMemo(() => {
     if (!data) return 0;
-    return carteraTotal - data.totalPagar;
+    return carteraTotal + (data.saldoFavorProveedores || 0) - data.totalPagar;
   }, [data, carteraTotal]);
 
   // Formateador de moneda defensivo
@@ -197,16 +201,21 @@ export default function ConsolidadoClient() {
           
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-gray-50/50 p-4 rounded-2xl border border-gray-100/50">
-              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Venta Total (3 op.)</span>
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Total confirmado (3 op.)</span>
               <span className="text-lg font-black text-gray-800 mt-1 block">
                 {formatSoles(data?.ventasHoy.total_todas || 0)}
               </span>
             </div>
             <div className="bg-blue-50/40 p-4 rounded-2xl border border-blue-100/40">
-              <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">🛵 Ejecutivas</span>
+              <span className="text-[10px] font-bold text-blue-500 uppercase tracking-wider block">🛵 Ejecutivas · confirmado</span>
               <span className="text-lg font-black text-blue-600 mt-1 block">
                 {formatSoles(data?.ventasHoy.ventas_asesor || 0)}
               </span>
+              {(data?.ventasHoy.ventas_asesor_pendientes || 0) > 0 && (
+                <span className="mt-1 block text-[9px] font-semibold text-amber-700">
+                  {data?.ventasHoy.ventas_asesor_pendientes} por pesar
+                </span>
+              )}
             </div>
             <div className="bg-amber-50/40 p-4 rounded-2xl border border-amber-100/40">
               <span className="text-[10px] font-bold text-amber-500 uppercase tracking-wider block">🏪 Campo</span>
@@ -237,9 +246,14 @@ export default function ConsolidadoClient() {
                   <span className="text-lg font-black text-gray-800 mt-1 block">
                     {formatSoles(comparativo.hoy.monto)}
                     <span className="text-xs text-gray-500 font-semibold ml-2">
-                      {comparativo.hoy.pedidos} {comparativo.hoy.pedidos === 1 ? "pedido" : "pedidos"}
+                      {comparativo.hoy.pedidos} {comparativo.hoy.pedidos === 1 ? "operación" : "operaciones"}
                     </span>
                   </span>
+                  {comparativo.hoy.ejecutivasPorValorizar > 0 && (
+                    <span className="mt-1 block text-[10px] font-semibold text-amber-700">
+                      {comparativo.hoy.ejecutivasPorValorizar} de Ejecutivas por pesar
+                    </span>
+                  )}
                 </div>
                 <div className="text-right">
                   {deltaPct === null ? (
@@ -257,7 +271,7 @@ export default function ConsolidadoClient() {
                   )}
                   <span className="text-[10px] text-gray-400 block mt-1.5">
                     Ayer: {formatSoles(comparativo.ayer.monto)} ({comparativo.ayer.pedidos}{" "}
-                    {comparativo.ayer.pedidos === 1 ? "pedido" : "pedidos"})
+                    {comparativo.ayer.pedidos === 1 ? "operación" : "operaciones"})
                   </span>
                 </div>
               </div>
@@ -265,7 +279,7 @@ export default function ConsolidadoClient() {
           })()}
 
           <div className="text-[10px] text-gray-400 leading-relaxed bg-gray-50 p-3.5 rounded-xl border border-gray-100/50">
-            * Venta del día = registro realizado hoy en Lima. Ejecutivas excluye pedidos fallidos; Campo excluye ventas anuladas. Es la misma cifra de <strong>Ventas Generales</strong>.
+            * Venta del día = registro realizado hoy en Lima. En Ejecutivas solo se suma el monto cuando Producción terminó de valorizar todos los ítems; los pedidos por pesar permanecen visibles, pero no inflan el total. Es la misma cifra de <strong>Ventas Generales</strong>.
           </div>
         </div>
 
@@ -345,8 +359,16 @@ export default function ConsolidadoClient() {
                 <span className="text-lg font-black text-red-600 mt-1 block">
                   {formatSoles(data?.totalPagar || 0)}
                 </span>
+                {(data?.saldoFavorProveedores || 0) > 0 && (
+                  <div className="mt-2 flex items-center justify-between rounded-lg bg-emerald-50 px-2 py-1 text-[10px]">
+                    <span className="font-semibold text-emerald-700">Anticipos a favor</span>
+                    <span className="font-black text-emerald-700">
+                      {formatSoles(data?.saldoFavorProveedores || 0)}
+                    </span>
+                  </div>
+                )}
               </div>
-              <span className="text-[9px] text-gray-400 mt-3 block">Deudas por compras pendientes</span>
+              <span className="text-[9px] text-gray-400 mt-3 block">Deuda y anticipos se calculan por proveedor, sin compensar proveedores distintos</span>
             </div>
 
             <div className={`p-4 rounded-2xl flex flex-col justify-between border ${

@@ -7,6 +7,9 @@ import { enqueueAction, getQueue, removeAction } from "@/lib/offline-queue";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
+import DetalleVentaPos from "@/components/planta/DetalleVentaPos";
+import type { ItemDetalleVentaPos } from "@/lib/planta/ventas-pos";
+import { totalVentaPos } from "@/lib/planta/ventas-pos";
 
 type Producto = {
   id: string;
@@ -59,6 +62,9 @@ type ResumenPosDia = {
     total: number;
     tipo_pago: string;
     cuenta_nombre: string | null;
+    costo_total: number | null;
+    costo_completo: boolean;
+    items: ItemDetalleVentaPos[];
   }>;
 };
 
@@ -383,7 +389,7 @@ export default function PosClient({
     setCart(cart.map(i => i.cartId === cartId ? { ...i, precioUnitario: Number(val) } : i));
   };
 
-  const total = cart.reduce((acc, item) => acc + (item.cantidad * item.precioUnitario), 0);
+  const total = totalVentaPos(cart);
 
   // Tras cada venta se vuelve al caso normal: Venta al Paso + Contado (decisión
   // de Hugo, 5 jul 2026 — evita anotarle por descuido la venta al cliente anterior).
@@ -547,35 +553,43 @@ export default function PosClient({
           cobrar (crédito) + últimas ventas. Responde "¿a dónde va el dinero?". */}
       {resumenDia && (
         <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50/40 overflow-hidden flex-shrink-0">
-          <button
-            onClick={() => setResumenAbierto((v) => !v)}
-            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-violet-50/70 transition"
-          >
-            <span className="flex items-center gap-2 text-sm font-bold text-violet-800 flex-wrap">
-              <FiTrendingUp className="flex-shrink-0" /> Ventas de hoy
-              <span className="text-lg font-black text-violet-900">S/ {resumenDia.total_dia.toFixed(2)}</span>
-              <span className="text-xs font-medium text-violet-500">
-                · {resumenDia.num_ventas} venta{resumenDia.num_ventas === 1 ? "" : "s"}
+          <div className="flex items-stretch">
+            <button
+              type="button"
+              onClick={() => setResumenAbierto((v) => !v)}
+              className="flex min-h-12 flex-1 items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-violet-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
+              aria-expanded={resumenAbierto}
+              aria-controls="resumen-pos-dia-contenido"
+            >
+              <span className="flex items-center gap-2 text-sm font-bold text-violet-800 flex-wrap">
+                <FiTrendingUp className="flex-shrink-0" /> Ventas de hoy
+                <span className="text-lg font-black text-violet-900">S/ {resumenDia.total_dia.toFixed(2)}</span>
+                <span className="text-xs font-medium text-violet-500">
+                  · {resumenDia.num_ventas} venta{resumenDia.num_ventas === 1 ? "" : "s"}
+                </span>
               </span>
-            </span>
-            <span className="flex items-center gap-2 flex-shrink-0">
-              <span
-                role="button"
-                tabIndex={0}
-                onClick={(e) => { e.stopPropagation(); void cargarResumen(); }}
-                className="p-1.5 rounded-lg text-violet-500 hover:bg-violet-100 transition"
-                title="Actualizar"
-              >
-                <FiRefreshCw size={15} />
+              <span className="flex-shrink-0" aria-hidden="true">
+                {resumenAbierto ? <FiChevronUp className="text-violet-500" /> : <FiChevronDown className="text-violet-500" />}
               </span>
-              {resumenAbierto ? <FiChevronUp className="text-violet-500" /> : <FiChevronDown className="text-violet-500" />}
-            </span>
-          </button>
+            </button>
+            <button
+              type="button"
+              onClick={() => void cargarResumen()}
+              className="m-1.5 flex min-h-11 min-w-11 items-center justify-center rounded-xl text-violet-600 transition hover:bg-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+              aria-label="Actualizar ventas de hoy"
+              title="Actualizar"
+            >
+              <FiRefreshCw size={16} />
+            </button>
+          </div>
           {resumenAbierto && (
-            <div className="px-4 pb-4 space-y-3">
+            <div id="resumen-pos-dia-contenido" className="px-4 pb-4 space-y-3">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500 mb-1">
                   Dónde cayó el dinero
+                </p>
+                <p className="text-[11px] leading-snug text-gray-400 mb-1.5">
+                  El monto de arriba es la venta total del día. Aquí ves dónde está: lo cobrado en cada cuenta y lo que queda por cobrar.
                 </p>
                 {resumenDia.contado.por_cuenta.length === 0 && resumenDia.credito.total === 0 ? (
                   <p className="text-xs text-gray-400">Sin cobros registrados hoy.</p>
@@ -605,18 +619,33 @@ export default function PosClient({
               {resumenDia.ventas.length > 0 && (
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-wide text-violet-500 mb-1">Últimas ventas</p>
-                  <div className="max-h-44 overflow-y-auto divide-y divide-violet-100 scrollbar-thin">
+                  <div className="max-h-80 overflow-y-auto divide-y divide-violet-100 scrollbar-thin">
                     {resumenDia.ventas.map((v) => (
-                      <div key={v.id} className="flex items-center gap-2 py-1.5 text-xs">
-                        <span className="text-gray-400 tabular-nums w-9 flex-shrink-0">{v.hora}</span>
-                        <span className="flex-1 truncate text-gray-700">
-                          {v.razon_social || v.cliente || "Venta al paso"}
-                        </span>
-                        <span className="text-gray-400 truncate max-w-[90px] text-right">
-                          {v.tipo_pago === "Crédito" ? "Crédito" : v.cuenta_nombre || "Contado"}
-                        </span>
-                        <span className="font-bold text-gray-900 tabular-nums flex-shrink-0">S/ {v.total.toFixed(2)}</span>
-                      </div>
+                      <details key={v.id} className="group py-0.5">
+                        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg px-1 py-1.5 text-xs transition hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 [&::-webkit-details-marker]:hidden">
+                          <span className="text-gray-400 tabular-nums w-9 flex-shrink-0">{v.hora}</span>
+                          <span className="flex-1 min-w-0">
+                            <span className="block truncate font-semibold text-gray-800">
+                              {v.razon_social || v.cliente || "Venta al paso"}
+                            </span>
+                            <span className="block truncate text-[11px] text-gray-500">
+                              {v.tipo_pago === "Credito"
+                                ? "Crédito"
+                                : `Contado · ${v.cuenta_nombre || "Cuenta no disponible"}`}
+                            </span>
+                          </span>
+                          <span className="font-bold text-gray-900 tabular-nums flex-shrink-0">S/ {v.total.toFixed(2)}</span>
+                          <FiChevronDown className="flex-shrink-0 text-violet-500 transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
+                        </summary>
+                        <div className="pb-3 pl-1 pt-2 sm:pl-10">
+                          <DetalleVentaPos
+                            items={v.items}
+                            total={v.total}
+                            costoTotal={v.costo_total}
+                            costoCompleto={v.costo_completo}
+                          />
+                        </div>
+                      </details>
                     ))}
                   </div>
                 </div>

@@ -49,6 +49,9 @@ type CuentaBancaria = {
   saldo: number;
 };
 
+const fechaHoyLima = () =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+
 export default function CuentasPorPagarClient() {
   const [deudas, setDeudas] = useState<Deuda[]>([]);
   const [cuentas, setCuentas] = useState<CuentaBancaria[]>([]);
@@ -62,10 +65,12 @@ export default function CuentasPorPagarClient() {
   const [selectedDeuda, setSelectedDeuda] = useState<Deuda | null>(null);
   const [montoPago, setMontoPago] = useState("");
   const [cuentaBancariaId, setCuentaBancariaId] = useState("");
-  const [fechaPago, setFechaPago] = useState(() => new Date().toISOString().split("T")[0]);
+  const [fechaPago, setFechaPago] = useState(fechaHoyLima);
   const [notas, setNotas] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [errorPago, setErrorPago] = useState<string | null>(null);
+  // UUID estable mientras el modal esta abierto: doble clic/reintento no duplica.
+  const [pagoId, setPagoId] = useState("");
 
   // Alertas
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -141,7 +146,7 @@ export default function CuentasPorPagarClient() {
     let pendiente = 0;
     let vencida = 0;
     let pagado = 0;
-    const hoyStr = new Date().toISOString().split("T")[0];
+    const hoyStr = fechaHoyLima();
 
     deudas.forEach(d => {
       const saldoRestante = d.monto_deuda - d.monto_pagado;
@@ -166,7 +171,7 @@ export default function CuentasPorPagarClient() {
       else if (filtroEstado === "parcial") matchEst = d.estado === "Parcial";
       else if (filtroEstado === "pagado") matchEst = d.estado === "Pagado";
       else if (filtroEstado === "vencido") {
-        const hoyStr = new Date().toISOString().split("T")[0];
+        const hoyStr = fechaHoyLima();
         matchEst = d.estado !== "Pagado" && d.fecha_vencimiento < hoyStr;
       }
       return matchProv && matchEst;
@@ -179,7 +184,8 @@ export default function CuentasPorPagarClient() {
     setMontoPago(restante.toFixed(2));
     setNotas("");
     setErrorPago(null);
-    setFechaPago(new Date().toISOString().split("T")[0]);
+    setPagoId(crypto.randomUUID());
+    setFechaPago(fechaHoyLima());
     if (cuentas.length > 0) {
       setCuentaBancariaId(cuentas[0].id);
     }
@@ -195,14 +201,8 @@ export default function CuentasPorPagarClient() {
     if (!selectedDeuda) return;
 
     const montoVal = Number(montoPago);
-    const restante = selectedDeuda.monto_deuda - selectedDeuda.monto_pagado;
-
     if (isNaN(montoVal) || montoVal <= 0) {
       alert("El monto de pago debe ser positivo.");
-      return;
-    }
-    if (montoVal > restante + 0.01) {
-      alert("El monto a pagar excede el saldo pendiente.");
       return;
     }
     // NO se bloquea por saldo de la cuenta: las cuentas del banco figuran en ~0 en el
@@ -216,20 +216,38 @@ export default function CuentasPorPagarClient() {
     setErrorPago(null);
 
     try {
-      const res = await fetch("/api/cuentas-por-pagar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cuentaPagarId: selectedDeuda.id,
-          cuentaBancariaId,
-          montoPago: montoVal,
-          fechaPago,
-          notas: notas || null
-        })
-      });
+      const enviar = async (confirmarAnticipo: boolean) => {
+        const res = await fetch("/api/cuentas-por-pagar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: pagoId,
+            cuentaPagarId: selectedDeuda.id,
+            cuentaBancariaId,
+            montoPago: montoVal,
+            fechaPago,
+            notas: notas || null,
+            confirmarAnticipo,
+          }),
+        });
+        const data = await res.json();
+        if (
+          res.status === 409 &&
+          data.codigo === "ANTICIPO_REQUIERE_CONFIRMACION" &&
+          !confirmarAnticipo
+        ) {
+          const acepta = window.confirm(
+            `${data.error}\n\nEl saldo a favor se aplicará automáticamente a futuras deudas de este proveedor. ¿Continuar?`
+          );
+          if (!acepta) return null;
+          return enviar(true);
+        }
+        if (!res.ok) throw new Error(data.error || "Error al procesar pago");
+        return data;
+      };
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Error al procesar pago");
+      const data = await enviar(false);
+      if (!data) return;
 
       setSuccessMsg("¡Pago registrado exitosamente!");
       handleClosePago();
@@ -344,7 +362,7 @@ export default function CuentasPorPagarClient() {
   };
 
   // Hoy en zona Lima (YYYY-MM-DD) — consistente con el KPI "Deuda Vencida" del server.
-  const hoyLima = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+  const hoyLima = fechaHoyLima();
 
   // Días enteros entre hoy (Lima) y la fecha de vencimiento (>0 faltan, 0 hoy, <0 vencida).
   const diasHastaVencimiento = (fechaVenc: string) => {
@@ -531,7 +549,12 @@ export default function CuentasPorPagarClient() {
                   return (
                     <tr key={d.id} className="hover:bg-gray-50/50 transition-colors">
                       <td className="py-4 px-6 font-medium text-gray-900">
-                        <div>{d.proveedor_nombre}</div>
+                        <Link
+                          href={`/dashboard/proveedores/${d.proveedor_id}`}
+                          className="text-indigo-700 hover:text-indigo-900 hover:underline"
+                        >
+                          {d.proveedor_nombre}
+                        </Link>
                         <div className="text-[10px] text-gray-400 font-mono mt-0.5">{d.proveedor_ruc}</div>
                       </td>
                       <td className="py-4 px-4 text-gray-600">
@@ -633,13 +656,14 @@ export default function CuentasPorPagarClient() {
       {/* Modal Registrar Pago */}
       {selectedDeuda && (
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div role="dialog" aria-modal="true" aria-labelledby="titulo-pago-cxp" className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <h2 id="titulo-pago-cxp" className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <FiDollarSign className="text-emerald-500" /> Registrar Pago de Deuda
               </h2>
               <button 
                 onClick={handleClosePago} 
+                aria-label="Cerrar registro de pago"
                 className="text-gray-400 hover:text-gray-600 p-2 cursor-pointer rounded-lg hover:bg-gray-100 transition-all"
               >
                 <FiX size={18} />
@@ -721,6 +745,7 @@ export default function CuentasPorPagarClient() {
                 <input
                   type="date"
                   required
+                  max={fechaHoyLima()}
                   value={fechaPago}
                   onChange={e => setFechaPago(e.target.value)}
                   className="block w-full rounded-xl border border-gray-300 py-2.5 px-3 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50 font-medium"

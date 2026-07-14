@@ -4,6 +4,10 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
 import { esLineaSinPeso } from "@/lib/compras-lineas";
+import {
+  consultaBloqueoProveedor,
+  consultasAplicarAnticiposADeuda,
+} from "@/lib/proveedores/pagos";
 
 export const dynamic = "force-dynamic";
 
@@ -175,7 +179,10 @@ export async function POST(req: Request) {
     // del driver HTTP de Neon no permite encadenar el RETURNING de una query
     // en las siguientes.
     const compraId = crypto.randomUUID();
+    const deudaId = crypto.randomUUID();
     await sql.transaction([
+      // Serializa compra/deuda con pagos y anulaciones del mismo proveedor.
+      consultaBloqueoProveedor(sql, proveedor_id),
       sql`
         INSERT INTO compras (id, proveedor_id, fecha, tipo_doc, nro_doc, subtotal, igv, total, created_by, estado)
         VALUES (${compraId}, ${proveedor_id}, ${fecha}::date, ${tipo_doc}, ${nro_doc}, ${subtotalTotal}, ${igvTotal}, ${totalAcumulado}, ${session.user.id}, 'Completado')
@@ -219,9 +226,10 @@ export async function POST(req: Request) {
       ...(totalAcumulado > 0
         ? [
             sql`
-              INSERT INTO cuentas_por_pagar (proveedor_id, compra_id, monto_deuda, monto_pagado, estado, fecha_vencimiento)
-              VALUES (${proveedor_id}, ${compraId}, ${totalAcumulado}, 0, 'Pendiente', ${fechaVencimientoStr}::date)
+              INSERT INTO cuentas_por_pagar (id, proveedor_id, compra_id, monto_deuda, monto_pagado, estado, fecha_vencimiento)
+              VALUES (${deudaId}, ${proveedor_id}, ${compraId}, ${totalAcumulado}, 0, 'Pendiente', ${fechaVencimientoStr}::date)
             `,
+            ...consultasAplicarAnticiposADeuda(sql, proveedor_id, deudaId, fecha),
           ]
         : []),
     ]);

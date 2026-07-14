@@ -1,6 +1,6 @@
 # 19 — Arquitectura Modular y Despliegue Seguro
 
-> **Fecha original:** 2026-06-28 · **Revisión:** 2026-07-12
+> **Fecha original:** 2026-06-28 · **Revisión:** 2026-07-13 · **Estado:** reglas actualizadas para la rama `codex/cambios-operativos-julio`, aún no desplegada
 > **Propósito:** Mantener aislados los módulos ERP ya desplegados y los cambios nuevos sin romper el sistema de pedidos ni las tres operaciones de venta.
 
 ## 1. Principio de Aislamiento (Isolation)
@@ -19,7 +19,10 @@ El código actual de Transavic está fuertemente acoplado en `/api/pedidos` y `/
 Para garantizar que "nada se rompa", seguiremos este flujo:
 1. **Rama en BD (Neon):** Usaremos `dev-hugo` en Neon, que es una base de datos aislada con el mismo esquema que producción. El archivo `.env.local` apunta ahí.
 2. **Desarrollo en Localhost:** Se construyen y prueban todas las pantallas localmente.
-3. **Migraciones Diferidas:** Cuando un bloque está listo, el script `.mjs` de la base de datos se ejecutará primero en producción, y *después* se subirá el código a Vercel. Al ser aditivas (nuevas tablas, no alteran las existentes), no rompen la app en vivo.
+3. **Migraciones SQL antes del código:** cada cambio nuevo entrega
+   `migrate-<feature>.sql` y rollback, se prueba por `psql` en `dev-hugo` y, con
+   autorización, se aplica primero en producción. Solo después se despliega el
+   código que consume el esquema. No se usan `.mjs` nuevos para migrar producción.
 
 ## 3. Modularidad Fase por Fase (Qué hacer primero y por qué)
 
@@ -47,3 +50,11 @@ Para garantizar que "nada se rompa", seguiremos este flujo:
 
 ### 🟣 Paso 5: Dashboard Gerencial
 - **Por qué último:** Requiere que todas las demás áreas (Compras, Caja, Ventas) estén generando datos para poder consolidarlos y calcular la utilidad real.
+
+## 4. Regla vigente de migraciones (revisión 13 jul 2026)
+
+Las referencias antiguas de este documento a ejecutar migraciones `.mjs` se
+consideran históricas. Todo esquema nuevo se entrega como par SQL
+`migrate-<feature>.sql` / `rollback-<feature>.sql`, se prueba en `dev-hugo` y se
+aplica con `psql -1 -v ON_ERROR_STOP=1` antes del código. Node 26 y el driver HTTP de
+Neon no son el camino de migración de producción. Ver [doc 20](./20-migracion-produccion.md).

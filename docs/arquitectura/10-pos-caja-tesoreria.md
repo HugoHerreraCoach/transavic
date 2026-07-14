@@ -1,7 +1,7 @@
 # 10 — POS de Planta, Caja Diaria y Tesorería (Expansión ERP 2026)
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** Beta en producción; fixes transversales del 12 jul pendientes de subir a `main`
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** Beta y fixes del 12 jul en producción; detalle/costo POS y libro de pagos de proveedores en rama, con migraciones pendientes
 > **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/caja-diaria/route.ts`, `src/app/api/cuentas/route.ts`, `src/app/api/transacciones/route.ts`, `src/app/api/gastos/route.ts`, `src/app/api/cuentas-por-pagar/route.ts`, `src/app/dashboard/pos-planta/pos-client.tsx`, `scripts/migrate-caja-unica-abierta.sql`
 
 Este documento describe la venta de mostrador en planta (POS), el ciclo de la caja física del día (apertura → movimientos → cierre con arqueo) y la tesorería simple de cuentas (`cuentas_bancarias` + `transacciones`). Cierra con la tabla de **qué dinero registra el sistema y cuál queda deliberadamente fuera**.
@@ -17,7 +17,7 @@ Durante el día, en la planta se vende al paso: menudencia, hígado, molleja, pa
 - **Offline:** la venta usa la **misma cola offline del repartidor** (`transavic_offline_queue`, regla 11 del doc 18). `pos-client.tsx` encola acciones tipo `"pos-venta"` con `enqueueAction()` cuando no hay conexión (o cuando el POST falla por red), y `offline-queue.ts` las sincroniza contra `/api/pos` al volver el internet.
 - **Aislamiento comercial:** el pedido nace con `origen = 'pos_planta'`, lo que lo **excluye del ranking y los bonos de las asesoras** (regla 7 del doc 18; la métrica de ventas filtra por origen).
 - **Catálogo "Principales" (13 jul 2026, pedido de Ariana):** el catálogo abre en la pestaña **"Principales"** (pollo entero/brasa, carcasa, espinazo, molleja, patas de pollo, menudencia mixta, alas) para no verse cargado de carnes que no se venden de madrugada; el resto queda en las otras categorías o en la **búsqueda, que ahora MANDA sobre la categoría** (busca en todo el catálogo, así "el resto se busca si se necesita"). Lista FIJA en `PRINCIPALES_PATRONES` de `pos-client.tsx` — matcher por nombre acotado (`/patas? de pollo/`, `/menudencia mixta/`, `/^alas\b/`…) para NO capturar res/cerdo; se ajusta ahí si cambia.
-- **Panel "Ventas de hoy" (13 jul 2026):** barra colapsable arriba del POS (`GET /api/pos/resumen-dia`) con el **total del día**, **DÓNDE CAYÓ EL DINERO** (desglose por cuenta/caja del contado + "por cobrar" del crédito) y las **últimas ventas** (hora, cuenta, monto). Se refresca tras cada venta. Responde el "no veo dónde se acumula el dinero": el contado suma a la cuenta elegida en "Cobrar en" (§2.2); el panel lo muestra por cuenta. ⚠️ **El desglose filtra por la fecha del PEDIDO** (`p.created_at`), NO por la de la `transaccion` — cerca de medianoche caían en días distintos (total 0 pese a la venta visible en el historial).
+- **Panel "Ventas de hoy" (13 jul 2026):** barra colapsable arriba del POS (`GET /api/pos/resumen-dia`) con el **total del día**, **DÓNDE CAYÓ EL DINERO** (desglose por cuenta/caja del contado + saldo realmente pendiente del crédito) y las **últimas ventas** (hora, cuenta, monto). “Por cobrar” descuenta abonos activos y omite ventas/cobranzas anuladas; el historial conserva “Crédito” como tipo original aunque la deuda cambie después. Se refresca tras cada venta. ⚠️ **El desglose filtra por la fecha del PEDIDO** (`p.created_at`), NO por la de la `transaccion` — cerca de medianoche caían en días distintos (total 0 pese a la venta visible en el historial).
 
 ---
 
@@ -48,7 +48,7 @@ Todos los efectos van en un solo `sql.transaction([...])`; el `pedido_id` se gen
 
 1. **Pedido:** `INSERT INTO pedidos` con `origen='pos_planta'`, **estado `'Entregado'` directo** (no pasa por la máquina de estados de reparto), `fecha_pedido` = hoy Lima, `detalle`/`detalle_final` derivados del carrito (`"2 kg Molleja (limpia), ..."`), `entregado_por` = nombre del usuario POS, `lat/lng` NULL (no hay ruta).
 2. **Cliente denormalizado:** si se selecciona `clientes_planta`, el pedido copia nombre, razón social y RUC/DNI para poder facturar. `pedidos.cliente_id` queda `NULL` porque esa FK apunta al directorio de Ejecutivas; `asesor_id` identifica al usuario POS, no a una asesora comercial.
-3. **Ítems + inventario + kardex** por cada línea: `INSERT pedido_items` (con `subtotal_real` ya igual al subtotal — la venta de mostrador se pesa en el momento), `UPDATE inventario_lotes SET cantidad = cantidad - X` (resta directa, **puede quedar negativo** — modelo flexible, regla 8) e `INSERT inventario_movimientos` con `tipo='venta_pos'` y `referencia_id = pedido_id`.
+3. **Ítems + inventario + kardex** por cada línea: cantidad y precio se canonizan a dos decimales; cada subtotal se redondea a centavos y el cobro suma exactamente esos subtotales. Después se hace `INSERT pedido_items` (con `subtotal_real` igual al subtotal), se descuenta inventario flexible y se registra `inventario_movimientos` con `tipo='venta_pos'`. Esta regla evita que detalle, cuenta y cobranza difieran S/0.01.
 4. **Cobro (Contado):** CTE atómico que suma el saldo de la cuenta elegida y registra la transacción de tesorería en el mismo statement:
 
 ```sql
@@ -67,7 +67,7 @@ FROM update_cuenta
 
 > La deuda de Planta nace con la venta POS a crédito, aunque el comprobante SUNAT se emita después. El CPE y sus reintentos deben enlazar esta cartera; nunca deben duplicarla en `facturas`.
 
-> **Nota sobre el descuento de inventario del POS:** a diferencia de compras/ajustes (upsert `ON CONFLICT`), el POS hace `UPDATE` directo — asume que la fila de `inventario_lotes` existe (la migración consolidada siembra todas en 0). El kardex sí se inserta siempre.
+> **Nota sobre el descuento de inventario del POS:** usa `INSERT ... ON CONFLICT DO UPDATE`, por lo que también descuenta si el producto aún no tenía fila en `inventario_lotes`; el stock puede quedar negativo. El kardex se inserta siempre.
 
 ### 2.3 Relación con CPE y reportes generales
 
@@ -164,15 +164,26 @@ Roles: `GET` y `POST` solo `admin`/`produccion` (los gastos son información sen
 
 ---
 
-## 6. Cuentas por pagar — pago a proveedores (`POST /api/cuentas-por-pagar`)
+## 6. Cuentas por pagar — libro de pagos por proveedor
 
-La deuda nace automáticamente con cada compra (doc [09 §3](./09-compras-inventario-mermas.md): total de la carga; el vencimiento usa el **`plazo_pago_dias` del proveedor** — editable en su ficha, default 30, desde el 10 jul 2026). El pago es **admin-only**, acepta **`fechaPago` retroactiva** (se persiste en `transacciones.fecha`) y valida ANTES de mover dinero:
+La deuda nace con cada compra (doc [09 §3](./09-compras-inventario-mermas.md));
+el vencimiento usa `proveedores.plazo_pago_dias`. El registro es **admin-only** y
+el endpoint histórico `POST /api/cuentas-por-pagar` delega al mismo servicio que
+`POST /api/proveedores/[id]/pagos`.
 
-- Que la deuda exista y tenga saldo restante (`monto_deuda − monto_pagado > 0`); tolerancia de S/ 0.01 para flotantes.
-- Que el pago no supere el restante.
-- Que la cuenta de origen exista, esté activa y tenga **fondos suficientes** (`saldo >= montoPago`).
+El pago pertenece al proveedor, no a una sola guía:
 
-El movimiento en sí es un **CTE triple atómico**: actualiza la deuda (estado `'Pagado'` si quedó cubierta, `'Parcial'` si no), descuenta el saldo de la cuenta bancaria y registra el egreso en `transacciones` con concepto `"Pago a Proveedor: <razón social> (Doc: <nro>) - <notas>"` — los tres efectos en un solo statement.
+1. aplica primero al documento elegido;
+2. continúa por las deudas más antiguas;
+3. deja el excedente como anticipo, previa confirmación del monto exacto;
+4. consume el anticipo automáticamente cuando nace una deuda posterior.
+
+El UUID, el bloqueo transaccional por proveedor y `procesado_at` hacen seguro el
+doble clic. Pago, aplicaciones, caché de CxP, egreso y saldo de cuenta se confirman
+como una sola operación. **No se exige saldo suficiente:** la cuenta puede quedar
+negativa porque el sistema registra la salida, no concilia el extracto bancario.
+Una corrección anula el pago y crea un ingreso de contraasiento; nunca edita ni
+elimina movimientos. Modelo y ficha completa: [doc 26](./26-proveedores-cuentas-por-pagar.md).
 
 ---
 
@@ -195,7 +206,7 @@ Consecuencia conocida: el efectivo que un repartidor cobra en ruta tampoco entra
 | Apertura de caja | ✅ Fija el saldo de "Caja Efectivo Planta" + ingreso `'Apertura de Caja'` | `POST /api/caja-diaria` |
 | Cierre de caja | ✅ Sincroniza el saldo al efectivo REAL contado (arqueo) | `PUT /api/caja-diaria` |
 | Gasto operativo | ✅ Egreso de la cuenta elegida | `POST /api/gastos` |
-| Pago a proveedor (CxP) | ✅ Egreso con validación de fondos | `POST /api/cuentas-por-pagar` |
+| Pago a proveedor (CxP) | ✅ Egreso; admite distribución, anticipo y cuenta negativa | APIs del doc 26 |
 | Movimiento manual | ✅ Ingreso/egreso libre con concepto | `POST /api/transacciones` |
 | **Cobro de una cobranza** de Ejecutivas/Planta | ❌ **DELIBERADO** — va por transferencia/Yape fuera de la caja física (§7) | APIs de pago de cada cartera |
 | Venta de pedido normal (asesora + reparto) | ❌ El dinero entra vía cobranza (fila anterior) | — |
@@ -213,4 +224,25 @@ Consecuencia conocida: el efectivo que un repartidor cobra en ruta tampoco entra
 | `/api/cuentas` | GET / POST | sesión / admin | Listar / crear cuentas de tesorería |
 | `/api/transacciones` | POST | admin | Movimiento manual atómico por CTE |
 | `/api/gastos` | GET / POST | admin+produccion | Gastos con egreso en la cuenta de origen |
-| `/api/cuentas-por-pagar` | GET / POST | admin | Deudas con proveedores / pago con CTE triple y validación de fondos |
+| `/api/cuentas-por-pagar` | GET / POST | admin | Deudas con proveedores / adaptador al libro de pagos; la cuenta puede quedar negativa |
+
+## Adenda 13 jul 2026 — detalle POS y pagos de proveedores
+
+### Snapshot de costo POS
+
+Al crear una venta, el servidor copia `productos.precio_compra` a
+`pedido_items.costo_unitario_snapshot` dentro de la misma transacción. Los endpoints
+de resumen e historial devuelven producto, cantidad/unidad, precio/subtotal de venta,
+costo unitario/subtotal de costo y tipo/cuenta de pago. Si una venta antigua no tiene
+snapshot se muestra **Sin costo registrado**; nunca se reconstruye con el costo actual.
+
+El costo solo se expone a `admin` y `produccion`. Un cambio posterior del catálogo no
+modifica el costo histórico mostrado para esa venta. El reporte global de Rentabilidad
+aún no consume este snapshot; integrarlo requiere una decisión separada.
+
+### Pagos de proveedores
+
+CxP ya no bloquea un pago mayor a una guía ni exige saldo bancario suficiente. El
+pago pertenece al proveedor, puede cubrir varias deudas y dejar anticipo. La cuenta
+de origen puede quedar negativa, igual que la política flexible existente. Modelo,
+APIs, anulación y PDF: [doc 26](./26-proveedores-cuentas-por-pagar.md).

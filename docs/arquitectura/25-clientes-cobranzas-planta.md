@@ -1,7 +1,7 @@
 # 25 — Clientes y Cobranzas de Planta
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado:** el núcleo de Planta y sus migraciones están desplegados desde el 8 jul 2026; los cambios transversales actuales de Nota de Crédito y Ventas Generales están en el árbol de trabajo, pendientes de subir a `main`
+> **Última verificación contra código:** 2026-07-13
+> **Estado:** núcleo, anulación integral y cambios del 12 jul desplegados; detalle/costo histórico POS en rama y pendiente de migración/despliegue
 > **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/clientes-planta/`, `src/app/api/cobranzas-planta/`, `src/lib/planta/types.ts`, `src/lib/planta/saldos.ts`, `src/app/dashboard/pos-planta/`, `src/app/dashboard/clientes-planta/`, `src/app/dashboard/cobranzas-planta/`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql`
 
 Este documento describe la operación **Venta en Planta**: su directorio de clientes, la cartera de ventas a crédito, los abonos parciales y sus relaciones con el POS, SUNAT, inventario, caja, tesorería y reportes. Es el documento de referencia para evitar que un cambio vuelva a mezclar Planta con las cobranzas de Ejecutivas o con las ventas de Campo.
@@ -362,8 +362,9 @@ La decisión vigente es que los cobros posteriores de cartera no generen automá
 
 - fecha `(pedidos.created_at AT TIME ZONE 'America/Lima')::date`;
 - `pedidos.origen='pos_planta'`;
-- exclusión de `estado='Fallido'`;
-- monto `SUM(pedido_items.cantidad * pedido_items.precio_unitario)`.
+- exclusión de `estado='Fallido'` y `pedidos.anulada=TRUE`;
+- ítems preagrupados por pedido y monto
+  `SUM(COALESCE(pedido_items.subtotal_real, pedido_items.subtotal, 0))`.
 
 Lo consumen:
 
@@ -448,11 +449,10 @@ Usa además [23-mapa-dependencias-impacto.md](./23-mapa-dependencias-impacto.md)
 Estos puntos describen el código actual; no deben asumirse como funcionalidades terminadas:
 
 1. **APIs de historial de abonos sin UI completa.** Existen lectura de foto, edición y anulación de abonos, además de `abonosDeCobranza()`, pero la pantalla actual solo registra abonos y no muestra su historial ni expone esos controles.
-2. **No hay anulación integral del POS.** Anular una deuda o emitir NC no revierte automáticamente `pedido_items`, inventario, kardex ni una transacción de contado. Una devolución completa necesita contra-asientos explícitos.
-3. **NC parcial y cartera no están modeladas.** Por seguridad, la API solo permite códigos de anulación/devolución total (`01`, `02`, `06`) hasta diseñar ítems y montos parciales.
-4. **No hay `UNIQUE(cobranzas_planta.pedido_id)`.** El flujo POS es idempotente y crea pedido+deuda en una transacción, pero el esquema no impide que un consumidor futuro inserte otra deuda para el mismo pedido.
-5. **Producción no emite CPE.** Puede operar POS, clientes, cobranzas y caja; el emisor tributario efectivo de un pedido POS sigue siendo el admin.
-6. **`Vencida` derivada vs persistida.** La lista muestra correctamente el vencimiento por fecha Lima; el valor almacenado se actualiza cuando se recalcula por un movimiento, no mediante un cron dedicado.
+2. **NC parcial y cartera no están modeladas.** Por seguridad, la API solo permite códigos de anulación/devolución total (`01`, `02`, `06`) hasta diseñar ítems y montos parciales.
+3. **No hay `UNIQUE(cobranzas_planta.pedido_id)`.** El flujo POS es idempotente y crea pedido+deuda en una transacción, pero el esquema no impide que un consumidor futuro inserte otra deuda para el mismo pedido.
+4. **Producción no emite CPE.** Puede operar POS, clientes, cobranzas y caja; el emisor tributario efectivo de un pedido POS sigue siendo el admin.
+5. **`Vencida` derivada vs persistida.** La lista muestra correctamente el vencimiento por fecha Lima; el valor almacenado se actualiza cuando se recalcula por un movimiento, no mediante un cron dedicado.
 
 ---
 
@@ -469,3 +469,17 @@ Estos puntos describen el código actual; no deben asumirse como funcionalidades
 9. Comparar el total de Planta en Ventas Generales, Consolidado y Hoy/Ayer de Rentabilidad.
 10. Probar con hora cercana a medianoche y confirmar fecha Lima.
 11. Validar los permisos de `admin`, `produccion` y `asesor` tanto por UI como llamando las APIs directamente.
+
+## 15. Detalle y costo histórico de la venta
+
+`GET /api/pos/resumen-dia` y `GET /api/pos/ventas` comparten el normalizador de
+`src/lib/planta/ventas-pos.ts`. La persistencia usa
+`pedido_items.costo_unitario_snapshot`; el contrato JSON lo expone como
+`costo_unitario`, junto con subtotal de costo, `costo_completo`, tipo y cuenta de
+pago. “Últimas ventas” y el historial usan el mismo acordeón accesible y responsivo.
+
+El snapshot se copia del catálogo solo al crear una venta nueva. Filas históricas
+sin snapshot se rotulan **Sin costo registrado** y hacen que `costo_total` sea `null`.
+No deben rellenarse con `productos.precio_compra` actual. La clasificación
+Contado/Crédito proviene de la operación original, aunque después se anule una
+cobranza.

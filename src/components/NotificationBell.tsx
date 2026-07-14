@@ -17,6 +17,7 @@ import {
   FiAlertTriangle,
   FiTrendingDown,
   FiClock,
+  FiCalendar,
   FiX,
 } from "react-icons/fi";
 // Fuente única del tipo: lo importamos del backend para que el frontend nunca
@@ -56,6 +57,8 @@ function iconoParaTipo(tipo: TipoNotificacion) {
     case "factura_vencida":
     case "factura_por_vencer":
       return <FiDollarSign className="text-amber-600" />;
+    case "pedido_reprogramado":
+      return <FiCalendar aria-hidden="true" className="text-orange-600" />;
     case "meta_diaria_alcanzada":
       return <span>🎯</span>;
     case "meta_atrasada":
@@ -85,6 +88,8 @@ function acentoParaTipo(tipo: TipoNotificacion): string | null {
       return "border-l-[3px] border-l-red-500";
     case "factura_vencida":
       return "border-l-[3px] border-l-amber-500";
+    case "pedido_reprogramado":
+      return "border-l-[3px] border-l-orange-500";
     case "autorizacion_resuelta":
     case "autorizacion_solicitada":
       return "border-l-[3px] border-l-indigo-500";
@@ -117,6 +122,7 @@ export default function NotificationBell({ variant }: { variant?: VariantBell })
   const [notifs, setNotifs] = useState<Notificacion[]>([]);
   const [unread, setUnread] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const panelId = `panel-notificaciones-${variant ?? "unico"}`;
 
   // ¿El viewport de ESTA instancia está activo? (de-dup del doble montaje)
   const [viewportActivo, setViewportActivo] = useState<boolean>(() => {
@@ -201,6 +207,8 @@ export default function NotificationBell({ variant }: { variant?: VariantBell })
         onClick={() => setOpen((o) => !o)}
         className="relative p-2 rounded-lg hover:bg-gray-100 text-gray-600 cursor-pointer"
         aria-label="Notificaciones"
+        aria-expanded={open}
+        aria-controls={panelId}
       >
         <FiBell className="h-5 w-5" />
         {unread > 0 && (
@@ -211,7 +219,12 @@ export default function NotificationBell({ variant }: { variant?: VariantBell })
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden">
+        <div
+          id={panelId}
+          role="region"
+          aria-label="Lista de notificaciones"
+          className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-xl shadow-xl border border-gray-200 z-50 overflow-hidden"
+        >
           <div className="flex items-center justify-between gap-2 px-4 py-3 border-b bg-gray-50">
             <h3 className="font-semibold text-gray-800">Notificaciones</h3>
             <div className="flex items-center gap-3">

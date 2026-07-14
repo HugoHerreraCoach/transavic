@@ -1447,3 +1447,47 @@ trae `created_at` + `creado_por_nombre` vía JOIN users en `ventaExistente`); lo
 precargan y el total está en el footer. Si se edita una venta de un día pasado (`?edit` del
 historial), el copy sigue siendo "Editando la guía … del DD/MM". Verificado por psql (detección +
 hora/usuario/items). La ficha ya tenía la tarjeta; esto cubre el camino de "Vender".
+
+## 2026-07-12 — Cierre de facturación de Campo y vistas generales
+
+El pase que notas anteriores describían como “solo `dev-hugo`” quedó cerrado el 12
+de julio. Se aplicaron por `psql`, antes del código, las migraciones de facturación
+de Campo, reemisión de CPE rechazado y NC con reintento único. Después se desplegaron
+las vistas separadas/general de ventas y facturación. Campo no crea deuda en
+`facturas`; conserva su cartera y sus abonos propios.
+
+Esta adenda actualiza el **estado de despliegue** sin borrar la cronología de diseño,
+pruebas y decisiones de las entradas anteriores.
+
+## 2026-07-13 — Paquete operativo: implementación y validación en desarrollo
+
+Se preparó la rama `codex/cambios-operativos-julio` con cuatro bloques:
+
+1. **Ventas de Ejecutivas:** total confirmado desde pedidos del canal asesor,
+   completamente valorizados con `subtotal_real`; detalle conciliable e idempotencia
+   por UUID. La auditoría reprodujo el 12/07 (27/23/4, S/9,662.39) y el corte de
+   la captura del 13/07 (36/10/26, S/3,237.08). Una lectura final del día 13 ya
+   mostraba 46/10/36 y el mismo total confirmado: los diez posteriores seguían
+   pendientes de peso.
+2. **Proveedores:** libro de pagos y aplicaciones, pagos múltiples separados,
+   distribución FIFO, anticipos, consumo en deudas futuras, anulación por
+   contraasiento, ficha financiera y PDF A4.
+3. **POS Planta:** costo de compra histórico capturado por el servidor, detalle por
+   producto/peso/precio/costo, tipo de pago original y totales redondeados por línea.
+4. **Producción:** reprogramación exclusiva para mañana, con auditoría y notificación
+   emergente idempotentes a la ejecutiva responsable.
+
+Las migraciones de Proveedores y costo POS se aplicaron y reejecutaron únicamente en
+`dev-hugo`; el verificador financiero quedó en `0/0/0/0`. Se probaron concurrencia,
+anticipos, pago de S/18,500, replay de UUID, costo POS inmutable, reprogramación,
+typecheck, lint y suite dirigida. El PDF de proveedores se renderizó en dos páginas
+A4 y se revisó visualmente sin cortes. **Producción no fue modificada.**
+
+Correcciones de estado a notas históricas:
+
+- el CDR vigente se descarga como **ZIP crudo de SUNAT**, no como XML extraído;
+- RawBT ya forma parte del código desplegado; solo queda pendiente la validación
+  física con el celular y la ticketera real;
+- los mensajes listos para soporte viven en
+  [`soporte/cambios-2026-07-13.md`](./soporte/cambios-2026-07-13.md) y no deben
+  enviarse antes del despliegue autorizado.

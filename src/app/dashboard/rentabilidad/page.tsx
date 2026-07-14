@@ -37,6 +37,7 @@ interface RegistroDiario {
 interface ComparativoDia {
   monto: number;
   pedidos: number;
+  ejecutivasPorValorizar: number;
 }
 
 interface Comparativo {
@@ -208,15 +209,20 @@ export default function RentabilidadPage() {
           {/* Tarjeta destacada: Ventas de hoy vs ayer (por fecha de registro, zona Lima) */}
           {comparativo && (
             <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm relative overflow-hidden">
-              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas de hoy</span>
+              <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas confirmadas de hoy</span>
               <div className="flex flex-wrap items-end justify-between gap-4 mt-2">
                 <div>
                   <div className="text-4xl font-extrabold text-gray-900">
                     S/ {comparativo.hoy.monto.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <div className="text-sm text-gray-500 font-semibold mt-1">
-                    {comparativo.hoy.pedidos} {comparativo.hoy.pedidos === 1 ? "pedido" : "pedidos"}
+                    {comparativo.hoy.pedidos} {comparativo.hoy.pedidos === 1 ? "operación" : "operaciones"}
                   </div>
+                  {comparativo.hoy.ejecutivasPorValorizar > 0 && (
+                    <div className="mt-1 text-xs font-semibold text-amber-700">
+                      {comparativo.hoy.ejecutivasPorValorizar} de Ejecutivas por pesar
+                    </div>
+                  )}
                 </div>
                 <div className="text-right">
                   {deltaPct === null ? (
@@ -234,12 +240,12 @@ export default function RentabilidadPage() {
                   )}
                   <div className="text-xs text-gray-400 mt-2">
                     Ayer: S/ {comparativo.ayer.monto.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    {" "}({comparativo.ayer.pedidos} {comparativo.ayer.pedidos === 1 ? "pedido" : "pedidos"})
+                    {" "}({comparativo.ayer.pedidos} {comparativo.ayer.pedidos === 1 ? "operación" : "operaciones"})
                   </div>
                 </div>
               </div>
               <p className="text-[10px] text-gray-400 mt-3">
-                Pedidos entregados por fecha de registro (zona Lima). No depende del filtro de fechas de arriba.
+                Operaciones registradas por fecha de venta (zona Lima). Ejecutivas suma importes solo cuando todos sus ítems están valorizados. No depende del filtro de fechas de arriba.
               </p>
             </div>
           )}

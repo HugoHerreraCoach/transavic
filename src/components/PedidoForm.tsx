@@ -157,6 +157,10 @@ export default function PedidoForm({
   const formRef = useRef<HTMLFormElement>(null);
   const empresaSelectorRef = useRef<HTMLDivElement>(null);
   const clienteInputRef = useRef<HTMLInputElement>(null);
+  // Se crea una sola vez por pedido y se conserva ante timeout/reintento. El
+  // backend usa este UUID como PK idempotente, evitando duplicar el pedido si la
+  // respuesta se pierde después de haberlo guardado.
+  const pedidoIdRef = useRef<string | null>(null);
 
   const cargarYEstablecerLogo = useCallback(async (empresa: string) => {
     setCargandoLogo(true);
@@ -553,8 +557,10 @@ export default function PedidoForm({
     try {
 
       // con el formato correcto (YYYY-MM-DD) que está en formDatos.
+      if (!pedidoIdRef.current) pedidoIdRef.current = crypto.randomUUID();
       const payloadParaApi = {
         ...ticketDatos,
+        id: pedidoIdRef.current,
         clienteId: clienteGuardadoId || null,
         fecha: formDatos.fecha,
         direccionMapa: formDatos.direccionMapa,
@@ -615,6 +621,7 @@ export default function PedidoForm({
     setPendienteGeneracion(false);
     setAppState('editing');
     setErrors({});
+    pedidoIdRef.current = null;
     // ✅ FIX: Reset ALL state that was previously missed
     setSelectedItems([]);
     setDupItems(undefined); // que el reset NO resucite los ítems del duplicado

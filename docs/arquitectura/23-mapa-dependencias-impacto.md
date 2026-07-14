@@ -1,6 +1,6 @@
 # 23 — Mapa de Dependencias e Impacto de Cambios
 
-> **Última verificación:** 2026-07-12
+> **Última verificación:** 2026-07-13 · **Estado:** incluye dependencias de `codex/cambios-operativos-julio`, aún no desplegadas
 > **Objetivo:** impedir cambios locales que rompan silenciosamente otro flujo, reporte, rol, documento o integración.
 
 Este documento no sustituye los documentos temáticos. Es el índice transversal que indica **qué revisar cuando cambia una fuente de verdad**.
@@ -33,7 +33,7 @@ Una tarea no está completa solo porque compila. Debe conservar la regla de nego
 | `pedidos.estado` | APIs de transición, despacho, producción, mi-ruta | `entregado` legacy, timestamps, inventario/kardex, notificaciones, metas |
 | `pedidos.created_at` | ventas de Ejecutivas/Planta, metas, rachas | zona Lima; no confundir con `fecha_pedido` |
 | `pedidos.fecha_pedido` | entrega, producción, despacho | no representa fecha comercial |
-| `pedidos.origen` | POS, ventas generales, metas, clasificación de CPE | un origen nuevo cae como Ejecutivas si no se clasifica explícitamente |
+| `pedidos.origen` | POS, ventas generales, metas, clasificación de CPE | Ejecutivas usa inclusión positiva `asesor`/`NULL`; un origen nuevo queda fuera hasta clasificarlo |
 | `pedido_items` | montos comerciales, producción, inventario, emisión | unidad real, precio con IGV, peso real/estimado |
 | `ventas_avicola` | saldo Campo, liquidación, ventas generales, CPE Campo | edición/anulación bloqueada al existir CPE |
 | `abonos_avicola` | saldo, estado de cuenta, guía y PDF | debe conservar cada pago individual, aun el mismo día |
@@ -134,8 +134,9 @@ Primero identifica la operación:
 - Ejecutivas: `facturas`;
 - Campo: saldo derivado + `abonos_avicola`;
 - Planta: `cobranzas_planta` + `abonos_planta`.
+- Proveedores: `pagos_proveedores` + aplicaciones activas; `monto_pagado` es caché.
 
-Luego revisa saldo, estado de cuenta, aging, vouchers, anulación, NC, caja/tesorería y PDF. No uses `estado <> 'Pagada'` para deuda de Ejecutivas; usa estados activos explícitos. No agrupes los abonos de Campo que el cliente necesita ver separados.
+Luego revisa saldo, estado de cuenta, aging, vouchers, anulación, NC, caja/tesorería y PDF. No uses `estado <> 'Pagada'` para deuda de Ejecutivas; usa estados activos explícitos. No agrupes abonos de Campo ni pagos de proveedores: cada movimiento debe conservar su fila y trazabilidad.
 
 ### 3.7 Cambiar una fecha
 
@@ -235,3 +236,38 @@ Antes de entregar:
 | despliegue | 20 y estado real del plan 18 |
 
 Si un documento contiene fecha de verificación o estado de despliegue, actualízalo solo con evidencia. No describas cambios locales como si ya estuvieran en producción.
+
+## 6. Dependencias incorporadas el 13 jul 2026
+
+```mermaid
+flowchart LR
+    COMPRA[Compra] --> CXP[Cuenta por pagar]
+    CXP --> APP[Aplicaciones]
+    PAGO[Pago proveedor] --> APP
+    PAGO --> TX[Transacción bancaria]
+    APP --> ANT[Anticipo disponible]
+    ANT --> CXP2[Deuda futura]
+    APP --> FPROV[Ficha y PDF proveedor]
+
+    POS[Venta POS] --> SNAP[Costo snapshot]
+    SNAP --> DPOS[Detalle POS]
+
+    PROD[Producción] --> REP[Reprogramación]
+    REP --> AUD[Auditoría]
+    REP --> NOTIF[Popup ejecutiva]
+
+    PESO[Subtotal real] --> VG[Ventas Generales]
+    VG --> CON[Consolidado]
+    VG --> RENT[Rentabilidad Hoy/Ayer]
+```
+
+| Cambio | Impacto obligatorio |
+|---|---|
+| pago/aplicación de proveedor | CxP, cuenta bancaria, compra futura, Consolidado, ficha/PDF, anulación |
+| costo POS | alta POS, resumen, historial y permisos; nunca catálogo retroactivo. Integrarlo a Rentabilidad completa queda como trabajo futuro explícito |
+| reprogramación | cola de Producción, estado/ruta, auditoría, destinatario, campana/popup, deep link |
+| `subtotal_real` o canal asesor | Ventas Generales, Consolidado, Rentabilidad y doc 27; no Metas sin aprobación |
+| idempotencia de pedidos | formulario, PK, ítems, notificación y diagnóstico de duplicados |
+
+Los documentos temáticos nuevos son [26](./26-proveedores-cuentas-por-pagar.md) y
+[27](./27-conciliacion-ventas-ejecutivas.md).

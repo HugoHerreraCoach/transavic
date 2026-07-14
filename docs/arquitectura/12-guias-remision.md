@@ -1,7 +1,7 @@
 # 12 — Guías de Remisión Electrónicas (GRE REST)
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** implementación vigente en `main` y producción
 > **Archivos clave:**
 > - `src/lib/sunat/xml-builder-guia.ts`
 > - `src/lib/sunat/rest-client.ts`

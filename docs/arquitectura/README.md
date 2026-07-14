@@ -1,8 +1,8 @@
 # Documentación de Arquitectura y Negocio — Transavic
 
-> **Última actualización:** 2026-07-12
-> **Base revisada:** `main` (`2b21926`) + cambios locales pendientes de ventas/facturación
-> **Producción:** `app.transavic.com`; ERP y separación Campo/Planta desplegados, facturación de Campo pendiente del siguiente pase
+> **Última actualización:** 2026-07-13
+> **Base revisada:** `main` (`e6ce194`) + rama `codex/cambios-operativos-julio`
+> **Producción:** `app.transavic.com`; ERP, separación Campo/Planta y facturación de Campo desplegados. Del lote del 13 jul, Proveedores y costo POS requieren migración; conciliación de Ejecutivas y reprogramación requieren solo despliegue de código. Nada de ese lote se ha aplicado aún en producción.
 
 Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos temáticos explican cada módulo; los docs 22–24 conectan los módulos, muestran el impacto de cambios y definen las pruebas de regresión.
 
@@ -37,6 +37,8 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 | 23 | **[Mapa de dependencias e impacto](./23-mapa-dependencias-impacto.md)** | Saber qué módulos revisar cuando cambia una fuente de verdad. |
 | 24 | **[Pruebas y despliegue transversal](./24-pruebas-regresion-despliegue.md)** | Validar concurrencia, CPE, PDF, filtros, roles y migraciones. |
 | 25 | **[Clientes y cobranzas de Planta](./25-clientes-cobranzas-planta.md)** | Tocar directorio, crédito, abonos o relación POS↔CPE de Planta. |
+| 26 | **[Proveedores y cuentas por pagar](./26-proveedores-cuentas-por-pagar.md)** | Tocar deudas, pagos, aplicaciones, anticipos o estado de cuenta de proveedores. |
+| 27 | **[Conciliación de Ventas de Ejecutivas](./27-conciliacion-ventas-ejecutivas.md)** | Cambiar el indicador gerencial, su detalle o la prevención de pedidos duplicados. |
 
 ---
 
@@ -46,15 +48,18 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 |---|---|
 | Entender el sistema por primera vez | 01 → 22 → 23 → 02 |
 | Agregar columna, tabla, estado o índice | 23 → 02 → documento temático → 20 → 24 |
-| Venta de Ejecutivas | 05 → 04 → 14 → 22 |
+| Venta de Ejecutivas | 05 → 27 → 04 → 14 → 22 |
 | Venta/abonos/facturación de Campo | 21 → 22 → 11 → 13 → 24 |
 | POS/clientes/cobranzas de Planta | 10 → 25 → 22 → 13 → 24 |
 | Factura, boleta, NC o reintento | 11 → 22 → 13 → 24 |
 | GRE | 12 → 11 → 22 → 24 |
-| Ventas Generales, Consolidado o Hoy/Ayer | 22 → 14 → 18 → 23 |
+| Ventas Generales, Consolidado o Hoy/Ayer | 27 → 22 → 14 → 18 → 23 |
 | Estado de cuenta/PDF de Campo | 21 → 13 → 24 |
 | Meta, racha o ranking | 14 → 05 → 03 |
 | Compras/inventario/mermas | 09 → 10 → 18 → 23 |
+| Pago, anticipo o PDF de proveedor | 26 → 10 → 09 → 23 → 24 |
+| Reprogramar desde Producción | 06 → 04 → 16 → 23 → 24 |
+| Detalle o costo histórico POS | 10 → 25 → 02 → 24 |
 | Roles, ruta o sidebar | 03 → 23 → documento temático |
 | Desplegar a producción | 20 → 24 → 02 → 19 |
 
@@ -73,8 +78,10 @@ graph TD
     N --> C[21 Campo]
     N --> POS[10 POS/Planta]
     POS --> CP[25 Clientes/Cobranzas Planta]
+    POS --> PC[26 Proveedores/CxP]
 
     E --> O[22 Tres operaciones]
+    E --> VE[27 Conciliación Ejecutivas]
     C --> O
     CP --> O
 
@@ -87,6 +94,8 @@ graph TD
     I --> D
     I --> S
     I --> COB
+    I --> PC
+    I --> VE
     I --> T[24 Pruebas]
     T --> DEP[20 Migraciones]
 ```

@@ -1,7 +1,7 @@
 # 05 — Ventas y Directorio de Clientes
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** base en `main`; idempotencia y conciliación gerencial en rama, no desplegadas
 > **Archivos clave:** `src/components/PedidoForm.tsx`, `src/components/ClienteAutocomplete.tsx`, `src/lib/clientes-duplicados.ts`, `src/lib/parse-detalle-pedido.ts`, `src/app/api/clientes/verificar/route.ts`
 
 Este documento describe la vista de preventa de pedidos, la lógica de autocompletado del directorio de clientes y los mecanismos de prevención de duplicados de carteras comerciales.
@@ -65,3 +65,11 @@ Si por algún motivo (como el uso de la cola offline) un pedido ingresa desde el
 
 - **Fórmula de análisis:** Escanea líneas del texto buscando patrones como `[cantidad] [unidad] - [nombre_producto]` (ej: `"3 pollos enteros"`, `"5 kg chuleta de cerdo"`).
 - **Match de catálogo:** Intenta buscar por prefijo o coincidencia aproximada de palabras contra el catálogo de `productos`. Si encuentra el producto, inserta automáticamente el registro en `pedido_items` con el precio de venta del catálogo, garantizando que el pedido nunca nazca vacío de ítems (requisito clave para Producción).
+
+## 6. Idempotencia de la venta
+
+El formulario conserva un UUID por intento de confirmación. `POST /api/pedidos`
+recibe ese `id` y crea pedido, ítems y notificación en una transacción. Si la respuesta
+se pierde y el navegador repite el mismo UUID/payload, la API devuelve el pedido ya
+creado; si el payload difiere, responde 409. El UUID solo se renueva al terminar la
+venta o iniciar otra. Ver la conciliación y la razón de este guard en el [doc 27](./27-conciliacion-ventas-ejecutivas.md).

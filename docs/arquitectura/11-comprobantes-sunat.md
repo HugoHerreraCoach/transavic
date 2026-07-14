@@ -1,7 +1,7 @@
 # 11 — Módulo de Facturación y SUNAT (CPE)
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado:** `main` + cambios locales pendientes; facturación de Campo migrada solo en `dev-hugo`
+> **Última verificación contra código:** 2026-07-13
+> **Estado:** código y esquema de facturación de Campo en producción; no existían CPE de Campo emitidos al corte de la verificación
 > **Archivos clave:** `src/lib/sunat/index.ts`, `xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `parse-cpe-items.ts`, `fechas.ts`, `src/app/api/comprobantes/`
 
 Este documento describe la emisión de facturas (01), boletas (03) y Notas de Crédito (07), incluida la concurrencia, los reintentos y la relación con las tres operaciones de venta.

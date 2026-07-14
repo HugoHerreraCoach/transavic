@@ -3,11 +3,22 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { crearNotificacionParaRol } from "@/lib/notificaciones";
-import { derivarEInsertarItemsDesdeDetalle } from "@/lib/parse-detalle-pedido";
+import {
+  matchProductoCatalogo,
+  parseDetallePedido,
+  type ProductoCatalogo,
+} from "@/lib/parse-detalle-pedido";
+import {
+  claveItemPedido,
+  decimalCanonicoNullable,
+  redondearDecimalPedido,
+} from "@/lib/pedidos-idempotencia";
 
 // Definimos un esquema de validación con Zod para asegurar los datos
 const PedidoSchema = z.object({
+  // Lo genera el cliente y se conserva mientras reintenta. Es opcional para no
+  // romper bundles antiguos durante el despliegue; esos clientes reciben uno server-side.
+  id: z.string().uuid().optional(),
   cliente: z.string().min(1, { message: "El cliente es requerido." }),
   clienteId: z.string().uuid().nullable().optional(),
   whatsapp: z.string().optional(),
@@ -92,6 +103,7 @@ export async function POST(request: Request) {
     }
 
     const {
+      id,
       cliente,
       clienteId,
       whatsapp,
@@ -119,63 +131,243 @@ export async function POST(request: Request) {
 
     const fecha_pedido = fecha;
     const sql = neon(connectionString);
+    const pedidoId = id ?? crypto.randomUUID();
+    // La base persiste coordenadas con 8 decimales y cantidades con 2. Se
+    // canonizan antes de insertar y antes de comparar un replay para que el
+    // redondeo propio de NUMERIC no convierta un reintento genuino en 409.
+    const latitudeCanonica =
+      latitude === null || latitude === undefined
+        ? null
+        : redondearDecimalPedido(latitude, 8);
+    const longitudeCanonica =
+      longitude === null || longitude === undefined
+        ? null
+        : redondearDecimalPedido(longitude, 8);
 
-    // Insert the order and get it back
-    const insertedPedido = await sql`
-      INSERT INTO pedidos (cliente, cliente_id, whatsapp, direccion, direccion_mapa, distrito, tipo_cliente, detalle, hora_entrega, razon_social, ruc_dni, notas, empresa, fecha_pedido, latitude, longitude, asesor_id)
-      VALUES (${cliente}, ${clienteId ?? null}, ${whatsapp}, ${direccion}, ${direccionMapa}, ${distrito}, ${tipoCliente}, ${detalle}, ${horaEntrega}, ${razonSocial}, ${rucDni}, ${notas}, ${empresa}, ${fecha_pedido}, ${latitude}, ${longitude}, ${finalAsesorId})
-      RETURNING id
-    `;
+    type ItemPreparado = {
+      productoId: string | null;
+      nombre: string;
+      cantidad: number;
+      unidad: string;
+      notas: string | null;
+    };
 
-    // If structured items were sent, save them con SNAPSHOT del precio vigente
-    if (items && items.length > 0 && insertedPedido[0]?.id) {
-      const pedidoId = insertedPedido[0].id;
-      for (const item of items) {
-        // Snapshot del precio vigente al momento de crear el pedido
-        const productoRow = await sql`
-          SELECT precio_venta FROM productos WHERE id = ${item.productoId}
-        `;
-        const precio_unitario = productoRow[0]?.precio_venta
-          ? Number(productoRow[0].precio_venta)
-          : null;
-        
-        // Se permite precio nulo o 0 si el producto es un regalo o no tiene precio en catálogo.
-        // La responsabilidad recae en la asesora de revisar sus metas, o en Producción de pesar y cobrar.
-        const subtotal = precio_unitario !== null 
-          ? Number((precio_unitario * item.cantidad).toFixed(2))
-          : null;
-
-        await sql`
-          INSERT INTO pedido_items (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal, notas)
-          VALUES (${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad}, ${item.unidad}, ${item.unidad}, ${precio_unitario}, ${subtotal}, ${item.notas || null})
-        `;
-      }
-    } else if (insertedPedido[0]?.id && detalle) {
-      // Sin ítems estructurados (detalle escrito a mano, o "Duplicar pedido" de
-      // versiones viejas): derivarlos del TEXTO para que el pedido NUNCA nazca
-      // sin pedido_items — sin ellos Producción no puede registrar pesos (modal
-      // vacío, caso Manuel lince/Nikuya 11 jun 2026) y el pedido no cuenta en el
-      // Resumen del día. No bloqueante: si el texto no parsea, el pedido igual se crea.
-      try {
-        await derivarEInsertarItemsDesdeDetalle(sql, insertedPedido[0].id as string, detalle);
-      } catch (e) {
-        console.error("No se pudieron derivar los ítems del detalle:", e);
+    let itemsPreparados: ItemPreparado[] = [];
+    if (items && items.length > 0) {
+      itemsPreparados = items.map((item) => ({
+        productoId: item.productoId,
+        nombre: item.nombre,
+        cantidad: redondearDecimalPedido(item.cantidad, 2),
+        unidad: item.unidad,
+        notas: item.notas ?? null,
+      }));
+    } else {
+      // Red de seguridad para detalle escrito a mano o pedidos duplicados desde
+      // versiones antiguas. Se prepara ANTES del batch, pero se inserta dentro
+      // de la misma transacción que la cabecera y la notificación.
+      const parseados = parseDetallePedido(detalle);
+      if (parseados.length > 0) {
+        const catalogo = (await sql`
+          SELECT id, nombre, precio_venta FROM productos
+        `) as unknown as ProductoCatalogo[];
+        itemsPreparados = parseados.map((item) => ({
+          productoId: matchProductoCatalogo(item.producto_nombre, catalogo)?.id ?? null,
+          nombre: item.producto_nombre,
+          cantidad: redondearDecimalPedido(item.cantidad, 2),
+          unidad: item.unidad,
+          notas: null,
+        }));
       }
     }
 
-    // Notificar a Producción (no bloqueante: si falla, el pedido ya está creado)
-    if (insertedPedido[0]?.id) {
-      await crearNotificacionParaRol("produccion", {
-        tipo: "pedido_creado",
-        titulo: "Nuevo pedido recibido",
-        mensaje: `Cliente: ${cliente} · ${distrito ?? "sin distrito"} · ${horaEntrega ?? "sin horario"}`,
-        link: "/dashboard/produccion",
-        pedidoId: insertedPedido[0].id as string,
-      });
+    if (itemsPreparados.some((item) => item.cantidad <= 0)) {
+      return NextResponse.json(
+        { error: "La cantidad mínima que se puede registrar es 0.01." },
+        { status: 400 }
+      );
+    }
+
+    // Pedido + ítems + notificación en una sola transacción. El precio se lee
+    // dentro de cada INSERT para congelar exactamente el valor vigente en el batch.
+    const queries = [
+      sql`
+        INSERT INTO pedidos (
+          id, cliente, cliente_id, whatsapp, direccion, direccion_mapa, distrito,
+          tipo_cliente, detalle, hora_entrega, razon_social, ruc_dni, notas,
+          empresa, fecha_pedido, latitude, longitude, asesor_id, origen
+        )
+        VALUES (
+          ${pedidoId}, ${cliente}, ${clienteId ?? null}, ${whatsapp ?? null},
+          ${direccion ?? null}, ${direccionMapa ?? null}, ${distrito}, ${tipoCliente},
+          ${detalle}, ${horaEntrega ?? null}, ${razonSocial ?? null}, ${rucDni ?? null},
+          ${notas ?? null}, ${empresa}, ${fecha_pedido}, ${latitudeCanonica},
+          ${longitudeCanonica}, ${finalAsesorId}, 'asesor'
+        )
+      `,
+      ...itemsPreparados.map((item) => sql`
+        INSERT INTO pedido_items (
+          pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido,
+          precio_unitario, subtotal, notas
+        )
+        VALUES (
+          ${pedidoId}, ${item.productoId}, ${item.nombre}, ${item.cantidad},
+          ${item.unidad}, ${item.unidad},
+          (SELECT precio_venta FROM productos WHERE id = ${item.productoId}),
+          ROUND(
+            (SELECT precio_venta FROM productos WHERE id = ${item.productoId})
+            * ${item.cantidad},
+            2
+          ),
+          ${item.notas}
+        )
+      `),
+      sql`
+        INSERT INTO notificaciones (user_id, tipo, titulo, mensaje, link, pedido_id)
+        SELECT
+          u.id,
+          'pedido_creado',
+          'Nuevo pedido recibido',
+          ${`Cliente: ${cliente} · ${distrito || "sin distrito"} · ${horaEntrega || "sin horario"}`},
+          '/dashboard/produccion',
+          ${pedidoId}
+        FROM users u
+        WHERE u.role = 'produccion'
+      `,
+    ];
+
+    try {
+      await sql.transaction(queries);
+    } catch (error: unknown) {
+      const dbError = error as { code?: string };
+      if (dbError.code !== "23505") {
+        throw error;
+      }
+
+      // Replay del mismo UUID: no volver a insertar ítems ni notificaciones.
+      // Una colisión con otro payload se rechaza para no ocultar un error real.
+      const existentes = (await sql`
+        SELECT
+          p.id,
+          p.cliente,
+          p.cliente_id,
+          p.whatsapp,
+          p.direccion,
+          p.direccion_mapa,
+          p.distrito,
+          p.tipo_cliente,
+          p.hora_entrega,
+          p.razon_social,
+          p.ruc_dni,
+          p.notas,
+          p.latitude,
+          p.longitude,
+          p.asesor_id,
+          p.fecha_pedido::text AS fecha_pedido,
+          p.detalle,
+          p.empresa,
+          p.origen,
+          COALESCE((
+            SELECT jsonb_agg(
+              jsonb_build_object(
+                'productoId', pi.producto_id,
+                'nombre', pi.producto_nombre,
+                'cantidad', pi.cantidad,
+                'unidad', pi.unidad_pedido,
+                'notas', pi.notas
+              )
+              ORDER BY pi.producto_nombre, pi.cantidad, pi.unidad_pedido, pi.id
+            )
+            FROM pedido_items pi
+            WHERE pi.pedido_id = p.id
+          ), '[]'::jsonb) AS items
+        FROM pedidos p
+        WHERE p.id = ${pedidoId}
+        LIMIT 1
+      `) as Array<{
+        id: string;
+        cliente: string;
+        cliente_id: string | null;
+        whatsapp: string | null;
+        direccion: string | null;
+        direccion_mapa: string | null;
+        distrito: string | null;
+        tipo_cliente: string | null;
+        hora_entrega: string | null;
+        razon_social: string | null;
+        ruc_dni: string | null;
+        notas: string | null;
+        latitude: number | string | null;
+        longitude: number | string | null;
+        asesor_id: string;
+        fecha_pedido: string;
+        detalle: string;
+        empresa: string;
+        origen: string | null;
+        items: Array<{
+          productoId: string | null;
+          nombre: string;
+          cantidad: number | string;
+          unidad: string;
+          notas: string | null;
+        }>;
+      }>;
+      const existente = existentes[0];
+      const texto = (valor: string | null | undefined) => valor ?? "";
+      const compararProducto = Boolean(items && items.length > 0);
+      const itemsExistentes = (existente?.items ?? [])
+        .map((item) => claveItemPedido(item, compararProducto))
+        .sort();
+      const itemsRecibidos = itemsPreparados
+        .map((item) => claveItemPedido(item, compararProducto))
+        .sort();
+      const mismoPayload =
+        existente?.cliente === cliente &&
+        texto(existente?.cliente_id) === texto(clienteId) &&
+        texto(existente?.whatsapp) === texto(whatsapp) &&
+        texto(existente?.direccion) === texto(direccion) &&
+        texto(existente?.direccion_mapa) === texto(direccionMapa) &&
+        texto(existente?.distrito) === texto(distrito) &&
+        texto(existente?.tipo_cliente) === texto(tipoCliente) &&
+        texto(existente?.hora_entrega) === texto(horaEntrega) &&
+        texto(existente?.razon_social) === texto(razonSocial) &&
+        texto(existente?.ruc_dni) === texto(rucDni) &&
+        texto(existente?.notas) === texto(notas) &&
+        decimalCanonicoNullable(existente?.latitude, 8) ===
+          decimalCanonicoNullable(latitudeCanonica, 8) &&
+        decimalCanonicoNullable(existente?.longitude, 8) ===
+          decimalCanonicoNullable(longitudeCanonica, 8) &&
+        existente?.asesor_id === finalAsesorId &&
+        existente?.fecha_pedido === fecha_pedido &&
+        existente?.detalle === detalle &&
+        existente?.empresa === empresa &&
+        (existente?.origen ?? "asesor") === "asesor" &&
+        JSON.stringify(itemsExistentes) === JSON.stringify(itemsRecibidos);
+
+      if (!mismoPayload) {
+        return NextResponse.json(
+          { error: "El identificador del pedido ya fue usado con otros datos." },
+          { status: 409 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          message: "Pedido ya registrado",
+          pedido_id: pedidoId,
+          cliente: existente.cliente,
+          idempotente: true,
+        },
+        { status: 200 }
+      );
     }
 
     return NextResponse.json(
-      { message: "Pedido creado exitosamente" },
+      {
+        message: "Pedido creado exitosamente",
+        pedido_id: pedidoId,
+        cliente,
+        idempotente: false,
+      },
       { status: 201 }
     );
   } catch (error) {

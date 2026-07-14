@@ -1,36 +1,86 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Transavic
 
-## Getting Started
+Sistema interno de gestión para una distribuidora avícola de Lima. Centraliza pedidos,
+producción, despacho, cobranzas, compras, inventario, caja y facturación electrónica de
+las marcas **Transavic** y **Avícola de Tony**.
 
-First, run the development server:
+No es un e-commerce público. Los usuarios son el dueño, las ejecutivas comerciales,
+Producción y los repartidores; los clientes finales no inician sesión.
+
+## Operaciones de venta
+
+El sistema mantiene separadas tres operaciones que comparten catálogo y motor SUNAT:
+
+| Operación | Fuente principal | Cartera |
+|---|---|---|
+| Ejecutivas | `pedidos` con `origen='asesor'` o legado `NULL` | `facturas` |
+| Campo | `ventas_avicola` | `abonos_avicola` y saldo calculado |
+| Planta | `pedidos` con `origen='pos_planta'` | `cobranzas_planta` / `abonos_planta` |
+
+Las vistas generales agregan las operaciones sin mezclar sus clientes, pagos ni
+comprobantes. Consulta [Operaciones, ventas y facturación](./docs/arquitectura/22-operaciones-ventas-facturacion.md).
+
+## Stack
+
+- Next.js 15 (App Router) y TypeScript estricto.
+- Tailwind CSS 4.
+- NextAuth 5 beta con credenciales.
+- Neon Postgres mediante SQL directo (`@neondatabase/serverless`), sin ORM.
+- Vercel para producción.
+- Google Maps, SUNAT, Brevo/SMTP y Gemini/Groq como integraciones externas.
+
+## Desarrollo local
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+La aplicación queda disponible en `http://localhost:3000`. Las variables viven en
+`.env` y `.env.local`; nunca se deben subir credenciales al repositorio.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Verificaciones seguras:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npx tsc --noEmit
+npm run lint
+npm run test:observaciones
+npm run test:estado-cuenta-avicola
+npm run test:operaciones-facturacion
+```
 
-## Learn More
+No uses `npm run build` para una verificación rutinaria mientras otra persona tenga
+`npm run dev` abierto, porque ambos comparten el caché de Next/Webpack.
 
-To learn more about Next.js, take a look at the following resources:
+## Migraciones
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Las migraciones son SQL aditivo e idempotente en `scripts/`. Se prueban primero en
+la rama Neon `dev-hugo` y se aplican con `psql` antes de desplegar el código:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-<feature>.sql
+```
 
-## Deploy on Vercel
+Los scripts `.mjs` son históricos; no son el mecanismo recomendado para cambios
+nuevos ni para producción. El procedimiento completo y los rollbacks están en
+[Migraciones y despliegue seguro](./docs/arquitectura/20-migracion-produccion.md).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Documentación
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+La referencia principal está en [docs/arquitectura/README.md](./docs/arquitectura/README.md).
+Sus 27 documentos describen el negocio, tablas, APIs, permisos, flujos, dependencias,
+impacto de cambios, pruebas y despliegue. Antes de modificar un módulo, usa el mapa
+"Si vas a tocar X, lee Y" del índice.
+
+Reglas operativas breves para agentes y colaboradores:
+
+- [AGENTS.md](./AGENTS.md)
+- [CLAUDE.md](./CLAUDE.md)
+- [Historial de cambios 2026](./docs/historial-cambios-2026.md)
+
+## Estado de despliegue
+
+`main` se despliega continuamente en Vercel. Las mejoras desarrolladas en una rama
+no deben describirse como productivas hasta aplicar sus migraciones, fusionar el
+código y verificar el despliegue. La documentación distingue siempre entre código,
+`dev-hugo` y producción.

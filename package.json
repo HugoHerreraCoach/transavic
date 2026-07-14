@@ -14,7 +14,13 @@
     "app:build:prod": "CAP_SERVER_URL=https://app.transavic.com cap sync android && cd android && ./gradlew bundleRelease",
     "test:observaciones": "node scripts/test-observaciones-sunat.mjs",
     "test:estado-cuenta-avicola": "node scripts/test-estado-cuenta-avicola.mjs",
-    "test:operaciones-facturacion": "node scripts/test-operaciones-facturacion.mjs"
+    "test:operaciones-facturacion": "node scripts/test-operaciones-facturacion.mjs",
+    "test:pos-detalle-costos": "node scripts/test-pos-detalle-costos.mjs",
+    "test:ventas-ejecutivas": "node scripts/test-ventas-ejecutivas.mjs",
+    "test:pagos-proveedores": "node --no-warnings scripts/test-pagos-proveedores.mjs",
+    "test:pagos-proveedores:db": "RUN_DB_TESTS=1 node --no-warnings scripts/test-pagos-proveedores-db.mjs",
+    "test:operaciones-julio:db": "RUN_DB_TESTS=1 node --no-warnings scripts/test-operaciones-julio-db.mjs",
+    "test:reprogramacion-produccion": "node scripts/test-reprogramacion-produccion.mjs"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

@@ -6,7 +6,7 @@
 //   - Botón "Listo para despacho" sólo aparece cuando todo está pesado.
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   FiPackage,
@@ -19,6 +19,7 @@ import {
   FiPrinter,
   FiRotateCcw,
   FiRefreshCw,
+  FiCalendar,
 } from "react-icons/fi";
 
 interface Item {
@@ -60,6 +61,33 @@ function toNumber(v: number | string | null | undefined): number {
   if (v === null || v === undefined || v === "") return 0;
   const n = typeof v === "string" ? parseFloat(v) : v;
   return isNaN(n) ? 0 : n;
+}
+
+function mananaEnLima(): { iso: string; etiqueta: string } {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Lima",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const valor = (tipo: Intl.DateTimeFormatPartTypes) =>
+    partes.find((p) => p.type === tipo)?.value ?? "";
+  // La aritmética se hace en UTC sobre las partes de Lima. Así el navegador
+  // puede estar configurado en otra zona horaria sin mover el día resultante.
+  const fecha = new Date(
+    Date.UTC(
+      Number(valor("year")),
+      Number(valor("month")) - 1,
+      Number(valor("day")) + 1
+    )
+  );
+  const year = fecha.getUTCFullYear();
+  const month = String(fecha.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(fecha.getUTCDate()).padStart(2, "0");
+  return {
+    iso: `${year}-${month}-${day}`,
+    etiqueta: `${day}/${month}/${year}`,
+  };
 }
 
 // Unidades comunes que producción puede elegir al ajustar un ítem.
@@ -400,10 +428,52 @@ function PesoModal({
   const [guardando, setGuardando] = useState(false);
   const [marcandoListo, setMarcandoListo] = useState(false);
   const [reabriendo, setReabriendo] = useState(false);
+  const [confirmandoReprogramacion, setConfirmandoReprogramacion] = useState(false);
+  const [reprogramando, setReprogramando] = useState(false);
+  const [motivoReprogramacion, setMotivoReprogramacion] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const motivoReprogramacionRef = useRef<HTMLInputElement>(null);
+  const botonReprogramarRef = useRef<HTMLButtonElement>(null);
+  const dialogPedidoRef = useRef<HTMLDivElement>(null);
+  const cerrarPedidoRef = useRef<HTMLButtonElement>(null);
 
   // Si ya está listo para despacho, el modal lo refleja (no vuelve a ofrecer "marcar listo").
   const yaListo = pedido.estado === "Listo_Para_Despacho";
+  const manana = useMemo(() => mananaEnLima(), []);
+
+  useEffect(() => {
+    const focoAnterior = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const frame = requestAnimationFrame(() => cerrarPedidoRef.current?.focus());
+    return () => {
+      cancelAnimationFrame(frame);
+      if (focoAnterior?.isConnected) focoAnterior.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!confirmandoReprogramacion) return;
+    const frame = requestAnimationFrame(() => motivoReprogramacionRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [confirmandoReprogramacion]);
+
+  // La reprogramación no puede ocultar cambios locales: primero se guardan los
+  // pesos, unidades y precios para que el pedido de mañana conserve exactamente
+  // lo que Producción ve en pantalla.
+  const hayCambiosSinGuardar = pedido.items.some((it) => {
+    const pesoInicial =
+      it.cantidad_real != null ? String(toNumber(it.cantidad_real)) : "";
+    const precioInicial =
+      toNumber(it.precio_unitario) > 0 ? String(toNumber(it.precio_unitario)) : "";
+    const normalizarNumero = (valor: string) =>
+      valor.trim() === "" ? "" : String(Number(valor));
+    return (
+      normalizarNumero(pesos[it.id] ?? "") !== normalizarNumero(pesoInicial) ||
+      normalizarNumero(precios[it.id] ?? "") !== normalizarNumero(precioInicial) ||
+      (unidades[it.id] || it.unidad) !== it.unidad
+    );
+  });
 
   // Total en vivo
   const totalVivo = useMemo(() => {
@@ -527,14 +597,99 @@ function PesoModal({
     }
   };
 
+  const abrirReprogramacion = () => {
+    setError(null);
+    if (hayCambiosSinGuardar) {
+      setError(
+        yaListo
+          ? "Primero vuelve el pedido a Producción y guarda los cambios de pesos, unidades o precios."
+          : "Primero guarda los cambios de pesos, unidades o precios antes de reprogramar."
+      );
+      return;
+    }
+    setConfirmandoReprogramacion(true);
+  };
+
+  const cerrarConfirmacionReprogramacion = () => {
+    if (reprogramando) return;
+    setConfirmandoReprogramacion(false);
+    requestAnimationFrame(() => botonReprogramarRef.current?.focus());
+  };
+
+  const reprogramarParaManana = async () => {
+    if (reprogramando) return;
+    setError(null);
+    setReprogramando(true);
+    try {
+      const res = await fetch(`/api/pedidos/${pedido.id}/reprogramar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nueva_fecha: manana.iso,
+          motivo: motivoReprogramacion.trim() || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "No se pudo reprogramar"
+        );
+      }
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo reprogramar");
+    } finally {
+      setReprogramando(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[95vh] flex flex-col">
+      <div
+        className="absolute inset-0 bg-black/50"
+        onClick={reprogramando ? undefined : onClose}
+        aria-hidden="true"
+      />
+      <div
+        ref={dialogPedidoRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="titulo-pedido-produccion"
+        className="relative bg-white w-full sm:max-w-2xl rounded-t-2xl sm:rounded-2xl shadow-2xl max-h-[95vh] flex flex-col"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            if (confirmandoReprogramacion) cerrarConfirmacionReprogramacion();
+            else if (!reprogramando) onClose();
+            return;
+          }
+          if (event.key !== "Tab" || !dialogPedidoRef.current) return;
+          const enfocables = Array.from(
+            dialogPedidoRef.current.querySelectorAll<HTMLElement>(
+              'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            )
+          );
+          if (enfocables.length === 0) {
+            event.preventDefault();
+            return;
+          }
+          const primero = enfocables[0];
+          const ultimo = enfocables[enfocables.length - 1];
+          if (event.shiftKey && document.activeElement === primero) {
+            event.preventDefault();
+            ultimo.focus();
+          } else if (!event.shiftKey && document.activeElement === ultimo) {
+            event.preventDefault();
+            primero.focus();
+          }
+        }}
+      >
         {/* Header */}
         <div className="px-4 sm:px-6 py-4 border-b flex items-start gap-3">
           <div className="flex-1">
-            <h2 className="text-lg font-bold text-gray-800">{pedido.cliente}</h2>
+            <h2 id="titulo-pedido-produccion" className="text-lg font-bold text-gray-800">
+              {pedido.cliente}
+            </h2>
             <div className="text-xs text-gray-500 mt-0.5">
               {pedido.distrito && <>📍 {pedido.distrito} · </>}
               {pedido.hora_entrega && <>⏰ {pedido.hora_entrega} · </>}
@@ -542,8 +697,11 @@ function PesoModal({
             </div>
           </div>
           <button
+            ref={cerrarPedidoRef}
             onClick={onClose}
-            className="p-1.5 rounded-full hover:bg-gray-100"
+            disabled={reprogramando}
+            aria-label="Cerrar pedido"
+            className="flex min-h-11 min-w-11 items-center justify-center rounded-full hover:bg-gray-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <FiX className="text-gray-500" />
           </button>
@@ -666,9 +824,66 @@ function PesoModal({
         {/* Footer: total + acciones */}
         <div className="px-4 sm:px-6 py-3 border-t bg-gray-50">
           {error && (
-            <div className="mb-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="mb-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2"
+            >
               {error}
             </div>
+          )}
+          {confirmandoReprogramacion && (
+            <section
+              aria-labelledby="titulo-reprogramar-produccion"
+              aria-describedby="descripcion-reprogramar-produccion"
+              aria-live="polite"
+              className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-3"
+            >
+              <h3
+                id="titulo-reprogramar-produccion"
+                className="flex items-center gap-2 font-bold text-orange-900"
+              >
+                <FiCalendar aria-hidden="true" />
+                Reprogramar para mañana
+              </h3>
+              <p id="descripcion-reprogramar-produccion" className="mt-1 text-sm text-orange-800">
+                <strong>{pedido.cliente}</strong> pasará al {manana.etiqueta}. Se
+                conservarán su estado, productos y pesos guardados.
+              </p>
+              <label
+                htmlFor="motivo-reprogramacion-produccion"
+                className="mt-3 block text-xs font-semibold text-orange-900"
+              >
+                Motivo (opcional)
+              </label>
+              <input
+                ref={motivoReprogramacionRef}
+                id="motivo-reprogramacion-produccion"
+                value={motivoReprogramacion}
+                onChange={(e) => setMotivoReprogramacion(e.target.value)}
+                maxLength={200}
+                placeholder="Ej. No salió en el despacho de hoy"
+                className="mt-1 min-h-11 w-full rounded-lg border border-orange-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              />
+              <div className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={cerrarConfirmacionReprogramacion}
+                  disabled={reprogramando}
+                  className="min-h-11 rounded-lg border border-orange-300 bg-white px-4 py-2 text-sm font-semibold text-orange-900 hover:bg-orange-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={reprogramarParaManana}
+                  disabled={reprogramando}
+                  className="min-h-11 rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 disabled:opacity-50"
+                >
+                  {reprogramando ? "Reprogramando…" : "Confirmar para mañana"}
+                </button>
+              </div>
+            </section>
           )}
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm text-gray-600">Total a cobrar</div>
@@ -736,6 +951,20 @@ function PesoModal({
               Imprimir orden de pedido
             </a>
           )}
+
+          <button
+            ref={botonReprogramarRef}
+            type="button"
+            onClick={abrirReprogramacion}
+            disabled={
+              guardando || marcandoListo || reabriendo || reprogramando ||
+              confirmandoReprogramacion
+            }
+            className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-orange-300 bg-orange-50 px-4 py-2.5 font-semibold text-orange-800 hover:bg-orange-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 disabled:opacity-50"
+          >
+            <FiCalendar aria-hidden="true" />
+            Reprogramar para mañana
+          </button>
         </div>
       </div>
     </div>

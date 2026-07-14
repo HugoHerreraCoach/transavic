@@ -3,16 +3,28 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  PagoProveedorError,
+  registrarPagoProveedor,
+} from "@/lib/proveedores/pagos";
 
 export const dynamic = "force-dynamic";
 
 const PagoSchema = z.object({
+  id: z.string().uuid().optional(),
   cuentaPagarId: z.string().uuid(),
   cuentaBancariaId: z.string().uuid(),
-  montoPago: z.number().positive(),
+  montoPago: z
+    .number()
+    .positive()
+    .max(99_999_999.99)
+    .refine((monto) => Math.abs(monto * 100 - Math.round(monto * 100)) < 1e-7, {
+      message: "El monto admite como máximo dos decimales",
+    }),
   // Fecha REAL del pago (puede ser retroactiva): se persiste en transacciones.fecha.
   fechaPago: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato de fecha inválido (YYYY-MM-DD)."),
   notas: z.string().optional().nullable(),
+  confirmarAnticipo: z.boolean().default(false),
 });
 
 export async function GET() {
@@ -72,15 +84,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { cuentaPagarId, cuentaBancariaId, montoPago, fechaPago, notas } = result.data;
+    const {
+      cuentaPagarId,
+      cuentaBancariaId,
+      montoPago,
+      fechaPago,
+      notas,
+      confirmarAnticipo,
+    } = result.data;
     const sql = neon(process.env.DATABASE_URL!);
 
-    // 1. Obtener la cuenta por pagar
     const deudaRows = await sql`
-      SELECT cpp.*, prov.razon_social AS proveedor_nombre, comp.nro_doc AS compra_nro_doc
+      SELECT cpp.proveedor_id
       FROM cuentas_por_pagar cpp
-      JOIN proveedores prov ON cpp.proveedor_id = prov.id
-      LEFT JOIN compras comp ON cpp.compra_id = comp.id
       WHERE cpp.id = ${cuentaPagarId}
     `;
 
@@ -88,69 +104,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Cuenta por pagar no encontrada" }, { status: 404 });
     }
 
-    const deuda = deudaRows[0];
-    const montoDeuda = Number(deuda.monto_deuda);
-    const montoPagadoActual = Number(deuda.monto_pagado);
-    const restante = montoDeuda - montoPagadoActual;
+    const respuesta = await registrarPagoProveedor(sql, session.user.id, {
+      id: result.data.id ?? crypto.randomUUID(),
+      proveedor_id: String(deudaRows[0].proveedor_id),
+      cuenta_bancaria_id: cuentaBancariaId,
+      monto: montoPago,
+      fecha: fechaPago,
+      notas: notas ?? null,
+      deuda_prioritaria_id: cuentaPagarId,
+      confirmar_anticipo: confirmarAnticipo,
+    });
 
-    if (restante <= 0) {
-      return NextResponse.json({ error: "Esta deuda ya se encuentra totalmente pagada" }, { status: 400 });
-    }
-
-    if (montoPago > restante + 0.01) { // Tolerancia para flotantes
-      return NextResponse.json({ error: `El monto a pagar (S/ ${montoPago.toFixed(2)}) supera el saldo restante de la deuda (S/ ${restante.toFixed(2)})` }, { status: 400 });
-    }
-
-    // 2. La cuenta de origen debe existir y estar activa (pero NO se exige saldo:
-    // las cuentas del banco figuran en ~0 en el sistema —no se registran los
-    // ingresos— así que bloquear por fondos trababa TODOS los pagos. El pago se
-    // registra igual y el saldo puede quedar negativo: es un registro de lo que
-    // salió, no el saldo real del banco. Decisión de Hugo, 11 jul 2026.
-    const cuentaRows = await sql`
-      SELECT id, nombre
-      FROM cuentas_bancarias
-      WHERE id = ${cuentaBancariaId} AND activa = true
-    `;
-
-    if (cuentaRows.length === 0) {
-      return NextResponse.json({ error: "Cuenta bancaria de origen no encontrada o inactiva" }, { status: 404 });
-    }
-
-    // 3. Ejecutar la actualización atómica con el CTE encadenado
-    const docLabel = deuda.compra_nro_doc
-      ? `Doc: ${deuda.compra_nro_doc}`
-      : (deuda.concepto as string | null) || "Sin Doc";
-    const concepto = `Pago a Proveedor: ${deuda.proveedor_nombre} (${docLabel})${notas ? ` - ${notas}` : ""}`;
-
-    const res = await sql`
-      WITH update_pagar AS (
-        UPDATE cuentas_por_pagar
-        SET monto_pagado = monto_pagado + ${montoPago},
-            estado = CASE WHEN (monto_pagado + ${montoPago}) >= monto_deuda - 0.01 THEN 'Pagado' ELSE 'Parcial' END,
-            updated_at = (NOW() AT TIME ZONE 'America/Lima')
-        WHERE id = ${cuentaPagarId}
-        RETURNING id
-      ),
-      update_cuenta AS (
-        UPDATE cuentas_bancarias
-        SET saldo = saldo - ${montoPago},
-            updated_at = (NOW() AT TIME ZONE 'America/Lima')
-        WHERE id = ${cuentaBancariaId}
-        RETURNING id
-      )
-      INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id, fecha)
-      SELECT uc.id, ${session.user.id}, 'egreso', ${montoPago}, ${concepto}, up.id,
-             COALESCE(${fechaPago || null}::date, (NOW() AT TIME ZONE 'America/Lima')::date)
-      FROM update_cuenta uc, update_pagar up
-      RETURNING id;
-    `;
-
-    if (res.length === 0) {
-      throw new Error("La transacción atómica de pago falló.");
-    }
-
-    return NextResponse.json({ success: true, message: "Pago registrado exitosamente" });
+    return NextResponse.json({
+      success: true,
+      repetido: respuesta.repetido,
+      message: respuesta.repetido
+        ? "El pago ya estaba registrado."
+        : "Pago registrado exitosamente",
+    });
   } catch (error: unknown) {
+    if (error instanceof PagoProveedorError) {
+      return NextResponse.json(
+        { error: error.message, codigo: error.codigo, ...error.datos },
+        { status: error.status }
+      );
+    }
     console.error("Error al registrar pago a proveedor:", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Error del servidor" }, { status: 500 });
   }

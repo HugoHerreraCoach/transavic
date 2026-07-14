@@ -1,7 +1,7 @@
 # 01 — El Negocio Avícola y su Operativa
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** base operativa en `main`; mejoras de proveedores, POS, Producción y conciliación en `codex/cambios-operativos-julio`, aún no desplegadas
 > **Archivos clave:** `src/components/PedidoForm.tsx`, `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/dashboard/despacho/despacho-content.tsx`, `src/app/dashboard/mi-ruta/mi-ruta-content.tsx`
 
 Este documento describe el **funcionamiento real del negocio avícola de Antonio Resurrección** en Lima, Perú, y cómo se traduce este flujo comercial y operativo en el sistema Transavic.

@@ -1,6 +1,6 @@
 # 16 — Sistema de Notificaciones e Hilos de Cron
 
-> **Última verificación contra código:** 2026-07-12
+> **Última verificación contra código:** 2026-07-13
 > **Fuente de horarios:** `vercel.json`
 > **Archivos clave:** `src/lib/notificaciones.ts`, `src/components/NotificationBell.tsx`, `src/app/api/cron/**/route.ts`, `vercel.json`
 
@@ -37,3 +37,19 @@ Schedules y comportamientos configurados en `vercel.json`:
 | `/api/cron/recordatorios-asesoras` | `0 17 * * *` | 12:00 | Analiza el desempeño de cada asesora: si su meta acumulada a la fecha va por debajo del 50%, o si posee clientes con inactividad (sin compras en 14–21 días), dispara alertas de motivación. |
 | `/api/cron/resumen-diario-sunat` | `0 7 * * *` | 02:00 | Agrupa de forma atómica todas las boletas de venta (03) emitidas el día de ayer y transmite el Resumen Diario (RC-) consolidado a SUNAT. |
 | `/api/cron/repartidores-oscuros` | `*/10 * * * *` | Cada 10 min | Escanea motorizados con pedidos activos asignados. Si no hay reportes de posición en los últimos 10 minutos (en horario de 04:30 a 22:00), dispara alerta `repartidor_oscuro` al admin. |
+
+## 3. Popup persistente de reprogramación
+
+> **Estado de esta sección:** implementado en `codex/cambios-operativos-julio`,
+> probado en desarrollo y aún no desplegado. Las notificaciones y crons anteriores
+> continúan en producción sin depender de este cambio.
+
+`pedido_reprogramado` se guarda en `notificaciones` dentro de la misma operación
+atómica que cambia la fecha. El destinatario es el asesor del pedido, luego el asesor
+actual del cliente y, si ninguno existe, los administradores.
+
+`ArriboPopup` también presenta este tipo con calendario y acento naranja. Consulta en
+15 segundos (cumple el máximo de 30), anuncia el diálogo mediante ARIA y enlaza a
+`/dashboard?pedido=<uuid>`. Cerrar el popup guarda su ID en `sessionStorage`: no vuelve
+a interrumpir en esa sesión, pero permanece no leído en la campana. Si la aplicación
+estaba cerrada, la fila persistente aparece al regresar.

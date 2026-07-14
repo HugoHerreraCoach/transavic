@@ -52,11 +52,25 @@ export async function GET() {
 
     // 3. Cuentas por Pagar (Pasivos a proveedores)
     const pagarRows = await sql`
-      SELECT COALESCE(SUM(monto_deuda - monto_pagado), 0)::float8 AS total_pagar
-      FROM cuentas_por_pagar
-      WHERE estado IN ('Pendiente', 'Parcial')
+      WITH movimientos AS (
+        SELECT proveedor_id, monto_deuda AS monto
+        FROM cuentas_por_pagar
+        UNION ALL
+        SELECT proveedor_id, -monto AS monto
+        FROM pagos_proveedores
+        WHERE estado = 'registrado'
+      ), saldos AS (
+        SELECT proveedor_id, SUM(monto) AS saldo
+        FROM movimientos
+        GROUP BY proveedor_id
+      )
+      SELECT
+        COALESCE(SUM(GREATEST(saldo, 0)), 0)::float8 AS total_pagar,
+        COALESCE(SUM(GREATEST(-saldo, 0)), 0)::float8 AS saldo_favor
+      FROM saldos
     `;
     const totalPagar = pagarRows[0]?.total_pagar || 0;
+    const saldoFavorProveedores = pagarRows[0]?.saldo_favor || 0;
 
     // 4. Últimas transacciones registradas en cuentas
     const transacciones = await sql`
@@ -95,6 +109,11 @@ export async function GET() {
       total_ventas: resumenVentas.total,
       ventas_pos: resumenVentas.operaciones.planta.total,
       ventas_asesor: resumenVentas.operaciones.ejecutivas.total,
+      ventas_asesor_registradas: resumenVentas.operaciones.ejecutivas.ventas,
+      ventas_asesor_valorizadas:
+        resumenVentas.operaciones.ejecutivas.ventasValorizadas,
+      ventas_asesor_pendientes:
+        resumenVentas.operaciones.ejecutivas.ventasPorValorizar,
       ventas_campo: resumenVentas.operaciones.campo.total,
       total_todas: resumenVentas.total,
     };
@@ -105,6 +124,7 @@ export async function GET() {
       carteraPlanta, // cartera de planta (POS): saldos de cobranzas_planta
       carteraCampo, // cartera de campo (Clientes Avícola): saldos avícola positivos
       totalPagar,
+      saldoFavorProveedores,
       transacciones,
       ventasHoy,
     });

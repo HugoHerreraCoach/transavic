@@ -27,6 +27,9 @@ export async function GET() {
   if (!session?.user) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
   }
+  if (session.user.role !== "admin" && session.user.role !== "produccion") {
+    return NextResponse.json({ error: "Acceso denegado" }, { status: 403 });
+  }
 
   try {
     const sql = neon(process.env.DATABASE_URL!);

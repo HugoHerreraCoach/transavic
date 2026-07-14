@@ -1,7 +1,8 @@
 # 13 — Cobranzas y Carteras por Operación
 
-> **Última verificación contra código:** 2026-07-12
-> **Archivos clave:** `src/lib/cobranzas.ts`, `src/lib/avicola/saldos.ts`, `src/lib/avicola/estado-cuenta.ts`, `src/lib/planta/saldos.ts`, `src/app/api/facturas/`, `src/app/api/avicola/`, `src/app/api/cobranzas-planta/`
+> **Última verificación contra código:** 2026-07-13
+> **Estado:** las tres carteras de clientes están en producción; la ficha financiera de proveedores del doc 26 está solo en `codex/cambios-operativos-julio`
+> **Archivos clave:** `src/lib/cobranzas.ts`, `src/lib/avicola/saldos.ts`, `src/lib/avicola/estado-cuenta.ts`, `src/lib/planta/saldos.ts`, `src/lib/proveedores/pagos.ts`, `src/app/api/facturas/`, `src/app/api/avicola/`, `src/app/api/cobranzas-planta/`
 
 Transavic tiene tres carteras independientes. Compartir el motor SUNAT **no significa compartir la tabla de deuda**.
 
@@ -138,3 +139,14 @@ El aging clásico de `/api/cobranzas/aging` pertenece a Ejecutivas. No debe pres
 | tesorería | caja/cuentas; no asumas que una cobranza pagada mueve dinero automáticamente |
 
 Pruebas obligatorias: [24 §6–9](./24-pruebas-regresion-despliegue.md).
+
+## 10. Cuentas por pagar no son una cuarta cartera de clientes
+
+Este documento describe dinero que **clientes deben a Transavic**. Las cuentas por
+pagar representan lo contrario: dinero que Transavic debe a un proveedor. Comparten
+cuentas bancarias y `transacciones`, pero no comparten facturas de clientes,
+`abonos_avicola`, `abonos_planta` ni reglas de Nota de Crédito.
+
+La fuente canónica de pagos, aplicaciones, anticipos y estado de cuenta del proveedor
+está en el [doc 26](./26-proveedores-cuentas-por-pagar.md). Un cambio en tesorería debe
+probar ambos lados sin compensar saldos entre clientes o proveedores distintos.

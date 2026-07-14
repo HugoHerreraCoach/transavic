@@ -5,6 +5,7 @@
 // (cuentas_bancarias + transacciones); el crédito va a cobranzas_planta.
 // Roles: admin + produccion (mismos que el POS). Solo lectura.
 import { auth } from "@/auth";
+import { normalizarVentaConDetallePos } from "@/lib/planta/ventas-pos";
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 
@@ -34,6 +35,23 @@ export async function GET(request: Request) {
     `) as Array<{ hoy: string }>;
     const fecha = fechaRaw ?? hoyRows[0].hoy;
 
+    // Fuente canónica del encabezado: pedidos POS activos + sus ítems. No se deriva
+    // de movimientos financieros, porque una cobranza corregida/anulada no debe
+    // cambiar retroactivamente cuánto se vendió ni cuántas ventas se registraron.
+    const totalVentaRows = (await sql`
+      SELECT COALESCE(SUM(venta.total), 0)::float8 AS total,
+             COUNT(*)::int AS ventas
+      FROM (
+        SELECT p.id, COALESCE(SUM(COALESCE(pi.subtotal_real, pi.subtotal, 0)), 0) AS total
+        FROM pedidos p
+        LEFT JOIN pedido_items pi ON pi.pedido_id = p.id
+        WHERE p.origen = 'pos_planta'
+          AND (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+          AND NOT COALESCE(p.anulada, FALSE)
+        GROUP BY p.id
+      ) venta
+    `) as Array<{ total: number; ventas: number }>;
+
     // Contado del día por cuenta: cada venta del POS registra una transacción 'ingreso'
     // en la cuenta elegida, con referencia_id = pedido. Se une por ESE id al pedido
     // pos_planta (robusto; no depende del texto del concepto, que trae acento).
@@ -53,17 +71,33 @@ export async function GET(request: Request) {
       ORDER BY monto DESC
     `) as Array<{ id: string; nombre: string; tipo: string; monto: number; ventas: number }>;
 
-    // Crédito del día (a cobrar) en cobranzas_planta no anuladas. Por fecha_emision
-    // (DATE en zona Lima), consistente con la fecha del pedido.
+    // Saldo de crédito realmente pendiente del día. El tipo de pago original
+    // no cambia al abonar/anular, pero "por cobrar" sí debe descontar los
+    // abonos activos y omitir cobranzas/ventas anuladas.
     const creditoRows = (await sql`
-      SELECT COALESCE(SUM(monto), 0)::float8 AS total, COUNT(*)::int AS ventas
-      FROM cobranzas_planta
-      WHERE NOT anulada
-        AND fecha_emision = ${fecha}::date
+      SELECT
+        COALESCE(SUM(saldo), 0)::float8 AS total,
+        COUNT(*) FILTER (WHERE saldo > 0)::int AS ventas
+      FROM (
+        SELECT
+          GREATEST(
+            cob.monto - COALESCE(SUM(ab.monto) FILTER (WHERE NOT ab.anulado), 0),
+            0
+          ) AS saldo
+        FROM cobranzas_planta cob
+        JOIN pedidos p ON p.id = cob.pedido_id AND p.origen = 'pos_planta'
+        LEFT JOIN abonos_planta ab ON ab.cobranza_id = cob.id
+        WHERE NOT cob.anulada
+          AND NOT COALESCE(p.anulada, FALSE)
+          AND (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+        GROUP BY cob.id, cob.monto
+      ) creditos
     `) as Array<{ total: number; ventas: number }>;
 
-    // Historial breve: últimas ventas del POS del día (cliente + total + a dónde fue).
-    const ventas = (await sql`
+    // Historial breve con el detalle que explica el total. El tipo de pago se
+    // determina por la existencia HISTÓRICA de la cobranza; si luego se anula esa
+    // deuda, la venta original no se etiqueta engañosamente como contado.
+    const ventasRaw = (await sql`
       SELECT
         p.id,
         p.cliente,
@@ -71,16 +105,38 @@ export async function GET(request: Request) {
         p.empresa,
         TO_CHAR(p.created_at AT TIME ZONE 'America/Lima', 'HH24:MI') AS hora,
         COALESCE(im.total, 0)::float8 AS total,
-        CASE WHEN cob.id IS NOT NULL THEN 'Crédito' ELSE 'Contado' END AS tipo_pago,
-        cta.nombre AS cuenta_nombre
+        CASE WHEN EXISTS (
+          SELECT 1 FROM cobranzas_planta cpx WHERE cpx.pedido_id = p.id
+        ) THEN 'Credito' ELSE 'Contado' END AS tipo_pago,
+        pago.cuenta_nombre,
+        COALESCE(im.items, '[]'::jsonb) AS items
       FROM pedidos p
-      LEFT JOIN (
-        SELECT pedido_id, SUM(COALESCE(subtotal_real, subtotal, 0)) AS total
-        FROM pedido_items GROUP BY pedido_id
-      ) im ON im.pedido_id = p.id
-      LEFT JOIN cobranzas_planta cob ON cob.pedido_id = p.id AND NOT cob.anulada
-      LEFT JOIN transacciones t ON t.referencia_id = p.id AND t.tipo = 'ingreso'
-      LEFT JOIN cuentas_bancarias cta ON cta.id = t.cuenta_id
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM(COALESCE(pi.subtotal_real, pi.subtotal, 0)) AS total,
+          jsonb_agg(jsonb_build_object(
+            'producto_nombre', pi.producto_nombre,
+            'cantidad', pi.cantidad::float8,
+            'unidad', pi.unidad,
+            'precio_unitario', COALESCE(pi.precio_unitario, 0)::float8,
+            'subtotal_venta', COALESCE(pi.subtotal_real, pi.subtotal, 0)::float8,
+            'costo_unitario', pi.costo_unitario_snapshot::float8,
+            'subtotal_costo', CASE
+              WHEN pi.costo_unitario_snapshot IS NULL THEN NULL
+              ELSE ROUND(pi.cantidad * pi.costo_unitario_snapshot, 2)::float8
+            END
+          ) ORDER BY pi.created_at, pi.id) AS items
+        FROM pedido_items pi
+        WHERE pi.pedido_id = p.id
+      ) im ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT cta.nombre AS cuenta_nombre
+        FROM transacciones t
+        JOIN cuentas_bancarias cta ON cta.id = t.cuenta_id
+        WHERE t.referencia_id = p.id AND t.tipo = 'ingreso'
+        ORDER BY t.created_at, t.id
+        LIMIT 1
+      ) pago ON TRUE
       WHERE p.origen = 'pos_planta'
         AND (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
         AND NOT COALESCE(p.anulada, FALSE)
@@ -92,19 +148,22 @@ export async function GET(request: Request) {
       razon_social: string | null;
       empresa: string;
       hora: string;
-      total: number;
+      total: unknown;
       tipo_pago: string;
       cuenta_nombre: string | null;
+      items: unknown;
     }>;
+    const ventas = ventasRaw.map(normalizarVentaConDetallePos);
 
     const contadoTotal = porCuenta.reduce((s, c) => s + c.monto, 0);
     const contadoVentas = porCuenta.reduce((s, c) => s + c.ventas, 0);
     const credito = creditoRows[0] ?? { total: 0, ventas: 0 };
+    const totalVenta = totalVentaRows[0] ?? { total: 0, ventas: 0 };
 
     return NextResponse.json({
       fecha,
-      total_dia: Math.round((contadoTotal + credito.total) * 100) / 100,
-      num_ventas: contadoVentas + credito.ventas,
+      total_dia: Math.round(totalVenta.total * 100) / 100,
+      num_ventas: totalVenta.ventas,
       contado: {
         total: Math.round(contadoTotal * 100) / 100,
         ventas: contadoVentas,

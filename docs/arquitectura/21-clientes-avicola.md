@@ -1,6 +1,6 @@
 # 21 — Clientes Avícola (venta en campo del Gerente General)
 
-> **Creado:** 2026-07-07 · **Última verificación:** 2026-07-12 · **Estado:** BETA; facturación de Campo pendiente de subir a `main`
+> **Creado:** 2026-07-07 · **Última verificación:** 2026-07-13 · **Estado:** BETA en producción; código y esquema de facturación de Campo desplegados
 > **Requerimiento origen:** docx "Requerimiento de Implementación — Módulo Clientes Avícola" (Antonio/Nelita, 7 jul 2026)
 > **Cuándo leer esto:** vas a tocar cualquier cosa bajo `src/app/dashboard/clientes-avicola/`, `src/app/api/avicola/` o `src/lib/avicola/`.
 

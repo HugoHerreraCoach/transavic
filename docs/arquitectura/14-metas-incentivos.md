@@ -1,7 +1,7 @@
 # 14 — Sistema de Metas e Incentivos Comerciales
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** `main` + cambios locales pendientes
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** vigente en `main`; no se recalcula por la corrección gerencial de Ventas de Ejecutivas (ver doc 27)
 > **Archivos clave:** `src/lib/ventas-metricas.ts` (módulo unificado de la métrica), `src/lib/metas.ts`, `src/lib/incentivos.ts`, `src/app/dashboard/mis-metas/mis-metas-client.tsx`
 
 Este documento describe el funcionamiento de los reportes comerciales para las asesoras, los algoritmos de cálculo de metas, rachas de consistencia, metas grupales y el ranking de ventas.
@@ -75,3 +75,11 @@ Suma de las ventas consolidadas de todas las asesoras durante la semana actual (
 
 ### 4.3 Ranking Mensual
 Tabla de posiciones interactiva que ordena a las asesoras de mayor a menor ventas del mes actual (pedidos `Entregado` registrados en el mes — variante "confirmada" del §2), mostrando los premios asociados al primer, segundo y tercer puesto.
+
+## 5. Separación respecto del indicador gerencial confirmado
+
+La corrección de Ventas Generales del [doc 27](./27-conciliacion-ventas-ejecutivas.md)
+no modifica automáticamente metas, rachas, ranking, Mi Día ni comisiones. Esos módulos
+conservan `src/lib/ventas-metricas.ts` hasta que Antonio apruebe una regla de
+remuneración y su efecto histórico. Reutilizar el nuevo total confirmado sin esa
+decisión sería un cambio de pago al personal, no un refactor técnico.

@@ -60,12 +60,14 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const id = url.pathname.split("/").pop();
 
-    if (!id) {
+    const idResult = z.string().uuid().safeParse(id);
+    if (!idResult.success) {
       return NextResponse.json(
-        { error: "ID del pedido no encontrado" },
+        { error: "ID del pedido inválido" },
         { status: 400 }
       );
     }
+    const pedidoId = idResult.data;
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) throw new Error("DATABASE_URL no definida");
@@ -74,10 +76,11 @@ export async function GET(request: Request) {
 
     // Cargar pedido
     const pedidoRows = await sql`
-      SELECT p.*, u.name AS asesor_name
+      SELECT p.*, u.name AS asesor_name, c.asesor_id AS cliente_asesor_id
       FROM pedidos p
       LEFT JOIN users u ON p.asesor_id = u.id
-      WHERE p.id = ${id}
+      LEFT JOIN clientes c ON p.cliente_id = c.id
+      WHERE p.id = ${pedidoId}
     `;
 
     if (pedidoRows.length === 0) {
@@ -88,10 +91,15 @@ export async function GET(request: Request) {
     }
     const pedido = pedidoRows[0];
 
-    // Verificar permisos: asesor solo puede ver los suyos, repartidor los suyos, admin todos
+    // Fuente de propiedad: el asesor guardado en el pedido preserva el historial;
+    // solo si falta usamos al asesor actual del cliente. Usar un OR aquí expondría
+    // pedidos de una asesora anterior a quien hoy atiende al cliente.
+    const asesorPropietarioId = pedido.asesor_id ?? pedido.cliente_asesor_id;
+
+    // Verificar permisos: asesor solo puede ver los suyos, repartidor los suyos, admin todos.
     if (
       session.user.role !== "admin" &&
-      pedido.asesor_id !== session.user.id &&
+      asesorPropietarioId !== session.user.id &&
       pedido.repartidor_id !== session.user.id
     ) {
       return NextResponse.json(
@@ -105,7 +113,7 @@ export async function GET(request: Request) {
       SELECT pi.*, prod.codigo
       FROM pedido_items pi
       LEFT JOIN productos prod ON pi.producto_id = prod.id
-      WHERE pi.pedido_id = ${id}
+      WHERE pi.pedido_id = ${pedidoId}
     `;
 
     return NextResponse.json({ pedido, items });

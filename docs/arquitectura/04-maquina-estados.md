@@ -1,8 +1,8 @@
 # 04 — Máquina de Estados del Pedido
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** core en producción
-> **Archivos clave:** `src/lib/types.ts` (`EstadoPedido`), `src/app/api/pedidos/[id]/route.ts`, `src/app/api/pedidos/[id]/entregar/route.ts`
+> **Última verificación contra código:** 2026-07-13
+> **Estado del proyecto:** core en producción; reprogramación de Producción implementada en `codex/cambios-operativos-julio`, aún sin desplegar
+> **Archivos clave:** `src/lib/types.ts` (`EstadoPedido`), `src/app/api/pedidos/[id]/route.ts`, `src/app/api/pedidos/[id]/entregar/route.ts`, `src/app/api/pedidos/[id]/reprogramar/route.ts`
 
 Este documento detalla los estados por los que transita un pedido, las reglas de negocio de cada cambio de estado y sus efectos colaterales en la base de datos.
 
@@ -99,7 +99,7 @@ Dos modos excluyentes:
 
 | Modo | Efecto |
 |---|---|
-| `{ nueva_fecha }` | Cambia `fecha_pedido` (≥ hoy Lima, ≠ actual). Si el estado era `Asignado`/`En_Camino`/`Fallido` → **reset completo a `Pendiente`**: limpia `repartidor_id, orden_ruta, distancia_km, duracion_estimada_min, inicio_viaje_at, hora_llegada_estimada, notificado_*, entregado*, razon_fallo` (sin esto seguiría visible en la columna del motorizado — las queries de despacho por repartidor no tienen tope de fecha). `Pendiente`/`En_Produccion`/`Listo_Para_Despacho` conservan su estado. |
+| `{ nueva_fecha }` | Cambia `fecha_pedido` (≥ hoy Lima). Si ya era esa fecha, devuelve éxito idempotente sin otra auditoría ni notificación. Si el estado era `Asignado`/`En_Camino`/`Fallido` → **reset completo a `Pendiente`**: limpia `repartidor_id, orden_ruta, distancia_km, duracion_estimada_min, inicio_viaje_at, hora_llegada_estimada, notificado_*, entregado*, razon_fallo` (sin esto seguiría visible en la columna del motorizado — las queries de despacho por repartidor no tienen tope de fecha). `Pendiente`/`En_Produccion`/`Listo_Para_Despacho` conservan su estado. |
 | `{ mas_tarde: true }` | Mismo día: solo deja la marca visible "se envía más tarde". NO toca fecha, estado ni reparto. |
 
 **Huella**: columnas `pedidos.reprogramado_de` (fecha anterior; NULL si fue "más tarde"),
@@ -109,3 +109,15 @@ Badge naranja "Reprogramado · era DD/MM" / ámbar "Se envía más tarde" en la 
 llega a `Entregado`. Auditoría en `pedido_ediciones` + notificación `pedido_reprogramado` a la
 asesora dueña. `Entregado` → 409. Resumen y Despacho no necesitaron cambios (filtran por
 `fecha_pedido`, y el reset saca el pedido del kanban de hoy).
+
+### 5.1 Reprogramación iniciada por Producción (13 jul 2026)
+
+Producción puede mover a mañana, según `America/Lima`, solo pedidos en
+`Pendiente`, `En_Produccion` o `Listo_Para_Despacho`. Esta variante **no cambia el
+estado ni borra pesos, unidades, precios o ítems**: solo modifica `fecha_pedido` y la
+huella de reprogramación.
+
+El endpoint guarda en un mismo statement atómico el cambio, `pedido_ediciones` y
+`notificaciones`. Repetir la misma fecha es idempotente y no genera otro aviso.
+Admin/asesora conservan la regla anterior; los estados de reparto continúan
+reseteándose a `Pendiente` al cambiar de día.

@@ -139,8 +139,18 @@ export async function GET(req: NextRequest) {
       resumenVentasGeneralesPorFecha(sql, ayerIso),
     ]);
     const comparativo = {
-      hoy: { monto: ventasHoy.total, pedidos: ventasHoy.totalVentas },
-      ayer: { monto: ventasAyer.total, pedidos: ventasAyer.totalVentas },
+      hoy: {
+        monto: ventasHoy.total,
+        pedidos: ventasHoy.totalVentas,
+        ejecutivasPorValorizar:
+          ventasHoy.operaciones.ejecutivas.ventasPorValorizar,
+      },
+      ayer: {
+        monto: ventasAyer.total,
+        pedidos: ventasAyer.totalVentas,
+        ejecutivasPorValorizar:
+          ventasAyer.operaciones.ejecutivas.ventasPorValorizar,
+      },
     };
 
     return NextResponse.json({

@@ -2,7 +2,7 @@
 
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { usePollingVisible } from '@/lib/use-polling-visible';
@@ -27,6 +27,9 @@ interface PaginationControlsProps {
 interface DashboardContentProps {
   session: Session;
 }
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 
 const getInitialVisibleColumns = (role: string): Record<Column, boolean> => {
@@ -103,7 +106,18 @@ function Dashboard({ session }: DashboardContentProps) {
   const [asesoras, setAsesoras] = useState<{ id: string; name: string }[]>([]);
   const [usuarios, setUsuarios] = useState<string[]>([]);
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const currentPage = Number(searchParams.get('page')) || 1;
+  const pedidoEnlaceProcesado = useRef<string | null>(null);
+
+  const limpiarPedidoDelEnlace = useCallback(() => {
+    if (!searchParams.get('pedido')) return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('pedido');
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   // Obtiene la página actual de pedidos. `silencioso` = para el refresco en vivo
   // (no togglea "Cargando…" para no parpadear la tabla cada ciclo).
@@ -132,6 +146,42 @@ function Dashboard({ session }: DashboardContentProps) {
   useEffect(() => {
     fetchPedidos();
   }, [fetchPedidos]);
+
+  // Las notificaciones de reprogramación enlazan al pedido exacto. Se carga por
+  // ID (no por la página/filtro visible) y se abre el modal existente para que la
+  // ejecutiva vea inmediatamente cliente, fecha, detalle e historial operativo.
+  useEffect(() => {
+    const pedidoId = searchParams.get('pedido');
+    if (!pedidoId) {
+      pedidoEnlaceProcesado.current = null;
+      return;
+    }
+    if (pedidoEnlaceProcesado.current === pedidoId) return;
+    if (!UUID_PATTERN.test(pedidoId)) return;
+    pedidoEnlaceProcesado.current = pedidoId;
+    let cancelado = false;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/pedidos/${pedidoId}`);
+        if (!res.ok) throw new Error('No se pudo abrir el pedido');
+        const data = await res.json();
+        const pedido = data.pedido as Pedido;
+        const fechaRaw = String(pedido.fecha_pedido ?? '');
+        const match = fechaRaw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        const fecha_pedido = match
+          ? `${match[3]}/${match[2]}/${match[1]}`
+          : fechaRaw;
+        if (!cancelado) setEditingPedido({ ...pedido, fecha_pedido });
+      } catch (error) {
+        console.error('No se pudo abrir el pedido de la notificación:', error);
+      }
+    })();
+
+    return () => {
+      cancelado = true;
+    };
+  }, [searchParams]);
 
   // Refresco en vivo: trae cambios hechos desde otras pantallas/usuarios (ej. el
   // repartidor sube la foto → aparece el ícono sin recargar). Pausado mientras hay
@@ -170,6 +220,7 @@ function Dashboard({ session }: DashboardContentProps) {
       currentPedidos.map(p => p.id === updatedPedido.id ? updatedPedido : p)
     );
     setEditingPedido(null); // Cierra el modal si está abierto
+    limpiarPedidoDelEnlace();
   };
 
   const handlePedidoDeleted = (deletedId: string) => {
@@ -247,7 +298,10 @@ function Dashboard({ session }: DashboardContentProps) {
         <EditPedidoModal
           pedido={editingPedido}
           isOpen={!!editingPedido}
-          onClose={() => setEditingPedido(null)}
+          onClose={() => {
+            setEditingPedido(null);
+            limpiarPedidoDelEnlace();
+          }}
           onPedidoUpdated={handlePedidoUpdated}
         />
       )}
