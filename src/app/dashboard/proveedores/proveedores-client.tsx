@@ -298,8 +298,8 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
       {/* MODAL REGISTRAR/EDITAR */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl shadow-xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in duration-200">
-            <div className="bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
+            <div className="sticky top-0 z-10 bg-gray-50 px-6 py-4 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-xl font-bold text-gray-900">
                 {editingProveedor ? "Editar Proveedor" : "Agregar Nuevo Proveedor"}
               </h2>
@@ -446,7 +446,7 @@ export default function ProveedoresClient({ userRole }: ProveedoresClientProps) 
       {/* MODAL CONFIRMAR ELIMINACIÓN */}
       {proveedorAEliminar && (
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4 print:hidden">
-          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in duration-200">
             <div className="bg-gray-50 px-6 py-4 border-b border-gray-100">
               <h2 className="text-xl font-bold text-gray-900">Eliminar proveedor</h2>
             </div>

@@ -656,7 +656,7 @@ export default function CuentasPorPagarClient() {
       {/* Modal Registrar Pago */}
       {selectedDeuda && (
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
-          <div role="dialog" aria-modal="true" aria-labelledby="titulo-pago-cxp" className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div role="dialog" aria-modal="true" aria-labelledby="titulo-pago-cxp" className="bg-white rounded-3xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
               <h2 id="titulo-pago-cxp" className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <FiDollarSign className="text-emerald-500" /> Registrar Pago de Deuda
@@ -796,7 +796,7 @@ export default function CuentasPorPagarClient() {
       {/* Modal Deuda Anterior (deuda manual sin compra) */}
       {modalDeudaAbierto && (
         <div className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4">
-          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-200">
             <div className="bg-gray-50 p-6 border-b border-gray-100 flex justify-between items-center">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 {deudaEditando ? (
