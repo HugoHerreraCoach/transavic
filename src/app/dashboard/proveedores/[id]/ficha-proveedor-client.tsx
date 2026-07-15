@@ -8,6 +8,7 @@ import {
   FiCheckCircle,
   FiDownload,
   FiDollarSign,
+  FiEdit2,
   FiFileText,
   FiLoader,
   FiRefreshCw,
@@ -233,6 +234,104 @@ function ModalPago({
   );
 }
 
+function ModalEditarDeuda({
+  proveedorNombre,
+  deuda,
+  onClose,
+  onGuardado,
+}: {
+  proveedorNombre: string;
+  deuda: DeudaProveedorFicha;
+  onClose: () => void;
+  onGuardado: (mensaje: string) => void;
+}) {
+  const [monto, setMonto] = useState(deuda.monto_deuda.toFixed(2));
+  const [vencimiento, setVencimiento] = useState(deuda.fecha_vencimiento?.slice(0, 10) ?? "");
+  const [concepto, setConcepto] = useState(deuda.concepto || "Saldo anterior");
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const montoRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    montoRef.current?.focus();
+    const escape = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [onClose]);
+
+  const guardar = async () => {
+    const montoNumero = Number(monto);
+    if (!Number.isFinite(montoNumero) || montoNumero <= 0) {
+      setError("Ingresa un monto mayor a cero.");
+      return;
+    }
+    if (!concepto.trim()) {
+      setError("Escribe un concepto para la deuda.");
+      return;
+    }
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/cuentas-por-pagar/${deuda.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          monto: montoNumero,
+          fecha_vencimiento: vencimiento || null,
+          concepto: concepto.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo actualizar la deuda.");
+      onGuardado("Saldo anterior actualizado correctamente.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "No se pudo actualizar la deuda.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/55 p-4" onMouseDown={onClose}>
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="titulo-editar-deuda"
+        className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white shadow-2xl"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="sticky top-0 z-10 flex items-start justify-between border-b border-gray-100 bg-white px-5 py-4">
+          <div>
+            <h2 id="titulo-editar-deuda" className="text-lg font-black text-gray-900">Editar saldo anterior</h2>
+            <p className="text-sm text-gray-500">{proveedorNombre}</p>
+          </div>
+          <button onClick={onClose} aria-label="Cerrar edición" className="rounded-xl p-2 text-gray-500 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-indigo-500"><FiX size={20} /></button>
+        </header>
+        <div className="space-y-4 p-5">
+          <p className="rounded-2xl bg-indigo-50 p-3 text-xs text-indigo-800">Solo se puede editar una deuda cargada a mano que todavía no tenga pagos. Corrige el monto, el nombre o la fecha y guarda.</p>
+          <label className="block text-sm font-semibold text-gray-700">
+            Monto de la deuda
+            <input ref={montoRef} type="number" min="0.01" step="0.01" required value={monto} onChange={(e) => setMonto(e.target.value)} className="mt-1.5 min-h-11 w-full rounded-xl border border-gray-300 px-3 text-lg font-black text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+          </label>
+          <label className="block text-sm font-semibold text-gray-700">
+            Concepto
+            <input maxLength={200} value={concepto} onChange={(e) => setConcepto(e.target.value)} placeholder="Ej.: Saldo anterior" className="mt-1.5 min-h-11 w-full rounded-xl border border-gray-300 px-3 text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+          </label>
+          <label className="block text-sm font-semibold text-gray-700">
+            Vence (opcional)
+            <input type="date" value={vencimiento} onChange={(e) => setVencimiento(e.target.value)} className="mt-1.5 min-h-11 w-full rounded-xl border border-gray-300 px-3 text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
+          </label>
+          {error && <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700" role="alert">{error}</p>}
+          <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end">
+            <button type="button" onClick={onClose} className="min-h-11 rounded-xl bg-gray-100 px-5 font-bold text-gray-700 hover:bg-gray-200">Cancelar</button>
+            <button type="button" disabled={enviando} onClick={guardar} className="min-h-11 rounded-xl bg-indigo-600 px-5 font-bold text-white hover:bg-indigo-700 disabled:opacity-50">{enviando ? "Guardando..." : "Guardar cambios"}</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function FichaProveedorClient({ proveedorId }: { proveedorId: string }) {
   const [ficha, setFicha] = useState<FichaProveedorResponse | null>(null);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
@@ -241,6 +340,7 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [modalPago, setModalPago] = useState(false);
   const [deudaInicial, setDeudaInicial] = useState<DeudaProveedorFicha | null>(null);
+  const [deudaAEditar, setDeudaAEditar] = useState<DeudaProveedorFicha | null>(null);
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [generandoPdf, setGenerandoPdf] = useState<"compartir" | "descargar" | null>(null);
@@ -351,7 +451,12 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-gray-900">{deuda.tipo_doc && deuda.nro_doc ? `${deuda.tipo_doc} ${deuda.nro_doc}` : deuda.concepto || "Deuda manual"}</p><p className="text-xs text-gray-400">{fecha(deuda.fecha)}{deuda.fecha_vencimiento ? ` - vence ${fecha(deuda.fecha_vencimiento)}` : ""}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${deuda.estado === "Pagado" ? "bg-emerald-50 text-emerald-700" : deuda.estado === "Parcial" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>{deuda.estado}</span></div>
                 {deuda.items.length > 0 && <ul className="mt-3 space-y-1 rounded-xl bg-gray-50 p-3 text-xs text-gray-600">{deuda.items.map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.producto_nombre} - {item.peso_neto.toLocaleString("es-PE", { maximumFractionDigits: 2 })} kg x {dinero(item.costo_unitario)}</span><b>{dinero(item.subtotal)}</b></li>)}</ul>}
                 <div className="mt-3 grid grid-cols-3 gap-2 text-sm"><div><span className="block text-xs text-gray-400">Deuda</span><b>{dinero(deuda.monto_deuda)}</b></div><div><span className="block text-xs text-gray-400">Pagado</span><b className="text-emerald-700">{dinero(deuda.monto_pagado)}</b></div><div><span className="block text-xs text-gray-400">Restante</span><b className="text-red-700">{dinero(deuda.saldo_restante)}</b></div></div>
-                {deuda.saldo_restante > 0.009 && <button onClick={() => { setDeudaInicial(deuda); setModalPago(true); }} className="mt-3 min-h-10 w-full rounded-xl bg-indigo-50 text-sm font-bold text-indigo-700 hover:bg-indigo-100">Pagar este documento primero</button>}
+                {(deuda.saldo_restante > 0.009 || (deuda.compra_id === null && deuda.monto_pagado < 0.009)) && (
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    {deuda.saldo_restante > 0.009 && <button onClick={() => { setDeudaInicial(deuda); setModalPago(true); }} className="min-h-10 flex-1 rounded-xl bg-indigo-50 text-sm font-bold text-indigo-700 hover:bg-indigo-100">Pagar este documento primero</button>}
+                    {deuda.compra_id === null && deuda.monto_pagado < 0.009 && <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha (solo saldo anterior sin pagos)"><FiEdit2 className="mr-1.5 inline" />Editar</button>}
+                  </div>
+                )}
               </article>
             ))}
           </div>
@@ -418,6 +523,7 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
       </section>
 
       {modalPago && <ModalPago ficha={ficha} cuentas={cuentas} deudaInicial={deudaInicial} onClose={() => setModalPago(false)} onGuardado={(texto) => { setModalPago(false); setMensaje(texto); cargar(); }} />}
+      {deudaAEditar && <ModalEditarDeuda proveedorNombre={ficha.proveedor.razon_social} deuda={deudaAEditar} onClose={() => setDeudaAEditar(null)} onGuardado={(texto) => { setDeudaAEditar(null); setMensaje(texto); cargar(); }} />}
     </main>
   );
 }
