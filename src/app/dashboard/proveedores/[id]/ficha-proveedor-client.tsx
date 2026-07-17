@@ -259,6 +259,13 @@ function ModalEditarDeuda({
     return () => window.removeEventListener("keydown", escape);
   }, [onClose]);
 
+  // Lo que sobra del pago si el saldo se achica por debajo de lo ya aplicado.
+  const montoIngresado = Number(monto);
+  const liberado =
+    Number.isFinite(montoIngresado) && montoIngresado > 0
+      ? Math.round(Math.max(0, deuda.monto_pagado - montoIngresado) * 100) / 100
+      : 0;
+
   const guardar = async () => {
     const montoNumero = Number(monto);
     if (!Number.isFinite(montoNumero) || montoNumero <= 0) {
@@ -283,7 +290,12 @@ function ModalEditarDeuda({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo actualizar la deuda.");
-      onGuardado("Saldo anterior actualizado correctamente.");
+      const liberadoResp = Number(data.liberado || 0);
+      onGuardado(
+        liberadoResp > 0
+          ? `Saldo anterior actualizado. ${dinero(liberadoResp)} quedaron como saldo a favor del proveedor.`
+          : "Saldo anterior actualizado correctamente."
+      );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "No se pudo actualizar la deuda.");
     } finally {
@@ -308,7 +320,17 @@ function ModalEditarDeuda({
           <button onClick={onClose} aria-label="Cerrar edición" className="rounded-xl p-2 text-gray-500 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-indigo-500"><FiX size={20} /></button>
         </header>
         <div className="space-y-4 p-5">
-          <p className="rounded-2xl bg-indigo-50 p-3 text-xs text-indigo-800">Solo se puede editar una deuda cargada a mano que todavía no tenga pagos. Corrige el monto, el nombre o la fecha y guarda.</p>
+          <p className="rounded-2xl bg-indigo-50 p-3 text-xs text-indigo-800">Corrige el monto, el nombre o la fecha del saldo anterior. Las deudas que vienen de una compra no se pueden editar.</p>
+          {deuda.monto_pagado > 0.009 && (
+            <p className="rounded-2xl bg-gray-50 p-3 text-xs text-gray-600">
+              Este saldo ya tiene <b>{dinero(deuda.monto_pagado)}</b> pagados.
+            </p>
+          )}
+          {liberado > 0 && (
+            <p className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs font-semibold text-amber-800" role="alert">
+              Al bajarlo a {dinero(montoIngresado)} se liberarán <b>{dinero(liberado)}</b> del pago ya aplicado. Ese dinero queda como <b>saldo a favor</b> del proveedor y se descuenta solo de la próxima compra.
+            </p>
+          )}
           <label className="block text-sm font-semibold text-gray-700">
             Monto de la deuda
             <input ref={montoRef} type="number" min="0.01" step="0.01" required value={monto} onChange={(e) => setMonto(e.target.value)} className="mt-1.5 min-h-11 w-full rounded-xl border border-gray-300 px-3 text-lg font-black text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100" />
@@ -451,10 +473,10 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-gray-900">{deuda.tipo_doc && deuda.nro_doc ? `${deuda.tipo_doc} ${deuda.nro_doc}` : deuda.concepto || "Deuda manual"}</p><p className="text-xs text-gray-400">{fecha(deuda.fecha)}{deuda.fecha_vencimiento ? ` - vence ${fecha(deuda.fecha_vencimiento)}` : ""}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${deuda.estado === "Pagado" ? "bg-emerald-50 text-emerald-700" : deuda.estado === "Parcial" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>{deuda.estado}</span></div>
                 {deuda.items.length > 0 && <ul className="mt-3 space-y-1 rounded-xl bg-gray-50 p-3 text-xs text-gray-600">{deuda.items.map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.producto_nombre} - {item.peso_neto.toLocaleString("es-PE", { maximumFractionDigits: 2 })} kg x {dinero(item.costo_unitario)}</span><b>{dinero(item.subtotal)}</b></li>)}</ul>}
                 <div className="mt-3 grid grid-cols-3 gap-2 text-sm"><div><span className="block text-xs text-gray-400">Deuda</span><b>{dinero(deuda.monto_deuda)}</b></div><div><span className="block text-xs text-gray-400">Pagado</span><b className="text-emerald-700">{dinero(deuda.monto_pagado)}</b></div><div><span className="block text-xs text-gray-400">Restante</span><b className="text-red-700">{dinero(deuda.saldo_restante)}</b></div></div>
-                {(deuda.saldo_restante > 0.009 || (deuda.compra_id === null && deuda.monto_pagado < 0.009)) && (
+                {(deuda.saldo_restante > 0.009 || deuda.compra_id === null) && (
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                     {deuda.saldo_restante > 0.009 && <button onClick={() => { setDeudaInicial(deuda); setModalPago(true); }} className="min-h-10 flex-1 rounded-xl bg-indigo-50 text-sm font-bold text-indigo-700 hover:bg-indigo-100">Pagar este documento primero</button>}
-                    {deuda.compra_id === null && deuda.monto_pagado < 0.009 && <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha (solo saldo anterior sin pagos)"><FiEdit2 className="mr-1.5 inline" />Editar</button>}
+                    {deuda.compra_id === null && <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha del saldo anterior"><FiEdit2 className="mr-1.5 inline" />Editar</button>}
                   </div>
                 )}
               </article>

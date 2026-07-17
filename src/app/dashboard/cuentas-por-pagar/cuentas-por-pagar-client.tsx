@@ -272,7 +272,8 @@ export default function CuentasPorPagarClient() {
     setModalDeudaAbierto(true);
   };
 
-  // Reusa el mismo modal en modo corrección (solo deudas manuales sin pagos).
+  // Reusa el mismo modal en modo corrección (solo deudas manuales; si ya tiene pagos,
+  // lo que sobre al achicar el monto queda como saldo a favor del proveedor).
   const abrirModalEditarDeuda = (d: Deuda) => {
     setDeudaEditando(d);
     setDeudaProveedorId(d.proveedor_id);
@@ -623,24 +624,26 @@ export default function CuentasPorPagarClient() {
                           ) : (
                             <span className="text-gray-400 text-[10px] font-semibold italic">Completo</span>
                           )}
-                          {/* Solo las deudas manuales sin ningún pago se pueden corregir o borrar (error de tipeo) */}
+                          {/* Corregir: cualquier deuda manual, aunque ya tenga pagos (lo que sobre
+                              del pago queda como saldo a favor). Las de compra son intocables. */}
+                          {d.compra_id === null && (
+                            <button
+                              onClick={() => abrirModalEditarDeuda(d)}
+                              title="Corregir monto, vencimiento o concepto"
+                              className="p-1.5 text-gray-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
+                            >
+                              <FiEdit2 size={13} />
+                            </button>
+                          )}
+                          {/* Borrar sí exige que no tenga ni un sol pagado. */}
                           {d.compra_id === null && d.monto_pagado === 0 && (
-                            <>
-                              <button
-                                onClick={() => abrirModalEditarDeuda(d)}
-                                title="Corregir monto, vencimiento o concepto"
-                                className="p-1.5 text-gray-400 hover:text-indigo-600 rounded-lg hover:bg-indigo-50 transition-colors cursor-pointer"
-                              >
-                                <FiEdit2 size={13} />
-                              </button>
-                              <button
-                                onClick={() => handleBorrarDeudaManual(d)}
-                                title="Borrar esta deuda manual (sin pagos)"
-                                className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
-                              >
-                                <FiTrash2 size={13} />
-                              </button>
-                            </>
+                            <button
+                              onClick={() => handleBorrarDeudaManual(d)}
+                              title="Borrar esta deuda manual (sin pagos)"
+                              className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer"
+                            >
+                              <FiTrash2 size={13} />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -819,9 +822,24 @@ export default function CuentasPorPagarClient() {
 
             <form onSubmit={handleRegistrarDeuda} className="p-6 space-y-4">
               {deudaEditando ? (
-                <p className="text-xs text-gray-500 bg-indigo-50/50 border border-indigo-100/50 p-3 rounded-2xl">
-                  Corrige una deuda manual mal digitada. Solo se puede mientras <b>no tenga pagos</b>.
-                </p>
+                <>
+                  <p className="text-xs text-gray-500 bg-indigo-50/50 border border-indigo-100/50 p-3 rounded-2xl">
+                    Corrige una deuda manual mal digitada. Las deudas que vienen de una compra no se
+                    pueden editar.
+                    {deudaEditando.monto_pagado > 0.009 && (
+                      <> Este saldo ya tiene <b>{formatSoles(deudaEditando.monto_pagado)}</b> pagados.</>
+                    )}
+                  </p>
+                  {deudaEditando.monto_pagado - Number(deudaMonto) > 0.009 &&
+                    Number(deudaMonto) > 0 && (
+                      <p className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 p-3 rounded-2xl" role="alert">
+                        Al bajarlo a {formatSoles(Number(deudaMonto))} se liberarán{" "}
+                        <b>{formatSoles(deudaEditando.monto_pagado - Number(deudaMonto))}</b> del pago ya
+                        aplicado. Ese dinero queda como <b>saldo a favor</b> del proveedor y se descuenta
+                        solo de la próxima compra.
+                      </p>
+                    )}
+                </>
               ) : (
                 <p className="text-xs text-gray-500 bg-indigo-50/50 border border-indigo-100/50 p-3 rounded-2xl">
                   Para registrar lo que ya le debías a un proveedor <b>antes de usar el sistema</b>.
