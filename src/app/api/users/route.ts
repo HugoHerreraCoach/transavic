@@ -12,6 +12,7 @@ const CreateUserSchema = z.object({
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres."),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']),
+  solo_lectura: z.boolean().default(false),
   chofer_dni: z.string().trim().optional().nullable(),
   chofer_licencia: z.string().trim().optional().nullable(),
   vehiculo_placa: z.string().trim().optional().nullable(),
@@ -48,7 +49,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
       const users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE role = ${roleFilter} AND activo IS NOT FALSE ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE role = ${roleFilter} AND activo IS NOT FALSE ORDER BY name ASC
       `;
       return NextResponse.json(users);
     }
@@ -57,11 +58,11 @@ export async function GET(request: Request) {
     let users;
     if (roleFilter) {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE role = ${roleFilter} AND (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE role = ${roleFilter} AND (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     } else {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo FROM users WHERE (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     }
 
@@ -90,7 +91,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
 
-    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
+    const { name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
 
     const connectionString = process.env.DATABASE_URL!;
     const sql = neon(connectionString);
@@ -104,9 +105,9 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [newUser] = await sql`
-      INSERT INTO users (name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy)
-      VALUES (${name}, ${hashedPassword}, ${role}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null}, ${activo_rotacion}, ${orden_rotacion}, ${leads_recibidos_hoy})
-      RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy
+      INSERT INTO users (name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy)
+      VALUES (${name}, ${hashedPassword}, ${role}, ${solo_lectura}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null}, ${activo_rotacion}, ${orden_rotacion}, ${leads_recibidos_hoy})
+      RETURNING id, name, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy
     `;
 
     return NextResponse.json(newUser, { status: 201 });

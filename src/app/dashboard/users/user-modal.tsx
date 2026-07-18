@@ -24,6 +24,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
     const [vehiculoPlaca, setVehiculoPlaca] = useState('');
     const [choferNombres, setChoferNombres] = useState('');
     const [choferApellidos, setChoferApellidos] = useState('');
+    const [soloLectura, setSoloLectura] = useState(false);
     const isMouseDownInside = useRef(true);
 
     useEffect(() => {
@@ -36,6 +37,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setVehiculoPlaca(userToEdit.vehiculo_placa || '');
             setChoferNombres(userToEdit.chofer_nombres || '');
             setChoferApellidos(userToEdit.chofer_apellidos || '');
+            setSoloLectura(Boolean(userToEdit.solo_lectura));
         } else {
             setName('');
             setPassword('');
@@ -45,6 +47,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setVehiculoPlaca('');
             setChoferNombres('');
             setChoferApellidos('');
+            setSoloLectura(false);
         }
     }, [userToEdit, isOpen]);
 
@@ -59,6 +62,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             vehiculo_placa: role === 'repartidor' ? vehiculoPlaca.trim() || null : null,
             chofer_nombres: role === 'repartidor' ? choferNombres.trim() || null : null,
             chofer_apellidos: role === 'repartidor' ? choferApellidos.trim() || null : null,
+            solo_lectura: soloLectura,
         };
         if (password) {
             userData.password = password;
@@ -154,6 +158,26 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                 <option value="produccion">Producción (pesa y prepara)</option>
                                 <option value="admin">Administrador (acceso total)</option>
                             </select>
+                        </div>
+
+                        <div className="p-4 bg-indigo-50/60 border border-indigo-100 rounded-xl">
+                            <label htmlFor="soloLectura" className="flex items-start gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    id="soloLectura"
+                                    checked={soloLectura}
+                                    onChange={(e) => setSoloLectura(e.target.checked)}
+                                    className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span>
+                                    <span className="block text-sm font-semibold text-gray-800">Solo lectura</span>
+                                    <span className="block text-xs text-gray-500 leading-snug">
+                                        Puede ver todo lo de su rol, pero no crear, editar ni eliminar nada.
+                                        Para un observador que revise todo el sistema: elige <b>Administrador</b> y marca esta opción.
+                                        El cambio aplica cuando el usuario vuelve a iniciar sesión.
+                                    </span>
+                                </span>
+                            </label>
                         </div>
 
                         {role === 'repartidor' && (

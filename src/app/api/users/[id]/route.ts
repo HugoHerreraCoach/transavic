@@ -13,6 +13,7 @@ const UpdateUserSchema = z.object({
   name: z.string().min(3, "El nombre debe tener al menos 3 caracteres.").optional(),
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres.").optional().or(z.literal('')),
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']).optional(),
+  solo_lectura: z.boolean().optional(),
   chofer_dni: z.string().trim().optional().nullable(),
   chofer_licencia: z.string().trim().optional().nullable(),
   vehiculo_placa: z.string().trim().optional().nullable(),
@@ -53,7 +54,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
+    const { name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
 
     // Nadie puede desactivarse a sí mismo (evita dejar el sistema sin admins por accidente).
     if (activo === false && session.user.id === (new URL(request.url)).pathname.split("/").pop()) {
@@ -64,6 +65,7 @@ export async function PATCH(request: NextRequest) {
       !name &&
       !password &&
       !role &&
+      solo_lectura === undefined &&
       chofer_dni === undefined &&
       chofer_licencia === undefined &&
       vehiculo_placa === undefined &&
@@ -87,6 +89,7 @@ export async function PATCH(request: NextRequest) {
     const updates: Record<string, string | number | boolean | null> = {};
     if (name) updates.name = name;
     if (role) updates.role = role;
+    if (solo_lectura !== undefined) updates.solo_lectura = solo_lectura;
     if (password) {
       updates.password = await bcrypt.hash(password, 10);
     }
@@ -104,7 +107,7 @@ export async function PATCH(request: NextRequest) {
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
       [...values, id]
     );
 

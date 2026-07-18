@@ -245,6 +245,9 @@ export default function DashboardLayout({
   };
 
   const userRole = session.user.role;
+  // Usuario observador: el middleware bloquea toda escritura. Acá solo escondemos los
+  // botones de crear (isPrimary) para no tentarlo con acciones que darían 403.
+  const soloLectura = Boolean(session.user.solo_lectura);
 
   const [aprobadasSinUsar, setAprobadasSinUsar] = useState(0);
   const cargarAutorizaciones = useCallback(() => {
@@ -269,6 +272,7 @@ export default function DashboardLayout({
     href === "/dashboard/autorizaciones" && aprobadasSinUsar > 0 ? aprobadasSinUsar : 0;
 
   const filteredNavItems = navItems.filter((item) => {
+    if (soloLectura && item.isPrimary) return false;
     if (item.roles) return item.roles.includes(userRole);
     if (item.adminOnly) return userRole === "admin";
     if (item.repartidorOnly) return userRole === "repartidor";
@@ -542,6 +546,11 @@ export default function DashboardLayout({
                 <div className="mb-3 px-3">
                   <p className="text-[11px] text-gray-500 font-medium">Sesión:</p>
                   <p className="font-bold text-gray-800 truncate">{session.user.name}</p>
+                  {soloLectura && (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700">
+                      Solo lectura
+                    </span>
+                  )}
                 </div>
               )}
 

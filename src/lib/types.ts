@@ -71,6 +71,8 @@ export type User = {
   leads_recibidos_hoy?: number;
   /** FALSE = ex-empleado desactivado: el login lo rechaza (jamás se borra la fila). */
   activo?: boolean;
+  /** TRUE = usuario observador: puede ver todo su rol pero el middleware bloquea toda escritura. */
+  solo_lectura?: boolean;
 };
 
 export type Producto = {

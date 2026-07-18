@@ -233,7 +233,14 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                                                     {nombre.charAt(0).toUpperCase()}
                                                 </span>
                                                 <div>
-                                                    <span className="font-medium text-gray-800 block">{nombre}</span>
+                                                    <span className="font-medium text-gray-800 block">
+                                                        {nombre}
+                                                        {user.solo_lectura && (
+                                                            <span className="ml-2 inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-700 align-middle">
+                                                                Solo lectura
+                                                            </span>
+                                                        )}
+                                                    </span>
                                                     {user.role === 'repartidor' && (user.chofer_dni || user.vehiculo_placa) && (
                                                         <span className="text-[11px] text-gray-400 block mt-0.5 font-mono">
                                                             {user.chofer_dni ? `DNI: ${user.chofer_dni}` : ''}
