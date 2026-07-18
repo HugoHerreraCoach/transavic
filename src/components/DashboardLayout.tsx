@@ -248,6 +248,11 @@ export default function DashboardLayout({
   // Usuario observador: el middleware bloquea toda escritura. Acá solo escondemos los
   // botones de crear (isPrimary) para no tentarlo con acciones que darían 403.
   const soloLectura = Boolean(session.user.solo_lectura);
+  // Vistas limitadas (Fase 2): si el usuario tiene una lista, el sidebar solo muestra
+  // esas secciones (dentro de lo que su rol ya permite). null/vacío = sin restricción.
+  const vistasPermitidas = session.user.vistas_permitidas;
+  const tieneVistasLimitadas =
+    Array.isArray(vistasPermitidas) && vistasPermitidas.length > 0;
 
   const [aprobadasSinUsar, setAprobadasSinUsar] = useState(0);
   const cargarAutorizaciones = useCallback(() => {
@@ -273,9 +278,17 @@ export default function DashboardLayout({
 
   const filteredNavItems = navItems.filter((item) => {
     if (soloLectura && item.isPrimary) return false;
-    if (item.roles) return item.roles.includes(userRole);
-    if (item.adminOnly) return userRole === "admin";
-    if (item.repartidorOnly) return userRole === "repartidor";
+    // Filtro por rol (lo de siempre).
+    const rolOk = item.roles
+      ? item.roles.includes(userRole)
+      : item.adminOnly
+        ? userRole === "admin"
+        : item.repartidorOnly
+          ? userRole === "repartidor"
+          : true;
+    if (!rolOk) return false;
+    // Filtro por vistas limitadas (narrowa dentro del rol).
+    if (tieneVistasLimitadas && !vistasPermitidas!.includes(item.href)) return false;
     return true;
   });
 

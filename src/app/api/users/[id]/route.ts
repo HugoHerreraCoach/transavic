@@ -5,6 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { auth } from '@/auth';
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
+import { sanearVistas } from '@/lib/vistas';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,7 @@ const UpdateUserSchema = z.object({
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres.").optional().or(z.literal('')),
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']).optional(),
   solo_lectura: z.boolean().optional(),
+  vistas_permitidas: z.array(z.string()).nullable().optional(),
   chofer_dni: z.string().trim().optional().nullable(),
   chofer_licencia: z.string().trim().optional().nullable(),
   vehiculo_placa: z.string().trim().optional().nullable(),
@@ -54,7 +56,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
+    const { name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
 
     // Nadie puede desactivarse a sí mismo (evita dejar el sistema sin admins por accidente).
     if (activo === false && session.user.id === (new URL(request.url)).pathname.split("/").pop()) {
@@ -66,6 +68,7 @@ export async function PATCH(request: NextRequest) {
       !password &&
       !role &&
       solo_lectura === undefined &&
+      vistas_permitidas === undefined &&
       chofer_dni === undefined &&
       chofer_licencia === undefined &&
       vehiculo_placa === undefined &&
@@ -86,10 +89,11 @@ export async function PATCH(request: NextRequest) {
     }
     const sql = neon(connectionString);
 
-    const updates: Record<string, string | number | boolean | null> = {};
+    const updates: Record<string, string | number | boolean | null | string[]> = {};
     if (name) updates.name = name;
     if (role) updates.role = role;
     if (solo_lectura !== undefined) updates.solo_lectura = solo_lectura;
+    if (vistas_permitidas !== undefined) updates.vistas_permitidas = sanearVistas(vistas_permitidas);
     if (password) {
       updates.password = await bcrypt.hash(password, 10);
     }
@@ -103,11 +107,15 @@ export async function PATCH(request: NextRequest) {
     if (leads_recibidos_hoy !== undefined) updates.leads_recibidos_hoy = leads_recibidos_hoy;
     if (activo !== undefined) updates.activo = activo;
 
-    const setClauses = Object.keys(updates).map((key, i) => `"${key}" = $${i + 1}`).join(', ');
+    // vistas_permitidas es text[]: se castea explícito para que el driver HTTP de Neon
+    // no infiera mal el tipo (gotcha #45c).
+    const setClauses = Object.keys(updates)
+      .map((key, i) => `"${key}" = $${i + 1}${key === 'vistas_permitidas' ? '::text[]' : ''}`)
+      .join(', ');
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
       [...values, id]
     );
 

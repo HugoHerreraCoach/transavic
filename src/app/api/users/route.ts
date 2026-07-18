@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import bcrypt from 'bcrypt';
 import { z } from 'zod';
+import { sanearVistas } from '@/lib/vistas';
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ const CreateUserSchema = z.object({
   password: z.string().min(6, "La contraseña debe tener al menos 6 caracteres."),
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']),
   solo_lectura: z.boolean().default(false),
+  vistas_permitidas: z.array(z.string()).nullable().optional(),
   chofer_dni: z.string().trim().optional().nullable(),
   chofer_licencia: z.string().trim().optional().nullable(),
   vehiculo_placa: z.string().trim().optional().nullable(),
@@ -49,7 +51,7 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: "No autorizado" }, { status: 403 });
       }
       const users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE role = ${roleFilter} AND activo IS NOT FALSE ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas FROM users WHERE role = ${roleFilter} AND activo IS NOT FALSE ORDER BY name ASC
       `;
       return NextResponse.json(users);
     }
@@ -58,11 +60,11 @@ export async function GET(request: Request) {
     let users;
     if (roleFilter) {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE role = ${roleFilter} AND (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas FROM users WHERE role = ${roleFilter} AND (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     } else {
       users = await sql`
-        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura FROM users WHERE (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
+        SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas FROM users WHERE (${incluirInactivos} OR activo IS NOT FALSE) ORDER BY name ASC
       `;
     }
 
@@ -91,7 +93,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
 
-    const { name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
+    const { name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy } = parsedData.data;
+    const vistasSaneadas = sanearVistas(vistas_permitidas);
 
     const connectionString = process.env.DATABASE_URL!;
     const sql = neon(connectionString);
@@ -105,9 +108,9 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const [newUser] = await sql`
-      INSERT INTO users (name, password, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy)
-      VALUES (${name}, ${hashedPassword}, ${role}, ${solo_lectura}, ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null}, ${activo_rotacion}, ${orden_rotacion}, ${leads_recibidos_hoy})
-      RETURNING id, name, role, solo_lectura, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy
+      INSERT INTO users (name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy)
+      VALUES (${name}, ${hashedPassword}, ${role}, ${solo_lectura}, ${vistasSaneadas}::text[], ${chofer_dni ?? null}, ${chofer_licencia ?? null}, ${vehiculo_placa ?? null}, ${chofer_nombres ?? null}, ${chofer_apellidos ?? null}, ${activo_rotacion}, ${orden_rotacion}, ${leads_recibidos_hoy})
+      RETURNING id, name, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy
     `;
 
     return NextResponse.json(newUser, { status: 201 });

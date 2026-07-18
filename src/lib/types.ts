@@ -73,6 +73,8 @@ export type User = {
   activo?: boolean;
   /** TRUE = usuario observador: puede ver todo su rol pero el middleware bloquea toda escritura. */
   solo_lectura?: boolean;
+  /** Lista de hrefs de sección que puede ver/abrir. NULL = sin restricción (defaults del rol). */
+  vistas_permitidas?: string[] | null;
 };
 
 export type Producto = {

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { User } from '@/lib/types';
 import { FiX, FiRefreshCw } from 'react-icons/fi';
+import { CATALOGO_VISTAS, GRUPOS_VISTAS } from '@/lib/vistas';
 
 interface UserModalProps {
     isOpen: boolean;
@@ -25,7 +26,19 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
     const [choferNombres, setChoferNombres] = useState('');
     const [choferApellidos, setChoferApellidos] = useState('');
     const [soloLectura, setSoloLectura] = useState(false);
+    const [limitarVistas, setLimitarVistas] = useState(false);
+    const [vistasSel, setVistasSel] = useState<string[]>([]);
     const isMouseDownInside = useRef(true);
+
+    const toggleVista = (key: string) =>
+        setVistasSel((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+    const toggleGrupo = (keysGrupo: string[]) =>
+        setVistasSel((prev) => {
+            const todas = keysGrupo.every((k) => prev.includes(k));
+            return todas
+                ? prev.filter((k) => !keysGrupo.includes(k))
+                : [...new Set([...prev, ...keysGrupo])];
+        });
 
     useEffect(() => {
         if (userToEdit) {
@@ -38,6 +51,9 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setChoferNombres(userToEdit.chofer_nombres || '');
             setChoferApellidos(userToEdit.chofer_apellidos || '');
             setSoloLectura(Boolean(userToEdit.solo_lectura));
+            const vistas = Array.isArray(userToEdit.vistas_permitidas) ? userToEdit.vistas_permitidas : [];
+            setLimitarVistas(vistas.length > 0);
+            setVistasSel(vistas);
         } else {
             setName('');
             setPassword('');
@@ -48,6 +64,8 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setChoferNombres('');
             setChoferApellidos('');
             setSoloLectura(false);
+            setLimitarVistas(false);
+            setVistasSel([]);
         }
     }, [userToEdit, isOpen]);
 
@@ -63,6 +81,9 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             chofer_nombres: role === 'repartidor' ? choferNombres.trim() || null : null,
             chofer_apellidos: role === 'repartidor' ? choferApellidos.trim() || null : null,
             solo_lectura: soloLectura,
+            // null = sin restricción (acceso completo del rol). Solo se envía la lista
+            // si el admin activó "Limitar a ciertas vistas" y seleccionó al menos una.
+            vistas_permitidas: limitarVistas && vistasSel.length > 0 ? vistasSel : null,
         };
         if (password) {
             userData.password = password;
@@ -178,6 +199,67 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                     </span>
                                 </span>
                             </label>
+                        </div>
+
+                        <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl">
+                            <label htmlFor="limitarVistas" className="flex items-start gap-3 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    id="limitarVistas"
+                                    checked={limitarVistas}
+                                    onChange={(e) => setLimitarVistas(e.target.checked)}
+                                    className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span>
+                                    <span className="block text-sm font-semibold text-gray-800">Limitar a ciertas vistas</span>
+                                    <span className="block text-xs text-gray-500 leading-snug">
+                                        Por defecto ve todas las secciones de su rol. Actívalo para que solo vea las que marques.
+                                    </span>
+                                </span>
+                            </label>
+
+                            {limitarVistas && (
+                                <div className="mt-3 space-y-3 border-t border-gray-200 pt-3">
+                                    {vistasSel.length === 0 && (
+                                        <p className="text-xs font-semibold text-amber-700">
+                                            Marca al menos una vista. Si no marcas ninguna, el usuario verá todo (sin restricción).
+                                        </p>
+                                    )}
+                                    {GRUPOS_VISTAS.map((grupo) => {
+                                        const items = CATALOGO_VISTAS.filter((v) => v.grupo === grupo);
+                                        if (items.length === 0) return null;
+                                        const keys = items.map((v) => v.key);
+                                        const todas = keys.every((k) => vistasSel.includes(k));
+                                        return (
+                                            <div key={grupo}>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[11px] font-bold uppercase tracking-wide text-gray-500">{grupo}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleGrupo(keys)}
+                                                        className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                                                    >
+                                                        {todas ? 'Quitar todas' : 'Todas'}
+                                                    </button>
+                                                </div>
+                                                <div className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                                                    {items.map((v) => (
+                                                        <label key={v.key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={vistasSel.includes(v.key)}
+                                                                onChange={() => toggleVista(v.key)}
+                                                                className="h-4 w-4 flex-shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                                            />
+                                                            {v.label}
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
                         </div>
 
                         {role === 'repartidor' && (
