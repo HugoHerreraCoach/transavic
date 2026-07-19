@@ -87,14 +87,16 @@ export async function POST(req: NextRequest) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Verificar si ya existe un lead con ese teléfono
+    // Verificar si ya existe un lead con ese teléfono EN ESTA MARCA. La unicidad es
+    // por (telefono, empresa): el mismo cliente puede ser lead de las dos marcas.
     const existing = await sql`
-      SELECT id FROM public.leads WHERE telefono = ${limpioTelefono}
+      SELECT id FROM public.leads
+      WHERE telefono = ${limpioTelefono} AND empresa = ${data.empresa}
     `;
 
     if (existing.length > 0) {
       return NextResponse.json(
-        { error: "Ya existe un prospecto registrado con este número de teléfono." },
+        { error: "Ya existe un prospecto registrado con este número de teléfono en esta marca." },
         { status: 409 }
       );
     }

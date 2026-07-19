@@ -1,9 +1,16 @@
 // src/app/api/webhooks/meta/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
+import { neon } from "@neondatabase/serverless";
 import { handleInboundMessage } from "@/lib/chatbot/bot-orchestrator";
+import {
+  type EmpresaWhatsApp,
+  empresaDesdePhoneNumberId,
+} from "@/lib/whatsapp/config";
+import { descargarMediaComoDataUrl, estadoDesdeStatusMeta } from "@/lib/whatsapp/sender";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // descarga de media + IA + envío pueden pasar los ~15s default
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -33,6 +40,80 @@ export async function GET(request: NextRequest) {
   }
 
   return new NextResponse("Bad Request", { status: 400 });
+}
+
+/**
+ * Resuelve la MARCA de un mensaje entrante a partir del phone_number_id.
+ * - Si coincide con una marca configurada → esa marca.
+ * - Si NINGUNA marca tiene phone id configurado (entorno de prueba/mock) → "Transavic"
+ *   (para que el CRM y los tests funcionen sin credenciales reales).
+ * - Si hay marcas configuradas pero el id no coincide con ninguna → null (tráfico ajeno, se ignora).
+ */
+function resolverEmpresa(phoneNumberId: string | undefined): EmpresaWhatsApp | null {
+  const emp = empresaDesdePhoneNumberId(phoneNumberId);
+  if (emp) return emp;
+  const algunaConfigurada = !!(
+    process.env.WHATSAPP_TRA_PHONE_NUMBER_ID || process.env.WHATSAPP_AVI_PHONE_NUMBER_ID
+  );
+  return algunaConfigurada ? null : "Transavic";
+}
+
+interface WaMessage {
+  id?: string;
+  from?: string;
+  type?: string;
+  text?: { body?: string };
+  image?: { id?: string; caption?: string };
+  video?: { id?: string; caption?: string };
+  audio?: { id?: string };
+  document?: { id?: string; caption?: string; filename?: string };
+  button?: { text?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string };
+  };
+  referral?: {
+    source_url?: string;
+    source_id?: string;
+    source_type?: string;
+    headline?: string;
+    body?: string;
+    ctwa_clid?: string;
+  };
+}
+
+/** Extrae el tipo, el texto para la IA y el media id (si aplica) de un mensaje entrante. */
+function extraerContenido(message: WaMessage): {
+  tipo: string;
+  textoParaBot: string;
+  mediaId: string | null;
+} {
+  const tipo = message.type || "text";
+  switch (tipo) {
+    case "text":
+      return { tipo, textoParaBot: message.text?.body || "", mediaId: null };
+    case "image":
+      return { tipo, textoParaBot: message.image?.caption || "", mediaId: message.image?.id || null };
+    case "video":
+      return { tipo, textoParaBot: message.video?.caption || "", mediaId: message.video?.id || null };
+    case "document":
+      return { tipo, textoParaBot: message.document?.caption || "", mediaId: message.document?.id || null };
+    case "audio":
+      return { tipo, textoParaBot: "", mediaId: message.audio?.id || null };
+    case "button":
+      return { tipo: "text", textoParaBot: message.button?.text || "", mediaId: null };
+    case "interactive":
+      return {
+        tipo: "text",
+        textoParaBot:
+          message.interactive?.button_reply?.title ||
+          message.interactive?.list_reply?.title ||
+          "",
+        mediaId: null,
+      };
+    default:
+      return { tipo, textoParaBot: "", mediaId: null };
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -66,33 +147,62 @@ export async function POST(request: NextRequest) {
         const changes = entry.changes || [];
         for (const change of changes) {
           const value = change.value || {};
-          const messages = value.messages || [];
+
+          // Rutear a la MARCA según el número que recibió el mensaje.
+          const phoneNumberId: string | undefined = value.metadata?.phone_number_id;
+          const empresa = resolverEmpresa(phoneNumberId);
+          if (!empresa) {
+            console.warn(`⚠️ [Meta Webhook] phone_number_id desconocido (${phoneNumberId}) — ignorado.`);
+            continue;
+          }
+
+          // 1) Estados de entrega de nuestros mensajes salientes (sent/delivered/read/failed)
+          const statuses = value.statuses || [];
+          if (statuses.length > 0) {
+            await procesarStatuses(statuses);
+          }
+
+          // 2) Mensajes entrantes
+          const messages: WaMessage[] = value.messages || [];
           const contacts = value.contacts || [];
 
           for (const message of messages) {
-            // Extraer datos del mensaje
-            const from = message.from; // Teléfono
-            const textBody = message.text?.body || "";
-            
-            // Buscar nombre de perfil de contacto si existe
+            const from = message.from; // Teléfono del cliente
+            if (!from) continue;
+
             const contact = contacts.find(
               (c: { wa_id?: string; profile?: { name?: string } }) => c.wa_id === from
             );
             const profileName = contact?.profile?.name || from;
 
-            if (from && textBody) {
-              console.log(`📥 [Meta Webhook] Mensaje recibido de ${from} (${profileName}): "${textBody}"`);
-              
-              // Ejecutar lógica del orquestador del chatbot
-              const reply = await handleInboundMessage(from, profileName, textBody);
-              
-              if (reply) {
-                console.log(`📤 [Meta Webhook] Respuesta enviada automáticamente: "${reply}"`);
-                // Aquí se realizaría la llamada HTTP de envío físico de WhatsApp a la API de Meta si
-                // estuviera la llave configurada:
-                // await sendWhatsAppTextMessage(from, reply);
-              }
+            const { tipo, textoParaBot, mediaId } = extraerContenido(message);
+
+            // Descargar la media entrante como dataURL (para guardarla/renderizarla).
+            let mediaDataUrl: string | null = null;
+            if (mediaId) {
+              mediaDataUrl = await descargarMediaComoDataUrl(empresa, mediaId);
             }
+
+            const referral = message.referral
+              ? {
+                  ctwa_clid: message.referral.ctwa_clid,
+                  source_id: message.referral.source_id,
+                  headline: message.referral.headline,
+                }
+              : null;
+
+            console.log(
+              `📥 [Meta Webhook] ${empresa} ← ${from} (${profileName}) [${tipo}]: "${textoParaBot || "(media)"}"`
+            );
+
+            // El orquestador crea/actualiza el lead, guarda el mensaje, corre el bot y
+            // ENVÍA la respuesta por WhatsApp (si la marca está configurada).
+            await handleInboundMessage(from, profileName, textoParaBot, empresa, {
+              whatsappMessageId: message.id,
+              tipo,
+              mediaDataUrl,
+              referral,
+            });
           }
         }
       }
@@ -103,5 +213,30 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("❌ [POST] Error en webhook Meta:", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
+}
+
+interface WaStatus {
+  id?: string;
+  status?: string;
+  errors?: { title?: string; message?: string }[];
+}
+
+/** Actualiza el estado de entrega de los mensajes salientes por su wamid. */
+async function procesarStatuses(statuses: WaStatus[]): Promise<void> {
+  const sql = neon(process.env.DATABASE_URL!);
+  for (const st of statuses) {
+    if (!st.id) continue;
+    const nuevoEstado = estadoDesdeStatusMeta(st.status);
+    if (!nuevoEstado) continue;
+    const errMsg = st.errors?.[0]?.message || st.errors?.[0]?.title || null;
+    // No degradar un 'leido' a un estado anterior (los statuses pueden llegar desordenados).
+    await sql`
+      UPDATE public.lead_mensajes
+      SET estado = ${nuevoEstado},
+          error_msg = ${errMsg}
+      WHERE whatsapp_message_id = ${st.id}
+        AND estado IS DISTINCT FROM 'leido'
+    `;
   }
 }

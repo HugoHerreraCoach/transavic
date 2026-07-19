@@ -47,12 +47,26 @@ Para evitar llamadas innecesarias que tardan entre 7 y 10 segundos y agotan las 
 
 ---
 
-## 5. Checklist de seguridad ANTES de conectar el número real de WhatsApp (CRM/chatbot)
+## 5. CRM WhatsApp para dos marcas — cableado con Meta Cloud API (19 jul 2026)
 
-El chatbot del CRM de leads (Fase 4 de la expansión ERP) reutiliza el motor Gemini/Groq de este módulo, pero se conecta a **Meta Cloud API** mediante un webhook. Antes de apuntar el número real de WhatsApp del negocio al webhook, verifica TODOS estos puntos:
+El chatbot del CRM de leads reutiliza el motor Gemini/Groq de este módulo y se conecta a **Meta Cloud API** por webhook. El **envío saliente real ya está implementado** (antes era mock) y el sistema rutea DOS marcas (Transavic RUC 20 / Avícola de Tony RUC 10) sobre un mismo webhook.
 
-1. **`META_VERIFY_TOKEN` configurada en Vercel.** El código ya NO tiene fallback hardcodeado: sin esta variable, el webhook responde **503** y Meta no podrá verificar la suscripción.
-2. **`META_APP_SECRET` configurada.** Sin ella, los POST entrantes se aceptan **sin verificar la firma** `X-Hub-Signature-256` — eso solo es aceptable en pruebas, nunca con el número real.
-3. **Implementar el envío real de mensajes salientes.** Hoy el envío de WhatsApp saliente es **MOCK** (`console.log`) tanto en el webhook como en `/api/crm/leads/[id]/mensajes` — el bot "responde" solo en la base de datos, el cliente no recibe nada.
-4. **Probar el flujo completo** con `node scripts/test-crm-flow.mjs` (simula la entrada de un lead, la rotación de asesoras y la conversación con el bot).
-5. **Prompt injection:** el prompt del bot ya **trunca y delimita** el mensaje del cliente antes de enviarlo al modelo — mantener esa protección en cualquier cambio del prompt.
+**Arquitectura (deep research verificado contra Meta 2025-2026, workflow `w2upuo65t`):**
+- Dos marcas = **dos Business Portfolios = dos WABAs = dos números** (una WABA no cruza portfolios). El webhook es COMPARTIDO; se ruteá por `value.metadata.phone_number_id`.
+- **NO hace falta verificar la empresa para operar/publicitar** (recibir + responder en ventana 24h/72h + hasta 250 destinatarios únicos/día). La verificación solo se necesita para escalar el tope y para **plantillas proactivas** (desde ene-2026). El RUC 10 (persona natural) SÍ se verifica: nombre legal = persona (Ficha RUC), marca = nombre comercial.
+
+**Piezas de código:**
+- `src/lib/whatsapp/config.ts` — credenciales por marca (`WHATSAPP_TRA_*` / `WHATSAPP_AVI_*`), `empresaDesdePhoneNumberId()`, `isWhatsAppConfigured()`.
+- `src/lib/whatsapp/sender.ts` — `enviarTexto/enviarMedia/enviarPlantilla`, subida/descarga de media, detecta error 131047 (fuera de ventana). Nunca lanza.
+- `src/app/api/webhooks/meta/route.ts` — rutea por `phone_number_id`, maneja texto+media+`referral` (CTWA `ctwa_clid`), **idempotencia por `message.id`**, procesa `statuses[]` (estado de entrega).
+- `src/lib/chatbot/bot-orchestrator.ts` — lead scoped por `(telefono, empresa)`, envía la respuesta del bot de verdad.
+- `src/app/api/crm/leads/[id]/mensajes/route.ts` — envío de la asesora (texto/media/plantilla) con **gate de ventana 24h** (409 si está cerrada; solo plantilla la reabre).
+
+**Checklist ANTES de conectar cada número real (por marca):**
+1. **`META_VERIFY_TOKEN`** en Vercel (webhook compartido). Sin ella el webhook GET responde **503**.
+2. **`META_APP_SECRET`** en Vercel — verifica la firma `X-Hub-Signature-256` de los POST.
+3. **`WHATSAPP_TRA_PHONE_NUMBER_ID` + `WHATSAPP_TRA_TOKEN`** (y `WHATSAPP_AVI_*` para la 2ª marca). Sin las credenciales de una marca, esa marca queda en **modo mock** (registra en el CRM, no manda a Meta) — no rompe nada.
+4. Suscribir el webhook al campo **`messages`** y activar **"Ads Attribution"** para recibir `referral.ctwa_clid` de los anuncios.
+5. **Prompt injection:** el prompt del bot ya **trunca y delimita** el mensaje del cliente — mantener esa protección.
+
+> El test `scripts/test-crm-flow.mjs` NO corre localmente en esta Mac (Node 26 rompe `@neondatabase/serverless` — gotcha #13). Validar ejerciendo el webhook con un POST simulado contra el dev server (su runtime no está afectado).

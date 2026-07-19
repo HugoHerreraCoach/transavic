@@ -8,6 +8,83 @@
 
 ---
 
+## 19 jul 2026 — CRM WhatsApp REAL para las dos marcas (Meta Cloud API) + deep research de verificación
+
+**Contexto (pedido de Hugo):** completar el CRM para que reciba y responda por WhatsApp de verdad, con
+**dos números** (uno por marca: Transavic RUC 20 / Avícola de Tony RUC 10), cada uno conectado a su
+**Business Portfolio de Meta** para hacer publicidad **Click-to-WhatsApp (CTWA)**. La duda central: ¿hace
+falta **verificar la empresa** en Meta para poder hacerlo, dado que el RUC 20 ya está verificado pero el
+RUC 10 (persona natural, marca "La Avícola de Tony") aún no?
+
+**Deep research (workflow `w2upuo65t`, 11 agentes, 4 afirmaciones críticas verificadas adversarialmente
+contra la doc oficial de Meta 2025-2026). Conclusiones:**
+- **NO se necesita verificar para OPERAR/publicitar.** Un negocio sin verificar puede registrar el número,
+  **recibir entrantes sin tope**, responder libre dentro de la ventana (24h de servicio / 72h si vino de un
+  anuncio) y enviar hasta **250 destinatarios únicos/día** iniciados por el negocio. Verificar solo sirve para
+  **escalar** ese tope (250 → 2.000 → 10.000 → … → ilimitado) y, **desde ene-2026, para enviar plantillas
+  proactivas** (Meta exige verificación + URL de política de privacidad). El volumen (~30 pedidos/día) está
+  muy debajo de 250. → El RUC 10 puede publicitar y atender por el CRM sin verificar; solo no puede mandar
+  plantillas de re-enganche en frío hasta verificarse.
+- **Arquitectura obligatoria:** una WABA pertenece a **un solo portfolio** y no se migra → dos marcas en dos
+  portfolios = **dos WABAs, un número cada una**. El webhook es COMPARTIDO; se ruteá por
+  `value.metadata.phone_number_id`. Para CTWA, la Página + WABA + ad account deben vivir en el MISMO portfolio.
+- **RUC 10 (persona natural):** Meta acepta "sole proprietorship". El rechazo típico NO es por ser persona
+  natural sino por poner el **nombre comercial como nombre legal**. Regla: nombre legal = nombre de Antonio
+  exacto como en la **Ficha RUC de SUNAT** (equivale al "tax/VAT registration certificate"); "La Avícola de
+  Tony" va como nombre comercial / Alternative Business Name + nombre de la Página.
+- **Lado técnico:** modelo self-serve de uso propio (NO Tech Provider Program / NO App Review completo para
+  operar tus propias WABAs). 1 App en Meta for Developers, producto WhatsApp, webhook con verify token suscrito
+  a `messages`, **token permanente System User por portfolio** (permisos `whatsapp_business_messaging` +
+  `whatsapp_business_management`).
+
+**Estado previo del código:** la UI del CRM (`crm-leads-client.tsx`) YA estaba hecha para dos marcas (selector
+Transavic / Avícola de Tony, media, plantillas, respuestas rápidas) y `leads.empresa` existía, pero **todo el
+cableado con Meta era mock**: el webhook no leía `phone_number_id`, el saliente era `console.log`, no había
+credenciales ni manejo de la ventana de 24h, y `leads.telefono` era `UNIQUE` global.
+
+**Entregable (implementación):**
+- **Migración `scripts/migrate-crm-whatsapp-2026-07-19.sql`** (+ rollback): unicidad `leads` pasa de `telefono`
+  global a compuesta **`(telefono, empresa)`**; nuevas columnas `leads.last_inbound_at` (ventana 24h),
+  `leads.ctwa_clid/ctwa_source_id/ctwa_headline` (atribución del anuncio); `lead_mensajes.media_url/
+  whatsapp_message_id/estado/error_msg` + índice por `whatsapp_message_id`. Backfill de `last_inbound_at` con
+  el último entrante. Aplicada y verificada en `dev-hugo`.
+- **Módulo nuevo `src/lib/whatsapp/`**: `config.ts` (credenciales por marca `WHATSAPP_TRA_*`/`WHATSAPP_AVI_*`,
+  `empresaDesdePhoneNumberId`, `isWhatsAppConfigured`) + `sender.ts` (`enviarTexto/enviarMedia/enviarPlantilla`,
+  subida/descarga de media como dataURL, detección del error 131047 = fuera de ventana; **nunca lanza**).
+- **Webhook `api/webhooks/meta/route.ts`** reescrito: rutea por `phone_number_id` (con fallback a "Transavic"
+  solo si NINGUNA marca está configurada = mock; si hay marcas pero el id no matchea → se IGNORA como tráfico
+  ajeno), maneja **texto + media + `referral`** (CTWA), **idempotencia por `message.id`**, procesa `statuses[]`
+  (estado de entrega, sin degradar 'leido'), `maxDuration=60`.
+- **`bot-orchestrator.ts`**: firma `handleInboundMessage(telefono, nombre, cuerpo, empresa="Transavic", opts)`;
+  lead scoped por `(telefono, empresa)`; setea `empresa`/`last_inbound_at`/ctwa; **envía la respuesta del bot de
+  verdad** por WhatsApp y persiste su estado. Backward-compatible con `scripts/test-crm-flow.mjs` (3 args).
+- **`api/crm/leads/[id]/mensajes/route.ts`**: envío real por la empresa del lead (texto/media/plantilla), schema
+  ampliado con `templateName/language/variables`, **gate de ventana 24h** (409 si está cerrada y no es plantilla),
+  persiste `whatsapp_message_id/estado/error_msg`. Modo mock si la marca no tiene credenciales (no frena pruebas).
+- **`api/crm/leads/route.ts`**: el anti-duplicado de creación manual ahora es por `(telefono, empresa)`
+  (coherente con la nueva unicidad — antes bloqueaba el mismo teléfono en la otra marca).
+- **UI `crm-leads-client.tsx` + `types.ts`**: `handleSendTemplate` manda nombre/idioma/variables de la plantilla
+  (antes descartaba todo salvo el preview); `handleSendMessage` acepta `extra` y muestra el error real del server
+  (ej. ventana cerrada) vía toast; render del **estado de entrega** (✓/✓✓/leído azul/⚠ rojo) en salientes.
+
+**Verificación:** `tsc --noEmit` OK. Webhook ejercido con POST simulados contra el dev server (runtime no
+afectado por el bug Node 26 de `@neondatabase/serverless`): (1) lead creado + ruteado + mensaje guardado + bot
+respondió (mock); (2) **idempotencia** sostenida (2 POST mismo `message.id` → 1 mensaje); (3) **ruteo por marca**
+con dos `phone_number_id` de prueba → mismo teléfono generó DOS leads (Avícola de Tony vs Transavic); (4) `phone_
+number_id` desconocido → **ignorado** (0 leads). `.env.local` restaurado y datos de prueba limpiados. Sin errores
+en los logs del server.
+
+**Runbook de Meta (pasos del usuario, con acompañamiento en el navegador):** conseguir 2 números nuevos por
+marca; en cada portfolio, Página + ad account + WABA; App en Meta for Developers + producto WhatsApp + webhook
+(`messages`) + "Ads Attribution"; token System User por portfolio; verificar el RUC 10 (nombre legal = persona,
+Ficha RUC); cargar `WHATSAPP_*` en Vercel. **Límite de seguridad:** crear/loguear cuentas, meter contraseñas,
+subir la Ficha RUC y cargar el método de pago de anuncios los hace el usuario en persona.
+
+**Env vars nuevas:** `WHATSAPP_API_VERSION` (default v21.0), `WHATSAPP_TRA_PHONE_NUMBER_ID/TOKEN/WABA_ID`,
+`WHATSAPP_AVI_PHONE_NUMBER_ID/TOKEN/WABA_ID`. Ver gotcha #52 y [doc 15 §5](./docs/arquitectura/15-asistente-ia.md).
+
+---
+
 ## 13 jul 2026 — POS de planta: "Ventas de Planta" (ver por día/semana) + ANULAR una venta
 
 **Contexto (pedido de Ariana/Hugo):** el POS no daba visibilidad de las ventas de planta por

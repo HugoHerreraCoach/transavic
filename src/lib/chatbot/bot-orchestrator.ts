@@ -2,23 +2,51 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { callIA } from "../gemini";
 import { crearNotificacion } from "../notificaciones";
+import {
+  type EmpresaWhatsApp,
+  isWhatsAppConfigured,
+  normalizarEmpresa,
+} from "../whatsapp/config";
+import { enviarTexto } from "../whatsapp/sender";
+
+/** Datos extra de un mensaje entrante (media ya descargada, atribución del anuncio, id de Meta). */
+export interface InboundOpts {
+  /** wamid del mensaje entrante — para idempotencia (Meta reintenta el webhook). */
+  whatsappMessageId?: string;
+  /** Tipo del mensaje entrante: 'text' | 'image' | 'audio' | 'video' | 'document' | ... */
+  tipo?: string;
+  /** Media entrante ya descargada como dataURL (para guardar/renderizar). */
+  mediaDataUrl?: string | null;
+  /** Atribución del anuncio Click-to-WhatsApp (objeto referral del webhook). */
+  referral?: { ctwa_clid?: string; source_id?: string; headline?: string } | null;
+}
 
 export async function handleInboundMessage(
   telefono: string,
   nombreCliente: string,
-  mensajeCuerpo: string
+  mensajeCuerpo: string,
+  empresaInput: EmpresaWhatsApp | string = "Transavic",
+  opts: InboundOpts = {}
 ): Promise<string | null> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) return null;
   const sql = neon(connectionString);
 
+  const empresa = normalizarEmpresa(empresaInput);
+
   // 1. Limpiar teléfono
   const limpioTelefono = telefono.replace(/\D/g, "");
 
-  // 2. Buscar o crear el lead
+  // Atribución del anuncio (primer toque)
+  const ctwaClid = opts.referral?.ctwa_clid ?? null;
+  const ctwaSourceId = opts.referral?.source_id ?? null;
+  const ctwaHeadline = opts.referral?.headline ?? null;
+
+  // 2. Buscar o crear el lead — SCOPED por (telefono, empresa): un mismo cliente
+  //    puede escribir a las dos marcas y son leads distintos.
   let lead = null;
   const leadsRows = await sql`
-    SELECT * FROM public.leads WHERE telefono = ${limpioTelefono}
+    SELECT * FROM public.leads WHERE telefono = ${limpioTelefono} AND empresa = ${empresa}
   `;
 
   if (leadsRows.length === 0) {
@@ -26,23 +54,57 @@ export async function handleInboundMessage(
     const vendedorId = await rotateAndAssignLead(sql);
 
     const insertLead = await sql`
-      INSERT INTO public.leads (nombre, telefono, origen, estado, chatbot_activo, vendedor_id)
-      VALUES (${nombreCliente}, ${limpioTelefono}, 'whatsapp', 'Nuevo', TRUE, ${vendedorId})
+      INSERT INTO public.leads (
+        nombre, telefono, origen, empresa, estado, chatbot_activo, vendedor_id,
+        last_inbound_at, ctwa_clid, ctwa_source_id, ctwa_headline
+      )
+      VALUES (
+        ${nombreCliente}, ${limpioTelefono}, 'whatsapp', ${empresa}, 'Nuevo', TRUE, ${vendedorId},
+        NOW(), ${ctwaClid}, ${ctwaSourceId}, ${ctwaHeadline}
+      )
       RETURNING *
     `;
     lead = insertLead[0];
   } else {
     lead = leadsRows[0];
+    // Abrir/renovar la ventana de servicio de 24h y guardar la atribución si es el
+    // primer toque desde un anuncio (no pisar una atribución previa).
+    await sql`
+      UPDATE public.leads
+      SET last_inbound_at = NOW(),
+          ctwa_clid = COALESCE(ctwa_clid, ${ctwaClid}),
+          ctwa_source_id = COALESCE(ctwa_source_id, ${ctwaSourceId}),
+          ctwa_headline = COALESCE(ctwa_headline, ${ctwaHeadline}),
+          updated_at = NOW()
+      WHERE id = ${lead.id}
+    `;
   }
 
-  // 3. Registrar el mensaje entrante
+  // 2b. Idempotencia: si este wamid ya se registró (reintento de Meta), no reprocesar.
+  if (opts.whatsappMessageId) {
+    const dup = await sql`
+      SELECT 1 FROM public.lead_mensajes WHERE whatsapp_message_id = ${opts.whatsappMessageId} LIMIT 1
+    `;
+    if (dup.length > 0) return null;
+  }
+
+  // 3. Registrar el mensaje entrante. Para media guardamos la dataURL en body (así la
+  //    renderiza la UI igual que la saliente) y conservamos el tipo real.
+  const esMedia = opts.tipo && opts.tipo !== "text" && !!opts.mediaDataUrl;
+  const bodyGuardar = esMedia ? (opts.mediaDataUrl as string) : mensajeCuerpo;
+  const tipoGuardar = esMedia ? (opts.tipo as string) : "text";
   await sql`
-    INSERT INTO public.lead_mensajes (lead_id, sender, body, type)
-    VALUES (${lead.id}, 'cliente', ${mensajeCuerpo}, 'text')
+    INSERT INTO public.lead_mensajes (lead_id, sender, body, type, whatsapp_message_id)
+    VALUES (${lead.id}, 'cliente', ${bodyGuardar}, ${tipoGuardar}, ${opts.whatsappMessageId ?? null})
   `;
 
   // 4. Si el chatbot está inactivo, no respondemos automáticamente
   if (!lead.chatbot_activo) {
+    return null;
+  }
+
+  // 4b. Media sin texto (sin caption): no tiene sentido invocar a la IA sobre vacío.
+  if (!mensajeCuerpo || !mensajeCuerpo.trim()) {
     return null;
   }
 
@@ -137,10 +199,26 @@ Responde siguiendo estrictamente las instrucciones:`;
     }
 
     // 9. Registrar la respuesta del bot en base de datos
-    await sql`
+    const insertBot = await sql`
       INSERT INTO public.lead_mensajes (lead_id, sender, body, type)
       VALUES (${lead.id}, 'bot', ${textResponse}, 'text')
+      RETURNING id
     `;
+    const botMsgId = insertBot[0]?.id;
+
+    // 10. Enviar la respuesta por WhatsApp DE VERDAD (si la marca está configurada).
+    //     La respuesta del bot siempre cae dentro de la ventana de 24h (el cliente
+    //     acaba de escribir), así que va como texto libre. Sin credenciales = mock.
+    if (botMsgId && isWhatsAppConfigured(empresa)) {
+      const envio = await enviarTexto(empresa, limpioTelefono, textResponse);
+      await sql`
+        UPDATE public.lead_mensajes
+        SET whatsapp_message_id = ${envio.whatsappMessageId ?? null},
+            estado = ${envio.ok ? "enviado" : "fallido"},
+            error_msg = ${envio.ok ? null : envio.error ?? null}
+        WHERE id = ${botMsgId}
+      `;
+    }
 
     return textResponse;
   } catch (error) {

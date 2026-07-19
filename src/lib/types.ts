@@ -151,5 +151,10 @@ export type LeadMensaje = {
   body: string;
   type: string;
   created_at: Date;
+  /** Estado de entrega del mensaje saliente (WhatsApp Cloud API). */
+  estado?: 'enviado' | 'entregado' | 'leido' | 'fallido' | null;
+  whatsapp_message_id?: string | null;
+  media_url?: string | null;
+  error_msg?: string | null;
 };
 

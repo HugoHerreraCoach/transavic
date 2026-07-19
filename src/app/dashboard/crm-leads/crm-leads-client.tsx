@@ -1454,7 +1454,12 @@ function ChatPane({
   };
 
   // Enviar mensaje común
-  const handleSendMessage = async (e?: React.FormEvent, customBody?: string, customType = "text") => {
+  const handleSendMessage = async (
+    e?: React.FormEvent,
+    customBody?: string,
+    customType = "text",
+    extra?: Record<string, unknown>
+  ) => {
     if (e) e.preventDefault();
     const bodyToSend = customBody || newMessage;
     if (!bodyToSend.trim() || sending) return;
@@ -1477,15 +1482,19 @@ function ChatPane({
       const res = await fetch(`/api/crm/leads/${leadId}/mensajes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ body: bodyToSend, type: customType }),
+        body: JSON.stringify({ body: bodyToSend, type: customType, ...(extra || {}) }),
       });
 
-      if (!res.ok) throw new Error("Error en envío");
+      const dataResp = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Mostrar el motivo real (ej. ventana de 24h cerrada) en vez de un genérico.
+        throw new Error(dataResp?.error || "Error al enviar el mensaje.");
+      }
       loadLeadDetails();
       onRefreshLeads();
     } catch (err) {
       console.error(err);
-      alert("Error al enviar el mensaje.");
+      mostrarToast(err instanceof Error ? err.message : "Error al enviar el mensaje.", "error");
       loadLeadDetails();
     } finally {
       setSending(false);
@@ -1530,10 +1539,15 @@ function ChatPane({
     setShowRecording(false);
   };
 
-  // Enviar plantilla oficial
+  // Enviar plantilla oficial. El backend necesita el NOMBRE de la plantilla + idioma +
+  // variables para mandar el template real a Meta; el previewText solo se guarda/renderiza.
   const handleSendTemplate = async (templateName: string, lang?: string, vars?: string[], file?: File, mediaType?: string, previewText?: string) => {
     if (previewText) {
-      await handleSendMessage(undefined, previewText, "template");
+      await handleSendMessage(undefined, previewText, "template", {
+        templateName,
+        language: lang || "es",
+        variables: vars || [],
+      });
     }
     setShowTemplateModal(false);
   };
@@ -1789,6 +1803,28 @@ function ChatPane({
                       <span className="capitalize">{m.sender === "bot" ? "Bot IA" : m.sender}</span>
                       <span>•</span>
                       <span>{timeStr}</span>
+                      {(isMe || isBot) && m.estado && (
+                        <span
+                          className={
+                            m.estado === "leido"
+                              ? "text-sky-500"
+                              : m.estado === "fallido"
+                              ? "text-red-500"
+                              : "text-gray-400"
+                          }
+                          title={
+                            m.estado === "fallido"
+                              ? m.error_msg || "No se pudo entregar"
+                              : m.estado === "leido"
+                              ? "Leído"
+                              : m.estado === "entregado"
+                              ? "Entregado"
+                              : "Enviado"
+                          }
+                        >
+                          {m.estado === "fallido" ? "⚠" : m.estado === "enviado" ? "✓" : "✓✓"}
+                        </span>
+                      )}
                     </div>
 
                     <div
