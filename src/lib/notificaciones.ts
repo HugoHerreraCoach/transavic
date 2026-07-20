@@ -32,7 +32,8 @@ export type TipoNotificacion =
   // (revocó el permiso, GPS simulado o sin señal sostenida). Avisa al admin.
   | "repartidor_oscuro"
   // CRM y Chatbot: Handoff de IA a asesora
-  | "lead_handoff";
+  | "lead_handoff"
+  | "lead_mensaje";
 
 export interface CrearNotificacionParams {
   userId: string;

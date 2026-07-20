@@ -38,6 +38,7 @@ import { signOut } from "next-auth/react";
 import NotificationBell from "./NotificationBell";
 import FloatingAssistant from "./FloatingAssistant";
 import CmdKModal from "./CmdKModal";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 
 const ComunicadoPopup = dynamic(() => import("./ComunicadoPopup"), { ssr: false });
 const ArriboPopup = dynamic(() => import("./ArriboPopup"), { ssr: false });
@@ -207,6 +208,7 @@ export default function DashboardLayout({
   session,
 }: DashboardLayoutProps) {
   const pathname = usePathname();
+  usePushNotifications(session?.user?.id);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const isCrm = pathname === "/dashboard/crm-leads";

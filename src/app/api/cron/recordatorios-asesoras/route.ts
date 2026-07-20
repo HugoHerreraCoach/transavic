@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import { neon } from "@neondatabase/serverless";
 import { crearNotificacion } from "@/lib/notificaciones";
 import { calcularMetaDiaria, ventasMesActual } from "@/lib/metas";
+import { sendPushNotification } from "@/lib/push-service";
 
 export const dynamic = "force-dynamic";
 
@@ -51,13 +52,22 @@ export async function GET(request: Request) {
         meta.metaMensual > 0 ? (ventas / meta.metaMensual) * 100 : 100;
 
       if (meta.metaMensual > 0 && porcentajeMes < 50 && meta.diaDelMes >= 5) {
+        const msgText = `Vas en ${porcentajeMes.toFixed(0)}% de tu meta. Necesitas vender ~S/ ${ritmoNecesario.toFixed(0)} por día para alcanzarla.`;
         await crearNotificacion({
           userId: asesora.id,
           tipo: "meta_atrasada",
           titulo: "🎯 Tu meta mensual",
-          mensaje: `Vas en ${porcentajeMes.toFixed(0)}% de tu meta. Necesitas vender ~S/ ${ritmoNecesario.toFixed(0)} por día para alcanzarla.`,
+          mensaje: msgText,
           link: "/dashboard/mis-metas",
         });
+        
+        await sendPushNotification(asesora.id, {
+          title: "🎯 Tu meta mensual",
+          body: msgText,
+          url: "/dashboard/mis-metas",
+          tag: `meta-${asesora.id}`,
+        });
+
         recordatoriosEnviados.push({
           asesora: asesora.name,
           tipo: "meta_atrasada",
@@ -78,7 +88,7 @@ export async function GET(request: Request) {
               (SELECT SUM(COALESCE(pi.subtotal_real, pi.subtotal, 0))
                FROM pedido_items pi WHERE pi.pedido_id = p.id),
               0
-            )) AS gastado
+             )) AS gastado
           FROM pedidos p
           WHERE p.estado = 'Entregado' AND p.cliente_id IS NOT NULL
             AND p.asesor_id = ${asesora.id}::uuid
@@ -98,13 +108,22 @@ export async function GET(request: Request) {
 
       if (clientesInactivos.length > 0) {
         const top = clientesInactivos[0];
+        const msgText = `${top.nombre} lleva ${top.dias_sin_comprar} días sin comprar (histórico S/ ${Number(top.gastado).toFixed(0)}). ¿Lo contactas hoy?`;
         await crearNotificacion({
           userId: asesora.id,
           tipo: "cliente_inactivo",
           titulo: "📞 Cliente para reactivar",
-          mensaje: `${top.nombre} lleva ${top.dias_sin_comprar} días sin comprar (histórico S/ ${Number(top.gastado).toFixed(0)}). ¿Lo contactas hoy?`,
+          mensaje: msgText,
           link: "/dashboard/asistente-ia",
         });
+
+        await sendPushNotification(asesora.id, {
+          title: "📞 Cliente para reactivar",
+          body: msgText,
+          url: "/dashboard/asistente-ia",
+          tag: `cliente-inactivo-${top.nombre}`,
+        });
+
         recordatoriosEnviados.push({
           asesora: asesora.name,
           tipo: "cliente_inactivo",
@@ -135,12 +154,20 @@ export async function GET(request: Request) {
       }>;
 
       for (const f of facturasPorVencer) {
+        const msgText = `${f.cliente_nombre}: S/ ${Number(f.monto).toFixed(2)} vence el ${f.fecha_venc}. Coordina cobranza.`;
         await crearNotificacion({
           userId: asesora.id,
           tipo: "factura_por_vencer",
           titulo: "💰 Factura por vencer",
-          mensaje: `${f.cliente_nombre}: S/ ${Number(f.monto).toFixed(2)} vence el ${f.fecha_venc}. Coordina cobranza.`,
+          mensaje: msgText,
           link: "/dashboard/cobranzas",
+        });
+
+        await sendPushNotification(asesora.id, {
+          title: "💰 Factura por vencer",
+          body: msgText,
+          url: "/dashboard/cobranzas",
+          tag: `factura-vence-${f.cliente_nombre}`,
         });
       }
       if (facturasPorVencer.length > 0) {

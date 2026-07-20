@@ -9,6 +9,7 @@ import {
 } from "../whatsapp/config";
 import { enviarTexto } from "../whatsapp/sender";
 import { pideHandoff, sanearRespuestaBot } from "./sanear-respuesta";
+import { sendPushNotification } from "../push-service";
 
 /**
  * Perfil comercial de cada marca para el prompt del bot.
@@ -192,6 +193,24 @@ export async function handleInboundMessage(
 
   // 4. Si el chatbot está inactivo, no respondemos automáticamente
   if (!lead.chatbot_activo) {
+    const receptorNotif = lead.vendedor_id;
+    if (receptorNotif) {
+      await crearNotificacion({
+        userId: receptorNotif,
+        tipo: "lead_mensaje",
+        titulo: `💬 Mensaje de ${lead.nombre}`,
+        mensaje: mensajeCuerpo.length > 60 ? `${mensajeCuerpo.slice(0, 60)}...` : mensajeCuerpo,
+        link: `/dashboard/crm-leads?leadId=${lead.id}`,
+      });
+
+      await sendPushNotification(receptorNotif, {
+        title: `💬 Mensaje de ${lead.nombre}`,
+        body: mensajeCuerpo.length > 100 ? `${mensajeCuerpo.slice(0, 100)}...` : mensajeCuerpo,
+        url: `/dashboard/crm-leads?leadId=${lead.id}`,
+        tag: `lead-msg-${lead.id}`,
+        renotify: true,
+      });
+    }
     return null;
   }
 
@@ -310,6 +329,14 @@ Responde siguiendo estrictamente las instrucciones:`;
           titulo: "🗣️ Transferencia de Prospecto",
           mensaje: `El cliente ${lead.nombre} (${lead.telefono}) solicita atención humana.`,
           link: `/dashboard/crm-leads?leadId=${lead.id}`,
+        });
+
+        await sendPushNotification(receptorNotif, {
+          title: "🗣️ Transferencia de Prospecto",
+          body: `El cliente ${lead.nombre} (${lead.telefono}) solicita atención humana.`,
+          url: `/dashboard/crm-leads?leadId=${lead.id}`,
+          tag: `handoff-${lead.id}`,
+          renotify: true,
         });
       }
     }
