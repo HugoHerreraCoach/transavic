@@ -8,6 +8,68 @@
 
 ---
 
+## 20 jul 2026 — CRM: rediseño claro, feedback del bot, 4 bugs y estudio del CRM de Conexipema
+
+**Contexto (pedido de Hugo):** mejorar la interfaz de `/dashboard/crm-leads` (se veía oscura),
+quitar el Kanban (no lo usa), dar feedback de que el bot está pensando —decidió que se vea **a la
+asesora en el CRM**, no al cliente— y **estudiar el CRM de `conexipema-eventos`** (su asignación
+"golden ticket") para traer lo que sirva.
+
+### Lo más valioso del estudio no fueron features: fueron 4 fallas activas
+Verificadas leyendo el código, no asumidas:
+1. **El mensaje de error del bot nunca llegaba al cliente.** El `catch` devolvía el texto de disculpa
+   pero el webhook llama `await handleInboundMessage(...)` **sin usar el retorno** y el envío vive
+   dentro del `try`. Si Gemini/Groq fallaban, el cliente no recibía nada. *(Regresión introducida el
+   19 jul al mover el envío al orquestador.)* → helper `persistirYEnviarBot`, usado por el camino
+   normal **y** por el catch.
+2. **Carrera real en `sequenceIndex`.** Se leía con `SELECT` y se escribía con un UPSERT aparte, sin
+   lock. Dos WhatsApp del mismo segundo (normal a las 5am) consumían el mismo índice → el patrón
+   60/25/15 se degradaba y **ambos leads caían en la misma asesora**; además el UPSERT persistía el
+   `config` leído antes y podía pisar el `lastResetDate`. → **un solo** `UPDATE … jsonb_set …
+   RETURNING`. **Verificado**: 5 reservas concurrentes devolvieron 5 índices distintos (6,9,7,8,10) y
+   el contador quedó exacto.
+3. **`[HANDOFF]` se limpiaba sin flag `/g`** → si el modelo lo escribía dos veces, el segundo tag
+   llegaba **visible al cliente**; y `[handoff]` en minúscula no se detectaba (venta caliente
+   atrapada con el bot para siempre).
+4. **Salida del LLM sin sanear** con `maxOutputTokens: 250` pidiendo "2 o 3 oraciones" → riesgo de
+   mandar una frase cortada firmada por la marca. → `src/lib/chatbot/sanear-respuesta.ts`
+   (`esRespuestaUsable`, `pareceTruncada`, `sanearRespuestaBot`, `pideHandoff`) y tope a 400.
+
+### Interfaz
+256 clases `dark:` eliminadas (código muerto) y superficies oscuras base a paleta clara; **Kanban
+eliminado** (272 líneas + `DragDropContext` + `viewMode`; `@hello-pangea/dnd` se queda por Despacho;
+`GuiaModulo` rescatada al estado vacío del chat); colores de marca corregidos (Transavic rojo /
+Avícola ámbar, estaban invertidos); polling migrado a `usePollingVisible`.
+
+⚠️ **Dos trampas encontradas al hacerlo** (verificadas en el navegador, no por el compilador):
+- El mapeo masivo `bg-slate-900 → bg-white` **rompió el velo de los modales** (`bg-slate-900/60` →
+  `bg-white/60`). Los overlays deben seguir siendo oscuros. Mismo problema en el estado seleccionado
+  de `QuickReplySelector`, que quedó blanco sobre blanco.
+- `usePollingVisible` **no re-ejecuta su efecto al cambiar `leadId`** (solo depende de `enabled`), así
+  que al abrir una conversación el detalle quedaba en blanco hasta el siguiente tick. Y como la
+  pestaña automatizada reporta `document.hidden = true`, la bandeja no cargaba nada. Solución: la
+  **carga inicial va en su propio `useEffect` y es incondicional**; el helper solo gobierna el refresco.
+
+### Feedback del bot (`leads.bot_pensando_desde`)
+Migración `migrate-crm-bot-pensando-2026-07-20.sql` (aplicada a dev-hugo y producción por psql antes
+del deploy). El orquestador lo prende antes de `callIA()` y lo apaga en un `finally`; la UI muestra
+burbuja animada en el chat y badge en la lista **solo si la marca tiene < 60 s**, para que un flag
+colgado por un crash no deje el indicador encendido. Probado end-to-end simulando el flag en dev-hugo.
+
+### Backlog priorizado del estudio de Conexipema (NO implementado)
+| # | Qué | Por qué a esta avícola | Esfuerzo |
+|---|---|---|---|
+| 1 | **Reenganche de clientes fríos** cruzando `leads.telefono` con `pedidos.created_at` | El chifa que pedía 40 kg cada martes y lleva 12 días sin pedir ya se fue y nadie se entera. **El que más dinero recupera.** Umbrales en `settings.parametros_negocio` (gotcha #45b) | medio |
+| 2 | **Lock por lead + debounce 6 s** | El cliente escribe en ráfaga ("20 kg" / "para mañana" / "en Surco") → hoy son 3 llamadas a la IA y 3 respuestas encimadas. La única guarda actual (idempotencia por `wamid`) cubre el reintento del MISMO mensaje, no mensajes distintos | medio |
+| 3 | **Horario de atención real** | `WelcomeBotConfig.tsx` **hoy es decorativo**: guarda `crm_welcome_bot` en settings y ningún proceso lo consume. La avícola arranca 4:30am — reusar `src/lib/ventana-operativa.ts` | medio |
+| 4 | Cruzar el teléfono entrante contra la cartera de clientes | Un cliente de un año entra como lead "Nuevo" anónimo | bajo |
+| 5 | **Golden Ticket**: exclusividad 15 s → escalar al nivel → rescate → `sin_atencion`, con claim atómico | Si Leslie está en ruta, el lead muere en su bandeja. En Postgres el claim es `UPDATE … WHERE estado_asignacion='en_cola' RETURNING` (mismo patrón que gotcha #49). No hace falta QStash: Vercel Pro da 40 crons | alto |
+| 6 | Handoff tipado JSON + telemetría del bot | Hoy no hay forma de responderle a Antonio "¿el bot sirve?" con datos | medio |
+| 7 | Normalizar teléfono a E.164 | `replace(/\D/g,"")` en 3 lugares sin unificar el prefijo 51 → `ux_leads_telefono_empresa` no deduplica bien | bajo |
+| 8 | Latencia humana del bot + opt-out ("BAJA") | Percepción de robot; el opt-out lo exige la política de Meta al escalar envíos | bajo |
+
+---
+
 ## 19 jul 2026 (tarde) — Estado REAL de Meta, dominios por marca y remitente de correo por marca
 
 **Contexto:** tras dejar el CRM cableado (entrada anterior), se entró a la **cuenta real de Meta de
