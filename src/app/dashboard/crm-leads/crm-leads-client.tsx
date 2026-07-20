@@ -1746,29 +1746,6 @@ function ChatPane({
               )}
             </div>
 
-            {/* Asignación de Vendedora (Reasignar Chat) */}
-            <div className="space-y-1 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50">
-              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider block flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
-                Reasignar Chat
-              </label>
-              <p className="text-[9px] text-gray-400 leading-normal mb-1">
-                Transfiere este chat a otra asesora. Desaparecerá de tu lista.
-              </p>
-              <select
-                id="select-vendedor"
-                value={lead?.vendedor_id || ""}
-                onChange={(e) => handleChangeAsesor(e.target.value)}
-                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
-              >
-                <option value="">Sin Asignar</option>
-                {asesores.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
 
             {/* Negocio y Distrito Editables */}
             <div className="space-y-2">
@@ -1891,6 +1868,30 @@ function ChatPane({
                   {lead?.notas || "Sin anotaciones internas sobre este cliente."}
                 </p>
               )}
+            </div>
+
+            {/* Asignación de Vendedora (Reasignar Chat) */}
+            <div className="space-y-1 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50 my-2">
+              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider block flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                Reasignar Chat
+              </label>
+              <p className="text-[9px] text-gray-400 leading-normal mb-1">
+                Transfiere este chat a otra asesora. Desaparecerá de tu lista.
+              </p>
+              <select
+                id="select-vendedor"
+                value={lead?.vendedor_id || ""}
+                onChange={(e) => handleChangeAsesor(e.target.value)}
+                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
+              >
+                <option value="">Sin Asignar</option>
+                {asesores.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Botón de Venta Directa a Pedido */}
