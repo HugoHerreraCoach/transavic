@@ -50,9 +50,9 @@ export default function LeadAssignmentBanner() {
       const audio = new Audio("/sounds/notification-sound.mp3");
       audio.play().catch(() => {
         // Fallback: Web Audio API synth beep (880Hz A5 note)
-        const AudioContext = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!AudioContext) return;
-        const ctx = new AudioContext();
+        const AudioContextClass = window.AudioContext || (window as Window & { webkitAudioContext?: typeof window.AudioContext }).webkitAudioContext;
+        if (!AudioContextClass) return;
+        const ctx = new AudioContextClass();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = "sine";

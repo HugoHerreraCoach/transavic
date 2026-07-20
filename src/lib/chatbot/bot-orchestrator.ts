@@ -464,7 +464,7 @@ export async function escalateLead(
       `;
 
       if (tierAdvisors.length > 0) {
-        const ids = tierAdvisors.map((a: { id: string }) => a.id);
+        const ids = tierAdvisors.map((a) => String(a.id));
         await sql`
           UPDATE public.leads
           SET candidato_actual = NULL,
@@ -501,7 +501,7 @@ export async function escalateLead(
       `;
 
       if (nivel1Advisors.length > 0) {
-        const ids = nivel1Advisors.map((a: { id: string }) => a.id);
+        const ids = nivel1Advisors.map((a) => String(a.id));
         await sql`
           UPDATE public.leads
           SET candidato_actual = NULL,
