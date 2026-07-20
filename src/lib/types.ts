@@ -140,6 +140,11 @@ export type Lead = {
   notas: string | null;
   tags?: string[] | null;
   unread_count?: number;
+  /** Instante en que el bot empezó a generar una respuesta (NULL = no está trabajando).
+   *  La UI solo muestra "escribiendo…" si es reciente, para que un flag colgado no
+   *  deje el indicador encendido para siempre. */
+  bot_pensando_desde?: string | Date | null;
+  last_inbound_at?: string | Date | null;
   created_at: Date;
   updated_at: Date;
 };

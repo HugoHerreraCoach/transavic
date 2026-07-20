@@ -2,44 +2,31 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
-import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import {
-  FiTarget,
   FiUser,
   FiMessageSquare,
   FiCheck,
   FiPlus,
-  FiTrash2,
   FiSend,
   FiActivity,
   FiX,
   FiPhone,
-  FiMapPin,
-  FiBriefcase,
   FiInfo,
-  FiSave,
   FiBookOpen,
   FiChevronLeft,
-  FiChevronRight,
   FiSearch,
   FiFilter,
-  FiBell,
   FiTag,
   FiPaperclip,
   FiMic,
-  FiSmile,
   FiZap,
   FiExternalLink,
-  FiCheckSquare,
   FiMenu,
   FiChevronDown,
-  FiMoreVertical,
-  FiClock,
-  FiUserPlus,
   FiCopy,
   FiRefreshCw,
 } from "react-icons/fi";
-import { Lead, LeadEstado, LeadMensaje, User } from "@/lib/types";
+import { Lead, LeadEstado, LeadMensaje } from "@/lib/types";
 
 // Importar subcomponentes del CRM
 import AudioRecorder from "./components/AudioRecorder";
@@ -52,20 +39,13 @@ import TemplateModal from "./components/TemplateModal";
 import RotationConfig from "./components/RotationConfig";
 import PedidoForm from "@/components/PedidoForm";
 import GuiaModulo from "@/components/GuiaModulo";
+import { usePollingVisible } from "@/lib/use-polling-visible";
 import { useToast, ToastContainer } from "@/components/Toast";
 import imageCompression from "browser-image-compression";
 
 // Columnas fijas del Kanban
 const ESTADOS_KANBAN: LeadEstado[] = ["Nuevo", "Contactado", "Calificado", "Propuesta", "Cerrado", "Perdido"];
 
-const COLORES_ESTADO: Record<LeadEstado, { bg: string; border: string; text: string; headerBg: string }> = {
-  Nuevo: { bg: "bg-slate-50/70", border: "border-slate-200", text: "text-slate-700", headerBg: "bg-slate-200/80" },
-  Contactado: { bg: "bg-sky-50/70", border: "border-sky-200", text: "text-sky-700", headerBg: "bg-sky-200/80" },
-  Calificado: { bg: "bg-amber-50/70", border: "border-amber-200", text: "text-amber-700", headerBg: "bg-amber-200/80" },
-  Propuesta: { bg: "bg-indigo-50/70", border: "border-indigo-200", text: "text-indigo-700", headerBg: "bg-indigo-200/80" },
-  Cerrado: { bg: "bg-emerald-50/70", border: "border-emerald-200", text: "text-emerald-700", headerBg: "bg-emerald-200/80" },
-  Perdido: { bg: "bg-rose-50/70", border: "border-rose-200", text: "text-rose-700", headerBg: "bg-rose-200/80" },
-};
 
 interface CrmLeadsClientProps {
   sessionUser: {
@@ -90,6 +70,22 @@ type RespuestaRapida = {
   text: string;
   mediaUrl?: string;
   mediaType?: "image" | "video" | "document" | "dynamic_card";
+};
+
+/**
+ * ¿El bot está generando una respuesta para este lead AHORA?
+ *
+ * Se exige que la marca `bot_pensando_desde` sea RECIENTE (< 60 s): si un fallo
+ * dejara el flag colgado en la base, el indicador se apaga solo en lugar de
+ * quedarse encendido para siempre.
+ */
+const VENTANA_BOT_ESCRIBIENDO_MS = 60_000;
+
+const esBotEscribiendo = (desde: string | Date | null | undefined): boolean => {
+  if (!desde) return false;
+  const t = new Date(desde).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < VENTANA_BOT_ESCRIBIENDO_MS;
 };
 
 // Helpers para Separadores de Fecha
@@ -127,7 +123,7 @@ const formatDateSeparator = (dateStr: string | Date) => {
 
 export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
   // Configuración de vista
-  const [viewMode, setViewMode] = useState<"chat" | "kanban" | "rotacion">("chat");
+  const [viewMode, setViewMode] = useState<"chat" | "rotacion">("chat");
 
   const [leads, setLeads] = useState<Lead[]>([]);
   const [asesores, setAsesores] = useState<{ id: string; name: string }[]>([]);
@@ -213,14 +209,17 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
     setShowOrderModal(true);
   };
 
+  // Carga inicial SIEMPRE, aunque la pestaña arranque en segundo plano (si no, al
+  // abrir el CRM en otra pestaña la bandeja se vería vacía hasta enfocarla).
   useEffect(() => {
     fetchLeadsAndAsesores();
     setMounted(true);
-
-    // Polling general de la lista cada 15 segundos para mantener notificaciones y snippets al día
-    const interval = setInterval(fetchLeadsAndAsesores, 15000);
-    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // El REFRESCO periódico sí se pausa con la pestaña oculta: una pestaña de CRM
+  // olvidada en segundo plano mantenía despierto el cómputo de Neon (ver el helper).
+  usePollingVisible(fetchLeadsAndAsesores, 15000, { immediate: false });
 
   // Filtrar leads
   const filteredLeads = useMemo(() => {
@@ -271,51 +270,8 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
   }, [globalTags]);
 
   // Agrupar leads por columna para el Kanban
-  const boardData = useMemo(() => {
-    const columns: Record<LeadEstado, Lead[]> = {
-      Nuevo: [],
-      Contactado: [],
-      Calificado: [],
-      Propuesta: [],
-      Cerrado: [],
-      Perdido: [],
-    };
-    filteredLeads.forEach((l) => {
-      if (columns[l.estado]) {
-        columns[l.estado].push(l);
-      }
-    });
-    return columns;
-  }, [filteredLeads]);
 
   // Manejar Drag & Drop Kanban
-  const onDragEnd = async (result: DropResult) => {
-    const { destination, source, draggableId } = result;
-    if (!destination) return;
-    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
-
-    const newEstado = destination.droppableId as LeadEstado;
-    const targetLeadId = draggableId;
-
-    // Optimistic Update
-    const updatedLeads = leads.map((l) =>
-      l.id === targetLeadId ? { ...l, estado: newEstado, updated_at: new Date() } : l
-    );
-    setLeads(updatedLeads);
-
-    try {
-      const response = await fetch(`/api/crm/leads/${targetLeadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ estado: newEstado }),
-      });
-
-      if (!response.ok) throw new Error("Transition save failed");
-    } catch (e) {
-      console.error(e);
-      fetchLeadsAndAsesores();
-    }
-  };
 
   // Crear Lead
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -355,133 +311,46 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
   };
 
   // Métricas
-  const stats = useMemo(() => {
-    return {
-      total: leads.length,
-      nuevos: leads.filter((l) => l.estado === "Nuevo").length,
-      contactados: leads.filter((l) => l.estado === "Contactado").length,
-      chatbotActivos: leads.filter((l) => l.chatbot_activo).length,
-      cerrados: leads.filter((l) => l.estado === "Cerrado").length,
-    };
-  }, [leads]);
 
   if (!mounted) return null;
 
   return (
     <div className={`flex flex-col w-full overflow-hidden transition-all duration-300 ${
-      viewMode === "chat" ? "h-screen bg-slate-50 dark:bg-slate-950" : "h-[calc(100vh-64px)] lg:h-[calc(100vh-16px)] bg-gray-50/30 dark:bg-slate-900/10"
+      viewMode === "chat" ? "h-screen bg-slate-50" : "h-[calc(100vh-64px)] lg:h-[calc(100vh-16px)] bg-gray-50/30"
     }`}>
-      {/* Header General del CRM - Solo visible en Kanban */}
-      {viewMode === "kanban" && (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white dark:bg-slate-800 p-4 border-b border-gray-100 dark:border-slate-700 shrink-0 gap-3">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
-              <FiTarget className="text-indigo-600 dark:text-indigo-400" /> Centro de Clientes y CRM
-            </h1>
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
-              Conversa con tus prospectos, asigna vendedoras y monitorea el Chatbot de Inteligencia Artificial.
-            </p>
-          </div>
-
-          {/* Controles de vista y acciones */}
-          <div className="flex flex-wrap items-center gap-3 self-start sm:self-auto">
-            {/* Selector de Empresa/Marca */}
-            <div className="flex bg-gray-150/65 dark:bg-slate-700/55 p-0.5 rounded-xl border border-gray-200/50 dark:border-slate-600/50">
-              <button
-                onClick={() => setSelectedEmpresa("Transavic")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                  selectedEmpresa === "Transavic"
-                    ? "bg-red-600 text-white shadow-sm"
-                    : "text-gray-500 hover:text-gray-800 dark:text-gray-400"
-                }`}
-              >
-                🐔 Transavic
-              </button>
-              <button
-                onClick={() => setSelectedEmpresa("Avícola de Tony")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                  selectedEmpresa === "Avícola de Tony"
-                    ? "bg-amber-500 text-white shadow-sm"
-                    : "text-gray-500 hover:text-gray-800 dark:text-gray-400"
-                }`}
-              >
-                🥩 Avícola de Tony
-              </button>
-            </div>
-
-            {/* Selector de Vista (Chat vs Kanban) */}
-            <div className="flex bg-gray-150/65 dark:bg-slate-700/55 p-0.5 rounded-xl border border-gray-200/50 dark:border-slate-600/50">
-              <button
-                onClick={() => setViewMode("chat")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                  (viewMode as string) === "chat" ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-sm" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-                }`}
-              >
-                <FiMessageSquare size={13} /> Bandeja de Chats
-              </button>
-              <button
-                onClick={() => setViewMode("kanban")}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center gap-1 transition-all cursor-pointer ${
-                  (viewMode as string) === "kanban" ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-sm" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
-                }`}
-              >
-                <FiCheckSquare size={13} /> Tablero
-              </button>
-            </div>
-
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-3 py-1.5 font-bold text-xs cursor-pointer shadow-md transition-all active:scale-95"
-            >
-              <FiPlus size={13} /> Nuevo Prospecto
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* RENDER VISTA ROTACIÓN / CHAT INTERACTIVA */}
       {viewMode === "rotacion" ? (
         <RotationConfig onClose={() => setViewMode("chat")} />
-      ) : viewMode === "chat" ? (
-        <div className="flex-1 flex overflow-hidden bg-slate-100 dark:bg-slate-950">
+      ) : (
+        <div className="flex-1 flex overflow-hidden bg-slate-100">
           {/* Columna Izquierda: Listado de Chats */}
           <div
-            className={`w-full md:w-[350px] bg-white dark:bg-slate-900 border-r border-gray-100 dark:border-slate-800 flex flex-col shrink-0 overflow-hidden ${
+            className={`w-full md:w-[350px] bg-white border-r border-gray-100 flex flex-col shrink-0 overflow-hidden ${
               activeLeadId ? "hidden md:flex" : "flex"
             }`}
           >
             {/* Cabecera estilo WhatsApp */}
-            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-800 border-b border-gray-200 dark:border-slate-700 shrink-0">
+            <div className="flex items-center justify-between px-4 py-3 bg-slate-50 border-b border-gray-200 shrink-0">
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer p-1 rounded-lg hover:bg-gray-200/50 dark:hover:bg-slate-700/50"
+                  className="text-gray-500 hover:text-gray-700 cursor-pointer p-1 rounded-lg hover:bg-gray-200/50"
                   onClick={() => window.dispatchEvent(new CustomEvent("toggle-mobile-sidebar"))}
                 >
                   <FiMenu size={20} />
                 </button>
-                <h2 className="text-lg font-black text-gray-800 dark:text-gray-100">
+                <h2 className="text-lg font-black text-gray-800">
                   Chats
                 </h2>
               </div>
               <div className="flex items-center gap-1.5">
-                {/* Botón para alternar a vista Kanban */}
-                <button
-                  type="button"
-                  onClick={() => setViewMode("kanban")}
-                  title="Ver Tablero"
-                  className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-400 transition-colors flex items-center justify-center cursor-pointer"
-                >
-                  <FiCheckSquare size={16} />
-                </button>
-
                 {sessionUser.role === "admin" && (
                   <>
                     <button
                       type="button"
                       onClick={() => setViewMode("rotacion")}
                       title="Configurar Reparto de Leads"
-                      className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-pink-600 dark:text-pink-400 transition-colors flex items-center justify-center cursor-pointer"
+                      className="p-1 rounded-lg hover:bg-gray-200 text-pink-600 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <FiRefreshCw size={14} className={(viewMode as string) === "rotacion" ? "animate-spin" : ""} />
                     </button>
@@ -489,7 +358,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                       type="button"
                       onClick={() => setShowBotConfig(true)}
                       title="Configurar Bot de Bienvenida"
-                      className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-purple-600 dark:text-purple-400 transition-colors flex items-center justify-center cursor-pointer"
+                      className="p-1 rounded-lg hover:bg-gray-200 text-purple-600 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <span className="text-sm">🤖</span>
                     </button>
@@ -497,7 +366,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                       type="button"
                       onClick={() => setShowRepliesManager(true)}
                       title="Gestionar Respuestas Rápidas"
-                      className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-blue-600 dark:text-blue-400 transition-colors flex items-center justify-center cursor-pointer"
+                      className="p-1 rounded-lg hover:bg-gray-200 text-blue-600 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <FiZap size={14} className="fill-current" />
                     </button>
@@ -505,7 +374,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                       type="button"
                       onClick={() => setShowTagManager(true)}
                       title="Gestionar Etiquetas"
-                      className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-amber-600 dark:text-amber-400 transition-colors flex items-center justify-center cursor-pointer"
+                      className="p-1 rounded-lg hover:bg-gray-200 text-amber-600 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <FiTag size={14} />
                     </button>
@@ -515,7 +384,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                   type="button"
                   onClick={() => setShowCreateModal(true)}
                   title="Nuevo Prospecto"
-                  className="p-1 rounded-lg hover:bg-gray-200 dark:hover:bg-slate-700 text-indigo-600 dark:text-indigo-400 transition-colors flex items-center justify-center cursor-pointer"
+                  className="p-1 rounded-lg hover:bg-gray-200 text-indigo-600 transition-colors flex items-center justify-center cursor-pointer"
                 >
                   <FiPlus size={16} />
                 </button>
@@ -523,14 +392,14 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             </div>
 
             {/* Selector de Empresa/Marca (Dos CRMs independientes en uno) */}
-            <div className="flex border-b border-gray-150 dark:border-slate-800 p-2 bg-slate-50/50 dark:bg-slate-800/10 gap-1.5 shrink-0">
+            <div className="flex border-b border-gray-150 p-2 bg-slate-50/50 gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={() => setSelectedEmpresa("Transavic")}
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-xl transition-all border cursor-pointer active:scale-98 ${
                   selectedEmpresa === "Transavic"
                     ? "bg-red-600 text-white border-red-600 shadow-sm"
-                    : "bg-white dark:bg-slate-900 text-gray-650 dark:text-gray-400 border-gray-200 dark:border-slate-800 hover:bg-gray-50"
+                    : "bg-white text-gray-650 border-gray-200 hover:bg-gray-50"
                 }`}
               >
                 🐔 Transavic
@@ -541,7 +410,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                 className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-xl transition-all border cursor-pointer active:scale-98 ${
                   selectedEmpresa === "Avícola de Tony"
                     ? "bg-amber-500 text-white border-amber-500 shadow-sm"
-                    : "bg-white dark:bg-slate-900 text-gray-650 dark:text-gray-400 border-gray-200 dark:border-slate-800 hover:bg-gray-50"
+                    : "bg-white text-gray-650 border-gray-200 hover:bg-gray-50"
                 }`}
               >
                 🥩 Avícola de Tony
@@ -549,7 +418,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             </div>
 
             {/* Buscador y Filtros */}
-            <div className="p-3 border-b border-gray-100 dark:border-slate-800 space-y-2 shrink-0 bg-gray-50/20 dark:bg-slate-800/10">
+            <div className="p-3 border-b border-gray-100 space-y-2 shrink-0 bg-gray-50/20">
               <div className="flex items-center gap-2">
                 <div className="relative flex-1">
                   <input
@@ -557,13 +426,13 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Buscar nombre o celular..."
-                    className="w-full pl-8 pr-3 py-1.5 bg-gray-150/60 dark:bg-slate-800 border border-transparent hover:border-gray-200 dark:hover:border-slate-700 focus:border-indigo-500 dark:focus:border-indigo-400 focus:bg-white dark:focus:bg-slate-750 text-gray-900 dark:text-gray-100 rounded-xl text-xs outline-none transition-all placeholder-gray-400 dark:placeholder-gray-500"
+                    className="w-full pl-8 pr-3 py-1.5 bg-gray-150/60 border border-transparent hover:border-gray-200 focus:border-indigo-500 focus:bg-white text-gray-900 rounded-xl text-xs outline-none transition-all placeholder-gray-400"
                   />
-                  <FiSearch className="absolute left-2.5 top-2.5 text-gray-400 dark:text-gray-500" size={13} />
+                  <FiSearch className="absolute left-2.5 top-2.5 text-gray-400" size={13} />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery("")}
-                      className="absolute right-2 top-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+                      className="absolute right-2 top-2 text-gray-400 hover:text-gray-600 cursor-pointer"
                     >
                       <FiX size={13} />
                     </button>
@@ -578,8 +447,8 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                       selectedEmpresa !== "todas" ||
                       selectedChatbot !== "todos" ||
                       selectedEstadoFilter !== "todos"
-                        ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400"
-                        : "bg-white dark:bg-slate-800 hover:bg-gray-150 dark:hover:bg-slate-700 border-gray-200 dark:border-slate-700 text-gray-500 dark:text-gray-400"
+                        ? "bg-indigo-50 border-indigo-200 text-indigo-600"
+                        : "bg-white hover:bg-gray-150 border-gray-200 text-gray-500"
                     }`}
                     title="Filtrar chats"
                   >
@@ -592,9 +461,9 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                         className="fixed inset-0 z-40 bg-transparent"
                         onClick={() => setShowFilterMenu(false)}
                       ></div>
-                      <div className="absolute right-0 mt-1.5 w-64 bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-gray-200 dark:border-slate-700 z-50 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150 text-xs text-gray-700 dark:text-gray-300">
-                        <div className="flex justify-between items-center pb-2 border-b border-gray-150 dark:border-slate-700">
-                          <span className="font-bold text-gray-800 dark:text-gray-100">Filtros de Chat</span>
+                      <div className="absolute right-0 mt-1.5 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 z-50 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-150 text-xs text-gray-700">
+                        <div className="flex justify-between items-center pb-2 border-b border-gray-150">
+                          <span className="font-bold text-gray-800">Filtros de Chat</span>
                           <button
                             onClick={() => {
                               setSelectedAsesor("todos");
@@ -603,7 +472,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                               setSelectedEstadoFilter("todos");
                               setShowFilterMenu(false);
                             }}
-                            className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold"
+                            className="text-[10px] text-indigo-600 hover:underline font-bold"
                           >
                             Limpiar
                           </button>
@@ -611,11 +480,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
 
                         {/* Asesor */}
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Asesor</label>
+                          <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Asesor</label>
                           <select
                             value={selectedAsesor}
                             onChange={(e) => setSelectedAsesor(e.target.value)}
-                            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+                            className="w-full border border-gray-200 bg-white text-gray-800 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="todos">Todos</option>
                             <option value="sin_asignar">Sin Asignar</option>
@@ -629,11 +498,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
 
                         {/* Empresa/Marca */}
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Marca</label>
+                          <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Marca</label>
                           <select
                             value={selectedEmpresa}
                             onChange={(e) => setSelectedEmpresa(e.target.value)}
-                            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+                            className="w-full border border-gray-200 bg-white text-gray-800 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="todas">Todas</option>
                             <option value="Transavic">Transavic</option>
@@ -643,11 +512,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
 
                         {/* Chatbot */}
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Chatbot IA</label>
+                          <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Chatbot IA</label>
                           <select
                             value={selectedChatbot}
                             onChange={(e) => setSelectedChatbot(e.target.value)}
-                            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+                            className="w-full border border-gray-200 bg-white text-gray-800 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="todos">Todos</option>
                             <option value="activo">IA Activa</option>
@@ -657,11 +526,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
 
                         {/* Estado Kanban */}
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Estado Comercial</label>
+                          <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Estado Comercial</label>
                           <select
                             value={selectedEstadoFilter}
                             onChange={(e) => setSelectedEstadoFilter(e.target.value)}
-                            className="w-full border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+                            className="w-full border border-gray-200 bg-white text-gray-800 rounded-lg p-1.5 outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="todos">Todos</option>
                             {ESTADOS_KANBAN.map((est) => (
@@ -692,7 +561,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                     className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider shrink-0 transition-colors border cursor-pointer ${
                       activeChatTab === tab.id
                         ? "bg-indigo-600 border-indigo-600 text-white shadow-xs"
-                        : "bg-white dark:bg-slate-850 border-gray-100 dark:border-slate-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-750 hover:text-gray-700 dark:hover:text-gray-200"
+                        : "bg-white border-gray-100 text-gray-500 hover:bg-gray-50 hover:text-gray-700"
                     }`}
                   >
                     {tab.label}
@@ -702,9 +571,9 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             </div>
 
             {/* Listado de Chats */}
-            <div className="flex-1 overflow-y-auto divide-y divide-gray-50 dark:divide-slate-800/40">
+            <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
               {filteredLeads.length === 0 ? (
-                <div className="text-center py-20 px-4 text-xs text-gray-400 dark:text-gray-500">
+                <div className="text-center py-20 px-4 text-xs text-gray-400">
                   <p className="italic">No se encontraron prospectos.</p>
                   <div className="mt-3 flex flex-col items-center gap-2">
                     <button
@@ -728,7 +597,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                           setSelectedChatbot("todos");
                           setSelectedEstadoFilter("todos");
                         }}
-                        className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline font-bold cursor-pointer"
+                        className="text-[10px] text-indigo-600 hover:underline font-bold cursor-pointer"
                       >
                         Limpiar filtros
                       </button>
@@ -752,12 +621,12 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                           }).then(() => fetchLeadsAndAsesores());
                         }
                       }}
-                      className={`p-3.5 flex gap-3 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors relative group border-b border-gray-50 dark:border-slate-800/40 ${
-                        isActive ? "bg-indigo-50/50 dark:bg-indigo-950/20 border-l-4 border-indigo-600" : ""
+                      className={`p-3.5 flex gap-3 cursor-pointer hover:bg-slate-50 transition-colors relative group border-b border-gray-50 ${
+                        isActive ? "bg-indigo-50/50 border-l-4 border-indigo-600" : ""
                       }`}
                     >
                       {/* Avatar */}
-                      <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center font-bold text-slate-600 dark:text-slate-300 text-sm shrink-0">
+                      <div className="w-10 h-10 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-600 text-sm shrink-0">
                         {lead.nombre ? lead.nombre.substring(0, 2).toUpperCase() : "?"}
                       </div>
 
@@ -765,7 +634,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex justify-between items-center">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="font-bold text-xs text-gray-800 dark:text-gray-100 truncate">{lead.nombre}</span>
+                            <span className="font-bold text-xs text-gray-800 truncate">{lead.nombre}</span>
                             {/* Mini tags de colores */}
                             {lead.tags && lead.tags.length > 0 && (
                               <div className="flex items-center -space-x-1 shrink-0">
@@ -790,14 +659,14 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                                   );
                                 })}
                                 {lead.tags.length > 3 && (
-                                  <div className="w-3 h-3 rounded-full bg-gray-150 dark:bg-slate-800 flex items-center justify-center border border-gray-200/50 dark:border-slate-700 ml-1">
-                                    <span className="text-[7px] text-gray-500 dark:text-gray-400 font-bold">+</span>
+                                  <div className="w-3 h-3 rounded-full bg-gray-150 flex items-center justify-center border border-gray-200/50 ml-1">
+                                    <span className="text-[7px] text-gray-500 font-bold">+</span>
                                   </div>
                                 )}
                               </div>
                             )}
                           </div>
-                          <span className="text-[9px] text-gray-400 dark:text-gray-500 shrink-0">
+                          <span className="text-[9px] text-gray-400 shrink-0">
                             {new Date(lead.updated_at).toLocaleTimeString("es-PE", {
                               hour: "2-digit",
                               minute: "2-digit",
@@ -809,23 +678,32 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                           <div className="flex items-center gap-1.5 min-w-0">
                             <span
                               className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded-md shrink-0 ${
-                                lead.empresa === "Transavic" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                                lead.empresa === "Transavic" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
                               }`}
                             >
                               {lead.empresa}
                             </span>
-                            {lead.chatbot_activo ? (
-                              <span className="text-[8px] font-black text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/30 px-1.5 py-0.2 rounded border border-purple-100 dark:border-purple-900/40 shrink-0">
+                            {esBotEscribiendo(lead.bot_pensando_desde) ? (
+                              <span className="text-[8px] font-black text-indigo-700 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-200 shrink-0 flex items-center gap-1">
+                                <span className="flex gap-0.5" aria-hidden="true">
+                                  <span className="h-1 w-1 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.3s]" />
+                                  <span className="h-1 w-1 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.15s]" />
+                                  <span className="h-1 w-1 rounded-full bg-indigo-500 animate-bounce" />
+                                </span>
+                                escribiendo
+                              </span>
+                            ) : lead.chatbot_activo ? (
+                              <span className="text-[8px] font-black text-purple-600 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-100 shrink-0">
                                 🤖 IA
                               </span>
                             ) : (
-                              <span className="text-[8px] font-black text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 px-1.5 py-0.2 rounded border border-slate-100 dark:border-slate-700 shrink-0">
+                              <span className="text-[8px] font-black text-slate-500 bg-slate-50 px-1.5 py-0.2 rounded border border-slate-100 shrink-0">
                                 👤 Humano
                               </span>
                             )}
                           </div>
                           {(lead.unread_count ?? 0) > 0 && (
-                            <span className="bg-red-500 dark:bg-red-600 text-white font-black text-[9px] rounded-full px-1.5 py-0.5 shrink-0">
+                            <span className="bg-red-500 text-white font-black text-[9px] rounded-full px-1.5 py-0.5 shrink-0">
                               {lead.unread_count}
                             </span>
                           )}
@@ -840,14 +718,14 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                             e.stopPropagation();
                             setActiveChatDropdown(activeChatDropdown === lead.id ? null : lead.id);
                           }}
-                          className="p-1 rounded-full bg-white dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 shadow-sm border border-gray-200 dark:border-slate-700 cursor-pointer"
+                          className="p-1 rounded-full bg-white hover:bg-gray-100 text-gray-500 hover:text-gray-700 shadow-sm border border-gray-200 cursor-pointer"
                         >
                           <FiChevronDown size={12} />
                         </button>
                         {activeChatDropdown === lead.id && (
                           <>
                             <div className="fixed inset-0 z-10 bg-transparent" onClick={(e) => { e.stopPropagation(); setActiveChatDropdown(null); }} />
-                            <div className="absolute right-0 top-full mt-1 w-40 bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-gray-150 dark:border-slate-700 z-20 py-1 font-semibold text-xs text-gray-700 dark:text-gray-300 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
+                            <div className="absolute right-0 top-full mt-1 w-40 bg-white rounded-xl shadow-lg border border-gray-150 z-20 py-1 font-semibold text-xs text-gray-700 animate-in fade-in zoom-in-95 duration-100 origin-top-right">
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -855,7 +733,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                                   setActiveChatDropdown(null);
                                   setActiveLeadId(lead.id);
                                 }}
-                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
                               >
                                 <FiMessageSquare size={12} /> Abrir Chat
                               </button>
@@ -872,7 +750,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                                     body: JSON.stringify({ unread_count: newUnread }),
                                   }).then(() => fetchLeadsAndAsesores());
                                 }}
-                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-50 flex items-center gap-1.5 cursor-pointer"
                               >
                                 <FiCheck size={12} /> No Leído / Leído
                               </button>
@@ -903,217 +781,16 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8">
                 <FiMessageSquare size={52} className="mb-3 opacity-20" />
-                <h3 className="font-bold text-gray-700 text-sm">Bandeja de Entrada</h3>
+                <h3 className="font-bold text-slate-700 text-sm">Bandeja de Entrada</h3>
                 <p className="text-xs text-center max-w-xs mt-1">
                   Selecciona una conversación del listado de la izquierda para comenzar a responder o gestionar.
                 </p>
+                <div className="w-full max-w-lg mt-6">
+                  <GuiaModulo modulo="crm-leads" />
+                </div>
               </div>
             )}
           </div>
-        </div>
-      ) : (
-        /* RENDER VISTA KANBAN (BOARD CON DRAG AND DROP) */
-        <div className="flex-1 flex flex-col overflow-hidden p-4 space-y-4 bg-gray-50/30">
-          <div className="shrink-0">
-            <GuiaModulo modulo="crm-leads" />
-          </div>
-
-          {/* Tarjetas de Métricas Rápidas */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 shrink-0">
-            <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs">
-              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Total Leads</span>
-              <span className="text-xl font-black text-gray-900 block mt-0.5">{stats.total}</span>
-            </div>
-            <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs">
-              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Nuevos</span>
-              <span className="text-xl font-black text-slate-600 block mt-0.5">{stats.nuevos}</span>
-            </div>
-            <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs">
-              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Contactados</span>
-              <span className="text-xl font-black text-sky-600 block mt-0.5">{stats.contactados}</span>
-            </div>
-            <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs">
-              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">IA Activa</span>
-              <span className="text-xl font-black text-purple-600 block mt-0.5">{stats.chatbotActivos}</span>
-            </div>
-            <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs col-span-2 lg:col-span-1">
-              <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Cerrados</span>
-              <span className="text-xl font-black text-emerald-600 block mt-0.5">{stats.cerrados}</span>
-            </div>
-          </div>
-
-          {/* Filtros Kanban */}
-          <div className="bg-white p-3 rounded-2xl border border-gray-100 shadow-xs grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
-            {/* Buscador */}
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-gray-400 uppercase block">Buscar</label>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Nombre, celular..."
-                className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500 bg-gray-50/50"
-              />
-            </div>
-
-            {/* Asesor */}
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-gray-400 uppercase block">Asesor</label>
-              <select
-                value={selectedAsesor}
-                onChange={(e) => setSelectedAsesor(e.target.value)}
-                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="todos">Todos los asesores</option>
-                <option value="sin_asignar">Sin Asignar</option>
-                {asesores.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Empresa */}
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-gray-400 uppercase block">Marca</label>
-              <select
-                value={selectedEmpresa}
-                onChange={(e) => setSelectedEmpresa(e.target.value)}
-                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="todas">Todas</option>
-                <option value="Transavic">Transavic</option>
-                <option value="Avícola de Tony">Avícola de Tony</option>
-              </select>
-            </div>
-
-            {/* Chatbot */}
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-gray-400 uppercase block">Chatbot</label>
-              <select
-                value={selectedChatbot}
-                onChange={(e) => setSelectedChatbot(e.target.value)}
-                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="todos">Todos</option>
-                <option value="activo">IA Activo</option>
-                <option value="inactivo">IA Desactivado</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Kanban Board Container */}
-          {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center">
-              <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
-            </div>
-          ) : (
-            <DragDropContext onDragEnd={onDragEnd}>
-              <div className="flex-1 flex gap-3 overflow-x-auto pb-4 items-start select-none">
-                {ESTADOS_KANBAN.map((estado) => {
-                  const columnLeads = boardData[estado] || [];
-                  const colorInfo = COLORES_ESTADO[estado];
-                  return (
-                    <div
-                      key={estado}
-                      className={`flex flex-col rounded-2xl border ${colorInfo.border} w-[260px] max-h-full bg-slate-50/45 shadow-xs flex-shrink-0`}
-                    >
-                      {/* Header Columna */}
-                      <div
-                        className={`p-3 rounded-t-2xl flex justify-between items-center ${colorInfo.headerBg} border-b ${colorInfo.border}`}
-                      >
-                        <span className={`text-[10px] font-black uppercase tracking-wider ${colorInfo.text}`}>
-                          {estado}
-                        </span>
-                        <span
-                          className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${colorInfo.bg} ${colorInfo.text} border ${colorInfo.border}`}
-                        >
-                          {columnLeads.length}
-                        </span>
-                      </div>
-
-                      {/* Droppable Body */}
-                      <Droppable droppableId={estado}>
-                        {(provided, snapshot) => (
-                          <div
-                            ref={provided.innerRef}
-                            {...provided.droppableProps}
-                            className={`flex-1 overflow-y-auto p-2.5 space-y-2.5 min-h-[300px] transition-colors duration-150 ${
-                              snapshot.isDraggingOver ? "bg-indigo-50/15" : "bg-transparent"
-                            }`}
-                          >
-                            {columnLeads.map((lead, index) => (
-                              <Draggable key={lead.id} draggableId={lead.id} index={index}>
-                                {(providedDrag, snapshotDrag) => (
-                                  <div
-                                    ref={providedDrag.innerRef}
-                                    {...providedDrag.draggableProps}
-                                    {...providedDrag.dragHandleProps}
-                                    onClick={() => {
-                                      setActiveLeadId(lead.id);
-                                      setViewMode("chat");
-                                    }}
-                                    className={`p-3 bg-white border border-gray-150 rounded-xl shadow-2xs hover:shadow-xs hover:border-indigo-200 transition-all cursor-pointer space-y-2 ${
-                                      snapshotDrag.isDragging
-                                        ? "shadow-lg border-indigo-300 scale-[1.02]"
-                                        : "hover:-translate-y-0.5"
-                                    }`}
-                                  >
-                                    <div className="flex justify-between items-center">
-                                      <span
-                                        className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded-md ${
-                                          lead.empresa === "Transavic"
-                                            ? "bg-amber-100 text-amber-800"
-                                            : "bg-red-100 text-red-800"
-                                        }`}
-                                      >
-                                        {lead.empresa}
-                                      </span>
-                                      {lead.chatbot_activo ? (
-                                        <span className="text-[8px] font-black text-purple-600 bg-purple-50 px-1.5 py-0.2 rounded-md animate-pulse">
-                                          🤖 IA
-                                        </span>
-                                      ) : (
-                                        <span className="text-[8px] font-black text-slate-500 bg-slate-50 px-1.5 py-0.2 rounded-md">
-                                          👤 Asesora
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    <div className="space-y-0.5">
-                                      <h4 className="text-[11px] font-bold text-gray-800 leading-snug">
-                                        {lead.nombre}
-                                      </h4>
-                                      {lead.negocio && (
-                                        <p className="text-[9px] text-gray-400 font-medium flex items-center gap-0.5 truncate">
-                                          <FiBriefcase size={9} /> {lead.negocio}
-                                        </p>
-                                      )}
-                                    </div>
-
-                                    <div className="flex justify-between items-center text-[9px] text-gray-400 pt-1.5 border-t border-gray-100">
-                                      <span className="font-bold text-gray-500 flex items-center gap-0.5">
-                                        <FiPhone size={9} /> {lead.telefono}
-                                      </span>
-                                      <span className="font-semibold text-gray-400 truncate max-w-[75px]">
-                                        {lead.vendedor_name ? lead.vendedor_name.split(" ")[0] : "Libre"}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )}
-                              </Draggable>
-                            ))}
-                            {provided.placeholder}
-                          </div>
-                        )}
-                      </Droppable>
-                    </div>
-                  );
-                })}
-              </div>
-            </DragDropContext>
-          )}
         </div>
       )}
 
@@ -1255,11 +932,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
       {/* Modal Registrar Pedido desde CRM */}
       {showOrderModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4 backdrop-blur-xs animate-in fade-in duration-250">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl w-full max-w-5xl max-h-[92vh] overflow-y-auto relative p-6 border border-gray-150 dark:border-slate-800 shadow-2xl flex flex-col animate-in scale-in duration-250">
+          <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[92vh] overflow-y-auto relative p-6 border border-gray-150 shadow-2xl flex flex-col animate-in scale-in duration-250">
             {/* Cabecera del Modal */}
-            <div className="flex justify-between items-center pb-4 border-b border-gray-150 dark:border-slate-800 shrink-0">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-150 shrink-0">
               <div>
-                <h3 className="text-lg font-black text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
                   <span>🛒</span> Registrar Pedido desde CRM
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
@@ -1268,7 +945,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
               </div>
               <button
                 onClick={() => setShowOrderModal(false)}
-                className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors p-1.5 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                className="text-gray-400 hover:text-gray-700 transition-colors p-1.5 hover:bg-gray-100 rounded-xl cursor-pointer"
                 aria-label="Cerrar"
               >
                 <FiX size={20} />
@@ -1288,11 +965,11 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
             </div>
 
             {/* Pie del modal: salida visible (además de la X del header) */}
-            <div className="flex justify-end pt-4 mt-4 border-t border-gray-150 dark:border-slate-800 shrink-0">
+            <div className="flex justify-end pt-4 mt-4 border-t border-gray-150 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowOrderModal(false)}
-                className="px-4 py-2 border border-gray-200 dark:border-slate-700 rounded-xl text-xs font-bold text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                className="px-4 py-2 border border-gray-200 rounded-xl text-xs font-bold text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
               >
                 Cerrar y volver al chat
               </button>
@@ -1330,6 +1007,11 @@ function ChatPane({
 }: ChatPaneProps) {
   const [lead, setLead] = useState<Lead | null>(null);
   const [mensajes, setMensajes] = useState<LeadMensaje[]>([]);
+
+  const botEscribiendo = useMemo(
+    () => esBotEscribiendo(lead?.bot_pensando_desde),
+    [lead?.bot_pensando_desde]
+  );
   const [newMessage, setNewMessage] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -1389,12 +1071,16 @@ function ChatPane({
     }
   };
 
+  // Carga INMEDIATA al abrir o cambiar de conversación: `usePollingVisible` solo
+  // re-arranca su efecto si cambia `enabled`, no si cambia `leadId`, así que sin
+  // esto el chat recién elegido se quedaría en blanco hasta el siguiente tick.
   useEffect(() => {
-    loadLeadDetails();
-    // Polling del chat activo cada 4 segundos
-    const interval = setInterval(loadLeadDetails, 4000);
-    return () => clearInterval(interval);
+    if (leadId) loadLeadDetails();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);
+
+  // Refresco del chat abierto cada 4 s, SOLO con la pestaña visible.
+  usePollingVisible(loadLeadDetails, 4000, { enabled: !!leadId });
 
   // Scroll al final del chat
   useEffect(() => {
@@ -1655,20 +1341,20 @@ function ChatPane({
       {/* Workspace de Chat */}
       <div className="flex-1 flex flex-col overflow-hidden h-full">
         {/* Chat Header */}
-        <div className="h-14 bg-white dark:bg-slate-800 border-b border-gray-100 dark:border-slate-800 flex items-center justify-between px-4 shrink-0 shadow-2xs z-10">
+        <div className="h-14 bg-white border-b border-gray-100 flex items-center justify-between px-4 shrink-0 shadow-2xs z-10">
           <div className="flex items-center gap-3 min-w-0">
-            <button onClick={onCloseChat} className="md:hidden text-gray-500 mr-1 p-1 rounded-full hover:bg-gray-100 dark:hover:bg-slate-700">
+            <button onClick={onCloseChat} className="md:hidden text-gray-500 mr-1 p-1 rounded-full hover:bg-gray-100">
               <FiChevronLeft size={20} />
             </button>
-            <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-xs text-slate-700 dark:text-slate-200 shrink-0">
+            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-xs text-slate-700 shrink-0">
               {lead?.nombre ? lead.nombre.substring(0, 2).toUpperCase() : "?"}
             </div>
             <div className="min-w-0 group">
-              <h4 className="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5 truncate">
+              <h4 className="font-bold text-xs text-gray-800 flex items-center gap-1.5 truncate">
                 {lead?.nombre}
                 <span
                   className={`text-[8px] font-black uppercase px-1.5 py-0.2 rounded-md ${
-                    lead?.empresa === "Transavic" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800"
+                    lead?.empresa === "Transavic" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
                   }`}
                 >
                   {lead?.empresa}
@@ -1682,11 +1368,11 @@ function ChatPane({
                     setTimeout(() => setCopiedPhone(false), 1500);
                   }
                 }}
-                className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 truncate cursor-pointer hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors select-all"
+                className="text-[10px] text-gray-400 mt-0.5 truncate cursor-pointer hover:text-indigo-600 flex items-center gap-1 transition-colors select-all"
                 title="Clic para copiar número"
               >
                 {copiedPhone ? (
-                  <span className="text-green-600 dark:text-green-400 font-bold flex items-center gap-0.5 select-none">
+                  <span className="text-green-600 font-bold flex items-center gap-0.5 select-none">
                     <FiCheck size={10} className="shrink-0" /> ¡Copiado!
                   </span>
                 ) : (
@@ -1714,20 +1400,20 @@ function ChatPane({
             {/* Direct Calls */}
             <a
               href={`tel:${lead?.telefono}`}
-              className="p-2 bg-indigo-50 dark:bg-indigo-950 border border-indigo-100/50 dark:border-indigo-900/40 hover:bg-indigo-100/50 dark:hover:bg-indigo-900/60 rounded-xl text-indigo-600 dark:text-indigo-400 transition-colors cursor-pointer hidden sm:block"
+              className="p-2 bg-indigo-50 border border-indigo-100/50 hover:bg-indigo-100/50 rounded-xl text-indigo-600 transition-colors cursor-pointer hidden sm:block"
               title="Llamar por teléfono"
             >
               <FiPhone size={14} />
             </a>
  
             {/* Chatbot Active Switch */}
-            <div className="flex bg-gray-150/65 dark:bg-slate-700/60 p-0.5 rounded-lg border border-gray-200/50 dark:border-slate-600/50 text-[10px]">
+            <div className="flex bg-gray-150/65 p-0.5 rounded-lg border border-gray-200/50 text-[10px]">
               <button
                 type="button"
                 onClick={() => handleToggleChatbot(true)}
                 disabled={togglingChatbot}
                 className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait ${
-                  lead?.chatbot_activo ? "bg-purple-600 text-white shadow-2xs" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-250"
+                  lead?.chatbot_activo ? "bg-purple-600 text-white shadow-2xs" : "text-gray-500 hover:text-gray-800"
                 }`}
               >
                 🤖 IA
@@ -1737,7 +1423,7 @@ function ChatPane({
                 onClick={() => handleToggleChatbot(false)}
                 disabled={togglingChatbot}
                 className={`px-2 py-1 font-black rounded flex items-center gap-0.5 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-wait ${
-                  !lead?.chatbot_activo ? "bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-400 shadow-2xs" : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-250"
+                  !lead?.chatbot_activo ? "bg-white text-indigo-700 shadow-2xs" : "text-gray-500 hover:text-gray-800"
                 }`}
               >
                 👤 Humano
@@ -1748,8 +1434,8 @@ function ChatPane({
               onClick={toggleRightPanel}
               className={`p-2 rounded-xl border transition-colors cursor-pointer ${
                 showRightPanel
-                  ? "bg-indigo-50 dark:bg-indigo-950 border-indigo-100 dark:border-indigo-900 text-indigo-600 dark:text-indigo-400"
-                  : "bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                  ? "bg-indigo-50 border-indigo-100 text-indigo-600"
+                  : "bg-white border-gray-200 text-gray-400 hover:text-gray-600"
               }`}
               title="Ficha del Cliente"
             >
@@ -1793,13 +1479,13 @@ function ChatPane({
                 <div key={m.id || idx} className="flex flex-col w-full">
                   {showDateSeparator && (
                     <div className="flex justify-center my-3">
-                      <span className="bg-white/95 dark:bg-slate-800/95 backdrop-blur-xs text-gray-500 dark:text-gray-400 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full shadow-2xs border border-gray-150 dark:border-slate-700">
+                      <span className="bg-white/95 backdrop-blur-xs text-gray-500 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full shadow-2xs border border-gray-150">
                         {formatDateSeparator(m.created_at)}
                       </span>
                     </div>
                   )}
                   <div className={`flex flex-col ${isMe || isBot ? "items-end" : "items-start"}`}>
-                    <div className="flex items-center gap-1.5 mb-0.5 text-[9px] font-bold text-gray-400 dark:text-gray-500">
+                    <div className="flex items-center gap-1.5 mb-0.5 text-[9px] font-bold text-gray-400">
                       <span className="capitalize">{m.sender === "bot" ? "Bot IA" : m.sender}</span>
                       <span>•</span>
                       <span>{timeStr}</span>
@@ -1830,14 +1516,14 @@ function ChatPane({
                     <div
                       className={`max-w-[80%] rounded-2xl p-3 text-xs leading-relaxed ${
                         isMe
-                          ? "bg-[#d9fdd3] dark:bg-green-900/40 text-gray-800 dark:text-green-50 border border-[#c4eabf]/60 dark:border-green-800/20 rounded-tr-none shadow-2xs"
+                          ? "bg-[#d9fdd3] text-gray-800 border border-[#c4eabf]/60 rounded-tr-none shadow-2xs"
                           : isBot
-                          ? "bg-[#e0f0ff] dark:bg-indigo-950/60 text-indigo-950 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800/30 rounded-tr-none shadow-2xs"
-                          : "bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 border border-gray-150 dark:border-slate-700/60 rounded-tl-none shadow-2xs"
+                          ? "bg-[#e0f0ff] text-indigo-950 border border-indigo-200 rounded-tr-none shadow-2xs"
+                          : "bg-white text-gray-800 border border-gray-150 rounded-tl-none shadow-2xs"
                       }`}
                     >
                       {isBot && (
-                        <div className="flex items-center gap-1 mb-1 text-[9px] font-extrabold uppercase tracking-wide text-indigo-600 dark:text-indigo-400">
+                        <div className="flex items-center gap-1 mb-1 text-[9px] font-extrabold uppercase tracking-wide text-indigo-600">
                           <FiActivity size={10} className="shrink-0 animate-pulse" />
                           <span>Asistente IA</span>
                         </div>
@@ -1846,7 +1532,7 @@ function ChatPane({
                       {/* Rendering attachments */}
                       {m.type === "image" && m.body.startsWith("data:image/") ? (
                         <div className="space-y-1.5">
-                          <img src={m.body} alt="Imagen adjunta" className="rounded-lg max-w-full max-h-60 object-cover shadow-2xs border border-gray-100 dark:border-slate-800" />
+                          <img src={m.body} alt="Imagen adjunta" className="rounded-lg max-w-full max-h-60 object-cover shadow-2xs border border-gray-100" />
                         </div>
                       ) : m.type === "audio" && m.body.startsWith("data:audio/") ? (
                         <audio src={m.body} controls className="h-9 w-52 rounded-md focus:outline-none" />
@@ -1859,11 +1545,34 @@ function ChatPane({
               );
             })
           )}
+
+          {/* El bot está generando la respuesta. Evita que la asesora conteste
+              encima del bot y le duplique mensajes al cliente. */}
+          {botEscribiendo && (
+            <div className="flex flex-col items-end">
+              <div className="flex items-center gap-1.5 mb-0.5 text-[9px] font-bold text-indigo-400">
+                <span>Bot IA</span>
+              </div>
+              <div className="max-w-[80%] rounded-2xl rounded-tr-none border border-indigo-200 bg-indigo-50 px-3.5 py-2.5 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <span className="flex gap-1" aria-hidden="true">
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.3s]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce [animation-delay:-0.15s]" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-indigo-500 animate-bounce" />
+                  </span>
+                  <span className="text-[11px] font-semibold text-indigo-700">
+                    El bot está escribiendo…
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div ref={chatEndRef} />
         </div>
 
         {/* Input Bar */}
-        <div className="p-3 bg-white dark:bg-slate-800 border-t border-gray-100 dark:border-slate-800 shrink-0 relative flex flex-col gap-2">
+        <div className="p-3 bg-white border-t border-gray-100 shrink-0 relative flex flex-col gap-2">
           {/* Quick Replies Autocomplete Selector */}
           {filteredReplies.length > 0 && (
             <QuickReplySelector
@@ -1877,13 +1586,13 @@ function ChatPane({
  
           {/* Grabadóra de Voz */}
           {showRecording ? (
-            <div className="bg-gray-100/80 dark:bg-slate-900/80 px-4 py-2 flex items-center w-full border border-gray-200 dark:border-slate-700 rounded-xl">
+            <div className="bg-gray-100/80 px-4 py-2 flex items-center w-full border border-gray-200 rounded-xl">
               <AudioRecorder onSend={handleSendAudio} onCancel={() => setShowRecording(false)} />
             </div>
           ) : (
             <form onSubmit={(e) => handleSendMessage(e)} className="flex items-end gap-2 w-full pt-1 px-1 pb-1">
               {/* Main WhatsApp input pill wrapper */}
-              <div className="flex-1 flex items-center gap-1.5 bg-white dark:bg-slate-900 rounded-2xl border border-gray-250/60 dark:border-slate-750/70 shadow-xs px-3 py-1.5 relative transition-all duration-200 focus-within:border-indigo-400 dark:focus-within:border-indigo-500">
+              <div className="flex-1 flex items-center gap-1.5 bg-white rounded-2xl border border-gray-250/60 shadow-xs px-3 py-1.5 relative transition-all duration-200 focus-within:border-indigo-400">
                 {/* Zap button */}
                 <button
                   type="button"
@@ -1898,7 +1607,7 @@ function ChatPane({
                       setQuickReplySelectedIndex(0);
                     }
                   }}
-                  className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                  className="p-1.5 text-gray-400 hover:text-blue-500 rounded-full hover:bg-gray-100 transition-colors cursor-pointer shrink-0"
                   title="Respuestas Rápidas (/)"
                 >
                   <FiZap size={15} />
@@ -1928,12 +1637,12 @@ function ChatPane({
                       ? "Chatbot activo. Escribe para pausarlo y responder..."
                       : "Escribe un mensaje... (escribe / para ver atajos)"
                   }
-                  className="flex-1 min-w-0 bg-transparent border-none py-1 px-1 text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none resize-none leading-relaxed"
+                  className="flex-1 min-w-0 bg-transparent border-none py-1 px-1 text-xs text-gray-800 placeholder-gray-400 focus:outline-none resize-none leading-relaxed"
                   style={{ maxHeight: "120px", overflowY: "auto" }}
                 />
  
                 {/* File Attachment Input & Clip Icon */}
-                <label className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors cursor-pointer flex items-center justify-center shrink-0">
+                <label className="p-1.5 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100 transition-colors cursor-pointer flex items-center justify-center shrink-0">
                   <FiPaperclip size={15} className="rotate-45" />
                   <input type="file" onChange={handleFileAttach} className="hidden" accept="image/*,application/pdf" />
                 </label>
@@ -1942,7 +1651,7 @@ function ChatPane({
                 <button
                   type="button"
                   onClick={() => setShowTemplateModal(true)}
-                  className="p-1.5 text-gray-400 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 rounded-full hover:bg-gray-100 dark:hover:bg-slate-800 transition-colors shrink-0 cursor-pointer"
+                  className="p-1.5 text-gray-400 hover:text-green-600 rounded-full hover:bg-gray-100 transition-colors shrink-0 cursor-pointer"
                   title="Enviar Plantilla"
                 >
                   <FiBookOpen size={15} />

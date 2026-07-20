@@ -203,14 +203,14 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-slate-50 dark:bg-slate-950">
+    <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-slate-50">
       {/* Toast de notificaciones */}
       {toast && (
         <div
           className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg border text-sm animate-in fade-in slide-in-from-top-4 duration-300 ${
             toast.tipo === "ok"
-              ? "bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-350"
-              : "bg-rose-50 dark:bg-rose-950/70 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-350"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-rose-50 border-rose-200 text-rose-800"
           }`}
         >
           {toast.tipo === "ok" ? <FiCheck /> : <FiX />}
@@ -219,48 +219,48 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
       )}
 
       {/* Título de la página */}
-      <div className="flex justify-between items-center pb-5 border-b border-gray-200/60 dark:border-slate-800 shrink-0">
+      <div className="flex justify-between items-center pb-5 border-b border-gray-200/60 shrink-0">
         <div>
-          <h1 className="text-xl font-black text-gray-900 dark:text-gray-100 flex items-center gap-2">
-            <span className="text-indigo-600 dark:text-indigo-400">🎫</span> Reparto Automático de Leads
+          <h1 className="text-xl font-black text-gray-900 flex items-center gap-2">
+            <span className="text-indigo-600">🎫</span> Reparto Automático de Leads
           </h1>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          <p className="text-xs text-gray-500 mt-1">
             Distribuye de forma automática y equitativa los prospectos entrantes de WhatsApp entre las asesoras comerciales.
           </p>
         </div>
         <button
           onClick={onClose}
-          className="px-4 py-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold shadow-xs cursor-pointer active:scale-95 transition-all"
+          className="px-4 py-2 bg-white border border-gray-200 hover:bg-gray-100 text-gray-700 rounded-xl text-xs font-bold shadow-xs cursor-pointer active:scale-95 transition-all"
         >
           Volver al Chat
         </button>
       </div>
 
       {loading ? (
-        <div className="flex-1 flex flex-col items-center justify-center py-20 text-indigo-600 dark:text-indigo-400">
+        <div className="flex-1 flex flex-col items-center justify-center py-20 text-indigo-600">
           <FiRefreshCw className="animate-spin text-3xl mb-3" />
-          <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">Cargando configuración de rotación...</span>
+          <span className="text-xs text-gray-500 font-medium">Cargando configuración de rotación...</span>
         </div>
       ) : (
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Listado de Asesoras (Columna Izquierda y Central) */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-800/80 rounded-2xl shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-150 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 flex justify-between items-center">
-                <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 text-sm">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-150 bg-slate-50/50 flex justify-between items-center">
+                <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
                   <FiUser className="text-indigo-500" /> Asesoras en la Rotación
                 </h3>
                 <button
                   onClick={handleResetAllLoads}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/40 text-rose-600 dark:text-rose-400 border border-rose-200/50 dark:border-rose-800/50 rounded-xl text-[10px] font-bold transition-all cursor-pointer active:scale-95"
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/50 rounded-xl text-[10px] font-bold transition-all cursor-pointer active:scale-95"
                 >
                   Reiniciar Cargas Diarias
                 </button>
               </div>
 
-              <div className="divide-y divide-gray-100 dark:divide-slate-850">
+              <div className="divide-y divide-gray-100">
                 {advisors.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-gray-400 dark:text-gray-500">
+                  <div className="p-8 text-center text-xs text-gray-400">
                     No se encontraron asesoras comerciales registradas.
                   </div>
                 ) : (
@@ -273,7 +273,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                       <div
                         key={asesora.id}
                         className={`flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 gap-3 transition-colors ${
-                          !isActive ? "bg-gray-50/40 dark:bg-slate-900/10 opacity-70" : ""
+                          !isActive ? "bg-gray-50/40 opacity-70" : ""
                         }`}
                       >
                         {/* Nombre e info */}
@@ -292,10 +292,10 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                             {asesora.name.substring(0, 2).toUpperCase()}
                           </div>
                           <div>
-                            <span className="font-bold text-gray-800 dark:text-gray-150 text-sm block">
+                            <span className="font-bold text-gray-800 text-sm block">
                               {asesora.name}
                             </span>
-                            <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-0.5">
+                            <span className="text-[10px] text-gray-400 block mt-0.5">
                               ID: {asesora.id.substring(0, 8)}... | Rol: {asesora.role}
                             </span>
                           </div>
@@ -305,7 +305,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                         <div className="flex flex-wrap items-center gap-4">
                           {/* Toggle Activo */}
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Rotación</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Rotación</span>
                             <button
                               onClick={() =>
                                 handleUpdateUserField(asesora.id, {
@@ -314,7 +314,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                               }
                               disabled={updatingUser === asesora.id}
                               className={`w-11 h-6 rounded-full transition-colors relative outline-none cursor-pointer ${
-                                isActive ? "bg-indigo-600" : "bg-gray-300 dark:bg-slate-700"
+                                isActive ? "bg-indigo-600" : "bg-gray-300"
                               }`}
                             >
                               <div
@@ -327,7 +327,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
                           {/* Prioridad / Tier */}
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Prioridad</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Prioridad</span>
                             <select
                               value={tier}
                               disabled={!isActive || updatingUser === asesora.id}
@@ -336,7 +336,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                                   orden_rotacion: parseInt(e.target.value, 10),
                                 })
                               }
-                              className="border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-150 rounded-lg p-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                              className="border border-gray-200 bg-white text-gray-800 rounded-lg p-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                             >
                               <option value={1}>Nivel 1 (Alta)</option>
                               <option value={2}>Nivel 2 (Media)</option>
@@ -346,8 +346,8 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
                           {/* Leads Recibidos Hoy */}
                           <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Hoy</span>
-                            <div className="flex items-center border border-gray-200 dark:border-slate-700 rounded-lg overflow-hidden">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Hoy</span>
+                            <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
                               <button
                                 onClick={() =>
                                   handleUpdateUserField(asesora.id, {
@@ -355,11 +355,11 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                                   })
                                 }
                                 disabled={!isActive || countToday === 0 || updatingUser === asesora.id}
-                                className="px-2 py-1 bg-gray-50 dark:bg-slate-800 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
+                                className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
                               >
                                 -
                               </button>
-                              <span className="px-3 text-xs font-bold text-gray-800 dark:text-gray-150 min-w-[28px] text-center bg-white dark:bg-slate-900">
+                              <span className="px-3 text-xs font-bold text-gray-800 min-w-[28px] text-center bg-white">
                                 {countToday}
                               </span>
                               <button
@@ -369,7 +369,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                                   })
                                 }
                                 disabled={!isActive || updatingUser === asesora.id}
-                                className="px-2 py-1 bg-gray-50 dark:bg-slate-800 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
+                                className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
                               >
                                 +
                               </button>
@@ -384,11 +384,11 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
             </div>
 
             {/* Panel Informativo de Tiers */}
-            <div className="bg-slate-100 dark:bg-slate-900 p-4 border border-gray-200/50 dark:border-slate-800 rounded-2xl">
-              <h4 className="font-bold text-gray-800 dark:text-gray-200 text-xs flex items-center gap-1.5">
+            <div className="bg-slate-100 p-4 border border-gray-200/50 rounded-2xl">
+              <h4 className="font-bold text-gray-800 text-xs flex items-center gap-1.5">
                 <FiHelpCircle className="text-indigo-500" /> ¿Cómo funciona la rotación?
               </h4>
-              <ul className="text-[11px] text-gray-500 dark:text-gray-450 mt-2 space-y-1.5 list-disc pl-4">
+              <ul className="text-[11px] text-gray-500 mt-2 space-y-1.5 list-disc pl-4">
                 <li>
                   <strong>Niveles de Prioridad</strong>: En cada asignación, el sistema consulta el patrón configurado para saber qué Nivel le toca recibir el lead.
                 </li>
@@ -407,15 +407,15 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
           {/* Configuración de Algoritmo de Rotación (Columna Derecha) */}
           <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-800/80 rounded-2xl shadow-sm overflow-hidden p-5">
-              <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 text-sm border-b border-gray-100 dark:border-slate-850 pb-3 mb-4">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm overflow-hidden p-5">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3 mb-4">
                 <FiSliders className="text-indigo-500" /> Configurar Secuencia
               </h3>
 
               <form onSubmit={handleSaveSettings} className="space-y-4">
                 {/* Patrón de secuencia */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5">
                     Patrón de Prioridad (Niveles)
                   </label>
                   <input
@@ -423,22 +423,22 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     value={sequenceInput}
                     onChange={(e) => setSequenceInput(e.target.value)}
                     placeholder="Ej. 1, 1, 2, 1, 3, 1, 2"
-                    className="w-full px-3 py-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-gray-200 bg-white text-gray-800 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-1">
+                  <span className="text-[10px] text-gray-400 block mt-1">
                     Ingresa números de Nivel separados por comas. El sistema ciclará por este patrón. (Ej. 1,1,2 = dos leads al Nivel 1 por cada lead al Nivel 2).
                   </span>
                 </div>
 
                 {/* Hora de reset */}
                 <div>
-                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1.5">
+                  <label className="block text-xs font-bold text-gray-500 mb-1.5">
                     Hora de Reinicio Diario (Lima)
                   </label>
                   <select
                     value={resetHourInput}
                     onChange={(e) => setResetHourInput(parseInt(e.target.value, 10))}
-                    className="w-full px-3 py-2 border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-gray-800 dark:text-gray-100 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full px-3 py-2 border border-gray-200 bg-white text-gray-800 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   >
                     {Array.from({ length: 24 }).map((_, i) => (
                       <option key={i} value={i}>
@@ -446,7 +446,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                       </option>
                     ))}
                   </select>
-                  <span className="text-[10px] text-gray-400 dark:text-gray-500 block mt-1">
+                  <span className="text-[10px] text-gray-400 block mt-1">
                     Hora en la que se limpian los leads de hoy y se reinicia la secuencia.
                   </span>
                 </div>
@@ -464,29 +464,29 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
             </div>
 
             {/* Estado del Motor de Rotación */}
-            <div className="bg-white dark:bg-slate-900 border border-gray-200/60 dark:border-slate-800/80 rounded-2xl shadow-sm p-5 space-y-4">
-              <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center gap-2 text-sm border-b border-gray-100 dark:border-slate-850 pb-3">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-5 space-y-4">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3">
                 <FiTrendingUp className="text-indigo-500" /> Estado del Motor
               </h3>
 
               <div className="space-y-3 text-xs">
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400 dark:text-gray-500">Índice Actual:</span>
-                  <span className="font-bold text-gray-800 dark:text-gray-150">
+                  <span className="text-gray-400">Índice Actual:</span>
+                  <span className="font-bold text-gray-800">
                     {config.sequenceIndex ?? 0}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400 dark:text-gray-500">Próximo Nivel:</span>
-                  <span className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-bold text-[10px]">
+                  <span className="text-gray-400">Próximo Nivel:</span>
+                  <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-[10px]">
                     Nivel {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400 dark:text-gray-500">Último Reinicio:</span>
-                  <span className="font-bold text-gray-800 dark:text-gray-150">
+                  <span className="text-gray-400">Último Reinicio:</span>
+                  <span className="font-bold text-gray-800">
                     {config.lastResetDate || "Nunca"}
                   </span>
                 </div>
@@ -494,7 +494,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                 <button
                   onClick={handleResetSequenceIndex}
                   disabled={savingSettings}
-                  className="w-full py-2 bg-slate-100 dark:bg-slate-850 hover:bg-gray-200/70 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200 rounded-xl text-xs font-bold border border-gray-200/50 dark:border-slate-700/50 cursor-pointer transition-all active:scale-95"
+                  className="w-full py-2 bg-slate-100 hover:bg-gray-200/70 text-gray-700 rounded-xl text-xs font-bold border border-gray-200/50 cursor-pointer transition-all active:scale-95"
                 >
                   Restablecer Secuencia a 0
                 </button>

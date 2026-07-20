@@ -1,6 +1,6 @@
 // src/app/dashboard/crm-leads/components/WelcomeBotConfig.tsx
 import React, { useState, useEffect } from "react";
-import { FiX, FiSave, FiClock, FiActivity, FiMessageSquare } from "react-icons/fi";
+import { FiX, FiSave, FiClock } from "react-icons/fi";
 
 interface WelcomeBotConfigProps {
   onClose: () => void;

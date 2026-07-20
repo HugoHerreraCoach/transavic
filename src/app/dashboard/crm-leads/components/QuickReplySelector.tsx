@@ -42,8 +42,8 @@ export default function QuickReplySelector({
   if (filtered.length === 0) return null;
 
   return (
-    <div className="fixed bottom-[64px] left-0 right-0 z-40 bg-slate-900 border-t border-slate-700 sm:absolute sm:bottom-full sm:left-0 sm:right-auto sm:mb-2 sm:rounded-xl sm:shadow-2xl sm:w-[500px] sm:bg-slate-900 sm:border sm:border-slate-700 flex flex-col sm:overflow-y-auto sm:max-h-80 select-none">
-      <div className="flex items-center justify-between p-2.5 bg-slate-800 border-b border-slate-700 sticky top-0">
+    <div className="fixed bottom-[64px] left-0 right-0 z-40 bg-white border-t border-slate-200 sm:absolute sm:bottom-full sm:left-0 sm:right-auto sm:mb-2 sm:rounded-xl sm:shadow-2xl sm:w-[500px] sm:bg-white sm:border sm:border-slate-200 flex flex-col sm:overflow-y-auto sm:max-h-80 select-none">
+      <div className="flex items-center justify-between p-2.5 bg-white border-b border-slate-200 sticky top-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-indigo-400 flex items-center gap-1">
             <FiZap size={12} className="fill-current" /> Respuestas Rápidas
@@ -72,8 +72,8 @@ export default function QuickReplySelector({
             className={`w-48 sm:w-full text-left p-2 rounded-lg group transition-colors flex flex-col gap-1 border flex-shrink-0 sm:flex-shrink cursor-pointer
               ${
                 index === selectedIndex
-                  ? "bg-slate-800 border-slate-600"
-                  : "bg-slate-800/50 sm:bg-transparent border-slate-700 sm:border-transparent hover:bg-slate-800 hover:border-slate-700"
+                  ? "bg-indigo-50 border-indigo-300"
+                  : "bg-white sm:bg-transparent border-slate-200 sm:border-transparent hover:bg-slate-50 hover:border-slate-200"
               }
             `}
           >
@@ -95,7 +95,7 @@ export default function QuickReplySelector({
               </div>
 
               {reply.mediaType === "image" && reply.mediaUrl && (
-                <div className="h-10 w-10 shrink-0 rounded bg-slate-800 border border-slate-700 overflow-hidden self-center">
+                <div className="h-10 w-10 shrink-0 rounded bg-white border border-slate-200 overflow-hidden self-center">
                   <img src={reply.mediaUrl} alt="Preview" className="h-full w-full object-cover" />
                 </div>
               )}

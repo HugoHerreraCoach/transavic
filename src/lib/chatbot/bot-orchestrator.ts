@@ -8,6 +8,7 @@ import {
   normalizarEmpresa,
 } from "../whatsapp/config";
 import { enviarTexto } from "../whatsapp/sender";
+import { pideHandoff, sanearRespuestaBot } from "./sanear-respuesta";
 
 /**
  * Perfil comercial de cada marca para el prompt del bot.
@@ -28,6 +29,77 @@ const PERFIL_MARCA: Record<EmpresaWhatsApp, { nombre: string; productos: string 
       "pollo fresco (entero, despresado y filetes), gallina, carnes, huevos de granja y menudencia",
   },
 };
+
+/**
+ * Config de rotación por defecto. El patrón de 20 pasos reparte los leads entre
+ * niveles de asesoras con cuotas ~60/25/15.
+ */
+const CONFIG_ROTACION_DEFAULT = {
+  sequenceIndex: 0,
+  sequencePattern: [1, 1, 2, 1, 3, 1, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1, 1, 2, 1, 3],
+  lastResetDate: null as string | null,
+  dailyResetHour: 8,
+};
+
+/** Texto que se envía cuando la IA falla o devuelve algo inservible. */
+const TEXTO_RESPALDO =
+  "Disculpa, en este momento tengo un problema técnico. Una asesora se comunicará contigo a la brevedad.";
+
+/**
+ * Marca/limpia el indicador "el bot está generando una respuesta" del lead.
+ *
+ * Lo lee el CRM para pintar "El bot está escribiendo…" y evitar que la asesora
+ * conteste encima del bot (duplicándole mensajes al cliente). Nunca lanza: si
+ * falla, el bot debe seguir funcionando igual.
+ */
+async function marcarBotPensando(
+  sql: NeonQueryFunction<false, false>,
+  leadId: string,
+  pensando: boolean
+): Promise<void> {
+  try {
+    await sql`
+      UPDATE public.leads
+      SET bot_pensando_desde = ${pensando ? new Date().toISOString() : null}
+      WHERE id = ${leadId}
+    `;
+  } catch (err) {
+    console.error("⚠️ [bot] No se pudo actualizar bot_pensando_desde:", err);
+  }
+}
+
+/**
+ * Persiste la respuesta del bot en `lead_mensajes` y la ENVÍA por WhatsApp,
+ * dejando registrado el estado de entrega.
+ *
+ * Está extraído en un helper a propósito: el camino normal y el `catch` de error
+ * deben comportarse igual. Antes el catch devolvía el texto de disculpa y nadie
+ * lo usaba, así que ante una caída de la IA el cliente se quedaba sin respuesta.
+ */
+async function persistirYEnviarBot(
+  sql: NeonQueryFunction<false, false>,
+  leadId: string,
+  empresa: EmpresaWhatsApp,
+  telefono: string,
+  texto: string
+): Promise<void> {
+  const insertBot = await sql`
+    INSERT INTO public.lead_mensajes (lead_id, sender, body, type)
+    VALUES (${leadId}, 'bot', ${texto}, 'text')
+    RETURNING id
+  `;
+  const botMsgId = insertBot[0]?.id;
+  if (!botMsgId || !isWhatsAppConfigured(empresa)) return;
+
+  const envio = await enviarTexto(empresa, telefono, texto);
+  await sql`
+    UPDATE public.lead_mensajes
+    SET whatsapp_message_id = ${envio.whatsappMessageId ?? null},
+        estado = ${envio.ok ? "enviado" : "fallido"},
+        error_msg = ${envio.ok ? null : envio.error ?? null}
+    WHERE id = ${botMsgId}
+  `;
+}
 
 /** Datos extra de un mensaje entrante (media ya descargada, atribución del anuncio, id de Meta). */
 export interface InboundOpts {
@@ -195,15 +267,33 @@ Responde siguiendo estrictamente las instrucciones:`;
         textResponse = `¡Hola! Gracias por comunicarte con ${marca.nombre}. Ofrecemos ${marca.productos} al por mayor y menor. Hacemos despachos en 18 distritos de Lima Metropolitana. ¿En qué te puedo ayudar hoy?`;
       }
     } else {
-      // 7. Llamar a la IA real
-      const res = await callIA(systemPrompt, { temperature: 0.5, maxOutputTokens: 250 });
-      textResponse = res.text.trim();
+      // 7. Llamar a la IA real. Marcamos "pensando" para que la asesora lo vea en
+      //    el CRM y no conteste encima del bot. Se limpia SIEMPRE (finally), así
+      //    una caída de la IA no deja el indicador encendido.
+      await marcarBotPensando(sql, lead.id, true);
+      try {
+        const res = await callIA(systemPrompt, { temperature: 0.5, maxOutputTokens: 400 });
+        textResponse = res.text.trim();
+      } finally {
+        await marcarBotPensando(sql, lead.id, false);
+      }
     }
 
-    // 8. Detectar Handoff
-    if (textResponse.includes("[HANDOFF]")) {
-      textResponse = textResponse.replace("[HANDOFF]", "").trim();
+    // 8. Detectar Handoff ANTES de sanear (la etiqueta se limpia en el saneo).
+    //    Tolerante a mayúsculas/espacios: "[handoff]" o "[ HANDOFF ]" también valen.
+    const hayHandoff = pideHandoff(textResponse);
 
+    // 8b. Sanear la salida del LLM antes de mandársela a un cliente: nunca enviamos
+    //     una frase cortada a la mitad, basura estructural ni una etiqueta visible.
+    const saneada = sanearRespuestaBot(textResponse);
+    if (!saneada) {
+      console.warn(
+        `⚠️ [bot] Respuesta descartada por saneo (lead ${lead.id}): "${textResponse.slice(0, 90)}"`
+      );
+    }
+    textResponse = saneada ?? TEXTO_RESPALDO;
+
+    if (hayHandoff) {
       // Desactivar chatbot
       await sql`
         UPDATE public.leads
@@ -224,32 +314,26 @@ Responde siguiendo estrictamente las instrucciones:`;
       }
     }
 
-    // 9. Registrar la respuesta del bot en base de datos
-    const insertBot = await sql`
-      INSERT INTO public.lead_mensajes (lead_id, sender, body, type)
-      VALUES (${lead.id}, 'bot', ${textResponse}, 'text')
-      RETURNING id
-    `;
-    const botMsgId = insertBot[0]?.id;
-
-    // 10. Enviar la respuesta por WhatsApp DE VERDAD (si la marca está configurada).
-    //     La respuesta del bot siempre cae dentro de la ventana de 24h (el cliente
-    //     acaba de escribir), así que va como texto libre. Sin credenciales = mock.
-    if (botMsgId && isWhatsAppConfigured(empresa)) {
-      const envio = await enviarTexto(empresa, limpioTelefono, textResponse);
-      await sql`
-        UPDATE public.lead_mensajes
-        SET whatsapp_message_id = ${envio.whatsappMessageId ?? null},
-            estado = ${envio.ok ? "enviado" : "fallido"},
-            error_msg = ${envio.ok ? null : envio.error ?? null}
-        WHERE id = ${botMsgId}
-      `;
-    }
+    // 9. Registrar y ENVIAR la respuesta por WhatsApp. La respuesta del bot siempre
+    //    cae dentro de la ventana de 24h (el cliente acaba de escribir), así que va
+    //    como texto libre. Sin credenciales de la marca = queda solo en el CRM (mock).
+    await persistirYEnviarBot(sql, lead.id, empresa, limpioTelefono, textResponse);
 
     return textResponse;
   } catch (error) {
     console.error("Error en bot orchestrator:", error);
-    return "Lo siento, en este momento tengo un problema técnico. Una asesora se comunicará contigo a la brevedad.";
+    // El cliente NO puede quedarse sin respuesta porque falló la IA: persistimos y
+    // enviamos el mensaje de respaldo igual que uno normal. (Antes esto devolvía un
+    // string que nadie usaba → el cliente no recibía nada.)
+    try {
+      if (lead?.id) {
+        await marcarBotPensando(sql, lead.id, false);
+        await persistirYEnviarBot(sql, lead.id, empresa, limpioTelefono, TEXTO_RESPALDO);
+      }
+    } catch (err2) {
+      console.error("❌ [bot] Tampoco se pudo enviar el mensaje de respaldo:", err2);
+    }
+    return TEXTO_RESPALDO;
   }
 }
 
@@ -269,16 +353,18 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
       WHERE role = 'asesor' AND activo_rotacion = TRUE
     `) as AsesoraRotacion[];
 
-    // 2. Obtener configuración de rotación de settings
+    // 2. Obtener configuración de rotación de settings.
+    //    Primero garantizamos que la fila exista (idempotente, NO pisa la existente),
+    //    porque el avance del índice se hace después con un UPDATE atómico.
+    await sql`
+      INSERT INTO public.settings (key, value, updated_at)
+      VALUES ('crm_lead_distribution', ${JSON.stringify(CONFIG_ROTACION_DEFAULT)}::jsonb, NOW())
+      ON CONFLICT (key) DO NOTHING
+    `;
     const settingsRef = await sql`
       SELECT value FROM public.settings WHERE key = 'crm_lead_distribution'
     `;
-    const config = settingsRef.length > 0 ? settingsRef[0].value : {
-      sequenceIndex: 0,
-      sequencePattern: [1, 1, 2, 1, 3, 1, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1, 1, 2, 1, 3],
-      lastResetDate: null,
-      dailyResetHour: 8
-    };
+    const config = settingsRef.length > 0 ? settingsRef[0].value : CONFIG_ROTACION_DEFAULT;
 
     // 3. Chequear si se necesita reset diario
     const peruTime = new Date().toLocaleString("en-US", { timeZone: "America/Lima" });
@@ -296,19 +382,49 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
         SET leads_recibidos_hoy = 0
         WHERE role = 'asesor'
       `;
-      config.sequenceIndex = 0;
-      config.lastResetDate = todayDateStr;
-      
-      await sql`
-        INSERT INTO public.settings (key, value, updated_at)
-        VALUES ('crm_lead_distribution', ${JSON.stringify(config)}::jsonb, NOW())
-        ON CONFLICT (key) DO UPDATE SET value = ${JSON.stringify(config)}::jsonb, updated_at = NOW()
-      `;
-
       // Refrescar en memoria
       for (const adv of activeAdvisors) {
         adv.leads_recibidos_hoy = 0;
       }
+    }
+
+    // 3b. RESERVA ATÓMICA del índice del patrón (un solo statement).
+    //
+    // ⚠️ Antes esto era un SELECT del índice + un UPSERT del config completo, en
+    // dos statements sin lock: dos mensajes de WhatsApp en el mismo segundo leían
+    // el MISMO índice, ambos escribían +1, se perdía un paso del patrón 60/25/15 y
+    // las dos asesoras sorteadas terminaban siendo la misma. Además el UPSERT
+    // persistía el `config` leído antes, pudiendo pisar el `lastResetDate` del otro.
+    //
+    // La decisión de resetear se toma en JS y se manda UNA sola variante de query
+    // (gotcha #45c: nada de CASE/comparaciones sobre parámetros en el SQL de Neon).
+    // En el RETURNING, `value` ya es el valor NUEVO, por eso restamos 1 para saber
+    // qué índice consumió ESTA invocación.
+    let currentIndex: number;
+    if (shouldReset) {
+      await sql`
+        UPDATE public.settings
+        SET value = jsonb_set(
+              jsonb_set(value, '{sequenceIndex}', '1'::jsonb),
+              '{lastResetDate}', to_jsonb(${todayDateStr}::text)
+            ),
+            updated_at = NOW()
+        WHERE key = 'crm_lead_distribution'
+      `;
+      currentIndex = 0;
+    } else {
+      const reserva = await sql`
+        UPDATE public.settings
+        SET value = jsonb_set(
+              value,
+              '{sequenceIndex}',
+              to_jsonb(COALESCE((value->>'sequenceIndex')::int, 0) + 1)
+            ),
+            updated_at = NOW()
+        WHERE key = 'crm_lead_distribution'
+        RETURNING COALESCE((value->>'sequenceIndex')::int, 1) - 1 AS indice
+      `;
+      currentIndex = reserva[0]?.indice ?? 0;
     }
 
     if (activeAdvisors.length === 0) {
@@ -319,9 +435,8 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
       return fallbackAdmins.length > 0 ? fallbackAdmins[0].id : null;
     }
 
-    // 4. Determinar target tier
+    // 4. Determinar target tier con el índice ya reservado arriba
     const pattern = config.sequencePattern || [1];
-    const currentIndex = config.sequenceIndex ?? 0;
     const targetTier = pattern[currentIndex % pattern.length];
 
     // Group active advisors by tier
@@ -374,12 +489,7 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
       WHERE id = ${chosenAdvisor.id}
     `;
 
-    config.sequenceIndex = currentIndex + 1;
-    await sql`
-      INSERT INTO public.settings (key, value, updated_at)
-      VALUES ('crm_lead_distribution', ${JSON.stringify(config)}::jsonb, NOW())
-      ON CONFLICT (key) DO UPDATE SET value = ${JSON.stringify(config)}::jsonb, updated_at = NOW()
-    `;
+    // (El índice ya se reservó de forma atómica en el paso 3b — no se reescribe acá.)
 
     console.log(`🎫 [Rotación Leads] Lead asignado a ${chosenAdvisor.name} (Tier ${actualTier}, Hoy: ${(chosenAdvisor.leads_recibidos_hoy ?? 0) + 1})`);
     return chosenAdvisor.id;
