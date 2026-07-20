@@ -465,10 +465,12 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 > Facebook** (TONIO LADT tiene 0 páginas, y CTWA la exige). Tendrá su **propia WABA y su propio
 > número** — una WABA no cruza portfolios. Ver gotcha #52.
 
-> ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User) ni ninguna
-> credencial. Esos van SOLO a Vercel y a los archivos gitignored (`.env.local`,
-> `CREDENCIALES-PRODUCCION.local.md`), igual que las `SUNAT_*`. Los IDs de arriba sí son públicos
-> (aparecen en URLs) y se documentan a propósito para no volver a buscarlos.
+> ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User), el
+> `META_VERIFY_TOKEN` ni el **PIN de registro del número** (2FA de 6 dígitos, hace falta para
+> RE-registrar el número). Todo eso vive SOLO en Vercel y en los archivos gitignored
+> (`.env.local`, **`CREDENCIALES-PRODUCCION.local.md` § "WhatsApp Cloud API — CRM"**), igual que
+> las `SUNAT_*`. Los IDs de arriba sí son públicos (aparecen en URLs) y se documentan a propósito
+> para no volver a buscarlos.
 
 ---
 
