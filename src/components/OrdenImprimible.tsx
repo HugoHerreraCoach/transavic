@@ -188,21 +188,7 @@ function construirTextoPlanoTicket(props: OrdenImprimibleProps, incluirPrecios: 
     lineas.push(separador);
     lineas.push(`TOTAL S/ ${props.total.toFixed(2)}`.padStart(ancho));
 
-    if (props.estadoCuenta) {
-      lineas.push(
-        separador,
-        centrar("ESTADO DE CUENTA", ancho),
-        `Saldo anterior: ${soles(props.estadoCuenta.saldoPrevio)}`.padStart(ancho),
-        `Venta de hoy:   ${soles(props.estadoCuenta.totalVenta)}`.padStart(ancho)
-      );
-      if (props.estadoCuenta.abonosAplicados > 0) {
-        lineas.push(`Abonos de hoy:  −${soles(props.estadoCuenta.abonosAplicados)}`.padStart(ancho));
-      }
-      lineas.push(
-        "-".repeat(ancho),
-        `SALDO ACTUAL:   ${soles(props.estadoCuenta.saldoActualizado)}`.padStart(ancho)
-      );
-    }
+
   } else {
     lineas.push("Cant.        Producto");
     props.items.forEach((item) => {
@@ -509,35 +495,7 @@ function TicketLayout({
           </>
         )}
 
-        {/* Estado de Cuenta (Solo en Campo + Con precios) */}
-        {props.estadoCuenta && incluirPrecios && (
-          <>
-            <div className={linea} />
-            <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 text-[15px] space-y-1">
-              <p className="font-bold text-gray-500 uppercase text-[12px] tracking-wider mb-2">
-                Estado de Cuenta
-              </p>
-              <div className="flex justify-between">
-                <span>Saldo anterior:</span>
-                <span className="font-semibold font-mono">{soles(props.estadoCuenta.saldoPrevio)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Venta de hoy:</span>
-                <span className="font-semibold font-mono">{soles(props.estadoCuenta.totalVenta)}</span>
-              </div>
-              {props.estadoCuenta.abonosAplicados > 0 && (
-                <div className="flex justify-between">
-                  <span>Abonos de hoy:</span>
-                  <span className="font-semibold font-mono">−{soles(props.estadoCuenta.abonosAplicados)}</span>
-                </div>
-              )}
-              <div className="flex justify-between items-center border-t border-gray-300 mt-2.5 pt-2.5 font-black text-[16px]">
-                <span>SALDO ACTUAL:</span>
-                <span className="font-mono">{soles(props.estadoCuenta.saldoActualizado)}</span>
-              </div>
-            </div>
-          </>
-        )}
+
 
         {/* Notas / Observaciones */}
         {props.notas && (
@@ -677,40 +635,7 @@ function A4Layout({
         </tbody>
       </table>
 
-      {/* Estado de Cuenta (Solo en Campo + Con precios) */}
-      {props.estadoCuenta && incluirPrecios && (
-        <div className="mt-8 flex justify-end">
-          <div className="w-80 bg-gray-50 border border-gray-200 rounded-2xl p-5 text-sm space-y-2.5">
-            <h3 className="font-bold text-gray-500 uppercase text-xs tracking-wider mb-2">
-              Resumen Estado de Cuenta
-            </h3>
-            <div className="flex justify-between">
-              <span>Saldo previo:</span>
-              <span className="font-semibold">{soles(props.estadoCuenta.saldoPrevio)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>Venta de hoy:</span>
-              <span className="font-semibold text-gray-900">
-                {soles(props.estadoCuenta.totalVenta)}
-              </span>
-            </div>
-            {props.estadoCuenta.abonosAplicados > 0 && (
-              <div className="flex justify-between text-gray-700">
-                <span>Abonos de hoy:</span>
-                <span className="font-semibold text-green-600">
-                  −{soles(props.estadoCuenta.abonosAplicados)}
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between items-center border-t border-gray-200 pt-3 mt-3 font-bold text-base text-gray-900">
-              <span>SALDO ACTUAL:</span>
-              <span className="text-lg text-amber-700">
-                {soles(props.estadoCuenta.saldoActualizado)}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Notas / Observaciones */}
       {props.notas && (
