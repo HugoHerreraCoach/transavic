@@ -450,8 +450,15 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 |---|---|
 | **WABA del CRM** "Transavic" → `WHATSAPP_TRA_WABA_ID` | `883642441471852` |
 | └ número del CRM **+51 960 666 114** → `WHATSAPP_TRA_PHONE_NUMBER_ID` | `1181655271701439` |
+| **Usuario del sistema** "CRM Transavic" (rol Admin; genera el token permanente) | `61591800645031` |
+| Página de Facebook vinculada (para Click-to-WhatsApp) | **Transavic** `@transavic_lima` |
 | WABA **"Transavic20"** — ⚠️ *coexistence, del número de uso NORMAL de Antonio, **NO tocar*** | `591728093936452` |
 | └ número +51 936 889 205 — **uso personal, NO es el del CRM** | `694240710444221` |
+
+> El usuario del sistema tiene asignados **2 activos con acceso total**: la app *Transavic CRM* y la
+> WABA *Transavic*. Su token se generó con caducidad **Nunca** y permisos
+> `whatsapp_business_messaging` + `whatsapp_business_management`. Avícola de Tony necesitará **su
+> propio usuario del sistema** dentro de TONIO LADT (los usuarios del sistema son por portfolio).
 
 **🏪 LA AVÍCOLA DE TONY — RUC 10** (env vars `WHATSAPP_AVI_*`) — *pendiente*
 
