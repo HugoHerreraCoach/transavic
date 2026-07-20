@@ -8,15 +8,13 @@ import {
   FiRefreshCw,
   FiSliders,
   FiTrendingUp,
-  FiLayers,
   FiCheck,
   FiX,
   FiHelpCircle,
-  FiMenu,
   FiActivity,
-  FiStar,
+  FiUserMinus,
+  FiMove,
 } from "react-icons/fi";
-import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { User } from "@/lib/types";
 
 interface RotationConfigProps {
@@ -44,6 +42,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [updatingUser, setUpdatingUser] = useState<string | null>(null);
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; txt: string } | null>(null);
+  const [draggedAdvisor, setDraggedAdvisor] = useState<User | null>(null);
 
   // Campos del formulario para la secuencia
   const [sequenceInput, setSequenceInput] = useState("");
@@ -64,11 +63,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
       if (usersRes.ok) {
         const usersData = await usersRes.json();
-        // Ordenar asesores por orden_rotacion de forma ascendente
-        const sortedAdvisors = (usersData || []).sort(
-          (a: User, b: User) => (a.orden_rotacion ?? 99) - (b.orden_rotacion ?? 99)
-        );
-        setAdvisors(sortedAdvisors);
+        setAdvisors(usersData || []);
       }
 
       if (settingsRes.ok) {
@@ -172,11 +167,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
       if (!res.ok) throw new Error("Error");
 
       const updated = await res.json();
-      setAdvisors((prev) =>
-        prev
-          .map((a) => (a.id === userId ? { ...a, ...updated } : a))
-          .sort((a, b) => (a.orden_rotacion ?? 99) - (b.orden_rotacion ?? 99))
-      );
+      setAdvisors((prev) => prev.map((a) => (a.id === userId ? { ...a, ...updated } : a)));
       showToast("ok", "Asesora actualizada correctamente.");
     } catch (e) {
       console.error(e);
@@ -186,44 +177,58 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     }
   };
 
-  // Manejar el reordenamiento por arrastrar y soltar
-  const handleDragEnd = async (result: any) => {
-    if (!result.destination) return;
+  // Drag and Drop Handlers (Native HTML5)
+  const handleDragStart = (e: React.DragEvent, advisor: User) => {
+    setDraggedAdvisor(advisor);
+    e.dataTransfer.effectAllowed = "move";
+  };
 
-    const sourceIdx = result.source.index;
-    const destIdx = result.destination.index;
-    if (sourceIdx === destIdx) return;
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
 
-    const reorderedList = Array.from(advisors);
-    const [movedItem] = reorderedList.splice(sourceIdx, 1);
-    reorderedList.splice(destIdx, 0, movedItem);
+  const handleDrop = async (e: React.DragEvent, targetTier: number) => {
+    e.preventDefault();
+    if (!draggedAdvisor) return;
 
-    // Asignar nuevas posiciones secuenciales de orden
-    const updatedList = reorderedList.map((item, index) => ({
-      ...item,
-      orden_rotacion: index + 1,
-    }));
+    const isMovingToInactive = targetTier === 0;
 
-    // Actualizar estado local inmediatamente
-    setAdvisors(updatedList);
-    setSavingSettings(true);
+    // Optimistic Update
+    setAdvisors((prev) =>
+      prev.map((a) => {
+        if (a.id === draggedAdvisor.id) {
+          return {
+            ...a,
+            activo_rotacion: !isMovingToInactive,
+            orden_rotacion: isMovingToInactive ? (a.orden_rotacion || 1) : targetTier,
+          };
+        }
+        return a;
+      })
+    );
 
     try {
-      // Guardar cambios en la base de datos para los asesores modificados
-      const promises = updatedList.map((item) =>
-        fetch(`/api/users/${item.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orden_rotacion: item.orden_rotacion }),
-        })
-      );
-      await Promise.all(promises);
-      showToast("ok", "Orden de reparto actualizado correctamente.");
+      const res = await fetch(`/api/users/${draggedAdvisor.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          activo_rotacion: !isMovingToInactive,
+          orden_rotacion: isMovingToInactive ? undefined : targetTier,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Error");
+
+      const updated = await res.json();
+      setAdvisors((prev) => prev.map((a) => (a.id === draggedAdvisor.id ? { ...a, ...updated } : a)));
+      showToast("ok", `${draggedAdvisor.name} movida correctamente.`);
     } catch (error) {
-      console.error("Error al guardar orden de rotación:", error);
-      showToast("error", "Error al guardar el nuevo orden.");
+      console.error(error);
+      showToast("error", "No se pudo mover la asesora.");
+      loadData(); // Revert to database state
     } finally {
-      setSavingSettings(false);
+      setDraggedAdvisor(null);
     }
   };
 
@@ -250,6 +255,23 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     }
   };
 
+  // Obtener asesores por nivel de prioridad
+  const getAdvisorsByTier = (tier: number) => {
+    if (tier === 0) {
+      // Fuera de rotación (inactivas)
+      return advisors.filter((a) => a.activo_rotacion === false);
+    }
+    // Activas en un nivel específico
+    return advisors.filter((a) => a.activo_rotacion !== false && (a.orden_rotacion || 1) === tier);
+  };
+
+  const TIERS = [
+    { id: 1, name: "Nivel 1 (Alta)", color: "bg-emerald-600 border-emerald-700 text-white", iconColor: "text-emerald-500" },
+    { id: 2, name: "Nivel 2 (Media)", color: "bg-amber-500 border-amber-600 text-white", iconColor: "text-amber-500" },
+    { id: 3, name: "Nivel 3 (Baja)", color: "bg-indigo-500 border-indigo-600 text-white", iconColor: "text-indigo-500" },
+    { id: 0, name: "Fuera de Rotación", color: "bg-rose-600 border-rose-700 text-white", iconColor: "text-rose-500" },
+  ];
+
   return (
     <div className="flex-1 flex flex-col overflow-y-auto p-6 bg-slate-50">
       {/* Toast de notificaciones */}
@@ -273,7 +295,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
             <span className="text-indigo-600">🎫</span> Reparto Automático de Leads
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Arrastra y ordena las asesoras para definir el orden de prioridad y distribuye equitativamente los prospectos.
+            Arrastra y suelta las asesoras entre los niveles de prioridad para organizar el flujo del motor de reparto.
           </p>
         </div>
         <button
@@ -290,211 +312,163 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
           <span className="text-xs text-gray-500 font-medium">Cargando configuración de rotación...</span>
         </div>
       ) : (
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Listado de Asesoras (Columna Izquierda y Central) */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-150 bg-slate-50/50 flex justify-between items-center">
-                <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
-                  <FiUser className="text-indigo-500" /> Asesoras en la Rotación
-                </h3>
-                <button
-                  onClick={handleResetAllLoads}
-                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/50 rounded-xl text-[10px] font-bold transition-all cursor-pointer active:scale-95"
-                >
-                  Reiniciar Cargas Diarias
-                </button>
-              </div>
+        <div className="mt-6 flex flex-col xl:flex-row gap-6 items-start">
+          {/* Tablero Kanban (Columna Izquierda y Central) */}
+          <div className="flex-1 w-full space-y-6">
+            <div className="flex justify-between items-center bg-white p-4 border border-gray-200/60 rounded-2xl shadow-xs">
+              <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                <FiUser className="text-indigo-500" /> Tablero de Niveles
+              </h3>
+              <button
+                onClick={handleResetAllLoads}
+                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/50 rounded-xl text-[10px] font-bold transition-all cursor-pointer active:scale-95"
+              >
+                Reiniciar Cargas Diarias
+              </button>
+            </div>
 
-              {advisors.length === 0 ? (
-                <div className="p-8 text-center text-xs text-gray-400">
-                  No se encontraron asesoras comerciales registradas.
-                </div>
-              ) : (
-                <DragDropContext onDragEnd={handleDragEnd}>
-                  <Droppable droppableId="advisors-list">
-                    {(provided) => (
-                      <div
-                        ref={provided.innerRef}
-                        {...provided.droppableProps}
-                        className="divide-y divide-gray-150"
-                      >
-                        {advisors.map((asesora, index) => {
-                          const isActive = asesora.activo_rotacion !== false;
-                          const order = index + 1;
+            {/* Columnas Kanban */}
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {TIERS.map((tier) => {
+                const tierAdvisors = getAdvisorsByTier(tier.id);
+                const isInactiveColumn = tier.id === 0;
+
+                return (
+                  <div
+                    key={tier.id}
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, tier.id)}
+                    className={`bg-white rounded-2xl shadow-xs border border-gray-200/80 overflow-hidden flex flex-col min-h-[350px] transition-colors ${
+                      draggedAdvisor ? "ring-2 ring-indigo-200 bg-indigo-50/10" : ""
+                    }`}
+                  >
+                    {/* Encabezado del Nivel */}
+                    <div className={`px-4 py-3 ${tier.color} font-bold text-xs flex items-center justify-between`}>
+                      <div className="flex items-center gap-1.5">
+                        {isInactiveColumn ? <FiUserMinus size={14} /> : <FiUser size={14} />}
+                        <span>{tier.name}</span>
+                      </div>
+                      <span className="bg-white/20 px-2 py-0.5 rounded-full text-[10px]">
+                        {tierAdvisors.length}
+                      </span>
+                    </div>
+
+                    {/* Lista de Tarjetas */}
+                    <div className="p-3 flex-1 space-y-3 overflow-y-auto">
+                      {tierAdvisors.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 py-10">
+                          <FiUserMinus className="opacity-30 mb-2" size={24} />
+                          <p className="text-[10px] font-semibold">Vacío</p>
+                        </div>
+                      ) : (
+                        tierAdvisors.map((asesora) => {
                           const countToday = asesora.leads_recibidos_hoy || 0;
-
                           return (
-                            <Draggable key={asesora.id} draggableId={asesora.id} index={index}>
-                              {(provided, snapshot) => (
+                            <div
+                              key={asesora.id}
+                              draggable
+                              onDragStart={(e) => handleDragStart(e, asesora)}
+                              className={`flex flex-col p-3 bg-white border border-gray-150 rounded-xl hover:shadow-md cursor-grab active:cursor-grabbing transition-all ${
+                                draggedAdvisor?.id === asesora.id ? "opacity-40" : ""
+                              }`}
+                            >
+                              {/* Fila 1: Grip & Nombre */}
+                              <div className="flex items-center gap-2 mb-2">
+                                <FiMove className="text-gray-400 shrink-0" size={13} />
                                 <div
-                                  ref={provided.innerRef}
-                                  {...provided.draggableProps}
-                                  className={`flex flex-col sm:flex-row sm:items-center p-4 gap-4 transition-all ${
-                                    snapshot.isDragging
-                                      ? "bg-indigo-50/50 shadow-md border-y border-indigo-150"
-                                      : !isActive
-                                      ? "bg-gray-50/40 opacity-70"
-                                      : "hover:bg-slate-50/50"
+                                  className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-[11px] text-white shrink-0 ${
+                                    isInactiveColumn
+                                      ? "bg-gray-400"
+                                      : tier.id === 1
+                                      ? "bg-emerald-500"
+                                      : tier.id === 2
+                                      ? "bg-amber-500"
+                                      : "bg-indigo-500"
                                   }`}
                                 >
-                                  {/* Drag Handle */}
-                                  <div
-                                    {...provided.dragHandleProps}
-                                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors cursor-grab active:cursor-grabbing self-center"
-                                    title="Arrastra para reordenar"
-                                  >
-                                    <FiMenu size={16} />
-                                  </div>
-
-                                  {/* Info Badge de Posición */}
-                                  <div className="shrink-0 flex items-center justify-center">
-                                    <span
-                                      className={`w-6 h-6 rounded-lg font-bold text-xs flex items-center justify-center ${
-                                        !isActive
-                                          ? "bg-gray-200 text-gray-400"
-                                          : order === 1
-                                          ? "bg-amber-100 text-amber-700 border border-amber-200"
-                                          : order === 2
-                                          ? "bg-slate-100 text-slate-700 border border-slate-200"
-                                          : "bg-indigo-50 text-indigo-700 border border-indigo-100"
-                                      }`}
-                                    >
-                                      {order}°
-                                    </span>
-                                  </div>
-
-                                  {/* Avatar e Información Personal */}
-                                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                                    <div
-                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm text-white shrink-0 ${
-                                        !isActive
-                                          ? "bg-gray-400"
-                                          : order === 1
-                                          ? "bg-indigo-600"
-                                          : "bg-indigo-500"
-                                      }`}
-                                    >
-                                      {asesora.name.substring(0, 2).toUpperCase()}
-                                    </div>
-                                    <div className="truncate">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-bold text-gray-800 text-sm truncate">
-                                          {asesora.name}
-                                        </span>
-                                        {isActive && (
-                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
-                                            <FiActivity className="mr-0.5" /> Activa
-                                          </span>
-                                        )}
-                                      </div>
-                                      <span className="text-[10px] text-gray-400 block mt-0.5 truncate">
-                                        ID: {asesora.id.substring(0, 8)}... | Rol: {asesora.role}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Controles de Estado y Carga */}
-                                  <div className="flex flex-wrap items-center gap-4 self-center justify-end">
-                                    {/* Switch de Rotación */}
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[10px] font-bold text-gray-400 uppercase">Rotación</span>
-                                      <button
-                                        onClick={() =>
-                                          handleUpdateUserField(asesora.id, {
-                                            activo_rotacion: !isActive,
-                                          })
-                                        }
-                                        disabled={updatingUser === asesora.id}
-                                        className={`w-11 h-6 rounded-full transition-colors relative outline-none cursor-pointer ${
-                                          isActive ? "bg-indigo-600" : "bg-gray-200"
-                                        }`}
-                                      >
-                                        <div
-                                          className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-all ${
-                                            isActive ? "left-6" : "left-1"
-                                          }`}
-                                        ></div>
-                                      </button>
-                                    </div>
-
-                                    {/* Contador de Leads */}
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] font-bold text-gray-400 uppercase">Hoy</span>
-                                      <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-white shadow-xs">
-                                        <button
-                                          onClick={() =>
-                                            handleUpdateUserField(asesora.id, {
-                                              leads_recibidos_hoy: Math.max(0, countToday - 1),
-                                            })
-                                          }
-                                          disabled={!isActive || countToday === 0 || updatingUser === asesora.id}
-                                          className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold cursor-pointer"
-                                        >
-                                          -
-                                        </button>
-                                        <span className="px-3 text-xs font-bold text-gray-800 min-w-[28px] text-center">
-                                          {countToday}
-                                        </span>
-                                        <button
-                                          onClick={() =>
-                                            handleUpdateUserField(asesora.id, {
-                                              leads_recibidos_hoy: countToday + 1,
-                                            })
-                                          }
-                                          disabled={!isActive || updatingUser === asesora.id}
-                                          className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold cursor-pointer"
-                                        >
-                                          +
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
+                                  {asesora.name.substring(0, 2).toUpperCase()}
                                 </div>
-                              )}
-                            </Draggable>
+                                <div className="truncate min-w-0 flex-1">
+                                  <span className="font-bold text-gray-800 text-xs block truncate">
+                                    {asesora.name}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Fila 2: Cargas "Hoy" */}
+                              <div className="flex items-center justify-between border-t border-gray-100 pt-2 mt-1">
+                                <span className="text-[9px] font-extrabold text-gray-400 uppercase">Leads Hoy</span>
+                                <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-slate-50">
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateUserField(asesora.id, {
+                                        leads_recibidos_hoy: Math.max(0, countToday - 1),
+                                      });
+                                    }}
+                                    disabled={countToday === 0 || updatingUser === asesora.id}
+                                    className="px-1.5 py-0.5 hover:bg-gray-200 text-[10px] font-bold text-gray-500 disabled:opacity-50 cursor-pointer"
+                                  >
+                                    -
+                                  </button>
+                                  <span className="px-2 text-[10px] font-bold text-gray-800 min-w-[20px] text-center bg-white">
+                                    {countToday}
+                                  </span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpdateUserField(asesora.id, {
+                                        leads_recibidos_hoy: countToday + 1,
+                                      });
+                                    }}
+                                    disabled={updatingUser === asesora.id}
+                                    className="px-1.5 py-0.5 hover:bg-gray-200 text-[10px] font-bold text-gray-500 disabled:opacity-50 cursor-pointer"
+                                  >
+                                    +
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
                           );
-                        })}
-                        {provided.placeholder}
-                      </div>
-                    )}
-                  </Droppable>
-                </DragDropContext>
-              )}
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             {/* Panel Informativo */}
             <div className="bg-slate-100 p-4 border border-gray-200/50 rounded-2xl">
               <h4 className="font-bold text-gray-800 text-xs flex items-center gap-1.5">
-                <FiHelpCircle className="text-indigo-500" /> ¿Cómo funciona la rotación por arrastre?
+                <FiHelpCircle className="text-indigo-500" /> ¿Cómo funciona la rotación por niveles?
               </h4>
               <ul className="text-[11px] text-gray-500 mt-2 space-y-1.5 list-disc pl-4">
                 <li>
-                  <strong>Prioridad por posición:</strong> La asesora en la posición <strong>1°</strong> tiene la prioridad principal de reparto. Puedes arrastrar y soltar usando el icono de menú (<FiMenu className="inline" />) para cambiar este orden en vivo.
+                  <strong>Asignación por Nivel:</strong> El sistema evalúa el "Patrón de Prioridad" (secuencia de la derecha). Si el turno actual marca "Posición 1", el lead va a las asesoras en el <strong>Nivel 1 (Alta)</strong>.
                 </li>
                 <li>
-                  <strong>Carga equitativa:</strong> El sistema prioriza entregar los nuevos leads a la asesora de mayor prioridad que tenga la <strong>menor cantidad de leads recibidos en el día</strong> (columna "Hoy").
+                  <strong>Equidad dentro del Nivel:</strong> Dentro del nivel seleccionado, el lead se le entrega a la asesora que tenga **menos leads recibidos hoy** para mantener el equilibrio.
                 </li>
                 <li>
-                  <strong>Pausa temporal:</strong> Si una asesora se ausenta, desactiva su interruptor de "Rotación". Esto la mantendrá en la lista pero evitará que el algoritmo le asigne nuevos leads temporalmente.
+                  <strong>Desactivar asesoras:</strong> Arrastra a una asesora a la columna <strong>Fuera de Rotación</strong> si se encuentra ausente o de descanso. No recibirá ningún lead de forma automática.
                 </li>
               </ul>
             </div>
           </div>
 
           {/* Configuración de Algoritmo de Rotación (Columna Derecha) */}
-          <div className="space-y-6">
+          <div className="w-full xl:w-[320px] shrink-0 space-y-6">
             {/* Configurar secuencia */}
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs overflow-hidden p-5">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs p-5">
               <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3 mb-4">
                 <FiSliders className="text-indigo-500" /> Secuencia de Reparto
               </h3>
 
               <form onSubmit={handleSaveSettings} className="space-y-4">
-                {/* Patrón de secuencia */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                    Patrón de Prioridad (Posiciones)
+                    Patrón de Prioridad (Niveles)
                   </label>
                   <input
                     type="text"
@@ -504,11 +478,10 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     className="w-full px-3 py-2 border border-gray-200 bg-white text-gray-800 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                   <span className="text-[10px] text-gray-400 block mt-1">
-                    Ingresa los números de posición separados por comas. El sistema ciclará por esta secuencia para determinar qué turno recibe el siguiente lead.
+                    Ingresa los números de nivel (1, 2 o 3) separados por comas. El sistema ciclará por esta secuencia.
                   </span>
                 </div>
 
-                {/* Hora de reset */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5">
                     Reinicio Diario (Lima)
@@ -529,7 +502,6 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                   </span>
                 </div>
 
-                {/* Botón Guardar */}
                 <button
                   type="submit"
                   disabled={savingSettings}
@@ -556,9 +528,9 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Turno de Prioridad:</span>
+                  <span className="text-gray-400">Nivel de Turno:</span>
                   <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-[10px]">
-                    Posición {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}°
+                    Nivel {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}
                   </span>
                 </div>
 
@@ -584,4 +556,3 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     </div>
   );
 }
-
