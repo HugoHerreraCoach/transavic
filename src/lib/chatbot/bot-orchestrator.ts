@@ -9,6 +9,26 @@ import {
 } from "../whatsapp/config";
 import { enviarTexto } from "../whatsapp/sender";
 
+/**
+ * Perfil comercial de cada marca para el prompt del bot.
+ *
+ * ⚠️ El cliente escribió al número de UNA marca (el webhook lo ruteá por
+ * `phone_number_id`). El bot debe hablar SOLO de esa marca: mencionar la otra
+ * confunde al cliente y revela que ambas son del mismo dueño.
+ */
+const PERFIL_MARCA: Record<EmpresaWhatsApp, { nombre: string; productos: string }> = {
+  Transavic: {
+    nombre: "Transavic",
+    productos:
+      "pollo fresco (entero, despresado y filetes), carnes de res y cerdo, huevos de granja y menudencia",
+  },
+  "Avícola de Tony": {
+    nombre: "La Avícola de Tony",
+    productos:
+      "pollo fresco (entero, despresado y filetes), gallina, carnes, huevos de granja y menudencia",
+  },
+};
+
 /** Datos extra de un mensaje entrante (media ya descargada, atribución del anuncio, id de Meta). */
 export interface InboundOpts {
   /** wamid del mensaje entrante — para idempotencia (Meta reintenta el webhook). */
@@ -130,10 +150,16 @@ export async function handleInboundMessage(
     .join("\n");
   const mensajeParaPrompt = truncar(mensajeCuerpo, 1000);
 
-  const systemPrompt = `Eres el asistente virtual comercial de las marcas avícolas **Transavic** (pollo, gallinas, menudencia) y **Avícola de Tony** (mismo flujo, carnes, huevos). El dueño es Antonio Resurrección.
-Operamos en 18 distritos de Lima Metropolitana, Perú. Ofrecemos venta al por mayor y menor para restaurantes, mayoristas y consumidores finales.
+  const marca = PERFIL_MARCA[empresa];
+
+  const systemPrompt = `Eres el asistente virtual comercial de **${marca.nombre}**, una distribuidora avícola en Lima, Perú.
+Ofrecemos ${marca.productos}. Vendemos al por mayor y menor a restaurantes, mayoristas y consumidores finales, con reparto en 18 distritos de Lima Metropolitana.
 Tu objetivo es ser muy amable, profesional, servicial y hablar en español neutro latinoamericano (tuteando: "tú", no "voseo" argentino).
 Tus respuestas deben ser breves, de máximo 2 o 3 oraciones.
+
+IDENTIDAD DE MARCA: representas ÚNICAMENTE a ${marca.nombre}. NUNCA menciones otras marcas, empresas
+relacionadas ni al dueño del negocio, aunque te pregunten por ellos. Si el cliente pregunta por otra
+empresa, responde con amabilidad que solo puedes ayudarle con los productos de ${marca.nombre}.
 
 CRÍTICO: Si el cliente muestra intención clara de compra, quiere realizar un pedido, solicita una cotización formal o pide hablar con un asesor/humano, responde amablemente indicando que le transferirás la conversación a una asesora, y finaliza obligatoriamente tu respuesta con la etiqueta especial "[HANDOFF]".
 
@@ -166,7 +192,7 @@ Responde siguiendo estrictamente las instrucciones:`;
       ) {
         textResponse = "Perfecto, entiendo que deseas realizar un pedido o cotización. De inmediato te transfiero con una de nuestras asesoras para que te atienda personalmente. [HANDOFF]";
       } else {
-        textResponse = "¡Hola! Gracias por comunicarte con Transavic y Avícola de Tony. Ofrecemos pollo fresco entero y trozado, carnes y huevos de excelente calidad al por mayor y menor. Hacemos despachos en 18 distritos de Lima Metropolitana. ¿En qué te puedo ayudar hoy?";
+        textResponse = `¡Hola! Gracias por comunicarte con ${marca.nombre}. Ofrecemos ${marca.productos} al por mayor y menor. Hacemos despachos en 18 distritos de Lima Metropolitana. ¿En qué te puedo ayudar hoy?`;
       }
     } else {
       // 7. Llamar a la IA real
