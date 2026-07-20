@@ -8,7 +8,7 @@ import { neon } from "@neondatabase/serverless";
 import { auth } from "@/auth";
 import { siguienteCorrelativo, formatNumeroGuia } from "@/lib/correlativos";
 import { notFound } from "next/navigation";
-import GuiaImprimibleClient from "./guia-imprimible-client";
+import OrdenImprimible from "@/components/OrdenImprimible";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -83,18 +83,19 @@ export default async function GuiaPage({ params }: PageProps) {
   const total = totalReal > 0 ? totalReal : totalEstimado;
 
   return (
-    <GuiaImprimibleClient
+    <OrdenImprimible
+      tipoDocumento="Orden de Pedido"
       numero={formatNumeroGuia(numero)}
       empresa={pedido.empresa as string}
-      cliente={pedido.cliente as string}
-      razonSocial={(pedido.razon_social as string) || ""}
-      rucDni={(pedido.ruc_dni as string) || ""}
-      direccion={(pedido.direccion as string) || ""}
-      distrito={(pedido.distrito as string) || ""}
-      whatsapp={(pedido.whatsapp as string) || ""}
+      clienteNombre={pedido.cliente as string}
+      clienteDetalle={pedido.razon_social ? `Razón Social: ${pedido.razon_social}` : undefined}
+      clienteDireccion={pedido.direccion as string}
+      clienteDistrito={pedido.distrito as string}
+      clienteTelefono={pedido.ruc_dni ? `RUC/DNI: ${pedido.ruc_dni}` : undefined}
+      clienteWhatsapp={pedido.whatsapp as string}
       fecha={pedido.fecha as string}
-      asesor={(pedido.asesor_name as string) || ""}
-      notas={(pedido.notas as string) || ""}
+      asesorNombre={pedido.asesor_name as string}
+      notas={pedido.notas as string}
       items={itemsFiltrados.map((it) => ({
         producto: it.producto_nombre,
         cantidad: Number(it.cantidad_real ?? it.cantidad),

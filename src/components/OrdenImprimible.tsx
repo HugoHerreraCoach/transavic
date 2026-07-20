@@ -1,15 +1,48 @@
-// src/app/avicola/ventas/[id]/imprimir/imprimir-client.tsx
-// Componente cliente: render de la "Guía de Venta de Campo" para impresión en navegador (PC/A4)
-// y envío por RawBT en Android (ticketera térmica Bluetooth).
+// src/components/OrdenImprimible.tsx
+// Componente de impresión unificado y escalable para las 3 operaciones de venta:
+//   1. Asesoras (Pedidos)
+//   2. Producción (Pesos reales de pedidos)
+//   3. Campo (Guías de Venta del módulo Clientes Avícola)
+//
+// Soporta formatos Ticket (80mm) y A4, toggle de precios (oculta todo rastro financiero),
+// impresión Bluetooth nativa con RawBT y un solo bloque de firma unificada ("Firma del cliente / Recibí conforme").
 "use client";
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { FiBluetooth, FiPrinter, FiShare2 } from "react-icons/fi";
-import type { GuiaAvicolaData } from "@/lib/avicola/types";
-import { formatNumeroGuia } from "@/lib/correlativos";
 
-interface Props {
-  data: GuiaAvicolaData;
+export interface ItemOrden {
+  producto: string;
+  cantidad: number;
+  unidad: string;
+  precio?: number;
+  subtotal?: number;
+}
+
+export interface EstadoCuentaOrden {
+  saldoPrevio: number;
+  totalVenta: number;
+  abonosAplicados: number;
+  saldoActualizado: number;
+}
+
+export interface OrdenImprimibleProps {
+  tipoDocumento: "Orden de Pedido" | "Guía de Venta";
+  numero: string;
+  fecha: string;
+  empresa: string;
+  clienteNombre: string;
+  clienteDetalle?: string;
+  clienteDireccion?: string;
+  clienteDistrito?: string;
+  clienteTelefono?: string;
+  clienteWhatsapp?: string;
+  asesorNombre?: string;
+  notas?: string;
+  items: ItemOrden[];
+  total: number;
+  anulada?: boolean;
+  estadoCuenta?: EstadoCuentaOrden;
 }
 
 type Formato = "ticket" | "a4";
@@ -45,16 +78,16 @@ function fechaLegible(fecha: string): string {
   return texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 
-function aplicarTamanoPaginaGuia(
+function aplicarTamanoPagina(
   formato: Formato,
   ticketElement: HTMLElement | null
 ): void {
   if (typeof document === "undefined") return;
 
-  let estilo = document.getElementById("page-size-guia") as HTMLStyleElement | null;
+  let estilo = document.getElementById("page-size-orden-unificada") as HTMLStyleElement | null;
   if (!estilo) {
     estilo = document.createElement("style");
-    estilo.id = "page-size-guia";
+    estilo.id = "page-size-orden-unificada";
     document.head.appendChild(estilo);
   }
 
@@ -70,7 +103,7 @@ function aplicarTamanoPaginaGuia(
   window.addEventListener(
     "afterprint",
     () => {
-      const e = document.getElementById("page-size-guia");
+      const e = document.getElementById("page-size-orden-unificada");
       if (e) e.textContent = "";
     },
     { once: true }
@@ -118,76 +151,70 @@ function lineaDato(label: string, value: string, ancho: number): string[] {
   return cortarLinea(`${label}: ${value}`, ancho);
 }
 
-function construirTicketCampoTexto(props: GuiaAvicolaData, incluirPrecios: boolean): string {
+function construirTextoPlanoTicket(props: OrdenImprimibleProps, incluirPrecios: boolean): string {
   const ancho = 42;
   const separador = "-".repeat(ancho);
-  const numeroFormateado = formatNumeroGuia(props.numero_guia);
 
   const lineas: string[] = [
-    centrar(props.cliente.empresa, ancho),
-    centrar("GUIA DE VENTA", ancho),
-    centrar(`Nro ${numeroFormateado}`, ancho),
-    centrar(fechaLegible(props.fecha), ancho),
+    centrar(props.empresa, ancho),
+    centrar(props.tipoDocumento.toUpperCase(), ancho),
+    centrar(`Nro ${props.numero}`, ancho),
+    centrar(props.fecha, ancho),
     separador,
-    ...lineaDato("Cliente", props.cliente.nombre, ancho),
-    ...lineaDato("Mercado", props.cliente.mercado, ancho),
+    ...lineaDato("Cliente", props.clienteNombre, ancho),
   ];
 
-  if (props.cliente.numero_puesto) {
-    lineas.push(...lineaDato("Puesto", props.cliente.numero_puesto, ancho));
-  }
-  if (props.cliente.telefono) {
-    lineas.push(...lineaDato("Telefono", props.cliente.telefono, ancho));
-  }
+  if (props.clienteDetalle) lineas.push(...lineaDato("Detalle", props.clienteDetalle, ancho));
+  if (props.clienteDireccion) lineas.push(...lineaDato("Dirección", props.clienteDireccion, ancho));
+  if (props.clienteDistrito) lineas.push(...lineaDato("Distrito", props.clienteDistrito, ancho));
+  if (props.clienteTelefono) lineas.push(...lineaDato("Teléfono", props.clienteTelefono, ancho));
+  if (props.clienteWhatsapp) lineas.push(...lineaDato("WhatsApp", props.clienteWhatsapp, ancho));
+  if (props.asesorNombre) lineas.push(...lineaDato("Asesor", props.asesorNombre, ancho));
 
   lineas.push(separador);
 
   if (incluirPrecios) {
-    lineas.push("Cant/Peso          Precio      Importe");
+    lineas.push("Cant.        Producto              Importe");
     props.items.forEach((item) => {
-      const prodLineas = cortarLinea(item.producto_nombre, ancho);
-      const pesoStr = `${kilos(item.peso_kg)} kg`;
-      const precioStr = soles(item.precio_kg);
-      const subtotalStr = soles(item.subtotal);
-
-      prodLineas.forEach((l) => lineas.push(l));
-      lineas.push(`${pesoStr.padEnd(16).slice(0, 16)}${precioStr.padEnd(12).slice(0, 12)}${subtotalStr.padStart(14)}`);
+      const cantStr = `${kilos(item.cantidad)} ${item.unidad}`.trim();
+      const importeStr = item.subtotal != null && item.subtotal > 0 ? item.subtotal.toFixed(2) : "—";
+      
+      lineas.push(`${cantStr.padEnd(12).slice(0, 12)}${item.producto.padEnd(18).slice(0, 18)}${importeStr.padStart(12)}`);
+      if (item.producto.length > 18) {
+        cortarLinea(item.producto, ancho).forEach((linea) => lineas.push(linea));
+      }
     });
 
     lineas.push(separador);
     lineas.push(`TOTAL S/ ${props.total.toFixed(2)}`.padStart(ancho));
 
-    // Estado de cuenta
-    lineas.push(
-      separador,
-      centrar("ESTADO DE CUENTA", ancho),
-      `Saldo anterior: ${soles(props.estado_cuenta.saldo_previo)}`.padStart(ancho),
-      `Venta de hoy:   ${soles(props.estado_cuenta.total_venta)}`.padStart(ancho)
-    );
-    if (props.estado_cuenta.abonos_aplicados > 0) {
-      lineas.push(`Abonos:        −${soles(props.estado_cuenta.abonos_aplicados)}`.padStart(ancho));
-    }
-    lineas.push(
-      "-".repeat(ancho),
-      `SALDO ACTUAL:   ${soles(props.estado_cuenta.saldo_actualizado)}`.padStart(ancho)
-    );
-  } else {
-    lineas.push("Producto                     Cant/Peso");
-    props.items.forEach((item) => {
-      const prodLineas = cortarLinea(item.producto_nombre, 26);
-      const pesoStr = `${kilos(item.peso_kg)} kg`.padStart(16);
-
-      if (prodLineas.length > 0) {
-        lineas.push(`${prodLineas[0].padEnd(26).slice(0, 26)}${pesoStr}`);
-        for (let i = 1; i < prodLineas.length; i++) {
-          lineas.push(prodLineas[i]);
-        }
+    if (props.estadoCuenta) {
+      lineas.push(
+        separador,
+        centrar("ESTADO DE CUENTA", ancho),
+        `Saldo anterior: ${soles(props.estadoCuenta.saldoPrevio)}`.padStart(ancho),
+        `Venta de hoy:   ${soles(props.estadoCuenta.totalVenta)}`.padStart(ancho)
+      );
+      if (props.estadoCuenta.abonosAplicados > 0) {
+        lineas.push(`Abonos de hoy:  −${soles(props.estadoCuenta.abonosAplicados)}`.padStart(ancho));
       }
+      lineas.push(
+        "-".repeat(ancho),
+        `SALDO ACTUAL:   ${soles(props.estadoCuenta.saldoActualizado)}`.padStart(ancho)
+      );
+    }
+  } else {
+    lineas.push("Cant.        Producto");
+    props.items.forEach((item) => {
+      const cantStr = `${kilos(item.cantidad)} ${item.unidad}`.trim();
+      cortarLinea(`${cantStr.padEnd(12).slice(0, 12)} ${item.producto}`, ancho).forEach((linea) =>
+        lineas.push(linea)
+      );
     });
   }
 
-  if (props.observaciones) {
-    lineas.push(separador, ...lineaDato("Obs", props.observaciones, ancho));
+  if (props.notas) {
+    lineas.push(separador, ...lineaDato("Notas", props.notas, ancho));
   }
 
   lineas.push(
@@ -195,7 +222,7 @@ function construirTicketCampoTexto(props: GuiaAvicolaData, incluirPrecios: boole
     "",
     "______________________________",
     centrar("Firma del cliente", ancho),
-    centrar("Recibi conforme", ancho),
+    centrar("Recibí conforme", ancho),
     "",
     "",
     ""
@@ -210,7 +237,7 @@ function abrirRawBt(texto: string): void {
   window.location.href = `intent:${payload}#Intent;scheme=rawbt;package=${RAWBT_PACKAGE};S.browser_fallback_url=${fallback};end;`;
 }
 
-export default function VentaImprimibleClient({ data }: Props) {
+export default function OrdenImprimible(props: OrdenImprimibleProps) {
   const [mounted, setMounted] = useState(false);
   const [formato, setFormato] = useState<Formato>("ticket");
   const [incluirPrecios, setIncluirPrecios] = useState(true);
@@ -224,26 +251,28 @@ export default function VentaImprimibleClient({ data }: Props) {
   const esTicket = formato === "ticket";
 
   const imprimirNavegador = () => {
-    aplicarTamanoPaginaGuia(formato, ticketRef.current);
+    aplicarTamanoPagina(formato, ticketRef.current);
     window.setTimeout(() => window.print(), 50);
   };
 
   const imprimirBluetooth = () => {
-    abrirRawBt(construirTicketCampoTexto(data, incluirPrecios));
+    imprimirNavegador();
+    // Enviar a RawBT en Android
+    abrirRawBt(construirTextoPlanoTicket(props, incluirPrecios));
   };
 
   return (
     <div className="min-h-screen bg-gray-100 print:bg-white text-black">
-      {/* Barra de herramientas superior (oculta al imprimir) */}
+      {/* Barra de herramientas superior (se oculta al imprimir) */}
       <div className="print:hidden bg-white shadow-sm border-b">
         <div className="max-w-4xl mx-auto px-4 py-3 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-xs text-gray-500">Guía de Venta (Campo)</div>
-            <div className="font-bold text-gray-800">N.° {formatNumeroGuia(data.numero_guia)}</div>
+            <div className="text-xs text-gray-500">{props.tipoDocumento}</div>
+            <div className="font-bold text-gray-800">N° {props.numero}</div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Alternador de Formato: Ticket vs A4 */}
+            {/* Formato: Ticket vs A4 */}
             <div className="flex rounded-lg border border-gray-200 overflow-hidden text-sm font-medium">
               <button
                 onClick={() => setFormato("ticket")}
@@ -278,7 +307,7 @@ export default function VentaImprimibleClient({ data }: Props) {
               Precios
             </label>
 
-            {/* Botones de acción */}
+            {/* Botón Imprimir */}
             <button
               onClick={imprimirNavegador}
               className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 flex items-center gap-2 transition-transform active:scale-[0.98]"
@@ -287,6 +316,7 @@ export default function VentaImprimibleClient({ data }: Props) {
               Imprimir
             </button>
 
+            {/* Botón Bluetooth */}
             {esTicket ? (
               <button
                 onClick={imprimirBluetooth}
@@ -298,12 +328,13 @@ export default function VentaImprimibleClient({ data }: Props) {
               </button>
             ) : null}
 
+            {/* Compartir Enlace */}
             {puedeCompartir ? (
               <button
                 onClick={async () => {
                   try {
                     await navigator.share({
-                      title: `Guía de venta ${formatNumeroGuia(data.numero_guia)} - ${data.cliente.nombre}`,
+                      title: `${props.tipoDocumento} ${props.numero} - ${props.clienteNombre}`,
                       url: window.location.href,
                     });
                   } catch {
@@ -318,6 +349,7 @@ export default function VentaImprimibleClient({ data }: Props) {
             ) : null}
           </div>
         </div>
+
         <div className="max-w-4xl mx-auto px-4 pb-2 text-xs text-gray-500">
           {esTicket ? (
             <>
@@ -331,22 +363,22 @@ export default function VentaImprimibleClient({ data }: Props) {
         </div>
       </div>
 
-      {/* Documento Imprimible */}
+      {/* Layout de Impresión */}
       {esTicket ? (
         <div className="flex justify-center py-6 print:py-0 print:block">
           <TicketLayout
-            data={data}
+            props={props}
             incluirPrecios={incluirPrecios}
             referencia={ticketRef}
           />
         </div>
       ) : (
         <div className="max-w-4xl mx-auto p-4 sm:p-8 print:p-0">
-          <A4Layout data={data} incluirPrecios={incluirPrecios} />
+          <A4Layout props={props} incluirPrecios={incluirPrecios} />
         </div>
       )}
 
-      {/* Estilos para ocultar la barra de herramientas al imprimir */}
+      {/* Estilos globales de impresión */}
       <style jsx global>{`
         @media print {
           @page {
@@ -356,7 +388,7 @@ export default function VentaImprimibleClient({ data }: Props) {
           body {
             background: white;
           }
-          .guia-ticket {
+          .orden-ticket-unificado {
             box-shadow: none !important;
             border: none !important;
           }
@@ -372,26 +404,26 @@ export default function VentaImprimibleClient({ data }: Props) {
 
 // ── Layout Formato TICKET (80mm térmico) ──
 function TicketLayout({
-  data,
+  props,
   incluirPrecios,
   referencia,
 }: {
-  data: GuiaAvicolaData;
+  props: OrdenImprimibleProps;
   incluirPrecios: boolean;
   referencia?: RefObject<HTMLDivElement | null>;
 }) {
-  const esTransavic = data.cliente.empresa === "Transavic";
+  const esTransavic = props.empresa === "Transavic";
   const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
   const linea = "border-t border-dashed border-black my-3";
 
   return (
     <div
       ref={referencia}
-      className="guia-ticket bg-white text-black shadow-lg border border-gray-300 rounded print:border-none"
+      className="orden-ticket-unificado bg-white text-black shadow-lg border border-gray-200 rounded print:border-none print:shadow-none"
       style={{ width: "80mm" }}
     >
       <div className="px-4 py-4" style={{ fontFamily: "Arial, Helvetica, sans-serif" }}>
-        {/* Logo */}
+        {/* Encabezado: Logo */}
         <div className="text-center leading-tight">
           <div
             className="mx-auto overflow-hidden"
@@ -403,135 +435,126 @@ function TicketLayout({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={logo}
-              alt={data.cliente.empresa}
+              alt={props.empresa}
               className="h-full w-full object-cover object-center"
             />
           </div>
           <p className="text-sm font-bold uppercase tracking-wider mt-1">
-            {data.cliente.empresa}
+            {props.empresa}
           </p>
-          <h1 className="text-xl font-black mt-1">GUÍA DE VENTA</h1>
-          <p className="text-lg font-bold">N.º {formatNumeroGuia(data.numero_guia)}</p>
-          <p className="text-xs font-semibold text-gray-700">{fechaLegible(data.fecha)}</p>
         </div>
 
         <div className={linea} />
 
-        {/* Datos Cliente */}
-        <div className="text-xs leading-normal">
-          <p className="font-bold text-sm">{data.cliente.nombre}</p>
-          <p className="mt-0.5">
-            {data.cliente.mercado}
-            {data.cliente.numero_puesto ? ` · Puesto ${data.cliente.numero_puesto}` : ""}
-          </p>
-          {data.cliente.telefono && <p>Teléfono: {data.cliente.telefono}</p>}
+        {/* Tipo de Documento y Números */}
+        <div className="text-center leading-tight">
+          <div className="text-[20px] font-bold uppercase tracking-wide">{props.tipoDocumento}</div>
+          <div className="text-[24px] font-black">N° {props.numero}</div>
+          <div className="text-[14px] font-semibold mt-0.5">{fechaLegible(props.fecha)}</div>
+        </div>
+
+        <div className={linea} />
+
+        {/* Datos del Cliente */}
+        <div className="text-[16px] leading-snug space-y-1.5">
+          <TicketRow label="Cliente" value={props.clienteNombre} />
+          {props.clienteDetalle && <TicketRow label="Detalle" value={props.clienteDetalle} />}
+          {props.clienteDireccion && <TicketRow label="Dirección" value={props.clienteDireccion} />}
+          {props.clienteDistrito && <TicketRow label="Distrito" value={props.clienteDistrito} />}
+          {props.clienteTelefono && <TicketRow label="Teléfono" value={props.clienteTelefono} />}
+          {props.clienteWhatsapp && <TicketRow label="WhatsApp" value={props.clienteWhatsapp} />}
+          {props.asesorNombre && <TicketRow label="Asesor" value={props.asesorNombre} />}
         </div>
 
         <div className={linea} />
 
         {/* Anulada */}
-        {data.anulada && (
-          <div className="border-2 border-red-600 text-red-600 font-bold text-center py-1 text-sm tracking-widest my-2">
-            ANULADA
+        {props.anulada && (
+          <div className="border-4 border-red-600 text-red-600 font-bold text-center py-1.5 text-base tracking-widest my-3">
+            ANULADA / CANCELADA
           </div>
         )}
 
         {/* Tabla de Productos */}
-        <table className="w-full text-xs" style={{ borderCollapse: "collapse" }}>
-          <thead>
-            <tr className="border-b border-black text-left">
-              <th className="py-1 pr-1 font-bold">Prod.</th>
-              <th className="py-1 px-1 font-bold text-right">Peso</th>
+        <div className="text-[16px]">
+          <div className="flex font-bold border-b border-black pb-1.5 mb-1.5">
+            <span className="w-24 flex-shrink-0">Cant.</span>
+            <span className="flex-1">Producto</span>
+            {incluirPrecios && <span className="w-20 text-right">Importe</span>}
+          </div>
+          {props.items.map((it, i) => (
+            <div key={i} className="flex py-1 leading-snug border-b border-gray-100 last:border-0 align-top">
+              <span className="w-24 flex-shrink-0 font-mono font-bold">
+                {kilos(it.cantidad)}
+                {it.unidad ? ` ${it.unidad}` : ""}
+              </span>
+              <span className="flex-1 break-words pr-1 font-bold text-gray-900">{it.producto}</span>
               {incluirPrecios && (
-                <>
-                  <th className="py-1 px-1 font-bold text-right">P/kg</th>
-                  <th className="py-1 pl-1 font-bold text-right">Total</th>
-                </>
+                <span className="w-20 text-right font-mono font-bold">
+                  {it.subtotal != null && it.subtotal > 0 ? it.subtotal.toFixed(2) : "—"}
+                </span>
               )}
-            </tr>
-          </thead>
-          <tbody>
-            {data.items.map((item, i) => (
-              <tr key={i} className="border-b border-gray-200 align-top">
-                <td className="py-1 pr-1 break-words">{item.producto_nombre}</td>
-                <td className="py-1 px-1 text-right whitespace-nowrap">
-                  {kilos(item.peso_kg)} kg
-                </td>
-                {incluirPrecios && (
-                  <>
-                    <td className="py-1 px-1 text-right whitespace-nowrap">
-                      {soles(item.precio_kg)}
-                    </td>
-                    <td className="py-1 pl-1 text-right whitespace-nowrap font-semibold">
-                      {soles(item.subtotal)}
-                    </td>
-                  </>
-                )}
-              </tr>
-            ))}
+            </div>
+          ))}
+        </div>
 
-            {/* Total General */}
-            {incluirPrecios && (
-              <tr className="border-t border-black font-bold">
-                <td className="py-1.5 pr-1" colSpan={3}>
-                  TOTAL
-                </td>
-                <td className="py-1.5 pl-1 text-right whitespace-nowrap text-sm">
-                  {soles(data.total)}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        {/* Estado de Cuenta */}
+        {/* Total General */}
         {incluirPrecios && (
           <>
             <div className={linea} />
-            <div className="bg-gray-50 border border-gray-200 rounded p-2 text-xs">
-              <p className="font-bold text-gray-600 uppercase text-[10px] tracking-wide mb-1">
+            <div className="flex justify-between items-baseline font-black text-[22px]">
+              <span>TOTAL</span>
+              <span className="font-mono">S/ {props.total.toFixed(2)}</span>
+            </div>
+          </>
+        )}
+
+        {/* Estado de Cuenta (Solo en Campo + Con precios) */}
+        {props.estadoCuenta && incluirPrecios && (
+          <>
+            <div className={linea} />
+            <div className="bg-gray-50 border border-gray-200 rounded-2xl p-3.5 text-[15px] space-y-1">
+              <p className="font-bold text-gray-500 uppercase text-[12px] tracking-wider mb-2">
                 Estado de Cuenta
               </p>
-              <div className="flex justify-between py-0.5">
+              <div className="flex justify-between">
                 <span>Saldo anterior:</span>
-                <span className="font-semibold">{soles(data.estado_cuenta.saldo_previo)}</span>
+                <span className="font-semibold font-mono">{soles(props.estadoCuenta.saldoPrevio)}</span>
               </div>
-              <div className="flex justify-between py-0.5">
+              <div className="flex justify-between">
                 <span>Venta de hoy:</span>
-                <span className="font-semibold">{soles(data.estado_cuenta.total_venta)}</span>
+                <span className="font-semibold font-mono">{soles(props.estadoCuenta.totalVenta)}</span>
               </div>
-              {data.estado_cuenta.abonos_aplicados > 0 && (
-                <div className="flex justify-between py-0.5">
+              {props.estadoCuenta.abonosAplicados > 0 && (
+                <div className="flex justify-between">
                   <span>Abonos de hoy:</span>
-                  <span className="font-semibold">−{soles(data.estado_cuenta.abonos_aplicados)}</span>
+                  <span className="font-semibold font-mono">−{soles(props.estadoCuenta.abonosAplicados)}</span>
                 </div>
               )}
-              <div className="flex justify-between items-center border-t border-gray-300 mt-1.5 pt-1.5 font-bold">
-                <span className="text-xs">SALDO ACTUAL:</span>
-                <span className="text-sm">{soles(data.estado_cuenta.saldo_actualizado)}</span>
+              <div className="flex justify-between items-center border-t border-gray-300 mt-2.5 pt-2.5 font-black text-[16px]">
+                <span>SALDO ACTUAL:</span>
+                <span className="font-mono">{soles(props.estadoCuenta.saldoActualizado)}</span>
               </div>
             </div>
           </>
         )}
 
-        {/* Observaciones */}
-        {data.observaciones && (
-          <div className="mt-3 text-xs leading-normal">
-            <span className="font-bold">Obs:</span> {data.observaciones}
-          </div>
+        {/* Notas / Observaciones */}
+        {props.notas && (
+          <>
+            <div className={linea} />
+            <div className="text-[16px] bg-yellow-50/50 p-2.5 rounded border border-gray-200">
+              <span className="font-bold">Notas: </span>
+              <span className="whitespace-pre-wrap break-words font-bold text-gray-900">{props.notas}</span>
+            </div>
+          </>
         )}
 
-        <div className={linea} />
-
-        {/* Firmas */}
-        <div className="text-center text-[10px] pt-4 pb-2">
-          <div className="flex justify-between gap-4 mt-2">
-            <div className="flex-1">
-              <div className="border-t border-black pt-1 mx-2">Firma cliente</div>
-            </div>
-            <div className="flex-1">
-              <div className="border-t border-black pt-1 mx-2">Recibí conforme</div>
-            </div>
+        {/* Firma Única del Cliente / Recibí conforme */}
+        <div className="mt-14 text-center text-[16px]">
+          <div className="border-t border-black mx-3 pt-2">
+            <div className="font-bold text-gray-800">Firma del cliente</div>
+            <div className="text-[13px] text-gray-500 font-medium">Recibí conforme</div>
           </div>
         </div>
       </div>
@@ -541,67 +564,71 @@ function TicketLayout({
 
 // ── Layout Formato A4 ──
 function A4Layout({
-  data,
+  props,
   incluirPrecios,
 }: {
-  data: GuiaAvicolaData;
+  props: OrdenImprimibleProps;
   incluirPrecios: boolean;
 }) {
-  const esTransavic = data.cliente.empresa === "Transavic";
+  const esTransavic = props.empresa === "Transavic";
   const logo = esTransavic ? "/transavic.jpg" : "/avicola.jpg";
 
   return (
-    <div className="bg-white p-8 border border-gray-200 rounded-2xl shadow-sm print:border-none print:shadow-none min-h-[297mm]">
-      {/* Encabezado */}
+    <div className="bg-white p-10 border border-gray-200 rounded-2xl shadow-sm print:border-none print:shadow-none min-h-[297mm]">
+      {/* Cabecera A4 */}
       <div className="flex justify-between items-start border-b-2 border-gray-100 pb-6">
         <div>
-          <h1 className="text-3xl font-black text-amber-600 tracking-tight">
-            GUÍA DE VENTA (CAMPO)
+          <h1 className="text-3xl font-black text-amber-600 tracking-tight uppercase">
+            {props.tipoDocumento}
           </h1>
           <p className="text-lg font-bold text-gray-500 mt-1">
-            N.º {formatNumeroGuia(data.numero_guia)}
+            N.º {props.numero}
           </p>
-          <p className="text-sm text-gray-600 mt-0.5">{fechaLegible(data.fecha)}</p>
+          <p className="text-sm text-gray-600 mt-0.5">{fechaLegible(props.fecha)}</p>
         </div>
 
         <div className="text-right">
           <div className="h-16 w-auto flex justify-end">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={logo} alt={data.cliente.empresa} className="h-full object-contain" />
+            <img src={logo} alt={props.empresa} className="h-full object-contain" />
           </div>
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">
-            {data.cliente.empresa}
+            {props.empresa}
           </p>
         </div>
       </div>
 
-      {/* Datos Cliente */}
+      {/* Datos Cliente y Metadatos */}
       <div className="grid grid-cols-2 gap-8 py-6 border-b border-gray-100">
         <div>
           <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
             Cliente
           </h2>
-          <p className="text-lg font-bold text-gray-900">{data.cliente.nombre}</p>
-          <p className="text-sm text-gray-600 mt-0.5">
-            Mercado: {data.cliente.mercado}
-            {data.cliente.numero_puesto ? ` · Puesto ${data.cliente.numero_puesto}` : ""}
-          </p>
+          <p className="text-lg font-bold text-gray-900">{props.clienteNombre}</p>
+          
+          <div className="text-sm text-gray-600 space-y-0.5 mt-1.5">
+            {props.clienteDetalle && <p>{props.clienteDetalle}</p>}
+            {props.clienteDireccion && <p>Dirección: {props.clienteDireccion}</p>}
+            {props.clienteDistrito && <p>Distrito: {props.clienteDistrito}</p>}
+          </div>
         </div>
 
-        {data.cliente.telefono && (
-          <div>
-            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
-              Contacto
-            </h2>
-            <p className="text-base text-gray-800">{data.cliente.telefono}</p>
+        <div>
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+            Información del Pedido
+          </h2>
+          <div className="text-sm text-gray-700 space-y-1 mt-1.5">
+            {props.clienteTelefono && <p><span className="font-bold text-gray-500">Teléfono:</span> {props.clienteTelefono}</p>}
+            {props.clienteWhatsapp && <p><span className="font-bold text-gray-500">WhatsApp:</span> {props.clienteWhatsapp}</p>}
+            {props.asesorNombre && <p><span className="font-bold text-gray-500">Asesor:</span> {props.asesorNombre}</p>}
           </div>
-        )}
+        </div>
       </div>
 
       {/* Anulada */}
-      {data.anulada && (
-        <div className="border-4 border-red-600 text-red-600 font-black text-center py-2 text-xl tracking-widest my-4">
-          VENTA ANULADA
+      {props.anulada && (
+        <div className="border-4 border-red-600 text-red-600 font-black text-center py-2.5 text-xl tracking-widest my-5">
+          ANULADA / CANCELADA
         </div>
       )}
 
@@ -610,7 +637,7 @@ function A4Layout({
         <thead>
           <tr className="border-b-2 border-gray-200 font-bold text-gray-500">
             <th className="py-3">Producto</th>
-            <th className="py-3 text-right">Peso (kg)</th>
+            <th className="py-3 text-right">Peso/Cant.</th>
             {incluirPrecios && (
               <>
                 <th className="py-3 text-right">Precio/kg</th>
@@ -620,15 +647,18 @@ function A4Layout({
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100">
-          {data.items.map((item, i) => (
+          {props.items.map((item, i) => (
             <tr key={i} className="align-middle">
-              <td className="py-3.5 font-semibold text-gray-900">{item.producto_nombre}</td>
-              <td className="py-3.5 text-right font-medium">{kilos(item.peso_kg)} kg</td>
+              <td className="py-4 font-semibold text-gray-900">{item.producto}</td>
+              <td className="py-4 text-right font-bold text-gray-900">
+                {kilos(item.cantidad)}
+                {item.unidad ? ` ${item.unidad}` : ""}
+              </td>
               {incluirPrecios && (
                 <>
-                  <td className="py-3.5 text-right">{soles(item.precio_kg)}</td>
-                  <td className="py-3.5 text-right font-bold text-gray-900">
-                    {soles(item.subtotal)}
+                  <td className="py-4 text-right">{item.precio ? soles(item.precio) : "—"}</td>
+                  <td className="py-4 text-right font-black text-gray-900">
+                    {item.subtotal ? soles(item.subtotal) : "—"}
                   </td>
                 </>
               )}
@@ -641,14 +671,14 @@ function A4Layout({
               <td className="py-4" colSpan={3}>
                 TOTAL
               </td>
-              <td className="py-4 text-right text-lg text-amber-600">{soles(data.total)}</td>
+              <td className="py-4 text-right text-lg text-amber-600">{soles(props.total)}</td>
             </tr>
           )}
         </tbody>
       </table>
 
-      {/* Estado de Cuenta */}
-      {incluirPrecios && (
+      {/* Estado de Cuenta (Solo en Campo + Con precios) */}
+      {props.estadoCuenta && incluirPrecios && (
         <div className="mt-8 flex justify-end">
           <div className="w-80 bg-gray-50 border border-gray-200 rounded-2xl p-5 text-sm space-y-2.5">
             <h3 className="font-bold text-gray-500 uppercase text-xs tracking-wider mb-2">
@@ -656,51 +686,62 @@ function A4Layout({
             </h3>
             <div className="flex justify-between">
               <span>Saldo previo:</span>
-              <span className="font-semibold">{soles(data.estado_cuenta.saldo_previo)}</span>
+              <span className="font-semibold">{soles(props.estadoCuenta.saldoPrevio)}</span>
             </div>
             <div className="flex justify-between">
               <span>Venta de hoy:</span>
               <span className="font-semibold text-gray-900">
-                {soles(data.estado_cuenta.total_venta)}
+                {soles(props.estadoCuenta.totalVenta)}
               </span>
             </div>
-            {data.estado_cuenta.abonos_aplicados > 0 && (
+            {props.estadoCuenta.abonosAplicados > 0 && (
               <div className="flex justify-between text-gray-700">
                 <span>Abonos de hoy:</span>
                 <span className="font-semibold text-green-600">
-                  −{soles(data.estado_cuenta.abonos_aplicados)}
+                  −{soles(props.estadoCuenta.abonosAplicados)}
                 </span>
               </div>
             )}
             <div className="flex justify-between items-center border-t border-gray-200 pt-3 mt-3 font-bold text-base text-gray-900">
               <span>SALDO ACTUAL:</span>
               <span className="text-lg text-amber-700">
-                {soles(data.estado_cuenta.saldo_actualizado)}
+                {soles(props.estadoCuenta.saldoActualizado)}
               </span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Observaciones */}
-      {data.observaciones && (
+      {/* Notas / Observaciones */}
+      {props.notas && (
         <div className="mt-8 text-sm bg-gray-50 rounded-xl p-4 border border-gray-100">
-          <span className="font-bold text-gray-700">Observaciones:</span>
-          <p className="text-gray-600 mt-1">{data.observaciones}</p>
+          <span className="font-bold text-gray-700">Notas / Observaciones:</span>
+          <p className="text-gray-600 mt-1 whitespace-pre-wrap">{props.notas}</p>
         </div>
       )}
 
-      {/* Pie de página Firmas */}
-      <div className="mt-24 border-t border-gray-100 pt-8">
-        <div className="flex justify-around gap-12 text-center text-xs font-semibold text-gray-500">
-          <div className="w-48">
-            <div className="border-t border-dashed border-gray-300 pt-3">Firma del Cliente</div>
-          </div>
-          <div className="w-48">
-            <div className="border-t border-dashed border-gray-300 pt-3">Recibí Conforme</div>
+      {/* Firma Única del Cliente / Recibí conforme */}
+      <div className="mt-28 border-t border-gray-100 pt-8 flex justify-center">
+        <div className="text-center w-72 max-w-full">
+          <div className="border-t border-gray-800 pt-2.5">
+            <div className="text-xs text-gray-600 uppercase tracking-wider font-bold">
+              Firma del cliente
+            </div>
+            <div className="text-[11px] text-gray-400 mt-0.5 font-medium">Recibí conforme</div>
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+function TicketRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="break-words">
+      <span className="font-bold text-gray-500 text-[14px] uppercase tracking-wide">{label}: </span>
+      <span className="font-bold text-gray-900">{value}</span>
+    </div>
+  );
+}
+
+

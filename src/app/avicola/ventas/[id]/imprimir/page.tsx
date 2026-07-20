@@ -4,7 +4,8 @@
 import { neon } from "@neondatabase/serverless";
 import { guiaDeVenta } from "@/lib/avicola/guia";
 import { notFound } from "next/navigation";
-import VentaImprimibleClient from "./imprimir-client";
+import { formatNumeroGuia } from "@/lib/correlativos";
+import OrdenImprimible from "@/components/OrdenImprimible";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -18,5 +19,33 @@ export default async function VentaImprimirPage({ params }: PageProps) {
   const data = await guiaDeVenta(sql, id);
   if (!data) return notFound();
 
-  return <VentaImprimibleClient data={data} />;
+  return (
+    <OrdenImprimible
+      tipoDocumento="Guía de Venta"
+      numero={formatNumeroGuia(data.numero_guia)}
+      empresa={data.cliente.empresa}
+      clienteNombre={data.cliente.nombre}
+      clienteDetalle={`${data.cliente.mercado}${
+        data.cliente.numero_puesto ? ` · Puesto ${data.cliente.numero_puesto}` : ""
+      }`}
+      clienteTelefono={data.cliente.telefono || undefined}
+      fecha={data.fecha}
+      notas={data.observaciones || undefined}
+      items={data.items.map((it) => ({
+        producto: it.producto_nombre,
+        cantidad: it.peso_kg,
+        unidad: "kg",
+        precio: it.precio_kg,
+        subtotal: it.subtotal,
+      }))}
+      total={data.total}
+      anulada={data.anulada}
+      estadoCuenta={{
+        saldoPrevio: data.estado_cuenta.saldo_previo,
+        totalVenta: data.estado_cuenta.total_venta,
+        abonosAplicados: data.estado_cuenta.abonos_aplicados,
+        saldoActualizado: data.estado_cuenta.saldo_actualizado,
+      }}
+    />
+  );
 }
