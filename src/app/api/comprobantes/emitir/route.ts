@@ -539,6 +539,186 @@ export async function POST(request: Request) {
       `.catch(() => {});
     }
 
+    // ── Sincronizar comprobante a pedido si la emisión fue exitosa ──
+    if (emisionOk) {
+      try {
+        // 1. Obtener los items actuales en la base de datos para comparar
+        const dbItems = (await sql`
+          SELECT id, producto_id, producto_nombre, cantidad, cantidad_real, subtotal_real
+          FROM pedido_items
+          WHERE pedido_id = ${parsed.data.pedido_id}
+        `) as Array<{
+          id: string;
+          producto_id: string | null;
+          producto_nombre: string;
+          cantidad: string | number;
+          cantidad_real: string | number | null;
+          subtotal_real: string | number | null;
+        }>;
+
+        // 2. Mapear los productos para el lookup de IDs si es necesario
+        const prodRows = (await sql`SELECT id, nombre FROM productos WHERE activo = true`) as Array<{ id: string; nombre: string }>;
+        const prodNameToId = new Map(prodRows.map(p => [p.nombre.toLowerCase().trim(), p.id]));
+
+        // Guardar cambios para la auditoría (pedido_ediciones)
+        const cambiosAudit: Array<{ campo: string; antes: any; despues: any }> = [];
+
+        // 3. Procesar cada ítem del comprobante emitido
+        const processedDbItemIds = new Set<string>();
+
+        for (const item of items) {
+          const itemNombreNorm = item.producto_nombre.toLowerCase().trim();
+          
+          // Buscar si existe un ítem en DB con el mismo nombre
+          const match = dbItems.find(dbIt => dbIt.producto_nombre.toLowerCase().trim() === itemNombreNorm);
+
+          const subtotalReal = Number((item.precio_unitario * item.cantidad).toFixed(2));
+
+          if (match) {
+            processedDbItemIds.add(match.id);
+            // Si el valor en DB difiere de lo facturado, actualizarlo
+            const cantRealAnterior = match.cantidad_real ? Number(match.cantidad_real) : null;
+            const subtotalRealAnterior = match.subtotal_real ? Number(match.subtotal_real) : null;
+
+            if (cantRealAnterior !== item.cantidad || subtotalRealAnterior !== subtotalReal) {
+              await sql`
+                UPDATE pedido_items
+                SET cantidad_real = ${item.cantidad},
+                    unidad = ${item.unidad},
+                    precio_unitario = ${item.precio_unitario},
+                    subtotal_real = ${subtotalReal}
+                WHERE id = ${match.id}
+              `;
+              cambiosAudit.push({
+                campo: `item:${item.producto_nombre}:cantidad_real`,
+                antes: cantRealAnterior,
+                despues: item.cantidad
+              });
+            }
+          } else {
+            // Es un producto nuevo agregado en el modal de facturación
+            const productoId = prodNameToId.get(itemNombreNorm) || null;
+            const subtotalPrev = Number((item.precio_unitario * item.cantidad).toFixed(2));
+
+            await sql`
+              INSERT INTO pedido_items
+                (pedido_id, producto_id, producto_nombre, cantidad, unidad, unidad_pedido, precio_unitario, subtotal, cantidad_real, subtotal_real)
+              VALUES (
+                ${parsed.data.pedido_id}, 
+                ${productoId}, 
+                ${item.producto_nombre}, 
+                ${item.cantidad}, 
+                ${item.unidad}, 
+                ${item.unidad}, 
+                ${item.precio_unitario}, 
+                ${subtotalPrev}, 
+                ${item.cantidad}, 
+                ${subtotalReal}
+              )
+            `;
+
+            cambiosAudit.push({
+              campo: `item:${item.producto_nombre}:creado`,
+              antes: null,
+              despues: { cantidad: item.cantidad, precio: item.precio_unitario }
+            });
+          }
+        }
+
+        // 4. Marcar con cantidad_real = 0 y subtotal_real = 0 los ítems eliminados
+        for (const dbIt of dbItems) {
+          if (!processedDbItemIds.has(dbIt.id)) {
+            const cantRealAnterior = dbIt.cantidad_real ? Number(dbIt.cantidad_real) : null;
+            if (cantRealAnterior !== 0) {
+              await sql`
+                UPDATE pedido_items
+                SET cantidad_real = 0,
+                    subtotal_real = 0
+                WHERE id = ${dbIt.id}
+              `;
+              cambiosAudit.push({
+                campo: `item:${dbIt.producto_nombre}:cantidad_real`,
+                antes: cantRealAnterior,
+                despues: 0
+              });
+            }
+          }
+        }
+
+        // 5. Construir y actualizar detalle_final en pedidos
+        const finalDetails = items.map(it => `${it.cantidad.toFixed(2)} ${it.unidad} ${it.producto_nombre}`).join(", ");
+        
+        // 6. Obtener estado actual del pedido para saber si debemos transicionarlo y auditarlo
+        const currentPedRow = (await sql`
+          SELECT estado, detalle_final FROM pedidos WHERE id = ${parsed.data.pedido_id}
+        `) as Array<{ estado: string; detalle_final: string | null }>;
+
+        if (currentPedRow.length > 0) {
+          const originalEstado = currentPedRow[0].estado;
+          const originalDetalleFinal = currentPedRow[0].detalle_final;
+          
+          if (originalDetalleFinal !== finalDetails) {
+            cambiosAudit.push({
+              campo: "detalle_final",
+              antes: originalDetalleFinal,
+              despues: finalDetails
+            });
+          }
+
+          // Si el pedido no estaba Entregado, transicionarlo
+          if (originalEstado !== "Entregado") {
+            await sql`
+              UPDATE pedidos
+              SET estado = 'Entregado',
+                  entregado = true,
+                  entregado_at = NOW(),
+                  entregado_por = ${session.user.name || "Sistema (Emisión CPE)"},
+                  detalle_final = ${finalDetails}
+              WHERE id = ${parsed.data.pedido_id}
+            `;
+            cambiosAudit.push({
+              campo: "estado",
+              antes: originalEstado,
+              despues: "Entregado"
+            });
+            cambiosAudit.push({
+              campo: "entregado",
+              antes: false,
+              despues: true
+            });
+          } else {
+            await sql`
+              UPDATE pedidos
+              SET detalle_final = ${finalDetails}
+              WHERE id = ${parsed.data.pedido_id}
+            `;
+          }
+        }
+
+        // 7. Escribir registro en pedido_ediciones para auditoría (no bloqueante)
+        if (cambiosAudit.length > 0) {
+          try {
+            await sql`
+              INSERT INTO pedido_ediciones
+                (pedido_id, usuario_id, usuario_nombre, usuario_rol, cambios)
+              VALUES (
+                ${parsed.data.pedido_id},
+                ${session.user.id},
+                ${session.user.name || "Sistema"},
+                ${session.user.role},
+                ${JSON.stringify(cambiosAudit)}::jsonb
+              )
+            `;
+          } catch (eAudit) {
+            console.error("Error al registrar auditoría en pedido_ediciones:", eAudit);
+          }
+        }
+
+      } catch (errSync) {
+        console.error("Error al sincronizar el pedido con el comprobante emitido:", errSync);
+      }
+    }
+
     return NextResponse.json({ ...resultado, id: comprobanteId });
   } catch (error) {
     console.error("Error en POST /api/comprobantes/emitir:", error);

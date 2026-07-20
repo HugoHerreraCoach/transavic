@@ -330,6 +330,7 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 34. **Pagos de proveedores (13 jul 2026):** la fuente canónica son `pagos_proveedores` y sus aplicaciones activas; `cuentas_por_pagar.monto_pagado` es solo caché compatible. Los excedentes quedan como saldo a favor y las correcciones se hacen anulando, nunca editando ni borrando movimientos. Ver doc 26.
 35. **Costo histórico POS (13 jul 2026):** `pedido_items.costo_unitario_snapshot` se toma del servidor al vender y no se recalcula. Si falta en una venta antigua, el costo total es desconocido, no cero. Solo admin/producción pueden verlo. Ver doc 10.
 36. **Reprogramación desde Producción (13 jul 2026):** Producción solo mueve a mañana Lima pedidos en estado productivo permitido; cambio, auditoría y notificación son atómicos e idempotentes. La alerta emergente no marca la campana como leída. Ver docs 04, 06 y 16.
+37. **Sincronización de Comprobante a Pedido (20 jul 2026)**: Al emitir un comprobante, si la asesora edita los ítems (`items_override`), la app ahora actualiza automáticamente la tabla `pedido_items` (cantidades reales, unidades, precios y subtotales reales) y la tabla `pedidos` (columna `detalle_final` y transición de estado no-entregado a `'Entregado'`). También se registra el historial de edición en `pedido_ediciones` para mantener la auditoría del ERP y evitar descuadres entre las planillas de las asesoras y las métricas de venta.
 
 ---
 
