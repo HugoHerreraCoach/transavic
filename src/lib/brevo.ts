@@ -5,8 +5,41 @@
 //
 // Más simple y confiable que SMTP en Vercel (no abre conexiones SMTP). El token
 // vive solo en el server (env BREVO_API_KEY). El remitente debe estar verificado
-// en Brevo (BREVO_SENDER_EMAIL). Plan free: 300 correos/día.
+// en Brevo (BREVO_SENDER_EMAIL). Plan free: 300 correos/día POR CUENTA — las dos
+// marcas comparten ese cupo (una sola cuenta Brevo admite ambos dominios).
+//
+// REMITENTE POR MARCA: mismo patrón per-empresa que SUNAT (SUNAT_TRA_*/SUNAT_AVI_*).
+//   BREVO_TRA_SENDER_EMAIL / BREVO_TRA_SENDER_NAME  → Transavic        (@transavic.com)
+//   BREVO_AVI_SENDER_EMAIL / BREVO_AVI_SENDER_NAME  → Avícola de Tony  (@laavicoladetony.com)
+// Si no está la variante por marca, cae a BREVO_SENDER_* (comportamiento anterior).
 // ════════════════════════════════════════════════════════════════════════════
+
+import type { EmpresaId } from "./sunat/types";
+
+/** Prefijos de env vars del remitente por empresa (espejo de ENV_PREFIX_MAP de SUNAT). */
+const SENDER_ENV_PREFIX: Record<EmpresaId, string> = {
+  transavic: "BREVO_TRA",
+  avicola: "BREVO_AVI",
+};
+
+/**
+ * Resuelve el remitente (email + nombre) de una marca, con fallback al remitente
+ * único de siempre. Fuente ÚNICA — la usan tanto Brevo como la rama SMTP.
+ */
+export function resolverRemitente(empresa?: EmpresaId): { email: string; name: string } {
+  const prefix = empresa ? SENDER_ENV_PREFIX[empresa] : undefined;
+  const email =
+    (prefix ? process.env[`${prefix}_SENDER_EMAIL`] : undefined) ||
+    process.env.BREVO_SENDER_EMAIL ||
+    process.env.SMTP_FROM_EMAIL ||
+    "transavicdev@gmail.com";
+  const name =
+    (prefix ? process.env[`${prefix}_SENDER_NAME`] : undefined) ||
+    process.env.BREVO_SENDER_NAME ||
+    process.env.SMTP_FROM_NAME ||
+    "Transavic";
+  return { email, name };
+}
 
 export interface BrevoAttachment {
   /** Contenido en base64 (sin el prefijo data:) */
@@ -23,6 +56,8 @@ export interface BrevoSendOptions {
   htmlContent: string;
   attachments?: BrevoAttachment[];
   replyTo?: { email: string; name?: string };
+  /** Marca emisora — define el remitente. Sin esto, usa el remitente único de siempre. */
+  empresa?: EmpresaId;
 }
 
 export interface BrevoResult {
@@ -37,10 +72,7 @@ export function isBrevoConfigured(): boolean {
 /** Envía un correo transaccional vía Brevo API v3. Nunca lanza: devuelve {error}. */
 export async function sendBrevoEmail(options: BrevoSendOptions): Promise<BrevoResult> {
   const apiKey = process.env.BREVO_API_KEY;
-  const senderEmail =
-    process.env.BREVO_SENDER_EMAIL || process.env.SMTP_FROM_EMAIL || "transavicdev@gmail.com";
-  const senderName =
-    process.env.BREVO_SENDER_NAME || process.env.SMTP_FROM_NAME || "Transavic";
+  const { email: senderEmail, name: senderName } = resolverRemitente(options.empresa);
 
   if (!apiKey) return { error: "BREVO_API_KEY no configurado" };
 

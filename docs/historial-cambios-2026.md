@@ -8,6 +8,68 @@
 
 ---
 
+## 19 jul 2026 (tarde) — Estado REAL de Meta, dominios por marca y remitente de correo por marca
+
+**Contexto:** tras dejar el CRM cableado (entrada anterior), se entró a la **cuenta real de Meta de
+Antonio** ("Toñito") para ejecutar el runbook. Lo que se encontró cambió el plan, y en paralelo Hugo
+compró **`laavicoladetony.com`** para el RUC 10 (ya existía `transavic.com` para el RUC 20).
+
+### Estado REAL de los portfolios (verificado en la cuenta, no asumido)
+| | TONIO DAT (RUC 20 / Transavic) | TONIO LADT (RUC 10 / Avícola de Tony) |
+|---|---|---|
+| `business_id` | `1324982862317136` | `2200578807071141` |
+| Verificación | ✅ **Verificado** | ❌ **RECHAZADA** |
+| WABA | ✅ **"Transavic20"** (`591728093936452`), Aprobada | ❌ ninguna |
+| Número | ✅ **+51 936 889 205** — Conectado | ❌ ninguno |
+| Página FB | ✅ 1 | ❌ 0 (la necesita para Click-to-WhatsApp) |
+| Razón social | TONIO DAT | `RESURRECCION GAMARRA TONIO` ✅ (correcta para RUC 10) |
+
+**Dato clave:** Transavic estaba MUCHO más avanzado de lo asumido (ya tenía WABA + número conectado).
+
+### 🚧 Bloqueo duro encontrado: falta método de pago
+En el WhatsApp Manager de Transavic: *"Falta un método de pago válido — Solo los clientes pueden iniciar
+conversaciones gratuitas. **No podrás enviar mensajes a los clientes hasta que añadas un método de pago**."*
+Consecuencia doble: el botón **"Añadir número de teléfono" queda DESHABILITADO** (por eso no se pudo
+registrar el chip nuevo `+51 960 666 114`) **y el CRM no podría responder**. Matiz importante que
+faltaba en el análisis previo: *no hace falta verificar la empresa para operar*, pero **sí hace falta una
+tarjeta en archivo para poder enviar** — son requisitos distintos. Antonio quedó de cargarla. Las otras
+3 alertas del panel son informativas (agenda de contactos, 24h gratis por anuncios CTWA, API de marketing).
+
+### Motivo EXACTO del rechazo de la verificación del RUC 10
+Meta (Centro de seguridad → Verificación de la empresa → "Más información"):
+> *"No podemos verificar que el **sitio web empresarial** está asociado con la empresa RESURRECCION
+> GAMARRA TONIO porque **la razón social debe aparecer en el sitio web**."* → arreglar con **una** de:
+> (a) que el nombre legal aparezca en el sitio web, o (b) subir un nuevo documento acreditativo.
+
+**NO era por ser persona natural** (la hipótesis inicial) ni por poner la marca como nombre legal (el
+nombre legal ya estaba correcto). Por eso `laavicoladetony.com` es justo la pieza que lo destraba:
+publicar una página con `RESURRECCION GAMARRA TONIO` + `RUC 10710548841` + `Cal. Las Esmeraldas 624,
+Urb. Balconcillo, Lima`, declarar el dominio en el portfolio y reintentar.
+
+### Correo por marca (implementado)
+Investigación verificada contra fuentes oficiales: **Zoho Mail free aloja 1 solo dominio por
+organización** (→ la 2ª marca necesita otra cuenta Zoho, con otro email de registro; el free tampoco
+tiene IMAP/POP); **Brevo free admite varios dominios remitentes en UNA cuenta** (no hace falta una 2ª)
+pero los **300 correos/día son de la cuenta y se comparten**; y **Meta prohíbe tener 2 cuentas
+personales** (una sola administra varios portfolios). De ahí las decisiones: gmail nuevo **solo** como
+email de registro de la 2ª organización Zoho, **un solo perfil de Chrome**, y una sola cuenta Brevo.
+
+Código: `resolverRemitente()` en **`src/lib/brevo.ts`** (fuente única, usada por la rama Brevo y la
+SMTP de `lib/email.ts`) resuelve el remitente por marca desde `BREVO_TRA_*`/`BREVO_AVI_*` con **fallback
+a `BREVO_SENDER_*`** (cero regresión sin las vars nuevas). `comprobantes/[id]/enviar` pasa
+`empresa: c.empresa` — la columna ya guarda el `EmpresaId`. **Gotcha DNS crítico:** un dominio debe
+tener **UN SOLO registro TXT SPF** que incluya ambos proveedores
+(`v=spf1 include:zoho.com include:spf.brevo.com ~all`); dos SPF separados invalidan la autenticación.
+
+### Pendientes (bloqueados por terceros)
+1. **Antonio:** cargar el método de pago → desbloquea el número y el envío de WhatsApp.
+2. **Hugo:** publicar la web de `laavicoladetony.com` con la razón social y reintentar la verificación.
+3. Luego: registrar la App en Meta for Developers (la cuenta **aún no es cuenta de desarrollador**),
+   webhook, System User token y cargar `WHATSAPP_*` en Vercel. `META_VERIFY_TOKEN` ya está cargada en
+   Vercel (falta el redeploy para que tome efecto). Ver gotcha #52/#53 y [doc 15 §5](./docs/arquitectura/15-asistente-ia.md).
+
+---
+
 ## 19 jul 2026 — CRM WhatsApp REAL para las dos marcas (Meta Cloud API) + deep research de verificación
 
 **Contexto (pedido de Hugo):** completar el CRM para que reciba y responda por WhatsApp de verdad, con

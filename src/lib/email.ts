@@ -16,7 +16,8 @@
 // 3. Usar esa contraseña en SMTP_PASS
 
 import nodemailer from "nodemailer";
-import { sendBrevoEmail, isBrevoConfigured } from "./brevo";
+import { sendBrevoEmail, isBrevoConfigured, resolverRemitente } from "./brevo";
+import type { EmpresaId } from "./sunat/types";
 
 export interface EmailAttachment {
   filename: string;
@@ -36,6 +37,11 @@ export interface SendEmailOptions {
   bcc?: string | string[];
   /** Reply-To (default: el FROM) */
   replyTo?: string;
+  /**
+   * Marca emisora. Define el remitente por marca (BREVO_TRA_* / BREVO_AVI_*).
+   * Sin esto se usa el remitente único de siempre (BREVO_SENDER_* / SMTP_FROM_*).
+   */
+  empresa?: EmpresaId;
 }
 
 export interface EmailResult {
@@ -105,6 +111,7 @@ async function sendViaBrevo(opts: SendEmailOptions): Promise<EmailResult> {
     htmlContent,
     attachments,
     replyTo: opts.replyTo ? { email: opts.replyTo } : undefined,
+    empresa: opts.empresa,
   });
 
   if (result.error) return { exito: false, error: result.error };
@@ -126,8 +133,10 @@ export async function sendEmail(opts: SendEmailOptions): Promise<EmailResult> {
     };
   }
 
-  const fromName = process.env.SMTP_FROM_NAME || "Transavic";
-  const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+  // Mismo criterio de remitente por marca que Brevo (fuente única en brevo.ts).
+  const remitente = resolverRemitente(opts.empresa);
+  const fromName = remitente.name;
+  const fromEmail = remitente.email || process.env.SMTP_USER;
 
   try {
     const info = await t.sendMail({

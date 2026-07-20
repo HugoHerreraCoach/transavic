@@ -182,6 +182,9 @@ ${empresaLabel}`;
     html,
     text,
     attachments,
+    // El comprobante ya guarda la empresa como EmpresaId ("transavic" | "avicola"):
+    // define el remitente por marca (BREVO_TRA_* / BREVO_AVI_*).
+    empresa: c.empresa === "avicola" ? "avicola" : "transavic",
   });
 
   if (!result.exito) {
