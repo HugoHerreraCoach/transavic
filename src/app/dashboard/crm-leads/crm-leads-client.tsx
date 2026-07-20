@@ -122,6 +122,9 @@ const formatDateSeparator = (dateStr: string | Date) => {
   });
 };
 
+const RUBROS_CRM = ['Restaurante', 'Cafetería', 'Avícola', 'Chifa', 'Fast food', 'Market / Minimarket', 'Tienda / Bodega', 'Casa / Hogar', 'Otro'];
+const DISTRITOS_CRM = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
+
 export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
   // Configuración de vista
   const [viewMode, setViewMode] = useState<"chat" | "rotacion">("chat");
@@ -1267,6 +1270,12 @@ function ChatPane({
   // Cambiar vendedora asignada
   const handleChangeAsesor = async (asesorId: string) => {
     if (!lead) return;
+    const newAsesorName = asesores.find((a) => a.id === asesorId)?.name || "Sin Asignar";
+    if (!confirm(`¿Transferir este chat a ${newAsesorName}?`)) {
+      const selectEl = document.getElementById("select-vendedor") as HTMLSelectElement | null;
+      if (selectEl) selectEl.value = lead.vendedor_id || "";
+      return;
+    }
     try {
       const res = await fetch(`/api/crm/leads/${leadId}`, {
         method: "PATCH",
@@ -1737,13 +1746,20 @@ function ChatPane({
               )}
             </div>
 
-            {/* Asignación de Vendedora */}
-            <div className="space-y-1">
-              <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Vendedor Asignado</label>
+            {/* Asignación de Vendedora (Reasignar Chat) */}
+            <div className="space-y-1 bg-amber-50/50 p-2.5 rounded-xl border border-amber-100/50">
+              <label className="text-[9px] font-bold text-gray-500 uppercase tracking-wider block flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span>
+                Reasignar Chat
+              </label>
+              <p className="text-[9px] text-gray-400 leading-normal mb-1">
+                Transfiere este chat a otra asesora. Desaparecerá de tu lista.
+              </p>
               <select
+                id="select-vendedor"
                 value={lead?.vendedor_id || ""}
                 onChange={(e) => handleChangeAsesor(e.target.value)}
-                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                className="w-full border border-gray-200 bg-white rounded-lg px-2 py-1.5 text-[10px] font-bold outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer"
               >
                 <option value="">Sin Asignar</option>
                 {asesores.map((a) => (
@@ -1758,22 +1774,30 @@ function ChatPane({
             <div className="space-y-2">
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Negocio / Rubro</label>
-                <div className="relative group">
-                  <input
-                    type="text"
-                    value={negocioTemp}
-                    readOnly={!editingNotes}
-                    onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                <div 
+                  onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                  className="relative group cursor-pointer"
+                >
+                  <select
+                    value={negocioTemp || ""}
+                    disabled={!editingNotes}
                     onChange={(e) => setNegocioTemp(e.target.value)}
-                    placeholder="ej. Pollería"
-                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all ${
+                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all appearance-none cursor-pointer ${
                       editingNotes
                         ? "border-indigo-500 bg-white text-gray-800 focus:ring-1 focus:ring-indigo-500"
-                        : "border-gray-200 bg-gray-50 text-gray-500 cursor-pointer hover:bg-gray-100 hover:border-gray-300"
+                        : "border-gray-200 bg-gray-50 text-gray-500 pointer-events-none"
                     }`}
-                  />
+                  >
+                    <option value="">Sin Clasificar</option>
+                    {RUBROS_CRM.map(r => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <FiChevronDown size={10} />
+                  </div>
                   {!editingNotes && (
-                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none">
+                    <div className="absolute right-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none bg-gray-50 px-1">
                       <FiEdit size={8} /> Click para editar
                     </div>
                   )}
@@ -1782,22 +1806,30 @@ function ChatPane({
 
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Ciudad / Distrito</label>
-                <div className="relative group">
-                  <input
-                    type="text"
-                    value={ciudadTemp}
-                    readOnly={!editingNotes}
-                    onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                <div 
+                  onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                  className="relative group cursor-pointer"
+                >
+                  <select
+                    value={ciudadTemp || ""}
+                    disabled={!editingNotes}
                     onChange={(e) => setCiudadTemp(e.target.value)}
-                    placeholder="ej. Miraflores"
-                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all ${
+                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all appearance-none cursor-pointer ${
                       editingNotes
                         ? "border-indigo-500 bg-white text-gray-800 focus:ring-1 focus:ring-indigo-500"
-                        : "border-gray-200 bg-gray-50 text-gray-500 cursor-pointer hover:bg-gray-100 hover:border-gray-300"
+                        : "border-gray-200 bg-gray-50 text-gray-500 pointer-events-none"
                     }`}
-                  />
+                  >
+                    <option value="">Sin Clasificar</option>
+                    {DISTRITOS_CRM.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                    <FiChevronDown size={10} />
+                  </div>
                   {!editingNotes && (
-                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none">
+                    <div className="absolute right-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none bg-gray-50 px-1">
                       <FiEdit size={8} /> Click para editar
                     </div>
                   )}
