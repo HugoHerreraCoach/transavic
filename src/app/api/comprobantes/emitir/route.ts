@@ -561,7 +561,10 @@ export async function POST(request: Request) {
         const prodNameToId = new Map(prodRows.map(p => [p.nombre.toLowerCase().trim(), p.id]));
 
         // Guardar cambios para la auditoría (pedido_ediciones)
-        const cambiosAudit: Array<{ campo: string; antes: any; despues: any }> = [];
+        // `unknown` en vez de `any`: los valores son heterogéneos (número, null, objeto)
+        // y solo se serializan con JSON.stringify, así que no hace falta tiparlos más.
+        // Con `any` el build de Vercel falla por @typescript-eslint/no-explicit-any.
+        const cambiosAudit: Array<{ campo: string; antes: unknown; despues: unknown }> = [];
 
         // 3. Procesar cada ítem del comprobante emitido
         const processedDbItemIds = new Set<string>();

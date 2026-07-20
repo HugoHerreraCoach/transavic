@@ -1387,17 +1387,6 @@ function ChatPane({
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Registrar Pedido */}
-            {lead && (
-              <button
-                onClick={() => onCreateOrder(lead)}
-                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1 transition-all active:scale-95 shadow-sm cursor-pointer"
-                title="Registrar Pedido del Cliente"
-              >
-                <FiPlus size={14} /> <span>Crear Pedido</span>
-              </button>
-            )}
-
             {/* Direct Calls */}
             <a
               href={`tel:${lead?.telefono}`}
@@ -1881,6 +1870,8 @@ function ChatPane({
                   )}&empresa=${encodeURIComponent(lead.empresa)}&distrito=${encodeURIComponent(
                     lead.ciudad || ""
                   )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="w-full flex items-center justify-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl py-2 font-bold text-xs cursor-pointer shadow-xs transition-all active:scale-95"
                 >
                   <FiExternalLink size={12} /> Registrar Pedido Venta
