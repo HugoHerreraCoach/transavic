@@ -61,12 +61,34 @@ a `BREVO_SENDER_*`** (cero regresión sin las vars nuevas). `comprobantes/[id]/e
 tener **UN SOLO registro TXT SPF** que incluya ambos proveedores
 (`v=spf1 include:zoho.com include:spf.brevo.com ~all`); dos SPF separados invalidan la autenticación.
 
-### Pendientes (bloqueados por terceros)
-1. **Antonio:** cargar el método de pago → desbloquea el número y el envío de WhatsApp.
-2. **Hugo:** publicar la web de `laavicoladetony.com` con la razón social y reintentar la verificación.
-3. Luego: registrar la App en Meta for Developers (la cuenta **aún no es cuenta de desarrollador**),
-   webhook, System User token y cargar `WHATSAPP_*` en Vercel. `META_VERIFY_TOKEN` ya está cargada en
-   Vercel (falta el redeploy para que tome efecto). Ver gotcha #52/#53 y [doc 15 §5](./docs/arquitectura/15-asistente-ia.md).
+### ✅ Setup de WhatsApp de Transavic COMPLETADO y PROBADO EN VIVO (19 jul 2026, noche)
+Todo el runbook se ejecutó: cuenta de desarrollador, App **Transavic CRM** (`1043268678158460`),
+WABA del CRM (`883642441471852`), número **+51 960 666 114** (`phone_number_id 1181655271701439`,
+`status CONNECTED`, display name "Transavic" APROBADO), webhook verificado por Meta con `messages`
+suscrito, usuario del sistema `CRM Transavic` (`61591800645031`) con token permanente, y las 6 env
+vars en Vercel. **Prueba end-to-end real:** un WhatsApp desde un celular al número creó el lead en
+producción con `empresa=Transavic` (ruteo por `phone_number_id` ✔), lo asignó a una asesora por
+rotación ✔, abrió la ventana de 24h ✔, la IA generó la respuesta ✔, se envió por la Graph API ✔ y el
+webhook de `statuses[]` la marcó como **leída** ✔. Detalle del `status: PENDING → CONNECTED`: el
+flujo de la UI se corta a medias; se completa con `POST /{phone_number_id}/register` + el PIN.
+
+### ⏳ Pendientes anotados (no bloquean, pero conviene cerrarlos)
+1. **Prompt del bot consciente de la marca** (`src/lib/chatbot/bot-orchestrator.ts`): el system prompt
+   está escrito para las DOS marcas ("Transavic y Avícola de Tony") porque se hizo antes del ruteo por
+   `phone_number_id`. Ahora el CRM SÍ sabe a qué marca escribió el cliente → hay que **pasarle
+   `empresa` al prompt** para que quien escribe al número de Transavic vea solo Transavic. Confirmado
+   en la prueba en vivo: el bot saludó mencionando ambas marcas.
+2. **Rotar el token de WhatsApp** (`WHATSAPP_TRA_TOKEN`): el token de System User se compartió en
+   texto plano en un chat con la IA el 19 jul 2026 y **no caduca**. Rotarlo ahora que el flujo ya está
+   validado: Business Settings → Usuarios del sistema → *CRM Transavic* → *Revocar identificadores* →
+   generar uno nuevo → `vercel env rm/add WHATSAPP_TRA_TOKEN production` → redeploy. Igual criterio
+   para las contraseñas de Google/Zoho que se compartieron (prioridad: **activar 2FA**).
+3. **Inscribir los bancos de datos en el RNPD** (`sipdp.minjus.gob.pe`, gratuito y automático), uno por
+   RUC. Obligación formal vigente; ver gotcha #54.
+4. **Publicar la app de Meta** (no bloqueó los mensajes de WhatsApp, pero conviene). Ya existe la URL
+   de política de privacidad que exige: `https://transavic.com/privacidad`.
+5. **RUC 10 / La Avícola de Tony:** reintentar la verificación ahora que `laavicoladetony.com` publica
+   la razón social; luego crearle Página de Facebook, WABA, número y su propio usuario del sistema.
 
 ---
 
