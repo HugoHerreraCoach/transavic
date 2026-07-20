@@ -25,6 +25,7 @@ import {
   FiChevronDown,
   FiCopy,
   FiRefreshCw,
+  FiEdit,
 } from "react-icons/fi";
 import { Lead, LeadEstado, LeadMensaje } from "@/lib/types";
 
@@ -1717,6 +1718,36 @@ function ChatPane({
               </div>
             </div>
 
+            {/* Ficha de Contacto Header */}
+            <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+              <span className="text-[9px] font-black text-gray-400 uppercase tracking-wider">Ficha de Contacto</span>
+              {editingNotes ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleCancelDetails}
+                    disabled={guardandoFicha}
+                    className="text-[9px] text-gray-400 font-bold hover:underline cursor-pointer disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleSaveDetails}
+                    disabled={guardandoFicha}
+                    className="text-[9px] text-emerald-600 font-bold hover:underline cursor-pointer flex items-center gap-0.5 disabled:opacity-50"
+                  >
+                    {guardandoFicha ? "Guardando..." : "Guardar"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingNotes(true)}
+                  className="text-[9px] text-indigo-600 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                >
+                  <FiEdit size={9} /> Editar Ficha
+                </button>
+              )}
+            </div>
+
             {/* Asignación de Vendedora */}
             <div className="space-y-1">
               <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Vendedor Asignado</label>
@@ -1738,26 +1769,50 @@ function ChatPane({
             <div className="space-y-2">
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Negocio / Rubro</label>
-                <input
-                  type="text"
-                  value={negocioTemp}
-                  disabled={!editingNotes}
-                  onChange={(e) => setNegocioTemp(e.target.value)}
-                  placeholder="ej. Pollería"
-                  className="w-full border border-gray-200 bg-white disabled:bg-gray-50 rounded-lg px-2.5 py-1 text-[10px] outline-none"
-                />
+                <div className="relative group">
+                  <input
+                    type="text"
+                    value={negocioTemp}
+                    readOnly={!editingNotes}
+                    onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                    onChange={(e) => setNegocioTemp(e.target.value)}
+                    placeholder="ej. Pollería"
+                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all ${
+                      editingNotes
+                        ? "border-indigo-500 bg-white text-gray-800 focus:ring-1 focus:ring-indigo-500"
+                        : "border-gray-200 bg-gray-50 text-gray-500 cursor-pointer hover:bg-gray-100 hover:border-gray-300"
+                    }`}
+                  />
+                  {!editingNotes && (
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none">
+                      <FiEdit size={8} /> Click para editar
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-1">
                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Ciudad / Distrito</label>
-                <input
-                  type="text"
-                  value={ciudadTemp}
-                  disabled={!editingNotes}
-                  onChange={(e) => setCiudadTemp(e.target.value)}
-                  placeholder="ej. Miraflores"
-                  className="w-full border border-gray-200 bg-white disabled:bg-gray-50 rounded-lg px-2.5 py-1 text-[10px] outline-none"
-                />
+                <div className="relative group">
+                  <input
+                    type="text"
+                    value={ciudadTemp}
+                    readOnly={!editingNotes}
+                    onClick={() => { if (!editingNotes) setEditingNotes(true); }}
+                    onChange={(e) => setCiudadTemp(e.target.value)}
+                    placeholder="ej. Miraflores"
+                    className={`w-full border rounded-lg px-2.5 py-1 text-[10px] outline-none transition-all ${
+                      editingNotes
+                        ? "border-indigo-500 bg-white text-gray-800 focus:ring-1 focus:ring-indigo-500"
+                        : "border-gray-200 bg-gray-50 text-gray-500 cursor-pointer hover:bg-gray-100 hover:border-gray-300"
+                    }`}
+                  />
+                  {!editingNotes && (
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity text-[8px] text-indigo-500 font-bold flex items-center gap-0.5 pointer-events-none">
+                      <FiEdit size={8} /> Click para editar
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
