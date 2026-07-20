@@ -10,6 +10,7 @@ import {
 import { enviarTexto } from "../whatsapp/sender";
 import { pideHandoff, sanearRespuestaBot } from "./sanear-respuesta";
 import { sendPushNotification } from "../push-service";
+import { type Lead } from "../types";
 
 /**
  * Perfil comercial de cada marca para el prompt del bot.
@@ -443,7 +444,7 @@ export async function checkAndEscalateLeads(sql: NeonQueryFunction<false, false>
 export async function escalateLead(
   sql: NeonQueryFunction<false, false>,
   leadId: string,
-  leadData: any
+  leadData: Partial<Lead>
 ): Promise<void> {
   try {
     const phase = leadData.golden_ticket_phase || "individual";
@@ -463,7 +464,7 @@ export async function escalateLead(
       `;
 
       if (tierAdvisors.length > 0) {
-        const ids = tierAdvisors.map((a: any) => a.id);
+        const ids = tierAdvisors.map((a: { id: string }) => a.id);
         await sql`
           UPDATE public.leads
           SET candidato_actual = NULL,
@@ -500,7 +501,7 @@ export async function escalateLead(
       `;
 
       if (nivel1Advisors.length > 0) {
-        const ids = nivel1Advisors.map((a: any) => a.id);
+        const ids = nivel1Advisors.map((a: { id: string }) => a.id);
         await sql`
           UPDATE public.leads
           SET candidato_actual = NULL,

@@ -1,9 +1,8 @@
-// src/components/LeadAssignmentBanner.tsx
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { FiClock, FiCheck, FiX, FiAlertTriangle } from "react-icons/fi";
+import { useRouter } from "next/navigation";
+import { FiClock, FiCheck } from "react-icons/fi";
 import { usePollingVisible } from "@/lib/use-polling-visible";
 
 interface QueuedLead {
@@ -51,7 +50,7 @@ export default function LeadAssignmentBanner() {
       const audio = new Audio("/sounds/notification-sound.mp3");
       audio.play().catch(() => {
         // Fallback: Web Audio API synth beep (880Hz A5 note)
-        const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioContext = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!AudioContext) return;
         const ctx = new AudioContext();
         const osc = ctx.createOscillator();

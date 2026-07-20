@@ -36,7 +36,7 @@ export async function sendPushNotification(
       return false;
     }
 
-    const tokens = rows.map((r: any) => r.token);
+    const tokens = rows.map((r) => String(r.token));
     
     // 2. Formatear el mensaje multicast
     const message = {
@@ -63,7 +63,7 @@ export async function sendPushNotification(
     // 4. Limpieza automática de tokens obsoletos
     if (response.failureCount > 0) {
       const tokensToRemove: string[] = [];
-      response.responses.forEach((resp: any, idx: number) => {
+      response.responses.forEach((resp, idx: number) => {
         if (!resp.success && resp.error) {
           const code = resp.error.code;
           if (

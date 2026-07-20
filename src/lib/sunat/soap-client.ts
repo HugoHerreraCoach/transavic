@@ -102,14 +102,6 @@ export function parsearRespuestaCDR(cdrXml: string): {
 }
 
 /**
- * Genera el header de autenticación Basic para SUNAT (kept for debug logging)
- */
-function getAuthHeader(config: SunatConfig): string {
-  const credentials = `${config.ruc}${config.solUser}:${config.solPassword}`;
-  return `Basic ${Buffer.from(credentials).toString("base64")}`;
-}
-
-/**
  * Genera el bloque WS-Security UsernameToken para el SOAP Header.
  * Método estándar de autenticación de SUNAT (usado también por Greenter).
  *

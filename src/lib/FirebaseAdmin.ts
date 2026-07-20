@@ -1,7 +1,7 @@
 import { getApps, initializeApp, cert } from "firebase-admin/app";
-import { getMessaging } from "firebase-admin/messaging";
+import { getMessaging, Messaging } from "firebase-admin/messaging";
 
-let messagingInstance: any = null;
+let messagingInstance: Messaging | null = null;
 
 const projectId = process.env.FIREBASE_PROJECT_ID;
 const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
