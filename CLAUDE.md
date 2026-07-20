@@ -348,6 +348,8 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 
 53. **Correo y dominios de las DOS marcas (19 jul 2026)**: (a) **remitente por marca** — `resolverRemitente()` en **`src/lib/brevo.ts`** es la fuente ÚNICA (la usan la rama Brevo y la SMTP de `lib/email.ts`); lee `BREVO_TRA_*`/`BREVO_AVI_*` y **cae a `BREVO_SENDER_*`** si no están (sin esas vars, todo igual que antes). `comprobantes.empresa` YA guarda el `EmpresaId` (`"transavic"`/`"avicola"`), así que la ruta `comprobantes/[id]/enviar` lo pasa directo; si agregas otro punto de envío, **pásale `empresa`** o saldrá con el remitente por defecto. (b) **Zoho Mail free aloja 1 SOLO dominio por organización** → la 2ª marca necesita **otra cuenta Zoho** (otro email de registro); el free además **no tiene IMAP/POP**. (c) **Brevo free admite VARIOS dominios remitentes en UNA cuenta** (no abrir una 2ª), pero los **300 correos/día son de la CUENTA** y se comparten entre marcas. (d) **DNS: UN SOLO registro TXT SPF por dominio** con ambos includes (`v=spf1 include:zoho.com include:spf.brevo.com ~all`) — dos registros SPF separados **invalidan** la autenticación (los DKIM sí son independientes). (e) **Meta: prohibido tener 2 cuentas personales**; una cuenta administra varios portfolios. Detalle: [historial](./docs/historial-cambios-2026.md).
 
+54. **Protección de datos personales — Perú (19 jul 2026)**: cada marca tiene su **política de privacidad pública** en `https://transavic.com/privacidad` y `https://laavicoladetony.com/privacidad` (repos `*-pag-web`, página `src/app/privacidad/page.tsx` que **reutiliza `COMPANY_INFO` de `src/lib/constants.ts`** — si cambia la razón social o el RUC se actualiza ahí, no en el texto). Meta **exige esa URL pública, sin login y en HTTPS** para publicar la app. Marco vigente: **Ley 29733 + Reglamento DS 016-2024-JUS** (vigente desde el **30 mar 2025**, reemplazó al DS 003-2013-JUS; agrega portabilidad, limitación y **notificación de brechas a la ANPD en 48 h**). ⚠️ **Obligación formal PENDIENTE:** inscribir los bancos de datos en el **RNPD** (gratuito, en línea y de aprobación automática desde el 31 mar 2025, en `sipdp.minjus.gob.pe`) — es lo que más se incumple y lo primero que revisa la ANPD; multas de 0.5 a 100 UIT. La política **no ha sido revisada por un abogado**: es un borrador sólido y actualizado, conviene validarlo. Detalle: [historial](./docs/historial-cambios-2026.md).
+
 ---
 
 ## 13. Estado del proyecto (resumen — crónicas completas en [docs/historial-cambios-2026.md](./docs/historial-cambios-2026.md))
@@ -427,6 +429,8 @@ Antes de empezar cualquier tarea:
 | | **Transavic** (RUC 20 · 20612806901) | **La Avícola de Tony** (RUC 10 · 10710548841) |
 |---|---|---|
 | Dominio | `transavic.com` (raíz RESERVADA para web pública; el ERP vive en `app.transavic.com`) | `laavicoladetony.com` (comprado 19 jul 2026) |
+| Repo de la web pública | `HugoHerreraCoach/transavic-pag-web` | `HugoHerreraCoach/laavicoladetony-pag-web` |
+| **Política de privacidad** (URL que exige Meta) | `https://transavic.com/privacidad` | `https://laavicoladetony.com/privacidad` |
 | Portfolio Meta | **TONIO DAT** (`business_id 1324982862317136`) | **TONIO LADT** (`business_id 2200578807071141`) |
 | Zoho Mail (free) | organización #1 | organización #2 — **cuenta Zoho aparte** (el free aloja 1 solo dominio por organización), creada con un gmail de registro dedicado |
 | Brevo | **una sola cuenta** con AMBOS dominios remitentes (no hace falta 2ª cuenta); remitente por marca vía `BREVO_TRA_*`/`BREVO_AVI_*` | idem |
