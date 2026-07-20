@@ -12,8 +12,11 @@ import {
   FiCheck,
   FiX,
   FiHelpCircle,
-  FiPlay,
+  FiMenu,
+  FiActivity,
+  FiStar,
 } from "react-icons/fi";
+import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { User } from "@/lib/types";
 
 interface RotationConfigProps {
@@ -61,7 +64,11 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
       if (usersRes.ok) {
         const usersData = await usersRes.json();
-        setAdvisors(usersData || []);
+        // Ordenar asesores por orden_rotacion de forma ascendente
+        const sortedAdvisors = (usersData || []).sort(
+          (a: User, b: User) => (a.orden_rotacion ?? 99) - (b.orden_rotacion ?? 99)
+        );
+        setAdvisors(sortedAdvisors);
       }
 
       if (settingsRes.ok) {
@@ -89,7 +96,6 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     setSavingSettings(true);
 
     try {
-      // Parsear la secuencia ingresada (debe ser lista de enteros separados por comas)
       const pattern = sequenceInput
         .split(",")
         .map((s) => parseInt(s.trim(), 10))
@@ -166,7 +172,11 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
       if (!res.ok) throw new Error("Error");
 
       const updated = await res.json();
-      setAdvisors(advisors.map((a) => (a.id === userId ? { ...a, ...updated } : a)));
+      setAdvisors((prev) =>
+        prev
+          .map((a) => (a.id === userId ? { ...a, ...updated } : a))
+          .sort((a, b) => (a.orden_rotacion ?? 99) - (b.orden_rotacion ?? 99))
+      );
       showToast("ok", "Asesora actualizada correctamente.");
     } catch (e) {
       console.error(e);
@@ -176,13 +186,53 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     }
   };
 
+  // Manejar el reordenamiento por arrastrar y soltar
+  const handleDragEnd = async (result: any) => {
+    if (!result.destination) return;
+
+    const sourceIdx = result.source.index;
+    const destIdx = result.destination.index;
+    if (sourceIdx === destIdx) return;
+
+    const reorderedList = Array.from(advisors);
+    const [movedItem] = reorderedList.splice(sourceIdx, 1);
+    reorderedList.splice(destIdx, 0, movedItem);
+
+    // Asignar nuevas posiciones secuenciales de orden
+    const updatedList = reorderedList.map((item, index) => ({
+      ...item,
+      orden_rotacion: index + 1,
+    }));
+
+    // Actualizar estado local inmediatamente
+    setAdvisors(updatedList);
+    setSavingSettings(true);
+
+    try {
+      // Guardar cambios en la base de datos para los asesores modificados
+      const promises = updatedList.map((item) =>
+        fetch(`/api/users/${item.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orden_rotacion: item.orden_rotacion }),
+        })
+      );
+      await Promise.all(promises);
+      showToast("ok", "Orden de reparto actualizado correctamente.");
+    } catch (error) {
+      console.error("Error al guardar orden de rotación:", error);
+      showToast("error", "Error al guardar el nuevo orden.");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   // Reiniciar todas las cargas diarias a 0
   const handleResetAllLoads = async () => {
     if (!confirm("¿Estás seguro de que deseas reiniciar a 0 los contadores de todas las asesoras?")) return;
     setLoading(true);
 
     try {
-      // Para ser limpios, hacemos PATCH por cada asesora activa
       const promises = advisors.map((a) =>
         fetch(`/api/users/${a.id}`, {
           method: "PATCH",
@@ -191,8 +241,6 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
         })
       );
       await Promise.all(promises);
-
-      // Recargar datos
       await loadData();
       showToast("ok", "Se reiniciaron todos los contadores de leads del día.");
     } catch (e) {
@@ -218,14 +266,14 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
         </div>
       )}
 
-      {/* Título de la página */}
+      {/* Cabecera */}
       <div className="flex justify-between items-center pb-5 border-b border-gray-200/60 shrink-0">
         <div>
           <h1 className="text-xl font-black text-gray-900 flex items-center gap-2">
             <span className="text-indigo-600">🎫</span> Reparto Automático de Leads
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Distribuye de forma automática y equitativa los prospectos entrantes de WhatsApp entre las asesoras comerciales.
+            Arrastra y ordena las asesoras para definir el orden de prioridad y distribuye equitativamente los prospectos.
           </p>
         </div>
         <button
@@ -245,7 +293,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           {/* Listado de Asesoras (Columna Izquierda y Central) */}
           <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm overflow-hidden">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-150 bg-slate-50/50 flex justify-between items-center">
                 <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm">
                   <FiUser className="text-indigo-500" /> Asesoras en la Rotación
@@ -258,148 +306,177 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                 </button>
               </div>
 
-              <div className="divide-y divide-gray-100">
-                {advisors.length === 0 ? (
-                  <div className="p-8 text-center text-xs text-gray-400">
-                    No se encontraron asesoras comerciales registradas.
-                  </div>
-                ) : (
-                  advisors.map((asesora) => {
-                    const isActive = asesora.activo_rotacion !== false;
-                    const tier = asesora.orden_rotacion || 1;
-                    const countToday = asesora.leads_recibidos_hoy || 0;
-
-                    return (
+              {advisors.length === 0 ? (
+                <div className="p-8 text-center text-xs text-gray-400">
+                  No se encontraron asesoras comerciales registradas.
+                </div>
+              ) : (
+                <DragDropContext onDragEnd={handleDragEnd}>
+                  <Droppable droppableId="advisors-list">
+                    {(provided) => (
                       <div
-                        key={asesora.id}
-                        className={`flex flex-col sm:flex-row sm:items-center sm:justify-between p-4 gap-3 transition-colors ${
-                          !isActive ? "bg-gray-50/40 opacity-70" : ""
-                        }`}
+                        ref={provided.innerRef}
+                        {...provided.droppableProps}
+                        className="divide-y divide-gray-150"
                       >
-                        {/* Nombre e info */}
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm text-white shrink-0 ${
-                              !isActive
-                                ? "bg-gray-400"
-                                : tier === 1
-                                ? "bg-emerald-500"
-                                : tier === 2
-                                ? "bg-amber-500"
-                                : "bg-slate-500"
-                            }`}
-                          >
-                            {asesora.name.substring(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <span className="font-bold text-gray-800 text-sm block">
-                              {asesora.name}
-                            </span>
-                            <span className="text-[10px] text-gray-400 block mt-0.5">
-                              ID: {asesora.id.substring(0, 8)}... | Rol: {asesora.role}
-                            </span>
-                          </div>
-                        </div>
+                        {advisors.map((asesora, index) => {
+                          const isActive = asesora.activo_rotacion !== false;
+                          const order = index + 1;
+                          const countToday = asesora.leads_recibidos_hoy || 0;
 
-                        {/* Controles de Rotación */}
-                        <div className="flex flex-wrap items-center gap-4">
-                          {/* Toggle Activo */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">Rotación</span>
-                            <button
-                              onClick={() =>
-                                handleUpdateUserField(asesora.id, {
-                                  activo_rotacion: !isActive,
-                                })
-                              }
-                              disabled={updatingUser === asesora.id}
-                              className={`w-11 h-6 rounded-full transition-colors relative outline-none cursor-pointer ${
-                                isActive ? "bg-indigo-600" : "bg-gray-300"
-                              }`}
-                            >
-                              <div
-                                className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-all ${
-                                  isActive ? "left-6" : "left-1"
-                                }`}
-                              ></div>
-                            </button>
-                          </div>
+                          return (
+                            <Draggable key={asesora.id} draggableId={asesora.id} index={index}>
+                              {(provided, snapshot) => (
+                                <div
+                                  ref={provided.innerRef}
+                                  {...provided.draggableProps}
+                                  className={`flex flex-col sm:flex-row sm:items-center p-4 gap-4 transition-all ${
+                                    snapshot.isDragging
+                                      ? "bg-indigo-50/50 shadow-md border-y border-indigo-150"
+                                      : !isActive
+                                      ? "bg-gray-50/40 opacity-70"
+                                      : "hover:bg-slate-50/50"
+                                  }`}
+                                >
+                                  {/* Drag Handle */}
+                                  <div
+                                    {...provided.dragHandleProps}
+                                    className="p-1 text-gray-400 hover:text-gray-600 transition-colors cursor-grab active:cursor-grabbing self-center"
+                                    title="Arrastra para reordenar"
+                                  >
+                                    <FiMenu size={16} />
+                                  </div>
 
-                          {/* Prioridad / Tier */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">Prioridad</span>
-                            <select
-                              value={tier}
-                              disabled={!isActive || updatingUser === asesora.id}
-                              onChange={(e) =>
-                                handleUpdateUserField(asesora.id, {
-                                  orden_rotacion: parseInt(e.target.value, 10),
-                                })
-                              }
-                              className="border border-gray-200 bg-white text-gray-800 rounded-lg p-1 text-xs outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
-                            >
-                              <option value={1}>Nivel 1 (Alta)</option>
-                              <option value={2}>Nivel 2 (Media)</option>
-                              <option value={3}>Nivel 3 (Baja)</option>
-                            </select>
-                          </div>
+                                  {/* Info Badge de Posición */}
+                                  <div className="shrink-0 flex items-center justify-center">
+                                    <span
+                                      className={`w-6 h-6 rounded-lg font-bold text-xs flex items-center justify-center ${
+                                        !isActive
+                                          ? "bg-gray-200 text-gray-400"
+                                          : order === 1
+                                          ? "bg-amber-100 text-amber-700 border border-amber-200"
+                                          : order === 2
+                                          ? "bg-slate-100 text-slate-700 border border-slate-200"
+                                          : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                      }`}
+                                    >
+                                      {order}°
+                                    </span>
+                                  </div>
 
-                          {/* Leads Recibidos Hoy */}
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase">Hoy</span>
-                            <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden">
-                              <button
-                                onClick={() =>
-                                  handleUpdateUserField(asesora.id, {
-                                    leads_recibidos_hoy: Math.max(0, countToday - 1),
-                                  })
-                                }
-                                disabled={!isActive || countToday === 0 || updatingUser === asesora.id}
-                                className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
-                              >
-                                -
-                              </button>
-                              <span className="px-3 text-xs font-bold text-gray-800 min-w-[28px] text-center bg-white">
-                                {countToday}
-                              </span>
-                              <button
-                                onClick={() =>
-                                  handleUpdateUserField(asesora.id, {
-                                    leads_recibidos_hoy: countToday + 1,
-                                  })
-                                }
-                                disabled={!isActive || updatingUser === asesora.id}
-                                className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+                                  {/* Avatar e Información Personal */}
+                                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                                    <div
+                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm text-white shrink-0 ${
+                                        !isActive
+                                          ? "bg-gray-400"
+                                          : order === 1
+                                          ? "bg-indigo-600"
+                                          : "bg-indigo-500"
+                                      }`}
+                                    >
+                                      {asesora.name.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <div className="truncate">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-gray-800 text-sm truncate">
+                                          {asesora.name}
+                                        </span>
+                                        {isActive && (
+                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                                            <FiActivity className="mr-0.5" /> Activa
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-gray-400 block mt-0.5 truncate">
+                                        ID: {asesora.id.substring(0, 8)}... | Rol: {asesora.role}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* Controles de Estado y Carga */}
+                                  <div className="flex flex-wrap items-center gap-4 self-center justify-end">
+                                    {/* Switch de Rotación */}
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-bold text-gray-400 uppercase">Rotación</span>
+                                      <button
+                                        onClick={() =>
+                                          handleUpdateUserField(asesora.id, {
+                                            activo_rotacion: !isActive,
+                                          })
+                                        }
+                                        disabled={updatingUser === asesora.id}
+                                        className={`w-11 h-6 rounded-full transition-colors relative outline-none cursor-pointer ${
+                                          isActive ? "bg-indigo-600" : "bg-gray-200"
+                                        }`}
+                                      >
+                                        <div
+                                          className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-all ${
+                                            isActive ? "left-6" : "left-1"
+                                          }`}
+                                        ></div>
+                                      </button>
+                                    </div>
+
+                                    {/* Contador de Leads */}
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] font-bold text-gray-400 uppercase">Hoy</span>
+                                      <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden bg-white shadow-xs">
+                                        <button
+                                          onClick={() =>
+                                            handleUpdateUserField(asesora.id, {
+                                              leads_recibidos_hoy: Math.max(0, countToday - 1),
+                                            })
+                                          }
+                                          disabled={!isActive || countToday === 0 || updatingUser === asesora.id}
+                                          className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold cursor-pointer"
+                                        >
+                                          -
+                                        </button>
+                                        <span className="px-3 text-xs font-bold text-gray-800 min-w-[28px] text-center">
+                                          {countToday}
+                                        </span>
+                                        <button
+                                          onClick={() =>
+                                            handleUpdateUserField(asesora.id, {
+                                              leads_recibidos_hoy: countToday + 1,
+                                            })
+                                          }
+                                          disabled={!isActive || updatingUser === asesora.id}
+                                          className="px-2 py-1 bg-gray-50 text-gray-500 hover:bg-gray-100 disabled:opacity-50 text-[10px] font-bold cursor-pointer"
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </Draggable>
+                          );
+                        })}
+                        {provided.placeholder}
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+              )}
             </div>
 
-            {/* Panel Informativo de Tiers */}
+            {/* Panel Informativo */}
             <div className="bg-slate-100 p-4 border border-gray-200/50 rounded-2xl">
               <h4 className="font-bold text-gray-800 text-xs flex items-center gap-1.5">
-                <FiHelpCircle className="text-indigo-500" /> ¿Cómo funciona la rotación?
+                <FiHelpCircle className="text-indigo-500" /> ¿Cómo funciona la rotación por arrastre?
               </h4>
               <ul className="text-[11px] text-gray-500 mt-2 space-y-1.5 list-disc pl-4">
                 <li>
-                  <strong>Niveles de Prioridad</strong>: En cada asignación, el sistema consulta el patrón configurado para saber qué Nivel le toca recibir el lead.
+                  <strong>Prioridad por posición:</strong> La asesora en la posición <strong>1°</strong> tiene la prioridad principal de reparto. Puedes arrastrar y soltar usando el icono de menú (<FiMenu className="inline" />) para cambiar este orden en vivo.
                 </li>
                 <li>
-                  <strong>Equidad de Carga</strong>: Dentro del Nivel seleccionado, el lead se le asigna a la asesora activa con **menor número de prospectos recibidos hoy**.
+                  <strong>Carga equitativa:</strong> El sistema prioriza entregar los nuevos leads a la asesora de mayor prioridad que tenga la <strong>menor cantidad de leads recibidos en el día</strong> (columna "Hoy").
                 </li>
                 <li>
-                  <strong>Botón de Ausencia</strong>: Si una asesora está de vacaciones o enferma, puedes apagar su rotación para que no reciba leads.
-                </li>
-                <li>
-                  <strong>Reinicio Diario</strong>: A las 8:00 AM de cada día (hora de Lima), los contadores se restablecen automáticamente a 0 y la secuencia vuelve a empezar.
+                  <strong>Pausa temporal:</strong> Si una asesora se ausenta, desactiva su interruptor de "Rotación". Esto la mantendrá en la lista pero evitará que el algoritmo le asigne nuevos leads temporalmente.
                 </li>
               </ul>
             </div>
@@ -407,16 +484,17 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
           {/* Configuración de Algoritmo de Rotación (Columna Derecha) */}
           <div className="space-y-6">
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm overflow-hidden p-5">
+            {/* Configurar secuencia */}
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs overflow-hidden p-5">
               <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3 mb-4">
-                <FiSliders className="text-indigo-500" /> Configurar Secuencia
+                <FiSliders className="text-indigo-500" /> Secuencia de Reparto
               </h3>
 
               <form onSubmit={handleSaveSettings} className="space-y-4">
                 {/* Patrón de secuencia */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                    Patrón de Prioridad (Niveles)
+                    Patrón de Prioridad (Posiciones)
                   </label>
                   <input
                     type="text"
@@ -426,14 +504,14 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     className="w-full px-3 py-2 border border-gray-200 bg-white text-gray-800 rounded-xl text-xs outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                   <span className="text-[10px] text-gray-400 block mt-1">
-                    Ingresa números de Nivel separados por comas. El sistema ciclará por este patrón. (Ej. 1,1,2 = dos leads al Nivel 1 por cada lead al Nivel 2).
+                    Ingresa los números de posición separados por comas. El sistema ciclará por esta secuencia para determinar qué turno recibe el siguiente lead.
                   </span>
                 </div>
 
                 {/* Hora de reset */}
                 <div>
                   <label className="block text-xs font-bold text-gray-500 mb-1.5">
-                    Hora de Reinicio Diario (Lima)
+                    Reinicio Diario (Lima)
                   </label>
                   <select
                     value={resetHourInput}
@@ -447,7 +525,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                     ))}
                   </select>
                   <span className="text-[10px] text-gray-400 block mt-1">
-                    Hora en la que se limpian los leads de hoy y se reinicia la secuencia.
+                    Hora en la que se restablecen los contadores de leads del día a 0 y la secuencia regresa al inicio.
                   </span>
                 </div>
 
@@ -464,23 +542,23 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
             </div>
 
             {/* Estado del Motor de Rotación */}
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-sm p-5 space-y-4">
+            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs p-5 space-y-4">
               <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3">
                 <FiTrendingUp className="text-indigo-500" /> Estado del Motor
               </h3>
 
               <div className="space-y-3 text-xs">
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Índice Actual:</span>
+                  <span className="text-gray-400">Índice de Turno:</span>
                   <span className="font-bold text-gray-800">
                     {config.sequenceIndex ?? 0}
                   </span>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <span className="text-gray-400">Próximo Nivel:</span>
+                  <span className="text-gray-400">Turno de Prioridad:</span>
                   <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-bold text-[10px]">
-                    Nivel {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}
+                    Posición {config.sequencePattern ? config.sequencePattern[(config.sequenceIndex ?? 0) % config.sequencePattern.length] : 1}°
                   </span>
                 </div>
 
@@ -496,7 +574,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                   disabled={savingSettings}
                   className="w-full py-2 bg-slate-100 hover:bg-gray-200/70 text-gray-700 rounded-xl text-xs font-bold border border-gray-200/50 cursor-pointer transition-all active:scale-95"
                 >
-                  Restablecer Secuencia a 0
+                  Restablecer Turno a 0
                 </button>
               </div>
             </div>
@@ -506,3 +584,4 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     </div>
   );
 }
+
