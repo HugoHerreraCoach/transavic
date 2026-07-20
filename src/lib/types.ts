@@ -145,6 +145,12 @@ export type Lead = {
    *  deje el indicador encendido para siempre. */
   bot_pensando_desde?: string | Date | null;
   last_inbound_at?: string | Date | null;
+  estado_asignacion?: string | null;
+  candidato_actual?: string | null;
+  candidatos_nivel?: string[] | null;
+  inicio_turno?: string | Date | null;
+  timeout_nivel?: number | null;
+  golden_ticket_phase?: string | null;
   created_at: Date;
   updated_at: Date;
 };

@@ -39,6 +39,7 @@ import NotificationBell from "./NotificationBell";
 import FloatingAssistant from "./FloatingAssistant";
 import CmdKModal from "./CmdKModal";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
+import LeadAssignmentBanner from "./LeadAssignmentBanner";
 
 const ComunicadoPopup = dynamic(() => import("./ComunicadoPopup"), { ssr: false });
 const ArriboPopup = dynamic(() => import("./ArriboPopup"), { ssr: false });
@@ -603,6 +604,7 @@ export default function DashboardLayout({
       {/* Popups */}
       <ComunicadoPopup />
       {(userRole === "admin" || userRole === "asesor") && <ArriboPopup />}
+      {(userRole === "admin" || userRole === "asesor") && <LeadAssignmentBanner />}
     </div>
   );
 }

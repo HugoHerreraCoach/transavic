@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { checkAndEscalateLeads } from "@/lib/chatbot/bot-orchestrator";
 
 export const dynamic = "force-dynamic";
 
@@ -32,8 +33,11 @@ export async function GET(req: NextRequest) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
+    // Escalar leads vencidos antes de listar
+    await checkAndEscalateLeads(sql);
+
     // Query leads joining with users to get vendor name
-    // Admin sees everything. Asesor sees their own leads OR unassigned leads.
+    // Admin sees everything. Asesor sees their own leads OR unassigned leads they are eligible for.
     let leads;
     if (role === "admin") {
       leads = await sql`
@@ -47,7 +51,12 @@ export async function GET(req: NextRequest) {
         SELECT l.*, u.name as vendedor_name
         FROM public.leads l
         LEFT JOIN public.users u ON l.vendedor_id = u.id
-        WHERE l.vendedor_id = ${userId} OR l.vendedor_id IS NULL
+        WHERE l.vendedor_id = ${userId}
+           OR (l.vendedor_id IS NULL AND (
+                l.estado_asignacion IS DISTINCT FROM 'en_cola'
+                OR ${userId}::uuid = ANY(l.candidatos_nivel)
+                OR l.candidato_actual = ${userId}::uuid
+              ))
         ORDER BY l.updated_at DESC
       `;
     }

@@ -125,6 +125,9 @@ export async function handleInboundMessage(
   if (!connectionString) return null;
   const sql = neon(connectionString);
 
+  // Escalar leads pendientes que hayan expirado
+  await checkAndEscalateLeads(sql);
+
   const empresa = normalizarEmpresa(empresaInput);
 
   // 1. Limpiar teléfono
@@ -143,20 +146,60 @@ export async function handleInboundMessage(
   `;
 
   if (leadsRows.length === 0) {
-    // Asignar mediante rotación dinámica
-    const vendedorId = await rotateAndAssignLead(sql);
+    // Asignar mediante rotación dinámica (Golden Ticket)
+    const rotationRes = await rotateAndSelectCandidate(sql);
+    let insertLead;
 
-    const insertLead = await sql`
-      INSERT INTO public.leads (
-        nombre, telefono, origen, empresa, estado, chatbot_activo, vendedor_id,
-        last_inbound_at, ctwa_clid, ctwa_source_id, ctwa_headline
-      )
-      VALUES (
-        ${nombreCliente}, ${limpioTelefono}, 'whatsapp', ${empresa}, 'Nuevo', TRUE, ${vendedorId},
-        NOW(), ${ctwaClid}, ${ctwaSourceId}, ${ctwaHeadline}
-      )
-      RETURNING *
-    `;
+    if (rotationRes && rotationRes.candidato_actual) {
+      insertLead = await sql`
+        INSERT INTO public.leads (
+          nombre, telefono, origen, empresa, estado, chatbot_activo, vendedor_id,
+          estado_asignacion, candidato_actual, candidatos_nivel, inicio_turno, timeout_nivel, golden_ticket_phase,
+          last_inbound_at, ctwa_clid, ctwa_source_id, ctwa_headline
+        )
+        VALUES (
+          ${nombreCliente}, ${limpioTelefono}, 'whatsapp', ${empresa}, 'Nuevo', TRUE, NULL,
+          'en_cola', ${rotationRes.candidato_actual}, ${rotationRes.candidatos_nivel}, NOW(), 15, 'individual',
+          NOW(), ${ctwaClid}, ${ctwaSourceId}, ${ctwaHeadline}
+        )
+        RETURNING *
+      `;
+
+      // Notificar al candidato del nuevo turno
+      try {
+        await crearNotificacion({
+          userId: rotationRes.candidato_actual,
+          tipo: "lead_mensaje",
+          titulo: "🎫 ¡Nuevo Lead Recibido!",
+          mensaje: `Tienes un prospecto en cola: ${nombreCliente}. Tienes 15s para atenderlo.`,
+          link: `/dashboard/crm-leads?leadId=${insertLead[0].id}`,
+        });
+
+        await sendPushNotification(rotationRes.candidato_actual, {
+          title: "🎫 ¡Nuevo Lead Recibido!",
+          body: `El prospecto ${nombreCliente} está en tu cola. Reclámalo en 15s o pasará al grupo.`,
+          url: `/dashboard/crm-leads?leadId=${insertLead[0].id}`,
+          tag: `new-lead-claim-${insertLead[0].id}`,
+          renotify: true,
+        });
+      } catch (err) {
+        console.error("Error al notificar al candidato inicial:", err);
+      }
+    } else {
+      // Fallback directo a administrador
+      const adminId = rotationRes?.vendedorId || null;
+      insertLead = await sql`
+        INSERT INTO public.leads (
+          nombre, telefono, origen, empresa, estado, chatbot_activo, vendedor_id,
+          estado_asignacion, last_inbound_at, ctwa_clid, ctwa_source_id, ctwa_headline
+        )
+        VALUES (
+          ${nombreCliente}, ${limpioTelefono}, 'whatsapp', ${empresa}, 'Nuevo', TRUE, ${adminId},
+          'asignado', NOW(), ${ctwaClid}, ${ctwaSourceId}, ${ctwaHeadline}
+        )
+        RETURNING *
+      `;
+    }
     lead = insertLead[0];
   } else {
     lead = leadsRows[0];
@@ -371,18 +414,162 @@ interface AsesoraRotacion {
   leads_recibidos_hoy: number | null;
 }
 
-async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promise<string | null> {
+interface RotationSelection {
+  candidato_actual: string | null;
+  candidatos_nivel: string[];
+  actualTier: number;
+  vendedorId?: string | null;
+}
+
+export async function checkAndEscalateLeads(sql: NeonQueryFunction<false, false>): Promise<void> {
   try {
-    // 1. Obtener asesoras activas en la rotación
+    const expiredLeads = await sql`
+      SELECT id, nombre, telefono, candidatos_nivel, candidato_actual, inicio_turno, timeout_nivel, golden_ticket_phase
+      FROM public.leads
+      WHERE estado_asignacion = 'en_cola'
+        AND inicio_turno IS NOT NULL
+        AND (inicio_turno + (timeout_nivel || ' seconds')::interval) < NOW()
+    `;
+
+    for (const lead of expiredLeads) {
+      console.log(`⏰ Lead ${lead.nombre} (${lead.id}) ha expirado en la fase '${lead.golden_ticket_phase}'. Escalando...`);
+      await escalateLead(sql, lead.id, lead);
+    }
+  } catch (error) {
+    console.error("❌ Error en checkAndEscalateLeads:", error);
+  }
+}
+
+export async function escalateLead(
+  sql: NeonQueryFunction<false, false>,
+  leadId: string,
+  leadData: any
+): Promise<void> {
+  try {
+    const phase = leadData.golden_ticket_phase || "individual";
+
+    if (phase === "individual") {
+      // 1. Expandir al nivel/tier entero
+      const prevCandidateId = leadData.candidato_actual;
+      let tier = 1;
+      if (prevCandidateId) {
+        const u = await sql`SELECT orden_rotacion FROM public.users WHERE id = ${prevCandidateId}`;
+        if (u.length > 0) tier = u[0].orden_rotacion || 1;
+      }
+
+      const tierAdvisors = await sql`
+        SELECT id FROM public.users 
+        WHERE role = 'asesor' AND activo_rotacion = TRUE AND orden_rotacion = ${tier}
+      `;
+
+      if (tierAdvisors.length > 0) {
+        const ids = tierAdvisors.map((a: any) => a.id);
+        await sql`
+          UPDATE public.leads
+          SET candidato_actual = NULL,
+              candidatos_nivel = ${ids},
+              inicio_turno = NOW(),
+              timeout_nivel = 45,
+              golden_ticket_phase = 'tier_expanded',
+              updated_at = NOW()
+          WHERE id = ${leadId}
+        `;
+
+        for (const advisor of tierAdvisors) {
+          await sendPushNotification(advisor.id, {
+            title: "👥 ¡Lead disponible para tu nivel!",
+            body: `El prospecto ${leadData.nombre} está libre en tu Nivel ${tier}. ¡El primero en atenderlo se lo queda!`,
+            url: `/dashboard/crm-leads?leadId=${leadId}`,
+            tag: `lead-expanded-${leadId}`,
+            renotify: true,
+          });
+        }
+        console.log(`👥 Lead ${leadId} expandido a todos los asesores del Tier ${tier}`);
+        return;
+      } else {
+        console.log(`⚠️ No hay asesores en el Tier ${tier}, saltando a rescate...`);
+        leadData.golden_ticket_phase = "tier_expanded";
+      }
+    }
+
+    if (leadData.golden_ticket_phase === "tier_expanded" || leadData.golden_ticket_phase === "individual") {
+      // 2. Rescate: Escalar a Nivel 1 (Alta Prioridad)
+      const nivel1Advisors = await sql`
+        SELECT id FROM public.users 
+        WHERE role = 'asesor' AND activo_rotacion = TRUE AND orden_rotacion = 1
+      `;
+
+      if (nivel1Advisors.length > 0) {
+        const ids = nivel1Advisors.map((a: any) => a.id);
+        await sql`
+          UPDATE public.leads
+          SET candidato_actual = NULL,
+              candidatos_nivel = ${ids},
+              inicio_turno = NOW(),
+              timeout_nivel = 60,
+              golden_ticket_phase = 'rescue',
+              updated_at = NOW()
+          WHERE id = ${leadId}
+        `;
+
+        for (const advisor of nivel1Advisors) {
+          await sendPushNotification(advisor.id, {
+            title: "🚨 ¡Rescate de Lead!",
+            body: `El prospecto ${leadData.nombre} necesita atención urgente en Nivel 1. ¡Apoya a tu equipo!`,
+            url: `/dashboard/crm-leads?leadId=${leadId}`,
+            tag: `lead-rescue-${leadId}`,
+            renotify: true,
+          });
+        }
+        console.log(`🚨 Lead ${leadId} en fase de rescate (enviado a asesores de Nivel 1)`);
+        return;
+      } else {
+        console.log(`⚠️ No hay asesores en Nivel 1, saltando a fallback...`);
+      }
+    }
+
+    // 3. Fallback final al administrador
+    const fallbackAdmins = await sql`
+      SELECT id FROM public.users WHERE role = 'admin' LIMIT 1
+    `;
+    const adminId = fallbackAdmins.length > 0 ? fallbackAdmins[0].id : null;
+
+    if (adminId) {
+      await sql`
+        UPDATE public.leads
+        SET vendedor_id = ${adminId},
+            estado_asignacion = 'asignado',
+            candidato_actual = NULL,
+            candidatos_nivel = '{}',
+            inicio_turno = NULL,
+            golden_ticket_phase = NULL,
+            updated_at = NOW()
+        WHERE id = ${leadId}
+      `;
+
+      await sendPushNotification(adminId, {
+        title: "⚠️ Lead Sin Atención",
+        body: `El prospecto ${leadData.nombre} no fue atendido a tiempo y se te ha asignado como fallback.`,
+        url: `/dashboard/crm-leads?leadId=${leadId}`,
+        tag: `lead-fallback-${leadId}`,
+        renotify: true,
+      });
+
+      console.log(`⚠️ Lead ${leadId} asignado al admin de fallback por timeout.`);
+    }
+  } catch (error) {
+    console.error("❌ Error en escalateLead:", error);
+  }
+}
+
+async function rotateAndSelectCandidate(sql: NeonQueryFunction<false, false>): Promise<RotationSelection> {
+  try {
     const activeAdvisors = (await sql`
       SELECT id, name, orden_rotacion, leads_recibidos_hoy
       FROM public.users
       WHERE role = 'asesor' AND activo_rotacion = TRUE
     `) as AsesoraRotacion[];
 
-    // 2. Obtener configuración de rotación de settings.
-    //    Primero garantizamos que la fila exista (idempotente, NO pisa la existente),
-    //    porque el avance del índice se hace después con un UPDATE atómico.
     await sql`
       INSERT INTO public.settings (key, value, updated_at)
       VALUES ('crm_lead_distribution', ${JSON.stringify(CONFIG_ROTACION_DEFAULT)}::jsonb, NOW())
@@ -393,11 +580,10 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
     `;
     const config = settingsRef.length > 0 ? settingsRef[0].value : CONFIG_ROTACION_DEFAULT;
 
-    // 3. Chequear si se necesita reset diario
     const peruTime = new Date().toLocaleString("en-US", { timeZone: "America/Lima" });
     const peruDate = new Date(peruTime);
     const currentHour = peruDate.getHours();
-    const todayDateStr = peruDate.toISOString().split('T')[0]; // YYYY-MM-DD
+    const todayDateStr = peruDate.toISOString().split('T')[0];
     const lastResetDate = config.lastResetDate;
     const dailyResetHour = config.dailyResetHour ?? 8;
 
@@ -409,24 +595,11 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
         SET leads_recibidos_hoy = 0
         WHERE role = 'asesor'
       `;
-      // Refrescar en memoria
       for (const adv of activeAdvisors) {
         adv.leads_recibidos_hoy = 0;
       }
     }
 
-    // 3b. RESERVA ATÓMICA del índice del patrón (un solo statement).
-    //
-    // ⚠️ Antes esto era un SELECT del índice + un UPSERT del config completo, en
-    // dos statements sin lock: dos mensajes de WhatsApp en el mismo segundo leían
-    // el MISMO índice, ambos escribían +1, se perdía un paso del patrón 60/25/15 y
-    // las dos asesoras sorteadas terminaban siendo la misma. Además el UPSERT
-    // persistía el `config` leído antes, pudiendo pisar el `lastResetDate` del otro.
-    //
-    // La decisión de resetear se toma en JS y se manda UNA sola variante de query
-    // (gotcha #45c: nada de CASE/comparaciones sobre parámetros en el SQL de Neon).
-    // En el RETURNING, `value` ya es el valor NUEVO, por eso restamos 1 para saber
-    // qué índice consumió ESTA invocación.
     let currentIndex: number;
     if (shouldReset) {
       await sql`
@@ -455,18 +628,16 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
     }
 
     if (activeAdvisors.length === 0) {
-      // Fallback a administrador si no hay asesoras activas en rotación
       const fallbackAdmins = await sql`
         SELECT id FROM public.users WHERE role = 'admin' LIMIT 1
       `;
-      return fallbackAdmins.length > 0 ? fallbackAdmins[0].id : null;
+      const adminId = fallbackAdmins.length > 0 ? fallbackAdmins[0].id : null;
+      return { candidato_actual: null, candidatos_nivel: [], actualTier: 1, vendedorId: adminId };
     }
 
-    // 4. Determinar target tier con el índice ya reservado arriba
     const pattern = config.sequencePattern || [1];
     const targetTier = pattern[currentIndex % pattern.length];
 
-    // Group active advisors by tier
     const vendorsByTier: Record<number, AsesoraRotacion[]> = {};
     activeAdvisors.forEach((v) => {
       const tier = v.orden_rotacion || 1;
@@ -474,7 +645,6 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
       vendorsByTier[tier].push(v);
     });
 
-    // Fallback de tier si el target está vacío
     let actualTier = targetTier;
     if (!vendorsByTier[targetTier] || vendorsByTier[targetTier].length === 0) {
       const availableTiers = Object.keys(vendorsByTier)
@@ -482,7 +652,6 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
         .sort((a, b) => a - b);
       
       if (availableTiers.length > 0) {
-        // Trata de conseguir uno mayor, si no el más bajo disponible
         const higherTiers = availableTiers.filter((t: number) => t > targetTier);
         actualTier = higherTiers.length > 0 ? higherTiers[0] : availableTiers[0];
       }
@@ -490,17 +659,10 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
 
     const candidates = vendorsByTier[actualTier] || [];
     if (candidates.length === 0) {
-      // Fallback a cualquier asesora si por alguna razón falla la agrupación
       const fallback = activeAdvisors[0];
-      await sql`
-        UPDATE public.users
-        SET leads_recibidos_hoy = COALESCE(leads_recibidos_hoy, 0) + 1
-        WHERE id = ${fallback.id}
-      `;
-      return fallback.id;
+      return { candidato_actual: fallback.id, candidatos_nivel: [fallback.id], actualTier };
     }
 
-    // Ordenar candidatos por leads_recibidos_hoy ascendente
     candidates.sort((a, b) => {
       const aLeads = a.leads_recibidos_hoy ?? 0;
       const bLeads = b.leads_recibidos_hoy ?? 0;
@@ -508,24 +670,18 @@ async function rotateAndAssignLead(sql: NeonQueryFunction<false, false>): Promis
     });
 
     const chosenAdvisor = candidates[0];
-
-    // 5. Asignar e incrementar
-    await sql`
-      UPDATE public.users
-      SET leads_recibidos_hoy = COALESCE(leads_recibidos_hoy, 0) + 1
-      WHERE id = ${chosenAdvisor.id}
-    `;
-
-    // (El índice ya se reservó de forma atómica en el paso 3b — no se reescribe acá.)
-
-    console.log(`🎫 [Rotación Leads] Lead asignado a ${chosenAdvisor.name} (Tier ${actualTier}, Hoy: ${(chosenAdvisor.leads_recibidos_hoy ?? 0) + 1})`);
-    return chosenAdvisor.id;
+    return {
+      candidato_actual: chosenAdvisor.id,
+      candidatos_nivel: [chosenAdvisor.id],
+      actualTier
+    };
   } catch (error) {
-    console.error("❌ Error en rotateAndAssignLead:", error);
-    // Fallback seguro a la primera asesora
+    console.error("❌ Error en rotateAndSelectCandidate:", error);
     const fallback = await sql`
       SELECT id FROM public.users WHERE role = 'asesor' LIMIT 1
     `;
-    return fallback.length > 0 ? fallback[0].id : null;
+    const fallbackId = fallback.length > 0 ? fallback[0].id : null;
+    return { candidato_actual: fallbackId, candidatos_nivel: fallbackId ? [fallbackId] : [], actualTier: 1 };
   }
 }
+

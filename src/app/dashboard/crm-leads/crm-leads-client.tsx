@@ -1247,6 +1247,40 @@ function ChatPane({
     setShowTemplateModal(false);
   };
 
+  const handleAcceptLeadInCrm = async (leadId: string) => {
+    try {
+      const res = await fetch(`/api/crm/leads/${leadId}/atender`, { method: "POST" });
+      const result = await res.json();
+      if (result.success) {
+        mostrarToast("Prospecto reclamado con éxito.", "exito");
+        loadLeadDetails();
+        onRefreshLeads();
+      } else {
+        mostrarToast(result.message || "No se pudo reclamar el prospecto.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      mostrarToast("Error al conectar con el servidor.", "error");
+    }
+  };
+
+  const handleSkipLeadInCrm = async (leadId: string) => {
+    try {
+      const res = await fetch(`/api/crm/leads/${leadId}/pasar`, { method: "POST" });
+      const result = await res.json();
+      if (result.success) {
+        mostrarToast("Turno omitido.", "exito");
+        onCloseChat();
+        onRefreshLeads();
+      } else {
+        mostrarToast(result.message || "No se pudo omitir el turno.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      mostrarToast("Error al omitir el turno.", "error");
+    }
+  };
+
   // Cambiar chatbot activo
   const handleToggleChatbot = async (active: boolean) => {
     if (!lead || togglingChatbot) return;
@@ -1594,6 +1628,32 @@ function ChatPane({
           {showRecording ? (
             <div className="bg-gray-100/80 px-4 py-2 flex items-center w-full border border-gray-200 rounded-xl">
               <AudioRecorder onSend={handleSendAudio} onCancel={() => setShowRecording(false)} />
+            </div>
+          ) : lead?.estado_asignacion === "en_cola" ? (
+            <div className="bg-amber-50 border border-amber-200/80 rounded-xl p-3.5 flex flex-col md:flex-row items-center justify-between gap-3 text-xs w-full">
+              <div className="flex items-center gap-2 text-amber-800 font-bold">
+                <span className="text-base shrink-0">🎫</span>
+                <span>Este prospecto está en cola de reparto. Debes atenderlo para poder enviar mensajes.</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {lead.candidato_actual === sessionUser.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleSkipLeadInCrm(lead.id)}
+                    className="px-3.5 py-1.5 bg-gray-250 hover:bg-gray-350 text-gray-750 font-black rounded-lg active:scale-95 transition-all cursor-pointer uppercase text-[10px]"
+                  >
+                    Pasar
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleAcceptLeadInCrm(lead.id)}
+                  className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-black rounded-lg active:scale-95 transition-all shadow-xs flex items-center gap-1 cursor-pointer uppercase text-[10px]"
+                >
+                  <FiCheck strokeWidth={3} size={13} />
+                  Atender
+                </button>
+              </div>
             </div>
           ) : (
             <form onSubmit={(e) => handleSendMessage(e)} className="flex items-end gap-2 w-full pt-1 px-1 pb-1">
