@@ -434,6 +434,42 @@ Antes de empezar cualquier tarea:
 **Meta:** hay **UNA sola cuenta personal** (la de Antonio, "Toñito") administrando los dos portfolios —
 crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y arriesga bloquear ambas.
 
+### IDs de Meta / WhatsApp (identificadores, NO son secretos)
+
+**Comunes / App**
+
+| Qué | ID |
+|---|---|
+| Portfolio **TONIO DAT** (RUC 20 / Transavic) | `1324982862317136` |
+| Portfolio **TONIO LADT** (RUC 10 / Avícola de Tony) | `2200578807071141` |
+| **App de Meta for Developers** "Transavic CRM" (uso propio, ligada a TONIO DAT) | `1043268678158460` |
+
+**🛵 TRANSAVIC — RUC 20** (env vars `WHATSAPP_TRA_*`)
+
+| Qué | ID |
+|---|---|
+| **WABA del CRM** "Transavic" → `WHATSAPP_TRA_WABA_ID` | `883642441471852` |
+| └ número del CRM **+51 960 666 114** → `WHATSAPP_TRA_PHONE_NUMBER_ID` | `1181655271701439` |
+| WABA **"Transavic20"** — ⚠️ *coexistence, del número de uso NORMAL de Antonio, **NO tocar*** | `591728093936452` |
+| └ número +51 936 889 205 — **uso personal, NO es el del CRM** | `694240710444221` |
+
+**🏪 LA AVÍCOLA DE TONY — RUC 10** (env vars `WHATSAPP_AVI_*`) — *pendiente*
+
+| Qué | ID |
+|---|---|
+| WABA del CRM → `WHATSAPP_AVI_WABA_ID` | *pendiente* |
+| └ número del CRM → `WHATSAPP_AVI_PHONE_NUMBER_ID` | *pendiente* |
+
+> Bloqueado hasta que pase la **verificación del RUC 10** (motivo del rechazo: la razón social
+> `RESURRECCION GAMARRA TONIO` debe aparecer en `laavicoladetony.com`) y se le cree su **Página de
+> Facebook** (TONIO LADT tiene 0 páginas, y CTWA la exige). Tendrá su **propia WABA y su propio
+> número** — una WABA no cruza portfolios. Ver gotcha #52.
+
+> ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User) ni ninguna
+> credencial. Esos van SOLO a Vercel y a los archivos gitignored (`.env.local`,
+> `CREDENCIALES-PRODUCCION.local.md`), igual que las `SUNAT_*`. Los IDs de arriba sí son públicos
+> (aparecen en URLs) y se documentan a propósito para no volver a buscarlos.
+
 ---
 
 ## 16. Mapa de archivos del Asistente IA y SUNAT
