@@ -87,6 +87,7 @@ Definidas en `.env` (no comiteado). Las críticas:
 | `BASE_LATITUDE`, `BASE_LONGITUDE` | Fallback de ubicación del almacén; la fuente real es la tabla `settings.base_location` |
 | `GEMINI_API_KEY` | Gemini Flash Latest para módulo de IA comercial (Fase C). Cuenta dedicada `transavicdev@gmail.com` (project 88126347805) — separada de otros proyectos personales |
 | `GROQ_API_KEY`, `GROQ_MODEL` | **Respaldo de IA** cuando Gemini falla (429 u otro). `callIA()` (`lib/gemini.ts`) reintenta con Groq (free tier, API OpenAI-compatible) si `GROQ_API_KEY` está; sin ella, no hay respaldo (todo igual que antes). `GROQ_MODEL` opcional, default `llama-3.3-70b-versatile`. Crear key en console.groq.com. **Configurar también en Vercel.** Groq recibe los mismos prompts ya anonimizados que Gemini. |
+| `MISTRAL_API_KEY`, `MISTRAL_MODEL` | **Respaldo adicional de IA** si Gemini y Groq fallan. `callIA()` (`lib/gemini.ts`) reintenta con Mistral (modelo default `mistral-small-latest`) si `MISTRAL_API_KEY` está. Clave de la cuenta dedicada `transavicdev@gmail.com`. **Configurar también en Vercel.** |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP para enviar comprobantes por correo (Gmail con app password, SendGrid, Mailgun, etc.) |
 | `SMTP_FROM_NAME`, `SMTP_FROM_EMAIL` | Override de remitente del correo (default name="Transavic", email=SMTP_USER) |
 | `APISPERU_TOKEN` | Token de apisperu.com (cuenta `transavicdev@gmail.com`) para consultar RUC/DNI y auto-llenar datos del cliente (form de clientes, módulo emitir comprobante). Solo server-side vía `/api/consulta-documento`. **Configurar también en Vercel.** |
@@ -229,6 +230,7 @@ Pendiente ──asignar──▶ Asignado ──iniciar viaje──▶ En_Camino
 - **Naming de archivos:** `kebab-case.tsx` (`dashboard-content.tsx`), excepto componentes compartidos (`PedidoForm.tsx`, `DashboardLayout.tsx`).
 - **No usar emojis en strings de Paragraph de reportlab** (cuando generes PDFs) — usar texto plano.
 - **Verificación segura de tipos:** Para verificar tipos en desarrollo local sin romper el caché de Webpack del usuario (`npm run dev`), utilizar SIEMPRE `npx tsc --noEmit` en lugar de `npm run build`.
+- **Mensajes para WhatsApp (Soporte):** Siempre que el usuario pida redactar una respuesta o mensaje para enviar por WhatsApp (a Antonio, a las asesoras o al grupo de soporte), se debe entregar listo para copiar y pegar dentro de un bloque de código markdown. El mensaje debe ser corto, sumamente directo, fácil de entender (bajo la filosofía de "No me hagas pensar") e incluir el formato nativo de WhatsApp (`*` para negritas, etc.) y emojis de forma natural.
 
 ---
 

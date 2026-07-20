@@ -12,7 +12,7 @@ import { toJpeg } from "html-to-image";
 import type { GuiaAvicolaData } from "@/lib/avicola/types";
 import { formatNumeroGuia } from "@/lib/correlativos";
 import TicketGuiaAvicola from "./ticket-guia-avicola";
-import { FiDownload, FiShare2, FiX, FiLoader, FiCheck } from "react-icons/fi";
+import { FiDownload, FiShare2, FiX, FiLoader, FiCheck, FiPrinter } from "react-icons/fi";
 
 /** Clave de localStorage con la última opción elegida por el usuario. */
 const CLAVE_OPCION_GUIA = "transavic_avicola_opcion_guia";
@@ -296,6 +296,14 @@ export default function GuiaAvicolaModal({ data, onClose }: GuiaAvicolaModalProp
                 >
                   <FiDownload className="mr-2" /> Descargar
                 </button>
+                <a
+                  href={`/avicola/ventas/${data.venta_id}/imprimir`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 bg-white border-2 border-gray-300 text-gray-800 font-bold py-3 px-4 rounded-md hover:bg-gray-50 transition-colors flex items-center justify-center"
+                >
+                  <FiPrinter className="mr-2" /> Imprimir
+                </a>
                 <button
                   onClick={onClose}
                   className="flex-1 bg-gray-800 text-white font-bold py-3 px-4 rounded-md hover:bg-gray-900 transition-colors flex items-center justify-center"

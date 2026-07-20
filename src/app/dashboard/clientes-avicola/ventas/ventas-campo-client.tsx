@@ -19,6 +19,7 @@ import {
   FiRefreshCw,
   FiShoppingBag,
   FiX,
+  FiPrinter,
 } from "react-icons/fi";
 import { OPERACIONES } from "@/lib/operaciones-venta";
 
@@ -507,6 +508,16 @@ export default function VentasCampoClient() {
                     </div>
 
                     <div className="flex flex-wrap gap-2 sm:flex-shrink-0 sm:justify-end">
+                      {!v.anulada && (
+                        <a
+                          href={`/avicola/ventas/${v.id}/imprimir`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50 sm:flex-none"
+                        >
+                          <FiPrinter size={14} /> Imprimir Orden
+                        </a>
+                      )}
                       {v.comprobante_id ? (
                         <>
                           <Link

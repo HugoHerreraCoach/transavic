@@ -17,6 +17,7 @@ import {
   FiEdit2,
   FiFileText,
   FiLoader,
+  FiPrinter,
   FiMapPin,
   FiMessageCircle,
   FiPaperclip,
@@ -714,6 +715,15 @@ export default function FichaAvicolaClient({ clienteId }: { clienteId: string })
                   )}
                   Enviar guía
                 </button>
+                <a
+                  href={`/avicola/ventas/${v.id}/imprimir`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-12 w-full rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center justify-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <FiPrinter size={16} />
+                  Imprimir Orden
+                </a>
               </div>
             </div>
           ))}
@@ -982,6 +992,15 @@ function MovimientoRow({
                   )}
                   Reenviar guía
                 </button>
+                <a
+                  href={`/avicola/ventas/${mov.id}/imprimir`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-10 px-4 rounded-2xl bg-white border-2 border-gray-200 text-gray-700 text-sm font-bold flex items-center gap-1.5 active:scale-95 transition-transform"
+                >
+                  <FiPrinter size={16} />
+                  Imprimir
+                </a>
               </>
             )}
             {!esVenta && !mov.anulado && (

@@ -176,11 +176,83 @@ export async function callGroq(
   }
 }
 
+
+// ════════════════════════════════════════════════════════════════════════
+// Respaldo adicional: Mistral (API compatible con OpenAI/Mistral).
+// Se usa SOLO cuando Gemini y Groq fallan (o no están configurados).
+// ════════════════════════════════════════════════════════════════════════
+
+const MISTRAL_ENDPOINT = "https://api.mistral.ai/v1/chat/completions";
+
 /**
- * Orquestador con respaldo automático: intenta Gemini y, si falla (429 u otro
- * error), reintenta con Groq cuando hay GROQ_API_KEY configurada. Sin esa key,
- * se comporta idéntico a callGemini (no es disruptivo). Si AMBOS fallan,
- * propaga el error → el insight degrada a "datos crudos abajo" como hoy.
+ * Llama a Mistral (Chat Completions). Misma firma/retorno que
+ * callGemini para que sea intercambiable. Lanza Error legible si falla.
+ */
+export async function callMistral(
+  prompt: string,
+  opts: GeminiOptions = {}
+): Promise<GeminiResult> {
+  const apiKey = process.env.MISTRAL_API_KEY;
+  if (!apiKey) {
+    throw new Error("MISTRAL_API_KEY no está definida en el entorno");
+  }
+
+  const {
+    temperature = 0.4,
+    maxOutputTokens = 600,
+    timeoutMs = 15000,
+  } = opts;
+  const model = process.env.MISTRAL_MODEL || "mistral-small-latest";
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(MISTRAL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        temperature,
+        max_tokens: maxOutputTokens,
+      }),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Mistral API ${res.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) {
+      throw new Error("Mistral no devolvió texto en la respuesta");
+    }
+
+    return {
+      text: text.trim(),
+      promptTokens: data?.usage?.prompt_tokens ?? 0,
+      responseTokens: data?.usage?.completion_tokens ?? 0,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Mistral timeout (>${timeoutMs}ms) — Mistral sobrecargado o sin red`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Orquestador con respaldo automático: intenta Gemini y, si falla,
+ * reintenta con Groq (si tiene key), y si falla, reintenta con Mistral (si tiene key).
+ * Si todos fallan o no están configurados, propaga el error original de Gemini.
  */
 export async function callIA(
   prompt: string,
@@ -188,14 +260,32 @@ export async function callIA(
 ): Promise<GeminiResult> {
   try {
     return await callGemini(prompt, opts);
-  } catch (err) {
+  } catch (geminiErr) {
+    console.warn(
+      `Gemini falló (${(geminiErr as Error).message.slice(0, 60)}); intentando respaldo…`
+    );
+
     if (process.env.GROQ_API_KEY) {
-      console.warn(
-        `Gemini falló (${(err as Error).message.slice(0, 60)}); usando Groq de respaldo…`
-      );
-      return await callGroq(prompt, opts);
+      try {
+        return await callGroq(prompt, opts);
+      } catch (groqErr) {
+        console.warn(
+          `Groq falló (${(groqErr as Error).message.slice(0, 60)}); intentando Mistral…`
+        );
+      }
     }
-    throw err;
+
+    if (process.env.MISTRAL_API_KEY) {
+      try {
+        return await callMistral(prompt, opts);
+      } catch (mistralErr) {
+        console.warn(
+          `Mistral falló (${(mistralErr as Error).message.slice(0, 60)})`
+        );
+      }
+    }
+
+    throw geminiErr;
   }
 }
 
