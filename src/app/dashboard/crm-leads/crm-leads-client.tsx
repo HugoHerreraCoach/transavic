@@ -1035,6 +1035,7 @@ function ChatPane({
   const [guardandoFicha, setGuardandoFicha] = useState(false);
   const [togglingChatbot, setTogglingChatbot] = useState(false);
   const { mostrarToast, toasts } = useToast();
+  const [nombreTemp, setNombreTemp] = useState("");
   const [notesTemp, setNotesTemp] = useState("");
   const [negocioTemp, setNegocioTemp] = useState("");
   const [ciudadTemp, setCiudadTemp] = useState("");
@@ -1055,6 +1056,7 @@ function ChatPane({
       if (leadRes.ok) {
         const leadData = await leadRes.json();
         setLead(leadData.lead);
+        setNombreTemp(leadData.lead?.nombre || "");
         setNotesTemp(leadData.lead?.notas || "");
         setNegocioTemp(leadData.lead?.negocio || "");
         setCiudadTemp(leadData.lead?.ciudad || "");
@@ -1079,7 +1081,10 @@ function ChatPane({
   // re-arranca su efecto si cambia `enabled`, no si cambia `leadId`, así que sin
   // esto el chat recién elegido se quedaría en blanco hasta el siguiente tick.
   useEffect(() => {
-    if (leadId) loadLeadDetails();
+    if (leadId) {
+      setEditingNotes(false);
+      loadLeadDetails();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);
 
@@ -1301,6 +1306,7 @@ function ChatPane({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          nombre: nombreTemp,
           notas: notesTemp,
           negocio: negocioTemp,
           ciudad: ciudadTemp,
@@ -1308,7 +1314,7 @@ function ChatPane({
       });
 
       if (res.ok) {
-        setLead({ ...lead, notas: notesTemp, negocio: negocioTemp, ciudad: ciudadTemp });
+        setLead({ ...lead, nombre: nombreTemp, notas: notesTemp, negocio: negocioTemp, ciudad: ciudadTemp });
         setEditingNotes(false);
         onRefreshLeads();
       }
@@ -1321,6 +1327,7 @@ function ChatPane({
 
   // Descartar cambios de la ficha y salir del modo edición
   const handleCancelDetails = () => {
+    setNombreTemp(lead?.nombre || "");
     setNotesTemp(lead?.notas || "");
     setNegocioTemp(lead?.negocio || "");
     setCiudadTemp(lead?.ciudad || "");
@@ -1704,7 +1711,16 @@ function ChatPane({
             <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100/50 space-y-2.5">
               <div className="space-y-1">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Nombre</span>
-                <span className="font-bold text-gray-800 text-xs block">{lead?.nombre}</span>
+                {editingNotes ? (
+                  <input
+                    type="text"
+                    value={nombreTemp}
+                    onChange={(e) => setNombreTemp(e.target.value)}
+                    className="w-full border border-indigo-500 bg-white text-gray-800 rounded-lg px-2.5 py-1 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 font-bold"
+                  />
+                ) : (
+                  <span className="font-bold text-gray-800 text-xs block">{lead?.nombre}</span>
+                )}
               </div>
               <div className="space-y-1">
                 <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider block">Teléfono / WhatsApp</span>

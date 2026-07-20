@@ -95,12 +95,21 @@ Definidas en `.env` (no comiteado). Las críticas:
 | `CRON_SECRET` | Secreto que protege los **5 cron jobs** de Vercel (`facturas-vencidas`, `recordatorios-asesoras`, `resumen-diario-sunat`, `daily-digest-admin`, `repartidores-oscuros`). Sin él devuelven **503**. Vercel lo manda como `Authorization: Bearer <CRON_SECRET>`. **Obligatorio en Vercel.** El cron de repartidores oscuros corre cada 10 min (`*/10` en `vercel.json`). Vercel Pro permite hasta 40 crons. |
 | `AUTO_EMITIR_COMPROBANTE` | Flag opcional (`"true"`) para emitir el comprobante automáticamente al cerrar un pedido. Si no está o es falso, la emisión es manual desde `/dashboard/comprobantes`. |
 | `SUNAT_TRA_NOMBRE_COMERCIAL`, `SUNAT_TRA_DEPARTAMENTO`, `SUNAT_TRA_PROVINCIA`, `SUNAT_TRA_DISTRITO` (idem `SUNAT_AVI_*`) | Override del domicilio fiscal del emisor en el XML. El default del `DATOS_EMISOR_MAP` es placeholder ("LA VICTORIA"); en producción **conviene** setear el distrito/provincia/departamento reales. La dirección y el `UBIGEO` (lo legalmente crítico) ya se overridean con `SUNAT_*_DIRECCION` / `SUNAT_*_UBIGEO`. Además **`SUNAT_*_URBANIZACION`** → `cbc:CitySubdivisionName`: **vacío por defecto = se OMITE** del XML (un valor vacío dispara la observación SUNAT 4095); setealo solo si la ficha RUC tiene urbanización. |
+| `FIREBASE_PROJECT_ID` | ID del proyecto Firebase (Admin SDK en servidor) |
+| `FIREBASE_CLIENT_EMAIL` | Email de la cuenta de servicio de Firebase Admin SDK |
+| `FIREBASE_PRIVATE_KEY` | Clave privada del certificado Firebase Admin SDK |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | API Key pública de Firebase (para cliente) |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Dominio de autenticación de Firebase (cliente) |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | Bucket de almacenamiento de Firebase |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | Sender ID de mensajería Firebase |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | ID de la App Web en Firebase |
+| `NEXT_PUBLIC_FIREBASE_VAPID_KEY` | Par de claves Push Web (VAPID Key) pública para notificaciones FCM |
 
 `ADMIN_USER`/`ADMIN_PASSWORD` están en `.env` pero **no se usan en código activo** (legacy del scaffolding inicial). La auth real lee de la tabla `users`.
 
-**`.env.local` (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Sigue en `SUNAT_ENVIRONMENT=beta` (con `MODDATOS`) para testing local.
+**.env.local (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Sigue en `SUNAT_ENVIRONMENT=beta` (con `MODDATOS`) para testing local.
 
-**Producción (Vercel) ya tiene TODAS estas vars configuradas (30 may 2026):** las 24 del lanzamiento — todas las `SUNAT_*` reales (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET` — además de las que ya existían (DB, Auth, Maps). Se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
+**Producción (Vercel) ya tiene TODAS estas vars configuradas (30 may 2026):** las 24 del lanzamiento — todas las `SUNAT_*` reales (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET`, además de **todas las credenciales y llaves públicas de Firebase/FCM** provistas para notificaciones automáticas. Se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
 
 ---
 
