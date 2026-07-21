@@ -39,6 +39,7 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 | 25 | **[Clientes y cobranzas de Planta](./25-clientes-cobranzas-planta.md)** | Tocar directorio, crédito, abonos o relación POS↔CPE de Planta. |
 | 26 | **[Proveedores y cuentas por pagar](./26-proveedores-cuentas-por-pagar.md)** | Tocar deudas, pagos, aplicaciones, anticipos o estado de cuenta de proveedores. |
 | 27 | **[Conciliación de Ventas de Ejecutivas](./27-conciliacion-ventas-ejecutivas.md)** | Cambiar el indicador gerencial, su detalle o la prevención de pedidos duplicados. |
+| 28 | **[Alta de WhatsApp por marca](./28-alta-whatsapp-por-marca.md)** | Conectar el número de WhatsApp de una marca al CRM: portfolio, app, WABA, número, token y webhook. |
 
 ---
 
@@ -60,6 +61,8 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 | Pago, anticipo o PDF de proveedor | 26 → 10 → 09 → 23 → 24 |
 | Reprogramar desde Producción | 06 → 04 → 16 → 23 → 24 |
 | Detalle o costo histórico POS | 10 → 25 → 02 → 24 |
+| Conectar el WhatsApp de una marca | 28 → 15 → 16 → 24 |
+| CRM de leads o chatbot | 15 → 28 → 16 |
 | Roles, ruta o sidebar | 03 → 23 → documento temático |
 | Desplegar a producción | 20 → 24 → 02 → 19 |
 

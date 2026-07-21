@@ -62,6 +62,10 @@ El chatbot del CRM de leads reutiliza el motor Gemini/Groq de este módulo y se 
 - `src/lib/chatbot/bot-orchestrator.ts` — lead scoped por `(telefono, empresa)`, envía la respuesta del bot de verdad.
 - `src/app/api/crm/leads/[id]/mensajes/route.ts` — envío de la asesora (texto/media/plantilla) con **gate de ventana 24h** (409 si está cerrada; solo plantilla la reabre).
 
+> 📗 **El runbook completo del alta de un número (portfolio, app, WABA, número, token, webhook, errores
+> conocidos y estado real de cada marca) vive en [28 · Alta de WhatsApp por marca](./28-alta-whatsapp-por-marca.md).**
+> Aquí queda solo el resumen y el checklist.
+
 **Una app de Meta POR MARCA (verificado 20 jul 2026).** Una app pertenece a un solo Business Portfolio;
 para operar WABAs de otro portfolio Meta exige **Advanced access** de `whatsapp_business_management`
 (App Review / Tech Provider) y sin él **toda llamada devuelve error 200**. Por eso el RUC 10 lleva su
