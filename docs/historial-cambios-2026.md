@@ -8,6 +8,95 @@
 
 ---
 
+## 20 jul 2026 (tarde) — Segunda marca en WhatsApp: el código listo para el RUC 10
+
+**Contexto (pedido de Hugo):** Transavic (RUC 20) ya opera en WhatsApp desde el 19 jul. Ahora toca
+**La Avícola de Tony (RUC 10)**, cuyo portfolio **TONIO LADT** (`2200578807071141`) ya fue
+**verificado**, con el número **+51 936 303 850**. La duda concreta: *¿se agrega la cuenta de WhatsApp
+al portafolio y luego se une a la app de Meta for Developers?*
+
+### El hallazgo que cambió el plan: UNA APP POR PORTFOLIO
+Investigación con 32 agentes (7 frentes + verificación adversarial; 20 afirmaciones confirmadas contra
+doc oficial de Meta, 4 refutadas). Conclusión:
+
+> **La app "Transavic CRM" (`1043268678158460`) NO puede operar la WABA del RUC 10.** Es propiedad de
+> TONIO DAT y Meta exige **Advanced access** del permiso `whatsapp_business_management` para que una
+> app acceda a WABAs *"not owned by your business"*; sin él **toda llamada devuelve error 200**. Ese
+> acceso se obtiene por App Review dentro del programa Tech Provider (pensado para quien atiende
+> negocios ajenos); para uso propio Meta deriva a la guía normal de Cloud API. **Dos portfolios del
+> mismo dueño humano son "negocios distintos" para Meta** → La Avícola de Tony necesita **su propia
+> app**, su propia WABA, su propio System User y su propio token.
+
+Se **descartó** crear la WABA de Avícola dentro de TONIO DAT (funcionaría con una sola app, pero mezcla
+las dos personas jurídicas, desaprovecha la verificación del RUC 10, ata display name/facturación al
+RUC 20 y **es irreversible**: una WABA no se migra entre portfolios).
+
+**Consecuencia técnica:** dos apps = **dos App Secrets**. El webhook sigue siendo UNO (misma URL, mismo
+`META_VERIFY_TOKEN`, que solo interviene en el handshake GET), pero Meta firma cada POST con el secret
+**de la app que entrega el evento**. Con un solo `META_APP_SECRET` todo el tráfico de Avícola se habría
+rechazado con **401 en silencio**.
+
+### Otras correcciones a la doc previa (gotcha #52)
+- *"Las plantillas proactivas exigen verificación desde ene-2026"* → **no confirmable** en doc oficial.
+  Lo verificable es que la verificación sube **cupos** (250 → 2 000 destinatarios únicos/24 h). Lo único
+  oficial fechado el 1-ene-2026 es un ajuste **tarifario** por país.
+- *"La ventana de 72 h del CTWA permite texto libre"* → **no**: la de 72 h es de **gratuidad**; la de
+  **24 h** sigue gobernando *qué* se puede enviar (*"if the customer service window closes, you will only
+  be able to send template messages"*). El 409 "fuera de ventana" del CRM debe seguir atado a las 24 h.
+- Los **límites de mensajería son por portfolio** (desde 7-oct-2025): LADT arranca en 250 aunque
+  Transavic esté escalada. No hereda nada.
+
+### Entregable (código)
+1. **Webhook multi-secret** (`api/webhooks/meta/route.ts`): `appSecretsConfigurados()` reúne
+   `META_APP_SECRET` + `META_APP_SECRET_AVI` y `firmaValida()` acepta si **alguno** valida el HMAC del
+   body crudo (con `timingSafeEqual`). Aditivo — Transavic no cambia. De yapa permite **rotar un secret
+   sin downtime**. El payload de WhatsApp no trae `app_id`: la firma es el único discriminador válido.
+2. **Rotación de asesoras POR MARCA** (`bot-orchestrator.ts`): `rotateAndSelectCandidate(sql, empresa)`.
+   El patrón y la hora de reset siguen compartidos (es lo que administra la UI), pero
+   `sequenceIndex`/`lastResetDate` viven en `porMarca.tra` / `porMarca.avi` dentro del mismo JSONB;
+   la reserva del turno sigue siendo **un solo `UPDATE … jsonb_set … RETURNING`** (gotcha #56b) y la
+   siembra copia el índice de la raíz para "tra" (no salta de turno con el despliegue). El **desempate
+   por carga del día se deriva de `leads`** filtrando por empresa, en vez de `users.leads_recibidos_hoy`
+   (contador global que se conserva intacto para la pantalla de rotación y `/atender`).
+3. **Idempotencia real por `message.id`**: el `SELECT`+`INSERT` (check-then-act) permitía que dos
+   reintentos concurrentes de Meta pasaran ambos y **el bot respondiera dos veces**. Ahora
+   `INSERT … ON CONFLICT (whatsapp_message_id) WHERE whatsapp_message_id IS NOT NULL DO NOTHING
+   RETURNING id` apoyado en el índice único parcial nuevo.
+4. **La bandeja abre el lead del push** (`crm-leads-client.tsx`): lee `?leadId=` de la URL, consulta el
+   lead, **posiciona el filtro en SU marca** y abre el chat (antes arrancaba fija en Transavic y un lead
+   de Avícola quedaba invisible). Se lee de `window.location` para no forzar un Suspense boundary.
+5. **Bug de fecha encontrado durante las pruebas**: `todayDateStr` salía de `toISOString()` sobre una
+   fecha ya convertida a Lima → de noche guardaba **la fecha de MAÑANA** y el reset diario se saltaba una
+   jornada. Ahora `toLocaleDateString("en-CA", { timeZone: "America/Lima" })`.
+
+**Migración:** `scripts/migrate-crm-idempotencia-wamid-2026-07-20.sql` (+ rollback) — índice **único
+parcial** `ux_lead_mensajes_wamid` y baja del `idx_lead_mensajes_wamid` redundante. El saneo previo de
+duplicados **no borra filas**: pone su wamid en NULL (quedan fuera del índice parcial). Aplicada en
+`dev-hugo` y en **producción** (0 duplicados en ambas).
+
+### Verificación (dev server contra `dev-hugo`, con secrets de prueba)
+`tsc --noEmit` limpio. Seis POST simulados: (1) Transavic firmado con el secret TRA → 200 y lead
+Transavic; (2) Avícola firmado con el secret AVI → 200 y lead Avícola **con el mismo teléfono**
+(ruteo por `phone_number_id` ✔); (3) firma inválida → **401**; (4) cuerpo de Avícola firmado con el
+secret de Transavic → 200 (firma válida de una app conocida); (5) reintento del mismo `message.id` →
+200 **sin duplicar mensaje ni respuesta del bot**; (6) `phone_number_id` desconocido → ignorado.
+Rotación: 3 leads nuevos de Avícola movieron `avi.sequenceIndex` 1 → 4 dejando `tra` en 1, y se
+repartieron entre 3 asesoras distintas. Datos de prueba borrados y `.env.local` restaurado.
+
+**Descubierto de paso:** la branch `dev-hugo` no tenía las columnas del "golden ticket"
+(`estado_asignacion`, `candidato_actual`, `candidatos_nivel`…) — cualquier lead nuevo reventaba ahí.
+Se alineó aplicando `scripts/migrate-lead-claim.sql` (producción sí las tenía).
+
+### Lo que falta (trámite de Antonio en Meta, runbook completo en el plan)
+Crear la WABA en TONIO LADT → método de pago → app propia *"Avicola de Tony CRM"* → alta y verificación
+del número → System User propio con token permanente → `POST /{phone_number_id}/register` con el PIN
+(**solo existe por API**; máx. 10 intentos por 72 h) → `POST /{waba_id}/subscribed_apps` → webhook con el
+**mismo** `META_VERIFY_TOKEN` → cargar en Vercel `META_APP_SECRET_AVI`, `WHATSAPP_AVI_PHONE_NUMBER_ID`,
+`WHATSAPP_AVI_TOKEN`, `WHATSAPP_AVI_WABA_ID` y **redeploy** (sin él la marca queda en modo mock sin
+avisar). Para publicidad hace falta además una **Página de Facebook** dentro de LADT (hoy tiene 0).
+
+---
+
 ## 20 jul 2026 — CRM: rediseño claro, feedback del bot, 4 bugs y estudio del CRM de Conexipema
 
 **Contexto (pedido de Hugo):** mejorar la interfaz de `/dashboard/crm-leads` (se veía oscura),

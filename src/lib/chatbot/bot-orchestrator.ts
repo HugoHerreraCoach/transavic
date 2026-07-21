@@ -148,7 +148,7 @@ export async function handleInboundMessage(
 
   if (leadsRows.length === 0) {
     // Asignar mediante rotación dinámica (Golden Ticket)
-    const rotationRes = await rotateAndSelectCandidate(sql);
+    const rotationRes = await rotateAndSelectCandidate(sql, empresa);
     let insertLead;
 
     if (rotationRes && rotationRes.candidato_actual) {
@@ -217,23 +217,26 @@ export async function handleInboundMessage(
     `;
   }
 
-  // 2b. Idempotencia: si este wamid ya se registró (reintento de Meta), no reprocesar.
-  if (opts.whatsappMessageId) {
-    const dup = await sql`
-      SELECT 1 FROM public.lead_mensajes WHERE whatsapp_message_id = ${opts.whatsappMessageId} LIMIT 1
-    `;
-    if (dup.length > 0) return null;
-  }
-
   // 3. Registrar el mensaje entrante. Para media guardamos la dataURL en body (así la
   //    renderiza la UI igual que la saliente) y conservamos el tipo real.
+  //
+  //    IDEMPOTENCIA: Meta reintenta el webhook, y dos reintentos concurrentes pasarían
+  //    ambos un SELECT previo (check-then-act) haciendo que el bot responda dos veces.
+  //    La deduplicación la resuelve el índice único parcial ux_lead_mensajes_wamid:
+  //    si el INSERT no devuelve fila, este wamid ya estaba registrado → no reprocesar.
   const esMedia = opts.tipo && opts.tipo !== "text" && !!opts.mediaDataUrl;
   const bodyGuardar = esMedia ? (opts.mediaDataUrl as string) : mensajeCuerpo;
   const tipoGuardar = esMedia ? (opts.tipo as string) : "text";
-  await sql`
+  const insertMensaje = await sql`
     INSERT INTO public.lead_mensajes (lead_id, sender, body, type, whatsapp_message_id)
     VALUES (${lead.id}, 'cliente', ${bodyGuardar}, ${tipoGuardar}, ${opts.whatsappMessageId ?? null})
+    ON CONFLICT (whatsapp_message_id) WHERE whatsapp_message_id IS NOT NULL DO NOTHING
+    RETURNING id
   `;
+  if (opts.whatsappMessageId && insertMensaje.length === 0) {
+    console.log(`↩️ [Meta Webhook] Reintento de ${opts.whatsappMessageId} ignorado (ya registrado).`);
+    return null;
+  }
 
   // 4. Si el chatbot está inactivo, no respondemos automáticamente
   if (!lead.chatbot_activo) {
@@ -563,12 +566,33 @@ export async function escalateLead(
   }
 }
 
-async function rotateAndSelectCandidate(sql: NeonQueryFunction<false, false>): Promise<RotationSelection> {
+/** Prefijo con el que se guarda el estado de rotación de cada marca en settings. */
+function slugMarcaRotacion(empresa: EmpresaWhatsApp): "tra" | "avi" {
+  return empresa === "Avícola de Tony" ? "avi" : "tra";
+}
+
+async function rotateAndSelectCandidate(
+  sql: NeonQueryFunction<false, false>,
+  empresa: EmpresaWhatsApp
+): Promise<RotationSelection> {
   try {
+    const slug = slugMarcaRotacion(empresa);
+
+    // Carga del día POR MARCA: se deriva de los leads de hoy (zona Lima) en vez de
+    // users.leads_recibidos_hoy, que es un contador GLOBAL compartido por las dos
+    // marcas (ese se conserva intacto: lo muestra y edita la pantalla de rotación y
+    // lo incrementa /api/crm/leads/[id]/atender).
     const activeAdvisors = (await sql`
-      SELECT id, name, orden_rotacion, leads_recibidos_hoy
-      FROM public.users
-      WHERE role = 'asesor' AND activo_rotacion = TRUE
+      SELECT u.id, u.name, u.orden_rotacion,
+             (
+               SELECT COUNT(*) FROM public.leads l
+               WHERE COALESCE(l.vendedor_id, l.candidato_actual) = u.id
+                 AND l.empresa = ${empresa}
+                 AND (l.created_at AT TIME ZONE 'America/Lima')::date
+                     = (NOW() AT TIME ZONE 'America/Lima')::date
+             )::int AS leads_recibidos_hoy
+      FROM public.users u
+      WHERE u.role = 'asesor' AND u.activo_rotacion = TRUE
     `) as AsesoraRotacion[];
 
     await sql`
@@ -584,46 +608,87 @@ async function rotateAndSelectCandidate(sql: NeonQueryFunction<false, false>): P
     const peruTime = new Date().toLocaleString("en-US", { timeZone: "America/Lima" });
     const peruDate = new Date(peruTime);
     const currentHour = peruDate.getHours();
-    const todayDateStr = peruDate.toISOString().split('T')[0];
-    const lastResetDate = config.lastResetDate;
+    // La fecha se toma DIRECTO en zona Lima ("en-CA" ya formatea YYYY-MM-DD). Con
+    // toISOString() sobre peruDate se volvía a aplicar el offset del servidor y de
+    // noche guardaba la fecha de MAÑANA, con lo que el reset diario se saltaba un día.
+    const todayDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Lima" });
     const dailyResetHour = config.dailyResetHour ?? 8;
 
-    const shouldReset = currentHour >= dailyResetHour && lastResetDate !== todayDateStr;
-    if (shouldReset) {
+    // 1) Reset del contador GLOBAL visible (users.leads_recibidos_hoy): una sola vez
+    //    al día, lo dispare la marca que lo dispare. Su fecha vive en la raíz.
+    const resetGlobal = currentHour >= dailyResetHour && config.lastResetDate !== todayDateStr;
+    if (resetGlobal) {
       console.log(`🔄 [Rotación Leads] Reseteando contadores diarios a las ${dailyResetHour}:00.`);
       await sql`
         UPDATE public.users
         SET leads_recibidos_hoy = 0
         WHERE role = 'asesor'
       `;
-      for (const adv of activeAdvisors) {
-        adv.leads_recibidos_hoy = 0;
-      }
+      await sql`
+        UPDATE public.settings
+        SET value = jsonb_set(value, '{lastResetDate}', to_jsonb(${todayDateStr}::text)),
+            updated_at = NOW()
+        WHERE key = 'crm_lead_distribution'
+      `;
     }
 
-    let currentIndex: number;
-    if (shouldReset) {
+    // 2) Estado de la SECUENCIA por marca: cada marca avanza su propio turno para que
+    //    los leads de una no consuman el patrón de la otra. El patrón y la hora de
+    //    reset siguen siendo compartidos (es lo que administra la UI de rotación).
+    //    Siembra: la primera vez, "tra" hereda el índice que venía en la raíz para no
+    //    saltar de turno con el despliegue.
+    const estadoMarca = config.porMarca?.[slug] as
+      | { sequenceIndex?: number; lastResetDate?: string | null }
+      | undefined;
+    const semilla = {
+      sequenceIndex: slug === "tra" ? (config.sequenceIndex ?? 0) : 0,
+      lastResetDate: slug === "tra" ? (config.lastResetDate ?? null) : null,
+    };
+    if (!estadoMarca) {
       await sql`
         UPDATE public.settings
         SET value = jsonb_set(
-              jsonb_set(value, '{sequenceIndex}', '1'::jsonb),
-              '{lastResetDate}', to_jsonb(${todayDateStr}::text)
+              value,
+              '{porMarca}',
+              COALESCE(value->'porMarca', '{}'::jsonb)
+                || jsonb_build_object(${slug}::text, ${JSON.stringify(semilla)}::jsonb)
+            ),
+            updated_at = NOW()
+        WHERE key = 'crm_lead_distribution'
+          AND value->'porMarca'->${slug}::text IS NULL
+      `;
+    }
+
+    const resetMarca =
+      currentHour >= dailyResetHour &&
+      (estadoMarca?.lastResetDate ?? semilla.lastResetDate) !== todayDateStr;
+
+    let currentIndex: number;
+    if (resetMarca) {
+      await sql`
+        UPDATE public.settings
+        SET value = jsonb_set(
+              value,
+              ARRAY['porMarca', ${slug}::text],
+              jsonb_build_object('sequenceIndex', 1, 'lastResetDate', ${todayDateStr}::text)
             ),
             updated_at = NOW()
         WHERE key = 'crm_lead_distribution'
       `;
       currentIndex = 0;
     } else {
+      // Reserva ATÓMICA del turno en UNA sola sentencia (gotcha #56b: con SELECT+UPDATE
+      // separados, dos WhatsApp del mismo segundo consumen el mismo índice).
       const reserva = await sql`
         UPDATE public.settings
         SET value = jsonb_set(
               value,
-              '{sequenceIndex}',
-              to_jsonb(COALESCE((value->>'sequenceIndex')::int, 0) + 1)
+              ARRAY['porMarca', ${slug}::text, 'sequenceIndex'],
+              to_jsonb(COALESCE((value->'porMarca'->${slug}::text->>'sequenceIndex')::int, 0) + 1)
             ),
             updated_at = NOW()
         WHERE key = 'crm_lead_distribution'
-        RETURNING COALESCE((value->>'sequenceIndex')::int, 1) - 1 AS indice
+        RETURNING COALESCE((value->'porMarca'->${slug}::text->>'sequenceIndex')::int, 1) - 1 AS indice
       `;
       currentIndex = reserva[0]?.indice ?? 0;
     }

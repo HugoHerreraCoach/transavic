@@ -225,6 +225,33 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
   // olvidada en segundo plano mantenía despierto el cómputo de Neon (ver el helper).
   usePollingVisible(fetchLeadsAndAsesores, 15000, { immediate: false });
 
+  // Abrir el chat que viene de una notificación push (?leadId=...). Sin esto la
+  // bandeja arranca siempre en la pestaña de Transavic y un lead de la otra marca
+  // queda invisible hasta que alguien cambie el filtro a mano. Se lee de
+  // window.location para no forzar un Suspense boundary con useSearchParams.
+  useEffect(() => {
+    const leadIdUrl = new URLSearchParams(window.location.search).get("leadId");
+    if (!leadIdUrl) return;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/crm/leads/${leadIdUrl}`);
+        if (res.ok) {
+          const data = await res.json();
+          // Posicionar el filtro en la marca del lead (si no, no aparece en la lista).
+          if (data.lead?.empresa) setSelectedEmpresa(data.lead.empresa);
+        }
+      } catch (e) {
+        console.error("No se pudo resolver el lead de la notificación:", e);
+      } finally {
+        setViewMode("chat");
+        setActiveLeadId(leadIdUrl);
+        // Limpiar el parámetro para que un refresh no reabra siempre el mismo chat.
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    })();
+  }, []);
+
   // Filtrar leads
   const filteredLeads = useMemo(() => {
     return leads.filter((l) => {

@@ -62,11 +62,19 @@ El chatbot del CRM de leads reutiliza el motor Gemini/Groq de este módulo y se 
 - `src/lib/chatbot/bot-orchestrator.ts` — lead scoped por `(telefono, empresa)`, envía la respuesta del bot de verdad.
 - `src/app/api/crm/leads/[id]/mensajes/route.ts` — envío de la asesora (texto/media/plantilla) con **gate de ventana 24h** (409 si está cerrada; solo plantilla la reabre).
 
+**Una app de Meta POR MARCA (verificado 20 jul 2026).** Una app pertenece a un solo Business Portfolio;
+para operar WABAs de otro portfolio Meta exige **Advanced access** de `whatsapp_business_management`
+(App Review / Tech Provider) y sin él **toda llamada devuelve error 200**. Por eso el RUC 10 lleva su
+propia app, su propia WABA, su propio System User y su propio token — la app "Transavic CRM" no sirve.
+El **webhook sí es compartido** (misma URL y mismo `META_VERIFY_TOKEN`), pero Meta firma cada POST con
+el App Secret de la app que lo entrega: el handler valida contra **todos** los secrets conocidos.
+
 **Checklist ANTES de conectar cada número real (por marca):**
-1. **`META_VERIFY_TOKEN`** en Vercel (webhook compartido). Sin ella el webhook GET responde **503**.
-2. **`META_APP_SECRET`** en Vercel — verifica la firma `X-Hub-Signature-256` de los POST.
-3. **`WHATSAPP_TRA_PHONE_NUMBER_ID` + `WHATSAPP_TRA_TOKEN`** (y `WHATSAPP_AVI_*` para la 2ª marca). Sin las credenciales de una marca, esa marca queda en **modo mock** (registra en el CRM, no manda a Meta) — no rompe nada.
+1. **`META_VERIFY_TOKEN`** en Vercel (webhook compartido, uno solo para todas las marcas). Sin ella el webhook GET responde **503**.
+2. **App Secret de LA app de esa marca**: `META_APP_SECRET` (Transavic) y **`META_APP_SECRET_AVI`** (Avícola de Tony). Se **agregan**, nunca se reemplazan: el webhook prueba la firma `X-Hub-Signature-256` contra todos.
+3. **`WHATSAPP_TRA_PHONE_NUMBER_ID` + `WHATSAPP_TRA_TOKEN`** (y `WHATSAPP_AVI_*` para la 2ª marca). Sin las credenciales de una marca, esa marca queda en **modo mock** (registra en el CRM, no manda a Meta) — no rompe nada. **Requiere redeploy** para tomar efecto.
 4. Suscribir el webhook al campo **`messages`** y activar **"Ads Attribution"** para recibir `referral.ctwa_clid` de los anuncios.
-5. **Prompt injection:** el prompt del bot ya **trunca y delimita** el mensaje del cliente — mantener esa protección.
+5. **Registrar el número**: `POST /{phone_number_id}/register` con `{messaging_product, pin}` — **solo existe por API**, la UI deja el número en PENDING. Máximo 10 intentos por 72 h (error 133016 = bloqueo). Luego `POST /{waba_id}/subscribed_apps` (la suscripción no es automática).
+6. **Prompt injection:** el prompt del bot ya **trunca y delimita** el mensaje del cliente — mantener esa protección.
 
 > El test `scripts/test-crm-flow.mjs` NO corre localmente en esta Mac (Node 26 rompe `@neondatabase/serverless` — gotcha #13). Validar ejerciendo el webhook con un POST simulado contra el dev server (su runtime no está afectado).

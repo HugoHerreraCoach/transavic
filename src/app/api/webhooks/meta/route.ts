@@ -43,6 +43,31 @@ export async function GET(request: NextRequest) {
 }
 
 /**
+ * Secretos de app válidos para verificar la firma de los POST.
+ *
+ * Cada marca tiene su PROPIA app de Meta (una app pertenece a un solo Business
+ * Portfolio y no puede operar WABAs de otro sin "Advanced access"), y Meta firma
+ * cada evento con el secreto de la app que lo entrega. Por eso el webhook —que sí
+ * es compartido— tiene que aceptar la firma de CUALQUIERA de las apps conocidas.
+ * `META_VERIFY_TOKEN` en cambio sí es uno solo: lo elegimos nosotros.
+ */
+function appSecretsConfigurados(): string[] {
+  return [process.env.META_APP_SECRET, process.env.META_APP_SECRET_AVI]
+    .map((s) => s?.trim())
+    .filter((s): s is string => !!s);
+}
+
+/** True si la firma corresponde al body crudo con ALGUNO de los secretos conocidos. */
+function firmaValida(rawBody: string, signature: string, secretos: string[]): boolean {
+  const sigBuf = Buffer.from(signature);
+  return secretos.some((secreto) => {
+    const esperado = "sha256=" + createHmac("sha256", secreto).update(rawBody, "utf8").digest("hex");
+    const espBuf = Buffer.from(esperado);
+    return sigBuf.length === espBuf.length && timingSafeEqual(sigBuf, espBuf);
+  });
+}
+
+/**
  * Resuelve la MARCA de un mensaje entrante a partir del phone_number_id.
  * - Si coincide con una marca configurada → esa marca.
  * - Si NINGUNA marca tiene phone id configurado (entorno de prueba/mock) → "Transavic"
@@ -120,20 +145,17 @@ export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.text();
 
-    // Verificación de firma. Sin META_APP_SECRET los mensajes se aceptan SIN verificar
-    // firma — solo aceptable en pruebas locales; configurarla ANTES de conectar el
+    // Verificación de firma contra los secretos de TODAS las apps de Meta conocidas
+    // (una por marca). Sin ninguna configurada los mensajes se aceptan SIN verificar
+    // firma — solo aceptable en pruebas locales; configurarlas ANTES de conectar un
     // número real (ver checklist en docs/arquitectura/15-asistente-ia.md).
-    const appSecret = process.env.META_APP_SECRET;
-    if (!appSecret) {
-      console.warn("⚠️ [POST] META_APP_SECRET no configurada: webhook Meta SIN verificación de firma.");
-    }
-    if (appSecret) {
+    const appSecrets = appSecretsConfigurados();
+    if (appSecrets.length === 0) {
+      console.warn("⚠️ [POST] Sin META_APP_SECRET*: webhook Meta SIN verificación de firma.");
+    } else {
       const signature = request.headers.get("x-hub-signature-256") || "";
-      const expected = "sha256=" + createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
-      const sigBuf = Buffer.from(signature);
-      const expBuf = Buffer.from(expected);
-      if (sigBuf.length !== expBuf.length || !timingSafeEqual(sigBuf, expBuf)) {
-        console.error("❌ [POST] Firma Meta inválida.");
+      if (!firmaValida(rawBody, signature, appSecrets)) {
+        console.error(`❌ [POST] Firma Meta inválida (probada contra ${appSecrets.length} app secret(s)).`);
         return new NextResponse("Invalid signature", { status: 401 });
       }
     }
