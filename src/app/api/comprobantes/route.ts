@@ -146,6 +146,13 @@ export async function GET(request: Request) {
         ? `WHERE ${outerConditions.join(" AND ")}`
         : "";
 
+    // NC emitidas antes de `referencia_comprobante_id`: el backend también las
+    // reconoce por la auditoría escrita en `observaciones`. La lista replica esa
+    // evidencia para no volver a ofrecer una NC que el endpoint rechazaría con 409.
+    const ncHistoricaSerieSql =
+      "substring(c.observaciones FROM '(?i)nota de cr[eé]dito[[:space:]]+([^[:space:]]+)[[:space:]]+[(]ACEPTADA')";
+    const ncHistoricaAceptadaSql = `(${ncHistoricaSerieSql}) IS NOT NULL`;
+
     // Columnas comunes de CPE/GRE se mantienen alineadas en las dos
     // subconsultas que siguen para que el UNION ALL sea estable.
     const guiaSelect = `
@@ -169,6 +176,9 @@ export async function GET(request: Request) {
         ref.cliente_razon_social            AS referencia_cliente_razon_social,
         ref.monto_total::numeric            AS referencia_monto_total,
         FALSE                               AS tiene_nc,
+        FALSE                               AS tiene_nc_bloqueante,
+        NULL::uuid                          AS nota_credito_id,
+        NULL::text                          AS nota_credito_serie_numero,
         g.peso_bruto_total::numeric         AS peso_bruto_total,
         g.total_bultos::integer             AS total_bultos,
         NULL::text                          AS guia_serie_numero,
@@ -219,12 +229,57 @@ export async function GET(request: Request) {
           ref.tipo         AS referencia_tipo,
           ref.cliente_razon_social AS referencia_cliente_razon_social,
           ref.monto_total::numeric AS referencia_monto_total,
-          EXISTS (
-            SELECT 1 FROM comprobantes nc
-            WHERE nc.referencia_comprobante_id = c.id
-              AND nc.tipo = '07'
-              AND nc.estado IN ('aceptado', 'observado')
+          (
+            EXISTS (
+              SELECT 1 FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+            )
+            OR ${ncHistoricaAceptadaSql}
           ) AS tiene_nc,
+          (
+            EXISTS (
+              SELECT 1 FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND (
+                  nc.estado NOT IN ('error', 'rechazado', 'anulado')
+                  OR (nc.estado = 'error' AND nc.xml_firmado_base64 IS NOT NULL)
+                )
+            )
+            OR ${ncHistoricaAceptadaSql}
+          ) AS tiene_nc_bloqueante,
+          COALESCE(
+            (
+              SELECT nc.id FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+              ORDER BY nc.created_at DESC, nc.id DESC
+              LIMIT 1
+            ),
+            (
+              SELECT nc_hist.id FROM comprobantes nc_hist
+              WHERE nc_hist.empresa = c.empresa
+                AND nc_hist.tipo = '07'
+                AND nc_hist.estado IN ('aceptado', 'observado')
+                AND nc_hist.serie_numero = ${ncHistoricaSerieSql}
+              ORDER BY nc_hist.created_at DESC, nc_hist.id DESC
+              LIMIT 1
+            )
+          ) AS nota_credito_id,
+          COALESCE(
+            (
+              SELECT nc.serie_numero FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+              ORDER BY nc.created_at DESC, nc.id DESC
+              LIMIT 1
+            ),
+            ${ncHistoricaSerieSql}
+          ) AS nota_credito_serie_numero,
           NULL::numeric  AS peso_bruto_total,
           NULL::integer  AS total_bultos,
           (
@@ -279,12 +334,57 @@ export async function GET(request: Request) {
           ref.tipo         AS referencia_tipo,
           ref.cliente_razon_social AS referencia_cliente_razon_social,
           ref.monto_total::numeric AS referencia_monto_total,
-          EXISTS (
-            SELECT 1 FROM comprobantes nc
-            WHERE nc.referencia_comprobante_id = c.id
-              AND nc.tipo = '07'
-              AND nc.estado IN ('aceptado', 'observado')
+          (
+            EXISTS (
+              SELECT 1 FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+            )
+            OR ${ncHistoricaAceptadaSql}
           ) AS tiene_nc,
+          (
+            EXISTS (
+              SELECT 1 FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND (
+                  nc.estado NOT IN ('error', 'rechazado', 'anulado')
+                  OR (nc.estado = 'error' AND nc.xml_firmado_base64 IS NOT NULL)
+                )
+            )
+            OR ${ncHistoricaAceptadaSql}
+          ) AS tiene_nc_bloqueante,
+          COALESCE(
+            (
+              SELECT nc.id FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+              ORDER BY nc.created_at DESC, nc.id DESC
+              LIMIT 1
+            ),
+            (
+              SELECT nc_hist.id FROM comprobantes nc_hist
+              WHERE nc_hist.empresa = c.empresa
+                AND nc_hist.tipo = '07'
+                AND nc_hist.estado IN ('aceptado', 'observado')
+                AND nc_hist.serie_numero = ${ncHistoricaSerieSql}
+              ORDER BY nc_hist.created_at DESC, nc_hist.id DESC
+              LIMIT 1
+            )
+          ) AS nota_credito_id,
+          COALESCE(
+            (
+              SELECT nc.serie_numero FROM comprobantes nc
+              WHERE nc.referencia_comprobante_id = c.id
+                AND nc.tipo = '07'
+                AND nc.estado IN ('aceptado', 'observado')
+              ORDER BY nc.created_at DESC, nc.id DESC
+              LIMIT 1
+            ),
+            ${ncHistoricaSerieSql}
+          ) AS nota_credito_serie_numero,
           NULL::numeric  AS peso_bruto_total,
           NULL::integer  AS total_bultos,
           (

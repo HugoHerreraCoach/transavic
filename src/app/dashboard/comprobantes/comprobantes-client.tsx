@@ -77,6 +77,13 @@ interface Comprobante {
   referencia_cliente_razon_social: string | null;
   referencia_monto_total: string | number | null;
   tiene_nc: boolean;
+  // La regla bloqueante replica el endpoint de emisión: también cubre una NC
+  // reservada/en curso o una NC en error que ya tiene XML firmado.
+  tiene_nc_bloqueante: boolean;
+  // NC aceptada/observada que ya corrige este CPE base. Se muestra para que la
+  // asesora no confunda la alerta histórica con una tarea todavía pendiente.
+  nota_credito_id: string | null;
+  nota_credito_serie_numero: string | null;
   // Serie-número que reemplaza esta fila: otra NC aceptada para la misma
   // referencia, o el CPE 01/03 nuevo que corrige un rechazo de Campo.
   reemplazada_por: string | null;
@@ -194,9 +201,13 @@ function esCpePorConfirmar(c: Pick<Comprobante, "tipo" | "estado">): boolean {
 function mensajeRevisionSunat(
   c: Pick<
     Comprobante,
-    "estado" | "revision_motivo_sunat" | "mensaje_sunat"
+    | "estado"
+    | "revision_motivo_sunat"
+    | "mensaje_sunat"
+    | "tiene_nc"
+    | "nota_credito_serie_numero"
   >
-): { amigable: string; tecnico: string } {
+): { amigable: string; tecnico: string; resuelta: boolean } {
   const motivo =
     c.revision_motivo_sunat ??
     c.mensaje_sunat ??
@@ -204,11 +215,21 @@ function mensajeRevisionSunat(
   const duplicado = /duplicad|más de un comprobante|otro comprobante aceptado/i.test(
     motivo
   );
+  if (duplicado && c.tiene_nc) {
+    return {
+      amigable: c.nota_credito_serie_numero
+        ? `Corregido con la Nota de Crédito ${c.nota_credito_serie_numero}. No emitas otra.`
+        : "Corregido con una Nota de Crédito aceptada. No emitas otra.",
+      tecnico: motivo,
+      resuelta: true,
+    };
+  }
   return duplicado
     ? {
         amigable:
           "Este pedido tiene más de un comprobante aceptado. No emitas otro; coordina cuál se corregirá con Nota de Crédito.",
         tecnico: motivo,
+        resuelta: false,
       }
     : {
         amigable:
@@ -216,6 +237,7 @@ function mensajeRevisionSunat(
             ? "SUNAT todavía no pudo confirmar este comprobante. El número está protegido: no emitas otro."
             : "Este comprobante requiere revisión del administrador.",
         tecnico: motivo,
+        resuelta: false,
       };
 }
 
@@ -2356,6 +2378,7 @@ export default function ComprobantesClient({
     tecnico: string;
     porConfirmar?: boolean;
     informativo?: boolean;
+    resuelta?: boolean;
   } | null>(null);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
@@ -2370,7 +2393,8 @@ export default function ComprobantesClient({
   const puedeNotaCredito = (c: Comprobante) =>
     (userRole === "admin" || userRole === "asesor") &&
     (c.estado === "aceptado" || c.estado === "observado") &&
-    (c.tipo === "01" || c.tipo === "03");
+    (c.tipo === "01" || c.tipo === "03") &&
+    !c.tiene_nc_bloqueante;
   // Reintentar:
   //  - CPE (01/03/07): solo en 'error' (transitorio: SUNAT caído, CDR ilegible,
   //    emisión interrumpida) — ahí reenviar el MISMO XML puede pasar. NO en
@@ -2397,6 +2421,23 @@ export default function ComprobantesClient({
     c.estado === "rechazado" &&
     !!c.referencia_comprobante_id &&
     !c.reemplazada_por;
+
+  // Lleva a la NC aceptada exacta y elimina los filtros que podrían ocultarla.
+  // Empresa, operación y pedido se conservan: la NC hereda esos vínculos del CPE
+  // base. Fijamos también el valor debounced para evitar una carga intermedia sin
+  // la búsqueda exacta.
+  const mostrarNotaCreditoRelacionada = (
+    c: Pick<Comprobante, "nota_credito_id" | "nota_credito_serie_numero">
+  ) => {
+    if (!c.nota_credito_serie_numero) return;
+    setFiltroTipo("07");
+    setFiltroEstado("all");
+    setFiltroDesde("");
+    setFiltroHasta("");
+    setBusqueda(c.nota_credito_serie_numero);
+    setSearchDebounced(c.nota_credito_serie_numero);
+    setPagina(1);
+  };
   // Comunicación de baja: solo admin, sobre FACTURAS aceptadas/observadas (boletas → resumen).
   // Días transcurridos desde la emisión (para la regla de la Comunicación de Baja).
   const diasDesde = (iso: string) =>
@@ -3333,10 +3374,23 @@ export default function ComprobantesClient({
                       );
                     })()}
                     {c.tipo !== "07" && c.tiene_nc && (
-                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
+                      <button
+                        type="button"
+                        onClick={() => mostrarNotaCreditoRelacionada(c)}
+                        disabled={!c.nota_credito_serie_numero}
+                        data-related-comprobante-id={c.nota_credito_id ?? undefined}
+                        title={
+                          c.nota_credito_serie_numero
+                            ? `Ver Nota de Crédito ${c.nota_credito_serie_numero}`
+                            : "Este comprobante ya fue corregido con una Nota de Crédito"
+                        }
+                        className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded hover:bg-emerald-100 disabled:cursor-default disabled:hover:bg-emerald-50"
+                      >
                         <FiCornerUpLeft size={10} className="flex-shrink-0" />
-                        con N. Crédito
-                      </span>
+                        {c.nota_credito_serie_numero
+                          ? `Corregida con ${serieCorta(c.nota_credito_serie_numero)}`
+                          : "Corregida con N. Crédito"}
+                      </button>
                     )}
                   </div>
                 </div>
@@ -3428,18 +3482,23 @@ export default function ComprobantesClient({
                     ? {
                         amigable: "SUNAT está procesando este comprobante. No emitas otro.",
                         tecnico: c.mensaje_sunat ?? "Esperando confirmación de SUNAT.",
+                        resuelta: false,
                       }
                     : c.mensaje_sunat
-                      ? mensajeSunatAmigable(c.mensaje_sunat)
+                      ? { ...mensajeSunatAmigable(c.mensaje_sunat), resuelta: false }
                     : (() => {
                         const def = mensajeEstadoSinDetalle(c.estado);
-                        return def ? { amigable: def, tecnico: def } : null;
+                        return def
+                          ? { amigable: def, tecnico: def, resuelta: false }
+                          : null;
                       })();
                   if (!msg) return null;
                   return (
                     <div
                       className={`mb-2 text-[11px] line-clamp-3 ${
-                        porConfirmar
+                        msg.resuelta
+                          ? "font-medium text-emerald-700"
+                          : porConfirmar
                           ? "font-medium text-amber-800"
                           : informativo
                             ? "font-medium text-blue-800"
@@ -3447,7 +3506,7 @@ export default function ComprobantesClient({
                       }`}
                       title={msg.tecnico}
                     >
-                      {porConfirmar ? "◷" : "⚠"} {msg.amigable}
+                      {msg.resuelta ? "✓" : porConfirmar ? "◷" : "⚠"} {msg.amigable}
                     </div>
                   );
                 })()}
@@ -3529,10 +3588,23 @@ export default function ComprobantesClient({
                         </button>
                       )}
                     {c.tipo !== "07" && c.tiene_nc && (
-                      <span className="mt-0.5 flex w-fit items-center gap-1 text-[10px] font-medium text-orange-700 bg-orange-50 px-1.5 py-0.5 rounded">
+                      <button
+                        type="button"
+                        onClick={() => mostrarNotaCreditoRelacionada(c)}
+                        disabled={!c.nota_credito_serie_numero}
+                        data-related-comprobante-id={c.nota_credito_id ?? undefined}
+                        title={
+                          c.nota_credito_serie_numero
+                            ? `Ver Nota de Crédito ${c.nota_credito_serie_numero}`
+                            : "Este comprobante ya fue corregido con una Nota de Crédito"
+                        }
+                        className="mt-0.5 flex w-fit items-center gap-1 text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded hover:bg-emerald-100 disabled:cursor-default disabled:hover:bg-emerald-50"
+                      >
                         <FiCornerUpLeft size={10} className="flex-shrink-0" />
-                        con N. Crédito
-                      </span>
+                        {c.nota_credito_serie_numero
+                          ? `Corregida con ${serieCorta(c.nota_credito_serie_numero)}`
+                          : "Corregida con N. Crédito"}
+                      </button>
                     )}
                   </td>
                   <td className="px-3 py-2">
@@ -3619,12 +3691,15 @@ export default function ComprobantesClient({
                           ? {
                               amigable: "SUNAT está procesando este comprobante. No emitas otro.",
                               tecnico: c.mensaje_sunat ?? "Esperando confirmación de SUNAT.",
+                              resuelta: false,
                             }
                         : c.mensaje_sunat
-                          ? mensajeSunatAmigable(c.mensaje_sunat)
+                          ? { ...mensajeSunatAmigable(c.mensaje_sunat), resuelta: false }
                           : (() => {
                               const def = mensajeEstadoSinDetalle(c.estado);
-                              return def ? { amigable: def, tecnico: def } : null;
+                              return def
+                                ? { amigable: def, tecnico: def, resuelta: false }
+                                : null;
                             })();
                       return (
                         <div>
@@ -3643,11 +3718,14 @@ export default function ComprobantesClient({
                                   tecnico: msg.tecnico,
                                   porConfirmar,
                                   informativo,
+                                  resuelta: msg.resuelta,
                                 })
                               }
                               title="Haz clic para ver el detalle completo"
                               className={`mt-1 block w-full max-w-[230px] mx-auto text-left text-[10px] leading-snug hover:underline cursor-pointer ${
-                                porConfirmar
+                                msg.resuelta
+                                  ? "font-medium text-emerald-700"
+                                  : porConfirmar
                                   ? "font-medium text-amber-800"
                                   : informativo
                                     ? "font-medium text-blue-800"
@@ -3655,7 +3733,7 @@ export default function ComprobantesClient({
                               }`}
                             >
                               <span className="line-clamp-2">
-                                {porConfirmar ? "◷" : "⚠"} {msg.amigable}
+                                {msg.resuelta ? "✓" : porConfirmar ? "◷" : "⚠"} {msg.amigable}
                               </span>
                             </button>
                           )}
@@ -4006,7 +4084,9 @@ export default function ComprobantesClient({
         <ModalShell onClose={() => setModalMensajeSunat(null)}>
           <div className="px-6 pb-6">
             <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3">
-              {modalMensajeSunat.porConfirmar ? (
+              {modalMensajeSunat.resuelta ? (
+                <FiCheckCircle className="text-emerald-600 flex-shrink-0" />
+              ) : modalMensajeSunat.porConfirmar ? (
                 <FiClock className="text-amber-600 flex-shrink-0" />
               ) : modalMensajeSunat.informativo ? (
                 <FiRefreshCw className="text-blue-600 flex-shrink-0" />

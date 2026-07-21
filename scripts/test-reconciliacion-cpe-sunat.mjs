@@ -541,6 +541,7 @@ const [
   consultaIntegradaSource,
   emitirUiSource,
   listaUiSource,
+  listaApiSource,
 ] = await Promise.all([
   leer("src/lib/sunat/soap-client.ts"),
   leer("src/lib/sunat/reconciliacion-cpe.ts"),
@@ -555,6 +556,7 @@ const [
   leer("src/lib/sunat/consulta-integrada-client.ts"),
   leer("src/app/dashboard/comprobantes/nuevo/emitir-client.tsx"),
   leer("src/app/dashboard/comprobantes/comprobantes-client.tsx"),
+  leer("src/app/api/comprobantes/route.ts"),
 ]);
 
 assert.match(
@@ -787,6 +789,91 @@ assert.match(
   listaUiSource,
   /!esGuia\s*&&\s*!porConfirmar/,
   "las acciones posteriores del CPE deben ocultarse mientras esta por confirmar"
+);
+assert.match(
+  listaApiSource,
+  /AS nota_credito_serie_numero/,
+  "la lista debe exponer la NC aceptada que corrigio el CPE base"
+);
+assert.match(
+  listaApiSource,
+  /AS nota_credito_id/,
+  "la lista debe exponer el id exacto de la NC aceptada"
+);
+assert.match(
+  listaApiSource,
+  /nc\.estado NOT IN \('error', 'rechazado', 'anulado'\)[\s\S]*?OR \(nc\.estado = 'error' AND nc\.xml_firmado_base64 IS NOT NULL\)[\s\S]*?AS tiene_nc_bloqueante/,
+  "la lista debe replicar el predicado backend que bloquea otra NC"
+);
+assert.match(
+  listaApiSource,
+  /ncHistoricaSerieSql[\s\S]*?nota de cr\[eé\]dito[\s\S]*?ncHistoricaAceptadaSql/,
+  "la lista debe reconocer la evidencia de NC historicas igual que el endpoint"
+);
+assert.ok(
+  (listaApiSource.match(/OR \$\{ncHistoricaAceptadaSql\}/g) ?? []).length >= 4,
+  "las NC historicas deben marcar tanto la relacion como el bloqueo en ambos SELECT"
+);
+assert.match(
+  listaUiSource,
+  /duplicado\s*&&\s*c\.tiene_nc/,
+  "una revision historica por duplicado debe reconocerse como resuelta por la NC"
+);
+assert.match(
+  listaUiSource,
+  /Corregido con la Nota de Crédito/,
+  "la asesora debe ver que el caso duplicado ya fue corregido"
+);
+const inicioPuedeNotaCredito = listaUiSource.indexOf(
+  "const puedeNotaCredito = (c: Comprobante)"
+);
+const finPuedeNotaCredito = listaUiSource.indexOf(
+  "const puedeReintentar = (c: Comprobante)",
+  inicioPuedeNotaCredito
+);
+assert.ok(
+  inicioPuedeNotaCredito >= 0 && finPuedeNotaCredito > inicioPuedeNotaCredito
+);
+assert.match(
+  listaUiSource.slice(inicioPuedeNotaCredito, finPuedeNotaCredito),
+  /!c\.tiene_nc_bloqueante/,
+  "una factura o boleta con NC activa o con XML no debe ofrecer otra Nota de Credito"
+);
+const inicioMostrarNc = listaUiSource.indexOf(
+  "const mostrarNotaCreditoRelacionada ="
+);
+const finMostrarNc = listaUiSource.indexOf(
+  "const ANULAR_HABILITADO",
+  inicioMostrarNc
+);
+assert.ok(inicioMostrarNc >= 0 && finMostrarNc > inicioMostrarNc);
+const bloqueMostrarNc = listaUiSource.slice(inicioMostrarNc, finMostrarNc);
+assert.doesNotMatch(
+  bloqueMostrarNc,
+  /!c\.nota_credito_id\s*\|\|/,
+  "una NC historica debe poder abrirse por su serie aunque no tenga id relacionado"
+);
+for (const patron of [
+  /setFiltroTipo\("07"\)/,
+  /setFiltroEstado\("all"\)/,
+  /setFiltroDesde\(""\)/,
+  /setFiltroHasta\(""\)/,
+  /setBusqueda\(c\.nota_credito_serie_numero\)/,
+  /setSearchDebounced\(c\.nota_credito_serie_numero\)/,
+]) {
+  assert.match(
+    bloqueMostrarNc,
+    patron,
+    "abrir la NC debe limpiar filtros incompatibles y buscar la NC exacta"
+  );
+}
+assert.ok(
+  (listaUiSource.match(/mostrarNotaCreditoRelacionada\(c\)/g) ?? []).length >= 2,
+  "los accesos movil y escritorio deben usar el mismo helper seguro"
+);
+assert.ok(
+  (listaUiSource.match(/msg\.resuelta/g) ?? []).length >= 4,
+  "movil y escritorio deben presentar la revision resuelta en verde"
 );
 
 console.log("Reconciliacion CPE SUNAT: pruebas OK");

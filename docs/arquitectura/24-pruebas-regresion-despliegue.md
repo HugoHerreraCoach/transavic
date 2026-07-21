@@ -1,7 +1,7 @@
 # 24 — Pruebas de Regresión y Despliegue de Cambios Transversales
 
 > **Última verificación:** 2026-07-20
-> **Alcance actual:** core desplegado; la reconciliación de respuestas indeterminadas SUNAT para factura/boleta está implementada en el worktree y su esquema ya fue migrado/verificado únicamente en `dev-hugo`. Producción no está migrada ni tiene desplegado este cambio.
+> **Alcance actual:** core y reconciliación de respuestas indeterminadas SUNAT 01/03 desplegados en producción; esquema, cron y resultado fiscal/financiero de F002-412/413 verificados. La limpieza UX post-NC está implementada; solo siguen pendientes las credenciales de Consulta Integrada de boletas. La conciliación genérica de cartera entre CPE hermanos queda separada por requerir procedencia estructurada de anulación.
 
 Este runbook convierte los invariantes de los docs [11](./11-comprobantes-sunat.md),
 [13](./13-cobranzas-facturas.md), [21](./21-clientes-avicola.md),
@@ -53,7 +53,7 @@ Reglas:
 - `test:estado-cuenta-avicola` cubre una venta, tres abonos del mismo día y un abono anulado; si cambia el libro mayor o PDF, amplía esa prueba.
 - `test:operaciones-facturacion` cubre la clasificación Ejecutivas/Campo/Planta y que solo los
   códigos de NC total `01`, `02`, `06` retiren una cartera completa.
-- `test:reconciliacion-sunat` usa SOAP 01 y REST 03 simulados más contratos de código/UI; no llama a SUNAT ni a la base de datos real.
+- `test:reconciliacion-sunat` usa SOAP 01 y REST 03 simulados más contratos de código/UI; no llama a SUNAT ni a la base de datos real. También falla si los módulos, endpoints o migración requeridos no están registrados en Git.
 
 ---
 
@@ -165,6 +165,27 @@ Verifica que:
 5. La NC debe heredar la operación del CPE base en lista, filtro y Excel.
 6. Si es total (`01`, `02` o `06`) y queda aceptada, debe anular automáticamente la venta de Campo;
    la operación manual posterior debe ser idempotente.
+7. Para dos CPE del mismo pedido confirmados como aceptados, elegir el que permanecerá vigente y
+   emitir una sola NC total `01` contra el duplicado; nunca cambiar artificialmente el CPE base a
+   `rechazado`.
+8. La NC debe repetir referencia, receptor, todas las líneas/totales del XML base y quedar con CDR
+   legible antes de considerarla resuelta.
+9. Post-NC, la UI debe mostrar `Corregida con <NC>`, enlazar la NC con su base, ofrecer CDR solo en
+   la NC que realmente lo tiene y ocultar la opción de emitir otra NC. El backend 409 sigue siendo
+   la barrera final ante cualquier doble clic o interfaz desactualizada.
+10. Confirmar que el comprobante vigente conserva una sola deuda y el acreditado ninguna deuda
+    activa. Una NC no puede borrar ni duplicar la cartera del CPE que se decidió conservar.
+
+El caso real FC02-00000028 cumplió referencia, tres líneas, neto/IGV/total, CDR y
+cartera. El pendiente de interfaz quedó cerrado: F002-412 ahora muestra la corrección
+con el número exacto de la NC y el menú ya no ofrece emitir otra. La protección 409
+del backend se mantiene como segunda barrera.
+
+No se debe convertir ese resultado puntual en un relink automático por texto o solo
+para una operación. El diseño futuro necesita `anulacion_origen`, referencia a la NC y
+estado previo, serialización por pedido/venta y pruebas de ambos órdenes de aceptación,
+anulación manual, deuda con abonos e idempotencia. Hasta entonces, un duplicado legal
+confirmado exige revisar la deuda que se conservará antes de emitir la NC.
 
 ### 5.3 Factura/boleta con respuesta indeterminada
 
@@ -182,6 +203,12 @@ Probar con dobles controlados: SOAP para el envío y la consulta de factura 01; 
 10. La aceptación tardía debe crear/enlazar una sola vez la cartera de Ejecutivas o Planta; Campo no debe crear `facturas`. Repetir cron/botón no puede duplicar el efecto.
 11. Intentar dos veces el postproceso y confirmar que los índices únicos impiden otra deuda por `comprobante_id` o por pedido + `numero_comprobante`.
 12. Con la lista abierta y visible, confirmar que refresca los pendientes cada 60 segundos. El cron debe ejecutar `/api/cron/reconciliar-cpe-sunat` cada 5 minutos y procesar lotes pequeños sin `sendBill`.
+13. Probar que un XML firmado sin CDR no se presenta como prueba de aceptación. Si `getStatus=0001`
+    confirma el CPE pero `getStatusCdr` no devuelve archivo, la UI debe decir aceptado/constancia
+    pendiente, ocultar la descarga y mantener `sunat_cdr_legible=false`.
+14. Un CDR solo es válido si el ZIP se descomprime, contiene `ApplicationResponse` y expone un
+    `ResponseCode` interpretable. Base64 no vacío o un ZIP sin respuesta no pueden activar la descarga
+    ni clasificar como aceptado por defecto.
 
 ### 5.4 Reserva atascada
 
@@ -266,7 +293,7 @@ Prueba la URL directa y la API; no basta con mirar el sidebar.
 
 ## 10. Migración de reconciliación 01/03
 
-La migración es aditiva y no modifica XML, firma, ítems, IGV, totales, correlativos, NC ni GRE. Ya fue aplicada en `dev-hugo`; esta es la receta reproducible para una branch de desarrollo nueva o una reejecución idempotente:
+La migración es aditiva y no modifica XML, firma, ítems, IGV, totales, correlativos, NC ni GRE. Ya fue aplicada en `dev-hugo` y producción; esta es la receta reproducible para una branch de desarrollo nueva o una reejecución idempotente:
 
 ```bash
 DB_DEV_URL="$(sed -n 's/^DATABASE_URL_UNPOOLED=//p' .env.local | tail -n 1 | sed -e 's/^"//' -e 's/"$//')"
@@ -342,23 +369,25 @@ La migración falla si hay duplicados; no los borra ni elige una deuda “ganado
 
 `scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql` se ejecuta únicamente después de retirar el código que usa las columnas. Aborta si existe cualquier claim de facturación/consulta, postproceso `pendiente`/`aplicando`, CPE 01/03 `emitiendo`/`por_confirmar`/`no_registrado` o fila marcada para revisión. Solo con el sistema drenado traduce los estados nuevos a `error`, elimina los dos índices únicos defensivos y después retira índices/columnas. No lo ejecutes como reacción automática ante una intermitencia de SUNAT.
 
-**Estado al 20 de julio de 2026:** la migración/esquema se validó solo en `dev-hugo` (`br-tiny-frost-aduw14pu`): 824 CDR históricos legibles y una fila exacta 0140 reclasificada. Los contratos SOAP 01 y REST 03 se prueban con mocks. Aún no existen las cuatro credenciales nuevas de Consulta Integrada y no hay E2E 03. La migración y el cron/código nuevo **no están aplicados ni desplegados en producción**.
+**Estado al 20 de julio de 2026:** después de validarse en `dev-hugo`, la migración se aplicó en producción con 1,585 CPE preservados, 15+2 columnas, 6 índices, 1,554 CDR históricos marcados y 6 filas exactas 0140 reclasificadas. El cron ejecutó con HTTP 200 y sin `42703`; la UI autenticada volvió a mostrar los totales reales. Los contratos SOAP 01/REST 03 se prueban con mocks. Aún no existen las cuatro credenciales nuevas de Consulta Integrada y no hay E2E REST 03 con ambos emisores.
 
 ---
 
 ## 11. Pase a producción
 
 1. Congelar y revisar el diff.
-2. Respaldar/consultar conteos clave.
-3. Aplicar migraciones por `psql -1 -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md). Para reconciliación 01/03, la migración debe quedar activa **antes** del código que lee sus columnas.
-4. Ejecutar consultas de verificación.
-5. Solo entonces activar el deploy del código.
-6. Realizar smoke test de lectura antes de emitir documentos reales.
-7. Emitir un caso real controlado por operación aplicable.
-8. Crear una aplicación **Consulta de Validez de Comprobantes** por RUC y cargar `SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`. No modificar `SUNAT_TRA_CLIENT_ID/SECRET` ni `SUNAT_AVI_CLIENT_ID/SECRET` de GRE.
-9. Confirmar `CRON_SECRET`, el registro `*/5 * * * *` de `/api/cron/reconciliar-cpe-sunat` y una ejecución autorizada del cron.
-10. Revisar logs, CDR, cobranzas y Ventas Generales; una consulta transitoria nunca debe disparar `sendBill`.
-11. Conservar el rollback solo como plan de contingencia evaluado, no automático.
+2. Confirmar que migración, rollback, módulos, endpoints y pruebas estén registrados en Git; construir y probar el commit desde `git archive` o un clon limpio.
+3. Respaldar/consultar conteos clave.
+4. Aplicar migraciones por `psql -1 -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md). Para reconciliación 01/03, la migración debe quedar activa **antes** del código que lee sus columnas.
+5. Ejecutar consultas de verificación.
+6. Solo entonces activar el despliegue construido desde Git; no promover un workspace local sucio.
+7. Realizar smoke test de lectura antes de emitir documentos reales.
+8. Validar con CPE existentes: lista/totales, detalle, XML, CDR, cron, ausencia de correlativos nuevos y deuda no duplicada.
+9. Para un caso post-NC, comprobar en la UI la relación base↔NC, estado aceptado, CDR real y que no se ofrezca repetir la corrección.
+10. Crear una aplicación **Consulta de Validez de Comprobantes** por RUC y cargar `SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`. No modificar `SUNAT_TRA_CLIENT_ID/SECRET` ni `SUNAT_AVI_CLIENT_ID/SECRET` de GRE.
+11. Confirmar `CRON_SECRET`, el registro `*/5 * * * *` de `/api/cron/reconciliar-cpe-sunat` y una ejecución autorizada del cron.
+12. Revisar logs, CDR, cobranzas y Ventas Generales; una consulta transitoria nunca debe disparar `sendBill`.
+13. Conservar el rollback solo como plan de contingencia evaluado, no automático.
 
 Registra en el historial qué migración se aplicó, a qué rama/base y con qué verificación. No anotes secretos.
 

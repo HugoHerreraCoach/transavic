@@ -333,7 +333,7 @@ Ficha RUC); cargar `WHATSAPP_*` en Vercel. **Límite de seguridad:** crear/logue
 subir la Ficha RUC y cargar el método de pago de anuncios los hace el usuario en persona.
 
 **Env vars nuevas:** `WHATSAPP_API_VERSION` (default v21.0), `WHATSAPP_TRA_PHONE_NUMBER_ID/TOKEN/WABA_ID`,
-`WHATSAPP_AVI_PHONE_NUMBER_ID/TOKEN/WABA_ID`. Ver gotcha #52 y [doc 15 §5](./docs/arquitectura/15-asistente-ia.md).
+`WHATSAPP_AVI_PHONE_NUMBER_ID/TOKEN/WABA_ID`. Ver gotcha #52 y [doc 15 §5](./arquitectura/15-asistente-ia.md).
 
 ---
 
@@ -573,7 +573,7 @@ de rechazados → unicidad de NC en error → código. Producción no fue modifi
 ### Comprobantes — tipos diferenciados, vínculo NC↔factura, visibilidad total + emisor (2 jun 2026 — ✅ EN PRODUCCIÓN)
 Pedido de Antonio/Hugo. Todo en la **lista** `/dashboard/comprobantes` (`comprobantes-client.tsx`); el PDF y el módulo SUNAT NO se tocaron. Se subió por un PR aparte (NO por el branch `respaldo-pre-migracion-2026-05-29`, que arrastraba la app repartidor — que en ese momento aún era solo-local; ya se subió a `main` el 4 jun en los PRs #18–#22).
 1. **Chip de tipo con color + ícono** (helper `tipoUI`, hermano de `estadoUI`): Factura = índigo + `FiFileText`, Boleta = slate + `FiFile`, N. Crédito = naranja + `FiCornerUpLeft`. Antes la columna "Tipo" era texto plano e indistinguible. Tabla desktop + cards mobile; los chips del filtro "Tipo" llevan swatch del mismo color. Chip `rounded-md` lleno. Hecho con `/mejora-diseño`.
-2. **Vínculo NC↔factura**: una NC muestra bajo su número "↩ anula F001-11" (clic → escribe esa serie en el buscador y salta a la factura); una factura/boleta ya acreditada muestra el chip "↩ con N. Crédito".
+2. **Vínculo NC↔factura**: una NC muestra bajo su número "↩ anula F001-11" (clic → escribe esa serie en el buscador y salta a la factura); una factura/boleta ya acreditada mostraba el chip "↩ con N. Crédito". El 20 jul se reemplazó por `Corregida con <NC>` con el número exacto y sin opción de emitir otra NC.
 3. **Visibilidad** — ⚠️ **REVERTIDO el mismo 2 jun (tarde); ver subsección "Permisos de asesora" más abajo.** Por unas horas se abrió a que TODAS las asesoras vieran TODOS los comprobantes, pero Antonio pidió volver al scoping por asesora. **Estado ACTUAL en prod:** cada asesora ve/maneja **solo los suyos** (de sus pedidos o emitidos por ella, vía helper `lib/comprobante-scope.ts`); el admin, todos. La separación por asesora se mantiene también en los insights de IA.
 4. **Emisor**: columna "Emitido por" (desktop) / línea "Emitió: X" (mobile) con el nombre de quien emitió. Columna `emitido_por` llenada al emitir (`session.user.name`) en los 3 endpoints (`emitir`, `emitir-manual`, `[id]/nota-credito`); el reintento hace UPDATE (no reinserta) → preserva el emisor original.
 
@@ -1821,7 +1821,7 @@ Correcciones de estado a notas históricas:
   [`soporte/cambios-2026-07-13.md`](./soporte/cambios-2026-07-13.md) y no deben
   enviarse antes del despliegue autorizado.
 
-## 2026-07-20 — Reconciliación de respuestas temporales SUNAT 01/03 (implementación local)
+## 2026-07-20 — Reconciliación SUNAT 01/03: incidente, recuperación y producción
 
 **Origen del cambio:** la factura F002-412 recibió primero el Fault 0140, “Existe un
 Documento igual en Proceso”. La aplicación lo mostró como rechazo definitivo y se
@@ -1829,7 +1829,7 @@ generó F002-413. La verificación posterior, de solo lectura, confirmó que SUN
 aceptado **ambas** facturas. El XML, la firma y los totales no eran la causa: faltaba
 distinguir una respuesta temporal de un rechazo tributario y consultar el mismo número.
 
-Se preparó una corrección acotada al postenvío de factura `01` y boleta `03`:
+Se implementó una corrección acotada al postenvío de factura `01` y boleta `03`:
 
 - 0140, fallos de transporte/HTTP 5xx, respuesta vacía y CDR ilegible quedan
   `por_confirmar`, con un mensaje explícito de **no emitir otro comprobante**;
@@ -1858,15 +1858,16 @@ No hacen fallback a `SUNAT_TRA_CLIENT_ID/SECRET` ni `SUNAT_AVI_CLIENT_ID/SECRET`
 son de GRE. **Nunca se reutilizan ni rotan las credenciales GRE para este fin.**
 
 La migración aditiva
-`scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` agrega únicamente metadatos
-de envío/consulta, disponibilidad legible del CDR, claims e índices. Incluye dos
-UNIQUE defensivos en `facturas`: uno por `comprobante_id` y otro por pedido +
-serie-número (`pedido_id`, `numero_comprobante`); si encuentra deuda histórica
-duplicada, falla para exigir auditoría en vez de borrar datos. La
-**reclasificación de estado** se limita al caso histórico exacto 0140; los CDR
-históricos ya presentes solo reciben su marca de legibilidad. El rollback es
-`scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql` y aborta si detecta claims
-recientes.
+`scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` agrega exactamente **15
+columnas** de metadatos/claims/postproceso en `comprobantes`, **2 columnas** de claim
+en `pedidos` y **6 índices**. Dos de esos índices son UNIQUE defensivos en
+`facturas`: uno por `comprobante_id` y otro por pedido + serie-número
+(`pedido_id`, `numero_comprobante`); si encuentra deuda histórica duplicada, la
+migración falla para exigir auditoría en vez de borrar datos. La **reclasificación
+de estado** se limita al caso histórico exacto 0140; los CDR ya presentes solo
+reciben su marca de legibilidad. El rollback es
+`scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql` y aborta si detecta
+actividad que haría inseguro retirar el esquema.
 
 **Límite de riesgo:** no se modificaron XML UBL, firma, ítems, IGV, redondeos,
 totales, correlativos, NC `07`, Resumen Diario ni GRE `09` REST/OAuth/tickets.
@@ -1876,12 +1877,63 @@ simuladas más contratos backend/UI; no llama a SUNAT ni a una base real.
 **Límite oficial:** `billConsultService` solo acepta factura/NC/ND con serie F; una
 boleta B se verifica por Consulta Integrada REST. Ambos clientes están deshabilitados
 fuera de producción. La validación en `dev-hugo` fue de migración/esquema y los
-contratos se cubrieron con mocks. No hubo E2E de consulta en BETA ni cruce hacia
-producción.
+contratos se cubrieron con mocks. No hubo E2E de consulta en BETA ni cruce desde
+desarrollo hacia producción.
 
-**Estado de despliegue:** la migración se aplicó y verificó únicamente en `dev-hugo`
-(`br-tiny-frost-aduw14pu`): 824 CDR históricos quedaron marcados como legibles y una
-sola fila con el caso exacto 0140 pasó a `por_confirmar`. El código permanece en el
-worktree. Aún no existen las cuatro credenciales nuevas ni un E2E REST 03. Al cierre
-de esta entrada, **la migración no se ha aplicado en producción y el código/cron
-nuevo no se han desplegado en producción**.
+### Incidente de despliegue y recuperación
+
+El primer despliegue de la mejora llegó a producción **antes de ejecutar su
+migración**. `/api/comprobantes` empezó a fallar con PostgreSQL `42703` porque el
+código ya leía `sunat_siguiente_consulta_at` y `sunat_codigo_consulta`, pero esas
+columnas todavía no existían. La pantalla mostró totales en cero y el banner
+"No pude cargar los comprobantes"; esos ceros eran el estado inicial del frontend,
+no una pérdida de información. La lectura directa confirmó que los **1,585
+comprobantes seguían intactos**.
+
+La recuperación se hizo sin emitir CPE de prueba:
+
+1. Se detuvo temporalmente la emisión y se aplicó la migración completa en una sola
+   transacción con `psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 -f ...`.
+2. Se verificaron las 15 columnas de `comprobantes`, las 2 de `pedidos` y los 6
+   índices, incluidos los 2 UNIQUE de protección financiera.
+3. El backfill estricto reclasificó los seis CPE históricos con 0140: F002-204,
+   F002-412 y cuatro boletas. Las facturas quedaron consultables automáticamente;
+   las boletas permanecen protegidas en revisión hasta configurar Consulta Integrada.
+4. Los módulos, endpoints, migración, rollback y prueba que habían quedado fuera de
+   Git se versionaron en `4974e92` (`fix(sunat): completar reconciliación y migración
+   CPE`). Vercel construyó ese commit desde `main` y quedó `Ready`; el despliegue
+   vigente también lo contiene.
+5. `/api/comprobantes` volvió a responder correctamente, la lista recuperó sus
+   totales reales y el cron de cinco minutos quedó desplegado.
+
+**Regla operativa incorporada:** una migración de esquema se ejecuta y verifica en
+producción **antes** de activar código que lea sus columnas. El build final debe
+provenir de un clon limpio de Git; nunca de un workspace con módulos locales sin
+versionar. Para este cambio se comprueban explícitamente `15 + 2 + 6` antes de mover
+el despliegue.
+
+### Resolución de F002-412/F002-413
+
+- `getStatus` devolvió `0001` para **F002-412**: SUNAT sí la había aceptado. La
+  ausencia de ZIP CDR descargable no convierte una aceptación confirmada en rechazo;
+  el sistema conserva `tieneCdr=false` y no ofrece una descarga vacía.
+- **F002-413** también estaba aceptada y sí tenía CDR válido. Era el comprobante que
+  debía permanecer vigente para el cliente.
+- Se emitió contra F002-412 la NC total **FC02-00000028**, motivo `01` (anulación de
+  la operación), por **S/ 1,593.27**. SUNAT la aceptó con código `0`; su CDR es un ZIP
+  válido, sin observaciones, y sus tres líneas coinciden con la factura base.
+- F002-413 quedó aceptada e intacta, y es la **única deuda vigente**. F002-412 quedó
+  neutralizada tributariamente por la NC; que SUNAT conserve la factura original como
+  "aceptada" en su historial es normal. La reconciliación no generó correlativos ni
+  deudas adicionales.
+- La lista ahora muestra F002-412 como **Corregida con FC02-00000028**, permite saltar
+  a esa NC y oculta la acción de emitir otra; el 409 del backend permanece como defensa.
+- La revisión adversarial descartó subir un parche puntual de relink para Planta: no
+  convergía si la NC se aceptaba antes que el CPE hermano y no distinguía anulaciones
+  manuales de automáticas. La solución futura debe abarcar Ejecutivas/Campo/Planta con
+  procedencia estructurada y serialización por venta; este cierre no alteró carteras.
+
+Quedan pendientes únicamente las cuatro credenciales OAuth separadas
+`SUNAT_*_CONSULTA_CLIENT_*` para resolver automáticamente boletas `03`; no son ni
+deben sustituir las credenciales GRE existentes. Mientras falten, una boleta ambigua
+permanece `por_confirmar` + revisión y bloquea duplicados.

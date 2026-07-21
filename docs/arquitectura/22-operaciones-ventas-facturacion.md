@@ -1,6 +1,6 @@
 # 22 — Operaciones de Venta, Facturación y Vistas Generales
 
-> **Última verificación contra código:** 2026-07-13
+> **Última verificación contra código:** 2026-07-20
 > **Estado:** separación y facturación de Campo en `main`/producción; conciliación de Ejecutivas del doc 27 en rama, aún no desplegada
 > **Archivos clave:** `src/lib/operaciones-venta.ts`, `src/lib/ventas-generales.ts`, `src/lib/sunat/index.ts`, `src/app/api/comprobantes/`, `src/app/api/ventas-generales/route.ts`, `src/components/DashboardLayout.tsx`
 
@@ -121,7 +121,10 @@ Invariantes:
 - Para factura se vuelve a consultar el RUC en el servidor. La razón social informal del puesto no reemplaza los datos fiscales.
 - El índice `ux_comprobantes_venta_avicola_cpe` permite un solo CPE 01/03 **no rechazado** por venta. Un rechazado queda como auditoría y libera el cupo para un reemplazo enlazado.
 - El claim `ventas_avicola.facturacion_claim_*` cubre la ventana anterior a crear la fila CPE. Mientras existe, no se puede editar ni anular la venta.
-- La fila `emitiendo` se reserva antes de llamar a SUNAT. Un intento interrumpido con más de 15 minutos se recupera como error y se reintenta con el mismo correlativo.
+- La fila `emitiendo` se reserva antes de llamar a SUNAT. En factura/boleta
+  `01`/`03`, una interrupción no prueba rechazo: pasa a `por_confirmar`, conserva
+  fila, XML y correlativo, y se consulta. Solo `no_registrado`, obtenido tras las
+  verificaciones previstas, permite reenviar el mismo XML y número.
 - `esCampo` impide crear una cobranza en `facturas`: el saldo ya se calcula con `ventas_avicola - abonos_avicola`.
 - Un CPE `emitiendo`, pendiente, `error`, aceptado u observado vuelve inmutable la venta. Si todos los
   CPE 01/03 fueron rechazados, Campo permite corregirla y emitir un reemplazo enlazado con otro
@@ -143,6 +146,36 @@ guardas concurrentes y no deben aplicarse si ya existen comprobantes de Campo si
   misma referencia tributaria; Ejecutivas/Planta no usan la cadena de reemplazo de Campo.
 - **GRE:** reutiliza el flujo legal existente. En Campo, los datos de dirección se obtienen del comprobante/XML, no de un pedido inexistente.
 - **PDF/XML/CDR:** pertenecen a `comprobantes`, por lo que las tres operaciones usan las mismas descargas y el PDF sigue leyendo los ítems del XML firmado.
+
+La reconciliación automática de `01`/`03` corre cada cinco minutos. Solo consulta
+el mismo RUC, tipo, serie y número; **nunca llama a `sendBill`**, no crea otro XML
+y no consume correlativos. `por_confirmar` es bloqueante para cualquier segunda
+emisión de la venta, incluso si la persona intenta confirmar un posible
+duplicado desde la interfaz.
+
+Cuando una aceptación llega tarde, el postproceso con claim deriva la operación y
+crea o enlaza la deuda una sola vez. Si el pedido ya tiene otro CPE aceptado o su
+deuda está vinculada, no reemplaza cartera: deja el caso en revisión para elegir
+cuál comprobante se neutralizará.
+
+La referencia tributaria de una NC apunta **solo** al CPE guardado en
+`referencia_comprobante_id`. No se debe confundir esa regla legal con una garantía
+ya implementada en todas las carteras: Planta conserva un fallback histórico por
+`pedido_id`, por lo que los duplicados aceptados exigen verificar la deuda antes de
+la NC. En el caso Ejecutivas F002-412/F002-413, esa verificación confirmó que
+FC02-00000028 corrige F002-412 y F002-413 continúa con la única deuda. La F002-412
+conserva `aceptado` como hecho histórico, pero se muestra corregida mediante esa NC.
+
+No se desplegó un relink genérico de cartera entre CPE hermanos: hacerlo solo para
+Planta o solo para un orden de aceptación dejaría inconsistencias en Ejecutivas/Campo
+y podría reactivar anulaciones manuales. Hasta modelar la procedencia de la anulación,
+dos CPE aceptados continúan siendo un caso de revisión administrada; antes de la NC se
+verifica cuál documento y deuda permanecerán vigentes.
+
+XML y CDR tampoco son sinónimos de estado: tener XML no prueba aceptación y no
+tener CDR descargable no prueba rechazo. Si la consulta oficial confirma
+`aceptado`, **no se emite una NC solo por falta de CDR**. Consulta la matriz de
+[estados-comprobantes-sunat.md](../soporte/estados-comprobantes-sunat.md).
 
 Cuando se agregue una operación nueva, no basta con crear un filtro visual: hay que propagar el origen por CPE, NC, reintentos, exportación y GRE.
 
@@ -178,6 +211,10 @@ Cambiar la definición del día en un solo reporte genera cifras contradictorias
 | Planta | `cobranzas_planta` | `abonos_planta` | no mezclar con `facturas` ni con abonos de Campo |
 
 En Campo, `src/lib/avicola/estado-cuenta.ts` conserva cada abono como movimiento individual. Si un cliente realiza tres abonos el mismo día, pantalla y PDF muestran tres filas con hora Lima, medio, monto, nota y saldo posterior. El agregado diario solo se usa para aritmética; nunca debe reemplazar el detalle entregado al cliente.
+
+La aceptación tardía no duplica cartera. Los claims serializan el postproceso y
+los índices únicos de `facturas` impiden una segunda deuda por el mismo CPE o por
+el mismo pedido y número, incluso si dos ejecuciones compiten.
 
 ---
 
@@ -223,6 +260,10 @@ El catálogo completo de dependencias y el procedimiento para evaluar cambios es
 6. Probar doble clic/doble pestaña en Campo y NC: debe existir un solo correlativo y un solo CPE activo.
 7. Generar un PDF de Campo con varios abonos del mismo día y confirmar que aparecen separados.
 8. En producción, validar primero con un caso real controlado que `precio_kg` incluye IGV.
+9. Simular `por_confirmar`: el cron y **Verificar ahora** solo deben consultar; no
+   pueden ejecutar `sendBill` ni crear otro correlativo.
+10. Confirmar que una NC sobre un CPE duplicado neutraliza solo esa referencia y
+    deja intacto el otro CPE aceptado y su deuda.
 
 ## 12. Corrección de Ventas Generales (13 jul 2026)
 

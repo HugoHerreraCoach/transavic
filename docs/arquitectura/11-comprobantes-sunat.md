@@ -1,7 +1,7 @@
 # 11 — Módulo de Facturación y SUNAT (CPE)
 
 > **Última verificación contra código:** 2026-07-20
-> **Estado:** el motor vigente de facturación está en producción; la migración de reconciliación 01/03 ya se aplicó y verificó únicamente en `dev-hugo`, mientras su migración y deploy a producción siguen pendientes
+> **Estado:** motor y reconciliación 01/03 desplegados en producción; migración aplicada/verificada el 20 jul. Siguen pendientes las cuatro credenciales de Consulta Integrada para boletas
 > **Archivos clave:** `src/lib/sunat/index.ts`, `xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `consulta-integrada-client.ts`, `reconciliacion-cpe.ts`, `efectos-aceptacion-cpe.ts`, `parse-cpe-items.ts`, `fechas.ts`, `src/app/api/comprobantes/`, `src/app/api/cron/reconciliar-cpe-sunat/`
 
 Este documento describe la emisión de facturas (01), boletas (03) y Notas de Crédito (07), incluida la concurrencia, los reintentos y la relación con las tres operaciones de venta.
@@ -136,6 +136,19 @@ Reglas:
 
 `por_confirmar` significa exactamente: **SUNAT pudo haber recibido el comprobante, pero todavía no confirmó su estado final**. La UI lo muestra en ámbar, bloquea “emitir otro”, ofrece **Verificar ahora** y refresca la lista visible cada 60 segundos.
 
+### Matriz operativa de estados
+
+| Estado | Evidencia | Qué debe hacer la asesora/admin |
+|---|---|---|
+| `aceptado` / `observado` | CDR legible o consulta oficial definitiva (`0001`/`estadoCp=1`) | Es un CPE válido. No emitir otro. Si falta CDR, conservar el estado: en factura F se reintenta recuperar la constancia; una boleta confirmada por Consulta Integrada puede permanecer aceptada sin CDR. |
+| `por_confirmar` | `0140`, timeout, HTTP 5xx, respuesta vacía, corte de red o CDR ilegible | No es rechazo. No reenviar ni consumir otro correlativo; cron/**Verificar ahora** consultan el mismo número. |
+| `rechazado` | Respuesta tributaria concluyente del CDR o `getStatus=0002` | Corregir la causa. No reintentar ciegamente el mismo XML como si fuera una caída temporal. |
+| `no_registrado` | Dos evidencias oficiales de ausencia separadas tras la espera | Reintentar la misma fila, XML y correlativo; nunca crear otro número para la misma venta. |
+
+El XML firmado demuestra qué se generó y envió, pero **no demuestra aceptación**.
+Del mismo modo, que no exista un CDR descargable **no demuestra rechazo**. La
+aceptación y la disponibilidad de la constancia son dos hechos distintos.
+
 La consulta posterior se separa por tipo; no existe un único servicio válido para ambos:
 
 | CPE | Fuente oficial de verificación | Datos de búsqueda | Resultado utilizable |
@@ -146,6 +159,11 @@ La consulta posterior se separa por tipo; no existe un único servicio válido p
 `billConsultService` oficialmente admite factura, Nota de Crédito y Nota de Débito **con serie F**; no admite boletas. Aunque SUNAT permite consultar 07/08 allí, este reconciliador sigue acotado a `01`/`03`: la NC `07` conserva su flujo estabilizado.
 
 Para factura, `getStatus=0001` confirma la aceptación y `getStatusCdr` intenta recuperar la constancia. Si el CDR aún no está disponible, la factura permanece aceptada y solo se reprograma la recuperación del ZIP.
+
+El caso real F002-412 validó esta frontera: `getStatus` devolvió `0001`, por lo que
+la factura quedó aceptada, mientras `getStatusCdr` no entregó ZIP y
+`sunat_cdr_legible` permaneció falso. El sistema no ofrece descargar un CDR vacío ni
+inventa una constancia. F002-413, en cambio, quedó aceptada con CDR legible.
 
 Para boleta, `estadoCp=0` se normaliza internamente como evidencia `0011`: deben existir dos consultas independientes después de la espera antes de pasar a `no_registrado`. Como Consulta Integrada no informa rechazo ni entrega CDR, una boleta aceptada por esta vía queda `aceptado` con `tieneCdr=false` sin iniciar un recuperador de CDR. Un rechazo concluyente de 03 solo puede venir del CDR recibido durante `sendBill`, no de esta consulta REST.
 
@@ -167,6 +185,12 @@ Si falta fecha/monto o las credenciales REST de la empresa, la boleta conserva `
 El cron `GET /api/cron/reconciliar-cpe-sunat`, protegido por `CRON_SECRET`, corre cada 5 minutos y procesa un lote pequeño en secuencia. Selecciona SOAP para 01 o REST para 03 y **nunca reenvía el CPE**. El endpoint manual `POST /api/comprobantes/[id]/verificar-sunat` aplica el mismo scoping admin/asesora y el mismo claim, por lo que cron y botón no duplican trabajo.
 
 `mensaje_sunat`, los códigos/mensajes de envío y consulta, sus timestamps, `cdr_base64` y la marca `sunat_cdr_legible` se conservan para auditoría. El ZIP CDR se descarga crudo; no se reconstruye con un parser ZIP casero ni se muestra como disponible hasta haberlo validado.
+
+La presencia de base64 o de bytes no basta: un CDR válido debe ser un ZIP
+descomprimible, contener una `ApplicationResponse` y exponer un `ResponseCode`
+interpretable. Si cualquiera de esas condiciones falla, la clasificación es
+fail-safe y nunca presume aceptación por defecto. El backfill de la migración no
+reclasificó respuestas históricas: solo mantuvo descargables los CDR ya conservados.
 
 ### Límite deliberado del cambio
 
@@ -235,6 +259,32 @@ Una NC en `error` que ya tiene XML firmado **no libera el cupo** para crear otra
 la misma fila y correlativo. Solo un error anterior a firmar/reservar XML puede dar paso a una emisión
 nueva. Esta regla vive también en `ux_comprobantes_nc_referencia_activa`.
 
+### Duplicados que SUNAT terminó aceptando
+
+Si dos CPE del mismo pedido quedan definitivamente aceptados, ninguno se transforma
+artificialmente en `rechazado`: ambos existen ante SUNAT. Se elige cuál conservar y
+se emite **una NC total código `01`** contra el duplicado. La fila original conserva
+estado `aceptado` y auditoría; la lista la marca `Corregida con <serie-número de la NC>`
+mediante la relación `referencia_comprobante_id`, permite abrir esa NC y oculta la
+opción de emitir otra.
+
+No se emite la NC mientras el supuesto duplicado siga `por_confirmar`. Primero debe
+existir evidencia definitiva de aceptación. Antes de emitirla se verifica qué CPE y
+qué deuda permanecerán vigentes. Los índices financieros evitan repetir una deuda
+de Ejecutivas, pero no eligen el documento ganador ni sustituyen la revisión de
+Campo/Planta.
+
+La lista distingue `tiene_nc` (NC ya aceptada/observada) de
+`tiene_nc_bloqueante` (NC reservada, en curso o en `error` con XML firmado). En ambos
+casos oculta la acción de emitir otra; el endpoint mantiene el 409 como defensa final.
+Para NC anteriores al vínculo estructurado, replica el fallback del backend: extrae
+la serie aceptada de `observaciones` y localiza la NC dentro de la misma empresa.
+
+En el incidente real se conservó F002-413 y se acreditó F002-412 con
+FC02-00000028, motivo `01`, por S/1,593.27. SUNAT aceptó la NC, su CDR fue legible y
+las tres líneas/neto/IGV/total coincidieron exactamente con F002-412. El resultado
+financiero fue una sola deuda, asociada a F002-413.
+
 ---
 
 ## 10. PDF, correo, XML, CDR y Excel
@@ -284,6 +334,6 @@ Para reconciliación 01/03 agrega obligatoriamente:
 - efectos de aceptación tardía idempotentes en Ejecutivas, Campo y Planta;
 - regresión explícita de NC 07, GRE 09 y Resumen Diario sin cambios.
 
-La migración aditiva es `scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` y su reversa es `scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql`. Se aplicó correctamente por `psql` solo en `dev-hugo` (`br-tiny-frost-aduw14pu`): marcó 824 CDR históricos como legibles y reclasificó una única fila exacta 0140 a `por_confirmar`. El archivo final también crea los dos índices únicos defensivos de deuda. La validación de consultas usa mocks SOAP 01/REST 03: no hubo E2E BETA, no hay credenciales/E2E REST 03 y no se llamó desde desarrollo a producción. Al 20 de julio de 2026 **no se ha aplicado ni desplegado en producción**.
+La migración aditiva es `scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` y su reversa es `scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql`. Primero se validó en `dev-hugo` (`br-tiny-frost-aduw14pu`) y el 20 de julio se aplicó a producción mediante `psql -1 -v ON_ERROR_STOP=1`: conservó los 1,585 CPE, instaló 15 columnas en `comprobantes`, 2 en `pedidos` y 6 índices, marcó 1,554 CDR históricos y reclasificó los 6 casos exactos 0140. El cron ejecutó después con HTTP 200 y sin nuevos `42703`; el despliegue Git correctivo quedó activo desde `main` (`4974e92`). Los contratos SOAP 01/REST 03 siguen cubiertos con mocks y aún faltan las cuatro credenciales REST, por lo que las boletas ambiguas permanecen protegidas en `por_confirmar` + revisión.
 
 Ejecuta el runbook de [24-pruebas-regresion-despliegue.md](./24-pruebas-regresion-despliegue.md).

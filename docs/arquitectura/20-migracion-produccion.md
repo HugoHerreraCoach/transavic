@@ -1,6 +1,6 @@
 # 20 — Migraciones y Despliegue Seguro a Producción
 
-> **Última actualización:** 2026-07-13
+> **Última actualización:** 2026-07-20
 > **Producción:** Vercel `hugoherrerateam/transavic` + Neon `ep-cool-sound`
 > **Desarrollo:** `.env.local` + Neon `dev-hugo`; SUNAT BETA
 
@@ -29,6 +29,7 @@ psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-<feature>
 | 8 jul 2026 | ✅ producción | Clientes Avícola, clientes/cobranzas de Planta, caja por operación y proveedores |
 | 12 jul 2026 | ✅ producción | facturación de Campo, claims/NC, vistas generales y corrección auditada de CPE rechazados |
 | 13 jul 2026 | 🧪 `dev-hugo` | pagos/anticipos de proveedores y costo histórico POS probados; producción intacta |
+| 20 jul 2026 | ✅ producción | `migrate-reconciliacion-cpe-sunat-2026-07-20.sql`: reconciliación 01/03, claims y defensas únicas de deuda |
 
 La fuente histórica detallada de cada pase es `docs/historial-cambios-2026.md`. No confundas "código local verificado" con "producción migrada".
 
@@ -39,11 +40,13 @@ La fuente histórica detallada de cada pase es `docs/historial-cambios-2026.md`.
 ### Paso 1: preflight
 
 1. Confirmar rama, commit/diff y archivos SQL exactos.
-2. Confirmar host/base de desarrollo y producción sin revelar secretos.
-3. Revisar si el script es idempotente y aditivo.
-4. Revisar rollback y si pierde datos o trazabilidad.
-5. Ejecutar primero en `dev-hugo`.
-6. Ejecutar `npx tsc --noEmit`, lint, pruebas dirigidas y `git diff --check`.
+2. Confirmar con `git ls-files` que migración, rollback, endpoints, módulos y prueba requeridos estén registrados en Git; un archivo local no versionado no forma parte del despliegue reproducible.
+3. Confirmar host/base de desarrollo y producción sin revelar secretos.
+4. Revisar si el script es idempotente y aditivo.
+5. Revisar rollback y si pierde datos o trazabilidad.
+6. Ejecutar primero en `dev-hugo`.
+7. Ejecutar `npx tsc --noEmit`, lint, pruebas dirigidas y `git diff --check`.
+8. Repetir typecheck/pruebas desde un `git archive` o clon limpio con el mismo commit que construirá Vercel.
 
 ### Paso 2: aplicar SQL en desarrollo
 
@@ -74,6 +77,10 @@ psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-<feature>
 
 Repetir las consultas de verificación. Solo después se hace push/merge a `main` o se habilita el deploy.
 
+No uses un despliegue manual de un workspace sucio como evidencia de que Git está
+completo: Vercel puede recibir archivos locales que el siguiente build automático no
+podrá clonar. El artefacto final debe poder construirse desde el commit por sí solo.
+
 ### Paso 5: post-deploy
 
 - comprobar `/api/version` y recarga del cliente;
@@ -81,6 +88,7 @@ Repetir las consultas de verificación. Solo después se hace push/merge a `main
 - revisar logs de Vercel;
 - validar datos reales controlados;
 - confirmar que no aparecieron deudas, correlativos o movimientos duplicados.
+- en cambios SUNAT, comprobar `/api/comprobantes`, XML/CDR existentes, cron y estados UI sin emitir un CPE fiscal de prueba innecesario.
 
 ---
 
@@ -206,3 +214,43 @@ La reprogramación y la conciliación de Ejecutivas no agregan columnas. Rollbac
 `rollback-pagos-proveedores-estado-cuenta-2026-07-13.sql` y
 `rollback-pos-costo-snapshot-2026-07-13.sql`; deben evaluarse, no ejecutarse
 automáticamente después de que existan datos nuevos.
+
+## 9. Incidente y recuperación SUNAT del 20 jul 2026
+
+### Causa
+
+El código nuevo de reconciliación llegó a producción mediante un despliegue manual
+que incluía módulos locales no versionados, pero la migración no se había ejecutado.
+`GET /api/comprobantes` intentó leer `sunat_siguiente_consulta_at` y
+`sunat_codigo_consulta`; PostgreSQL respondió `42703` y la UI mostró ceros iniciales.
+Los **1,585 comprobantes seguían intactos**: fue un fallo de esquema/código, no una
+pérdida de datos.
+
+### Recuperación aplicada
+
+1. Se suspendieron temporalmente factura/boleta/NC.
+2. Se verificaron conteos, los 6 casos exactos `0140` y cero grupos de deuda duplicada.
+3. Se ejecutó en producción:
+
+   ```bash
+   psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 \
+     -f scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql
+   ```
+
+4. Se confirmaron 15 columnas en `comprobantes`, 2 en `pedidos` y 6 índices.
+5. Se versionaron exclusivamente los 8 archivos de reconciliación requeridos y una
+   guarda de prueba que falla si falta alguno en Git.
+6. Se validó desde un `git archive` limpio; `main` (`4974e92`) construyó en Vercel y
+   quedó `Ready` antes de servir producción.
+7. `/api/comprobantes` y el cron respondieron 200; no reapareció `42703`, no se
+   generaron correlativos y no aparecieron deudas duplicadas.
+
+### Contingencia que queda como regla
+
+- Si la migración falla, `-1` revierte su transacción completa.
+- Si la migración terminó pero el código falla, se conserva el esquema aditivo y se
+  promueve temporalmente el último despliegue estable.
+- No se ejecuta el rollback SQL después de que la reconciliación o su postproceso
+  hayan comenzado, salvo auditoría y plan de datos explícitos.
+- Las cuatro credenciales `SUNAT_*_CONSULTA_CLIENT_*` siguen pendientes; no bloquean
+  facturas, pero las boletas ambiguas continúan `por_confirmar` y protegidas.

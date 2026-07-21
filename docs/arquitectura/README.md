@@ -1,10 +1,17 @@
 # Documentación de Arquitectura y Negocio — Transavic
 
-> **Última actualización:** 2026-07-13
-> **Base revisada:** `main` (`e6ce194`) + rama `codex/cambios-operativos-julio`
-> **Producción:** `app.transavic.com`; ERP, separación Campo/Planta y facturación de Campo desplegados. Del lote del 13 jul, Proveedores y costo POS requieren migración; conciliación de Ejecutivas y reprogramación requieren solo despliegue de código. Nada de ese lote se ha aplicado aún en producción.
+> **Última actualización:** 2026-07-20
+> **Base revisada:** `main`, incluida la reconciliación SUNAT de `4974e92` y su cierre operativo del 20/07
+> **Producción:** `app.transavic.com`; ERP, separación Campo/Planta, facturación de Campo y reconciliación automática SUNAT 01/03 desplegados. La migración de reconciliación ya está aplicada y verificada; siguen pendientes las cuatro credenciales de Consulta Integrada para resolver boletas ambiguas. Del lote del 13 jul, Proveedores y costo POS requieren migración; conciliación de Ejecutivas y reprogramación conservan su estado documentado en sus archivos temáticos.
 
 Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos temáticos explican cada módulo; los docs 22–24 conectan los módulos, muestran el impacto de cambios y definen las pruebas de regresión.
+
+> **Incidente SUNAT del 20 jul:** una versión del código que leía las columnas de
+> reconciliación llegó a producción antes de su migración y la lista de comprobantes
+> respondió con PostgreSQL `42703`. Los 1,585 CPE permanecieron intactos. La recuperación,
+> los estados `aceptado`/`por_confirmar`/`rechazado`, la aceptación sin CDR y la regla
+> migración→código quedan fijados en los docs [11](./11-comprobantes-sunat.md),
+> [20](./20-migracion-produccion.md) y [24](./24-pruebas-regresion-despliegue.md).
 
 ---
 

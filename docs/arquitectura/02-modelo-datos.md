@@ -1,8 +1,8 @@
 # 02 — Modelo de Datos (Esquema y Relaciones)
 
-> **Última verificación contra código:** 2026-07-13
-> **Estado:** ERP/CRM, separación Campo/Planta y esquema de facturación de Campo en producción; migraciones de pagos de proveedores y costo POS del 13 jul pendientes de despliegue
-> **Archivos clave:** `src/lib/types.ts`, `scripts/migrate-produccion-2026-05-29.sql`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-clientes-avicola-2026-07-07.sql`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql` y las tres migraciones de Campo/NC del 12 jul listadas en §4
+> **Última verificación contra código y producción:** 2026-07-20
+> **Estado:** ERP/CRM, separación Campo/Planta, facturación de Campo y esquema de reconciliación SUNAT 01/03 en producción; migraciones de pagos de proveedores y costo POS del 13 jul pendientes de despliegue
+> **Archivos clave:** `src/lib/types.ts`, `scripts/migrate-produccion-2026-05-29.sql`, `scripts/migrate-produccion-fase-2-3-consolidado.sql`, `scripts/migrate-clientes-avicola-2026-07-07.sql`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql`, las tres migraciones de Campo/NC del 12 jul y `scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql`
 
 Este documento define la estructura física de la base de datos Neon Postgres del proyecto Transavic.
 
@@ -382,6 +382,7 @@ nueva de desarrollo/producción se entrega como SQL y se aplica con **psql**; lo
 | `migrate-facturacion-campo-2026-07-12.sql` | Nexo Campo→CPE, RUC, claims, índices de CPE/NC y exclusión de Campo en `ventas_facturadas`. Aplicada a producción el 12 jul. |
 | `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql` | Agrega `reemplaza_comprobante_id` e índices para corregir un CPE rechazado con otro correlativo sin perder auditoría. Aplicada a producción el 12 jul. |
 | `migrate-nc-error-reintento-unico-2026-07-12.sql` | Mantiene ocupada la unicidad de NC cuando el estado es `error` y ya existe XML firmado; obliga a reintentar la misma fila/correlativo. Aplicada a producción el 12 jul. |
+| `migrate-reconciliacion-cpe-sunat-2026-07-20.sql` | Agrega metadatos/claims de reconciliación 01/03, disponibilidad comprobada del CDR y dos defensas únicas de deuda. Aplicada a producción el 20 jul antes del despliegue Git correctivo. |
 | `migrate-pagos-proveedores-estado-cuenta-2026-07-13.sql` | Libro de pagos, aplicaciones, anticipos y vínculo contable. Probada en `dev-hugo`; pendiente de producción. |
 | `migrate-pos-costo-snapshot-2026-07-13.sql` | Agrega el costo histórico nullable por ítem POS. Probada en `dev-hugo`; pendiente de producción. |
 
@@ -474,6 +475,47 @@ Detalles: [21-clientes-avicola.md](./21-clientes-avicola.md), [25-clientes-cobra
 
 La relación de reemplazo se agrega mediante `migrate-reemision-cpe-campo-rechazado-2026-07-12.sql`
 y es deliberadamente distinta de `referencia_comprobante_id` (reservada para NC).
+
+### 5.9 Reconciliación SUNAT 01/03 (en producción desde el 20 jul)
+
+`migrate-reconciliacion-cpe-sunat-2026-07-20.sql` es aditiva e idempotente. Agrega
+**15 columnas** en `comprobantes`:
+
+- envío: `sunat_codigo_envio`, `sunat_mensaje_envio`;
+- consulta: `sunat_codigo_consulta`, `sunat_ultima_consulta_at`,
+  `sunat_siguiente_consulta_at`, `sunat_consultas_count`,
+  `sunat_no_existe_consecutivos`, `sunat_consulta_claim_at`;
+- constancia/revisión: `sunat_cdr_legible`, `sunat_requiere_revision`,
+  `sunat_revision_motivo`;
+- postproceso: `sunat_postproceso_estado`, `sunat_postproceso_at`,
+  `sunat_postproceso_error`;
+- enlace de cartera: `cobranza_cliente_id`.
+
+Agrega además **2 columnas** de exclusión en `pedidos`:
+`facturacion_cpe_claim_token` y `facturacion_cpe_claim_at`.
+
+Los **6 índices** nuevos son:
+
+| Índice | Invariante |
+|---|---|
+| `idx_comprobantes_sunat_por_confirmar` | selecciona el siguiente lote 01/03 pendiente de consulta |
+| `idx_comprobantes_sunat_cdr_pendiente` | recupera CDR faltantes de CPE ya aceptados/observados |
+| `idx_comprobantes_sunat_postproceso` | retoma efectos internos de una aceptación tardía |
+| `idx_pedidos_facturacion_cpe_claim` | detecta claims de emisión activos/vencidos |
+| `uq_facturas_comprobante_id_cpe` | impide dos deudas para el mismo `comprobante_id` |
+| `uq_facturas_pedido_serie_cpe` | impide repetir pedido + serie-número en `facturas` |
+
+`cdr_base64 IS NOT NULL` **no prueba por sí solo** que una respuesta nueva sea
+utilizable. En emisión/reconciliación nuevas, `sunat_cdr_legible=TRUE` se asigna
+después de interpretar la respuesta; solo entonces la UI ofrece descargar CDR. El
+backfill histórico marcó como disponibles los CDR que el sistema ya conservaba para
+mantener retrocompatibilidad. Un CPE puede quedar `aceptado` por consulta oficial
+aunque la marca continúe falsa: la aceptación y la disponibilidad del archivo son
+hechos distintos.
+
+En producción, la migración conservó los 1,585 comprobantes, marcó 1,554 CDR
+históricos y reclasificó los 6 casos exactos `0140` para consulta. No genera XML,
+CDR ni correlativos nuevos.
 
 ## 6. Ampliación del 13 jul 2026 (probada en `dev-hugo`, pendiente de producción)
 

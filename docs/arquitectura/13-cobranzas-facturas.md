@@ -1,6 +1,6 @@
 # 13 — Cobranzas y Carteras por Operación
 
-> **Última verificación contra código:** 2026-07-13
+> **Última verificación contra código:** 2026-07-20
 > **Estado:** las tres carteras de clientes están en producción; la ficha financiera de proveedores del doc 26 está solo en `codex/cambios-operativos-julio`
 > **Archivos clave:** `src/lib/cobranzas.ts`, `src/lib/avicola/saldos.ts`, `src/lib/avicola/estado-cuenta.ts`, `src/lib/planta/saldos.ts`, `src/lib/proveedores/pagos.ts`, `src/app/api/facturas/`, `src/app/api/avicola/`, `src/app/api/cobranzas-planta/`
 
@@ -21,6 +21,15 @@ Invariantes:
 - Un CPE de Campo no crea `facturas`.
 - Un CPE/reintento de Planta no crea `facturas`.
 - Una misma deuda no debe existir en dos carteras.
+- En Ejecutivas, un CPE `01`/`03` en `por_confirmar` todavía no crea deuda. Si
+  SUNAT lo acepta después, el postproceso con claim la crea o enlaza **una sola
+  vez**. En Planta, la deuda de una venta a crédito ya nació en el POS y el CPE
+  solo la enlaza; Campo nunca crea `facturas`.
+- Los índices únicos `uq_facturas_comprobante_id_cpe` y
+  `uq_facturas_pedido_serie_cpe` son la defensa final de Ejecutivas ante dos workers.
+- Si la aceptación tardía descubre que el pedido ya tiene otro CPE aceptado o
+  una deuda enlazada, no crea ni reemplaza cartera automáticamente: marca el caso
+  para revisión y conserva la deuda existente hasta decidir qué CPE corregir.
 - Marcar una cobranza de Ejecutivas como pagada no crea una transacción bancaria/caja: es una decisión vigente documentada en [10 §7](./10-pos-caja-tesoreria.md).
 
 ---
@@ -113,6 +122,33 @@ La operación del CPE base decide qué cartera se afecta:
 
 No basta con mirar `venta_avicola_id`: para Planta se debe cargar el origen del pedido, incluso en reintentos y NC.
 
+Tributariamente, la NC neutraliza **solo el comprobante indicado en
+`referencia_comprobante_id`**. El efecto interno de cartera no tiene todavía una
+garantía genérica equivalente: el helper histórico de Planta también puede buscar
+por `pedido_id`. Por eso, ante dos CPE aceptados del mismo pedido, el administrador
+debe comprobar la deuda que quedará vigente antes de emitir la NC. El comprobante
+base puede conservar el estado histórico `aceptado`; la corrección legal se demuestra
+con la NC aceptada que lo referencia.
+
+Caso real de control: F002-412 y F002-413 fueron aceptadas para el mismo pedido.
+La NC FC02-00000028 se emitió exclusivamente sobre F002-412; por eso neutraliza esa
+factura, mientras F002-413 y su única deuda permanecen vigentes. No se debe emitir
+otra NC sobre F002-413.
+
+El resultado de F002-412/F002-413 no debe generalizarse como una reactivación
+automática ya resuelta para cualquier orden de eventos y operación. En ese caso real,
+la deuda ya estaba correctamente vinculada a F002-413 antes de emitir la NC sobre
+F002-412. Una conciliación futura de cartera debe cubrir Ejecutivas, Campo y Planta,
+serializar por venta/pedido y distinguir con campos estructurados una anulación por NC
+de una anulación manual; no se debe reactivar por coincidencias de texto.
+
+La falta del botón o ZIP de CDR **no es por sí sola motivo para una NC**. Si una
+consulta oficial ya confirma `aceptado`, el CPE es válido aunque la constancia no
+se haya podido recuperar. La NC corresponde cuando se decide anular o corregir
+ese CPE aceptado, no para intentar reparar una descarga. La guía operativa para
+asesoras está en
+[estados-comprobantes-sunat.md](../soporte/estados-comprobantes-sunat.md).
+
 ---
 
 ## 6. Consolidado y aging
@@ -134,6 +170,7 @@ El aging clásico de `/api/cobranzas/aging` pertenece a Ejecutivas. No debe pres
 | creación de cobranza al emitir/reintentar | operación del CPE, idempotencia y las tres tablas de cartera |
 | estados de deuda | Consolidado, aging, crons y filtros activos |
 | NC | cartera del CPE base, pagos ya realizados y anulación de venta Campo |
+| aceptación tardía SUNAT | claim de postproceso, CPE hermano y los dos índices únicos de `facturas` |
 | abonos de Campo | saldos, historial, guía, modal, PDF y prueba de tres abonos |
 | abonos de Planta | saldo parcial, estados, POS y devoluciones |
 | tesorería | caja/cuentas; no asumas que una cobranza pagada mueve dinero automáticamente |

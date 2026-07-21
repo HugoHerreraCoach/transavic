@@ -1,6 +1,6 @@
 # 16 — Sistema de Notificaciones e Hilos de Cron
 
-> **Última verificación contra código:** 2026-07-13
+> **Última verificación contra código:** 2026-07-20
 > **Fuente de horarios:** `vercel.json`
 > **Archivos clave:** `src/lib/notificaciones.ts`, `src/components/NotificationBell.tsx`, `src/app/api/cron/**/route.ts`, `vercel.json`
 
@@ -24,7 +24,7 @@ Para mantener comunicadas las 4 áreas sin necesidad de recargar la página:
 
 ---
 
-## 2. Los 5 Cron Jobs del Sistema
+## 2. Los 6 Cron Jobs del Sistema
 
 Todos los endpoints bajo `/api/cron/*` están protegidos de llamados externos. Requieren el header `Authorization: Bearer <CRON_SECRET>` enviado automáticamente por el planificador de Vercel. Si `CRON_SECRET` no coincide o está ausente, el servidor retorna un error **503/401**.
 
@@ -37,6 +37,24 @@ Schedules y comportamientos configurados en `vercel.json`:
 | `/api/cron/recordatorios-asesoras` | `0 17 * * *` | 12:00 | Analiza el desempeño de cada asesora: si su meta acumulada a la fecha va por debajo del 50%, o si posee clientes con inactividad (sin compras en 14–21 días), dispara alertas de motivación. |
 | `/api/cron/resumen-diario-sunat` | `0 7 * * *` | 02:00 | Agrupa de forma atómica todas las boletas de venta (03) emitidas el día de ayer y transmite el Resumen Diario (RC-) consolidado a SUNAT. |
 | `/api/cron/repartidores-oscuros` | `*/10 * * * *` | Cada 10 min | Escanea motorizados con pedidos activos asignados. Si no hay reportes de posición en los últimos 10 minutos (en horario de 04:30 a 22:00), dispara alerta `repartidor_oscuro` al admin. |
+| `/api/cron/reconciliar-cpe-sunat` | `*/5 * * * *` | Cada 5 min | Consulta en lotes pequeños el estado de facturas/boletas inciertas y recupera el CDR de una factura cuando SUNAT lo permite. Nunca emite ni reenvía un CPE. |
+
+### Límite del cron de reconciliación SUNAT
+
+`reconciliar-cpe-sunat` procesa hasta tres CPE por corrida y los consulta en
+secuencia para no producir una ráfaga contra SUNAT:
+
+- factura `01`: `getStatus` y, si corresponde, `getStatusCdr`;
+- boleta `03`: Consulta Integrada de Comprobantes con fecha y monto;
+- nunca llama a `sendBill`, no firma otro XML y no consume otro correlativo;
+- mientras el CPE siga `por_confirmar`, continúa bloqueando una segunda emisión
+  para la misma venta;
+- si SUNAT confirma tarde la aceptación, ejecuta el postproceso idempotente que
+  enlaza la cartera correcta una sola vez.
+
+Por eso una intermitencia del cron o de SUNAT no autoriza a emitir manualmente
+otro comprobante ni una Nota de Crédito. La matriz de actuación para asesoras está
+en [estados-comprobantes-sunat.md](../soporte/estados-comprobantes-sunat.md).
 
 ## 3. Popup persistente de reprogramación
 
