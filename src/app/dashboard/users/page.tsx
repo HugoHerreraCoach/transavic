@@ -11,7 +11,7 @@ async function getUsers(): Promise<User[]> {
     try {
         const connectionString = process.env.DATABASE_URL!;
         const sql = neon(connectionString);
-        const data = await sql`SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, activo FROM users ORDER BY activo DESC NULLS FIRST, name ASC`;
+        const data = await sql`SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas FROM users ORDER BY activo DESC NULLS FIRST, name ASC`;
         return data as User[];
     } catch (error) {
         console.error("Database Error:", error);
