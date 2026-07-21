@@ -34,15 +34,27 @@ export async function GET(request: Request) {
 
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Una fila `emitiendo` se reserva ANTES del SOAP para impedir dobles CPE/NC.
-    // Si la función murió y pasaron 15 min, se vuelve reintentable con el MISMO
-    // correlativo; nunca se habilita crear otro comprobante para la misma venta.
+    // Una factura/boleta reservada puede haber llegado a SUNAT aunque la función
+    // haya muerto. Después de 15 min pasa a consulta, NUNCA directamente a
+    // rechazo/error ni a una emisión con otro correlativo.
     try {
+      await sql`
+        UPDATE comprobantes
+        SET estado = 'por_confirmar',
+            mensaje_sunat = 'La emisión se interrumpió y SUNAT puede haber recibido el comprobante. El sistema verificará este mismo número; no emitas otro.',
+            sunat_siguiente_consulta_at = NOW()
+        WHERE estado = 'emitiendo'
+          AND tipo IN ('01', '03')
+          AND created_at < NOW() - INTERVAL '15 minutes'
+      `;
+
+      // NC/ND conservan exactamente el flujo de reintento previo.
       await sql`
         UPDATE comprobantes
         SET estado = 'error',
             mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
         WHERE estado = 'emitiendo'
+          AND tipo NOT IN ('01', '03')
           AND created_at < NOW() - INTERVAL '15 minutes'
       `;
     } catch (e) {
@@ -161,7 +173,13 @@ export async function GET(request: Request) {
         g.total_bultos::integer             AS total_bultos,
         NULL::text                          AS guia_serie_numero,
         (g.created_at AT TIME ZONE 'America/Lima')::date AS fecha_filtro,
-        NULL::text                          AS reemplazada_por
+        NULL::text                          AS reemplazada_por,
+        NULL::text                          AS codigo_respuesta_sunat,
+        NULL::timestamptz                   AS ultima_consulta_sunat_at,
+        NULL::timestamptz                   AS proxima_consulta_sunat_at,
+        FALSE                               AS tiene_cdr,
+        FALSE                               AS requiere_revision_sunat,
+        NULL::text                          AS revision_motivo_sunat
       FROM comprobantes_guias g
       LEFT JOIN comprobantes ref ON g.comprobante_id = ref.id`;
 
@@ -224,7 +242,14 @@ export async function GET(request: Request) {
                WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
                  AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
                ORDER BY nc2.created_at DESC LIMIT 1)
-          ) AS reemplazada_por
+          ) AS reemplazada_por,
+          COALESCE(c.sunat_codigo_consulta, c.sunat_codigo_envio)
+            AS codigo_respuesta_sunat,
+          c.sunat_ultima_consulta_at AS ultima_consulta_sunat_at,
+          c.sunat_siguiente_consulta_at AS proxima_consulta_sunat_at,
+          c.sunat_cdr_legible AS tiene_cdr,
+          c.sunat_requiere_revision AS requiere_revision_sunat,
+          c.sunat_revision_motivo AS revision_motivo_sunat
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id
         WHERE c.tipo = $${ctx.i++}`;
@@ -277,7 +302,14 @@ export async function GET(request: Request) {
                WHERE c.tipo = '07' AND nc2.tipo = '07' AND nc2.estado IN ('aceptado','observado')
                  AND nc2.referencia_comprobante_id = c.referencia_comprobante_id AND nc2.id <> c.id
                ORDER BY nc2.created_at DESC LIMIT 1)
-          ) AS reemplazada_por
+          ) AS reemplazada_por,
+          COALESCE(c.sunat_codigo_consulta, c.sunat_codigo_envio)
+            AS codigo_respuesta_sunat,
+          c.sunat_ultima_consulta_at AS ultima_consulta_sunat_at,
+          c.sunat_siguiente_consulta_at AS proxima_consulta_sunat_at,
+          c.sunat_cdr_legible AS tiene_cdr,
+          c.sunat_requiere_revision AS requiere_revision_sunat,
+          c.sunat_revision_motivo AS revision_motivo_sunat
         FROM comprobantes c
         LEFT JOIN comprobantes ref ON c.referencia_comprobante_id = ref.id`;
 

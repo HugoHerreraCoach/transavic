@@ -1,7 +1,7 @@
 // src/app/dashboard/comprobantes/nuevo/emitir-client.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { esDniValido, esRucValido, tieneNombreEspecifico } from "@/lib/sunat/validacion-cliente";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
@@ -13,8 +13,10 @@ import {
   FiFileText,
   FiCheckCircle,
   FiAlertCircle,
+  FiClock,
   FiLoader,
   FiDownload,
+  FiRefreshCw,
 } from "react-icons/fi";
 
 type Tipo = "01" | "03";
@@ -147,7 +149,7 @@ function limpiarObservacionInput(value: string, maxLength: number): string {
 
 interface ResultadoEmision {
   id?: string; // id del comprobante en DB (para descargar su PDF)
-  sunatCaido?: boolean; // SUNAT no respondió (caído) → aviso amigable + emisión manual
+  sunatCaido?: boolean; // Respuesta incierta: se consulta el mismo número antes de actuar.
   estado?: string;
   serieNumero?: string;
   codigoRespuesta?: string;
@@ -155,6 +157,39 @@ interface ResultadoEmision {
   error?: string;
   mensaje?: string;
   clienteRazonSocial?: string;
+  proximaConsultaAt?: string | null;
+  verificadoAt?: string | null;
+  tieneCdr?: boolean;
+}
+
+function normalizarEstadoResultado(estado: unknown): string | undefined {
+  if (typeof estado !== "string") return undefined;
+  switch (estado.toLowerCase()) {
+    case "aceptado":
+      return "ACEPTADA";
+    case "observado":
+      return "ACEPTADA_CON_OBSERVACIONES";
+    case "rechazado":
+      return "RECHAZADA";
+    case "por_confirmar":
+      return "POR_CONFIRMAR";
+    case "anulado":
+      return "ANULADA";
+    default:
+      return estado.toUpperCase();
+  }
+}
+
+function horaLima(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const fecha = new Date(iso);
+  if (Number.isNaN(fecha.getTime())) return null;
+  return new Intl.DateTimeFormat("es-PE", {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+  }).format(fecha);
 }
 
 const IGV_FACTOR = 1.18;
@@ -266,6 +301,9 @@ export default function EmitirComprobanteClient({
   const [resultado, setResultado] = useState<ResultadoEmision | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [descargando, setDescargando] = useState(false);
+  const [verificandoSunat, setVerificandoSunat] = useState(false);
+  const [reintentandoMismoNumero, setReintentandoMismoNumero] = useState(false);
+  const verificacionEnCursoRef = useRef(false);
 
   // Sistema de autorizaciones de precio mínimo
   const [autorizacionId, setAutorizacionId] = useState<string | null>(
@@ -996,6 +1034,113 @@ export default function EmitirComprobanteClient({
     }
   }
 
+  async function reintentarMismoNumeroSunat(id: string) {
+    if (reintentandoMismoNumero) return;
+    setReintentandoMismoNumero(true);
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/comprobantes/${id}/reintentar`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 202) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : "No se pudo reintentar el comprobante."
+        );
+      }
+      const estado = normalizarEstadoResultado(data?.estado) ?? "POR_CONFIRMAR";
+      setResultado((actual) =>
+        actual?.id === id
+          ? {
+              ...actual,
+              ...data,
+              id,
+              estado,
+              descripcion:
+                typeof data?.mensaje === "string"
+                  ? data.mensaje
+                  : data?.descripcion ?? actual.descripcion,
+            }
+          : actual
+      );
+      if (["ACEPTADA", "ACEPTADA_CON_OBSERVACIONES"].includes(estado)) {
+        void descargarPdf(id);
+      }
+    } catch (error) {
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : "No se pudo reintentar el comprobante."
+      );
+    } finally {
+      setReintentandoMismoNumero(false);
+    }
+  }
+
+  const verificarResultadoSunat = useCallback(
+    async (id: string, { silencioso = false }: { silencioso?: boolean } = {}) => {
+      if (verificacionEnCursoRef.current) return;
+      verificacionEnCursoRef.current = true;
+      setVerificandoSunat(true);
+      if (!silencioso) setErrorMsg(null);
+
+      try {
+        const res = await fetch(`/api/comprobantes/${id}/verificar-sunat`, {
+          method: "POST",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && res.status !== 202) {
+          throw new Error(
+            typeof data?.error === "string"
+              ? data.error
+              : "No se pudo verificar el comprobante en SUNAT."
+          );
+        }
+
+        const estado = normalizarEstadoResultado(data?.estado) ?? "POR_CONFIRMAR";
+        setResultado((actual) =>
+          actual?.id === id
+            ? {
+                ...actual,
+                estado,
+                descripcion:
+                  typeof data?.mensaje === "string" ? data.mensaje : actual.descripcion,
+                codigoRespuesta:
+                  typeof data?.codigoRespuesta === "string"
+                    ? data.codigoRespuesta
+                    : actual.codigoRespuesta,
+                tieneCdr:
+                  typeof data?.tieneCdr === "boolean" ? data.tieneCdr : actual.tieneCdr,
+                verificadoAt:
+                  typeof data?.verificadoAt === "string"
+                    ? data.verificadoAt
+                    : actual.verificadoAt,
+                proximaConsultaAt:
+                  typeof data?.proximaConsultaAt === "string"
+                    ? data.proximaConsultaAt
+                    : null,
+                sunatCaido: false,
+              }
+            : actual
+        );
+      } catch (error) {
+        if (!silencioso) {
+          setErrorMsg(
+            error instanceof Error
+              ? error.message
+              : "No se pudo verificar el comprobante en SUNAT."
+          );
+        }
+      } finally {
+        verificacionEnCursoRef.current = false;
+        setVerificandoSunat(false);
+      }
+    },
+    []
+  );
+
   async function emitir(confirmarDuplicado = false) {
     setErrorMsg(null);
     setResultado(null);
@@ -1092,6 +1237,7 @@ export default function EmitirComprobanteClient({
           serieNumero: j.duplicado.serieNumero,
           fecha: j.duplicado.fecha,
           mensaje: typeof j.mensaje === "string" ? j.mensaje : "Ya existe un comprobante igual.",
+          bloqueante: Boolean(j.duplicado.bloqueante ?? j.bloqueante),
         });
       } else if (
         res.status === 409 &&
@@ -1132,12 +1278,13 @@ export default function EmitirComprobanteClient({
         setResultado(j);
         const emitidoOk =
           j?.estado === "ACEPTADA" ||
-          j?.estado === "ACEPTADA_CON_OBSERVACIONES" ||
-          j?.estado === "PENDIENTE";
+          j?.estado === "ACEPTADA_CON_OBSERVACIONES";
         if (j?.id && emitidoOk) void descargarPdf(j.id);
       }
     } catch {
-      setErrorMsg("Error de conexión al emitir.");
+      setErrorMsg(
+        "No pudimos confirmar el resultado de la emisión. Antes de intentarlo otra vez, revisa Comprobantes para evitar emitir un duplicado."
+      );
     } finally {
       setEmitiendo(false);
     }
@@ -1145,7 +1292,63 @@ export default function EmitirComprobanteClient({
 
   const aceptado =
     resultado?.estado === "ACEPTADA" || resultado?.estado === "ACEPTADA_CON_OBSERVACIONES";
-  const pendiente = resultado?.estado === "PENDIENTE";
+  const porConfirmar =
+    resultado?.estado === "PENDIENTE" ||
+    resultado?.estado === "POR_CONFIRMAR" ||
+    resultado?.sunatCaido === true;
+  const noRegistrado = resultado?.estado === "NO_REGISTRADO";
+  const proximaConsultaHora = horaLima(resultado?.proximaConsultaAt);
+
+  // Si SUNAT dejó una respuesta temporal, consultar de nuevo con el MISMO número.
+  // El servidor define cuándo corresponde la siguiente consulta; en una pestaña
+  // oculta esperamos a que la asesora vuelva para no gastar red innecesariamente.
+  useEffect(() => {
+    const id = resultado?.id;
+    if (!id || !porConfirmar) return;
+
+    let cancelado = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const programar = (demoraForzada?: number): void => {
+      if (timer) clearTimeout(timer);
+      const fechaServidor = resultado?.proximaConsultaAt
+        ? new Date(resultado.proximaConsultaAt).getTime()
+        : Number.NaN;
+      const demoraServidor = Number.isFinite(fechaServidor)
+        ? fechaServidor - Date.now()
+        : 60_000;
+      const demora = Math.max(1_000, demoraForzada ?? demoraServidor);
+
+      timer = setTimeout(async () => {
+        if (cancelado) return;
+        if (document.visibilityState !== "visible") {
+          timer = null;
+          return;
+        }
+        await verificarResultadoSunat(id, { silencioso: true });
+        // Si la respuesta o el request no cambian el estado, mantenemos una
+        // cadencia conservadora. Un cambio de estado desmonta este efecto.
+        if (!cancelado) programar(60_000);
+      }, demora);
+    };
+
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible" && !timer) programar(1_000);
+    };
+
+    programar();
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () => {
+      cancelado = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+    };
+  }, [
+    porConfirmar,
+    resultado?.id,
+    resultado?.proximaConsultaAt,
+    verificarResultadoSunat,
+  ]);
 
   function reset() {
     setResultado(null);
@@ -1305,56 +1508,22 @@ export default function EmitirComprobanteClient({
 
       </div>
 
-      {/* SUNAT caído: aviso amigable */}
-      {resultado?.sunatCaido && (
-        <div className="rounded-2xl border-2 border-amber-300 bg-amber-50 p-6 mb-6 shadow-sm">
-          <div className="flex items-center gap-2 font-bold text-amber-800">
-            <FiAlertCircle className="text-amber-600 flex-shrink-0" />
-            SUNAT no está respondiendo en este momento
-          </div>
-          <p className="text-sm text-amber-800 mt-2 leading-relaxed">
-            Es un problema de los <strong>servidores de SUNAT</strong>, no del
-            sistema. El comprobante <strong>NO se emitió</strong>. Mientras SUNAT se
-            normaliza, emítelo <strong>manualmente desde el portal de SUNAT
-            (SEE-SOL)</strong> y vuelve a intentarlo aquí más tarde.
-          </p>
-          <div className="flex gap-2 mt-4">
-            <button
-              onClick={
-                ventaAvicolaId
-                  ? (onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas")))
-                  : reset
-              }
-              className="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 cursor-pointer"
-            >
-              Entendido
-            </button>
-            <button
-              onClick={() =>
-                router.push(
-                  ventaAvicolaId
-                    ? "/dashboard/clientes-avicola/comprobantes"
-                    : "/dashboard/comprobantes"
-                )
-              }
-              className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 cursor-pointer"
-            >
-              Ver comprobantes
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Resultado Exitoso / Fallido (Ticket Digital Premium) */}
-      {resultado && !resultado.sunatCaido && (
+      {/* Resultado aceptado, rechazado o aún por confirmar con SUNAT. */}
+      {resultado && (
         <div className="max-w-md mx-auto my-4 animate-[fadeIn_0.3s_ease-out]">
-          <div className={`bg-white rounded-3xl shadow-2xl border-t-8 overflow-hidden relative border-b border-gray-200 ${
+          <div
+            role="status"
+            aria-live="polite"
+            className={`bg-white rounded-3xl shadow-2xl border-t-8 overflow-hidden relative border-b border-gray-200 ${
             aceptado 
               ? "border-t-green-500 shadow-green-100/20" 
-              : pendiente 
+              : porConfirmar
                 ? "border-t-amber-500 shadow-amber-100/20" 
+                : noRegistrado
+                  ? "border-t-blue-500 shadow-blue-100/20"
                 : "border-t-red-500 shadow-red-100/20"
-          }`}>
+          }`}
+          >
             
             {/* Cabecera del Ticket */}
             <div className="p-6 text-center space-y-3 bg-gradient-to-b from-gray-50/50 to-white">
@@ -1379,17 +1548,29 @@ export default function EmitirComprobanteClient({
                 <div className={`px-4 py-1.5 rounded-full font-black text-[10px] uppercase tracking-wider flex items-center gap-1.5 shadow-sm border ${
                   aceptado
                     ? "bg-green-50 text-green-700 border-green-200"
-                    : pendiente
+                    : porConfirmar
                       ? "bg-amber-50 text-amber-700 border-amber-200"
+                      : noRegistrado
+                        ? "bg-blue-50 text-blue-700 border-blue-200"
                       : "bg-red-50 text-red-700 border-red-200"
                 }`}>
                   {aceptado ? (
                     <FiCheckCircle size={13} className="text-green-600 animate-bounce" />
+                  ) : porConfirmar ? (
+                    <FiClock size={13} className="text-amber-600" />
+                  ) : noRegistrado ? (
+                    <FiRefreshCw size={13} className="text-blue-600" />
                   ) : (
-                    <FiAlertCircle size={13} className={pendiente ? "text-amber-600 animate-pulse" : "text-red-600"} />
+                    <FiAlertCircle size={13} className="text-red-600" />
                   )}
                   <span>
-                    {resultado.estado === "ACEPTADA" ? "ACEPTADO POR SUNAT" : resultado.estado}
+                    {aceptado
+                      ? "ACEPTADO POR SUNAT"
+                      : porConfirmar
+                        ? "POR CONFIRMAR CON SUNAT"
+                        : noRegistrado
+                          ? "NO REGISTRADO EN SUNAT"
+                        : resultado.estado}
                   </span>
                 </div>
               </div>
@@ -1458,45 +1639,115 @@ export default function EmitirComprobanteClient({
               </div>
               
               {/* Mensaje de SUNAT o Error */}
-              {(resultado.descripcion || resultado.mensaje || resultado.error) && (
+              {porConfirmar ? (
+                <div className="p-3 rounded-xl text-[11px] font-semibold border leading-normal bg-amber-50/70 border-amber-200 text-amber-900">
+                  <p>
+                    SUNAT está procesando {resultado.serieNumero ?? "este comprobante"}.{" "}
+                    <strong>No emitas otro.</strong> El sistema volverá a consultar
+                    usando este mismo número.
+                  </p>
+                  {proximaConsultaHora && (
+                    <p className="mt-2 text-amber-700">
+                      Próxima verificación automática: {proximaConsultaHora}
+                    </p>
+                  )}
+                </div>
+              ) : noRegistrado ? (
+                <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-[11px] font-semibold leading-normal text-blue-900">
+                  <p>
+                    En dos consultas separadas, SUNAT no encontró{" "}
+                    {resultado.serieNumero ?? "este número"}.{" "}
+                    <strong>No emitas otro correlativo.</strong> Reintenta este
+                    mismo número con el botón de abajo.
+                  </p>
+                </div>
+              ) : (resultado.descripcion || resultado.mensaje || resultado.error) && (
                 <div className={`p-3 rounded-xl text-[11px] font-semibold border leading-normal ${
                   aceptado 
                     ? "bg-green-50/70 border-green-150 text-green-800" 
-                    : pendiente 
-                      ? "bg-amber-50/70 border-amber-150 text-amber-800" 
-                      : "bg-red-50/70 border-red-150 text-red-800"
+                    : "bg-red-50/70 border-red-150 text-red-800"
                 }`}>
                   <p className="whitespace-pre-wrap">
                     {resultado.descripcion || resultado.mensaje || resultado.error}
                   </p>
                 </div>
               )}
+              {errorMsg && (
+                <p
+                  role="alert"
+                  className="rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] font-semibold leading-normal text-red-700"
+                >
+                  {errorMsg}
+                </p>
+              )}
               
               {/* Acciones del Ticket */}
               <div className="border-t border-dashed border-gray-200 pt-4 space-y-2.5">
-                {resultado.id && (aceptado || pendiente) && (
+                {resultado.id && aceptado && (
                   <button
+                    type="button"
                     onClick={() => resultado.id && descargarPdf(resultado.id)}
                     disabled={descargando}
-                    className="w-full py-3 bg-green-600 text-white rounded-xl text-sm font-black hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-98 cursor-pointer"
+                    className="w-full min-h-11 py-3 bg-green-600 text-white rounded-xl text-sm font-black hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all active:scale-98 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-600 focus-visible:ring-offset-2"
                   >
                     {descargando ? <FiLoader className="animate-spin" /> : <FiDownload />}
                     {descargando ? "Generando PDF…" : "Descargar PDF Comprobante"}
                   </button>
                 )}
-                
-                <div className="flex gap-2">
+
+                {porConfirmar && resultado.id && (
                   <button
+                    type="button"
+                    onClick={() => resultado.id && verificarResultadoSunat(resultado.id)}
+                    disabled={verificandoSunat}
+                    aria-busy={verificandoSunat}
+                    className="w-full min-h-11 px-4 py-2.5 bg-amber-600 text-white rounded-xl text-sm font-black hover:bg-amber-700 disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2 shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
+                  >
+                    {verificandoSunat ? (
+                      <FiLoader className="animate-spin" aria-hidden="true" />
+                    ) : (
+                      <FiClock aria-hidden="true" />
+                    )}
+                    {verificandoSunat ? "Verificando…" : "Verificar ahora"}
+                  </button>
+                )}
+
+                {noRegistrado && resultado.id && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      resultado.id && reintentarMismoNumeroSunat(resultado.id)
+                    }
+                    disabled={reintentandoMismoNumero}
+                    aria-busy={reintentandoMismoNumero}
+                    className="w-full min-h-11 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-black hover:bg-blue-700 disabled:opacity-60 disabled:cursor-wait flex items-center justify-center gap-2 shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+                  >
+                    <FiRefreshCw
+                      className={reintentandoMismoNumero ? "animate-spin" : ""}
+                      aria-hidden="true"
+                    />
+                    {reintentandoMismoNumero
+                      ? "Reintentando…"
+                      : "Reintentar el mismo número"}
+                  </button>
+                )}
+
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  {!porConfirmar && !noRegistrado && (
+                  <button
+                    type="button"
                     onClick={
                       ventaAvicolaId
                         ? (onClose ?? (() => router.push("/dashboard/clientes-avicola/ventas")))
                         : reset
                     }
-                    className={`flex-1 py-2.5 ${theme.bg} hover:${theme.bgHover} text-white rounded-xl text-xs font-black shadow-sm transition-all active:scale-[0.97] cursor-pointer`}
+                    className={`flex-1 min-h-11 py-2.5 ${theme.bg} ${theme.bgHover} text-white rounded-xl text-xs font-black shadow-sm transition-all active:scale-[0.97] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${theme.ring}`}
                   >
                     {ventaAvicolaId ? "Cerrar y continuar" : "Emitir otro"}
                   </button>
+                  )}
                   <button
+                    type="button"
                     onClick={() =>
                       router.push(
                         ventaAvicolaId
@@ -1504,7 +1755,7 @@ export default function EmitirComprobanteClient({
                           : "/dashboard/comprobantes"
                       )
                     }
-                    className="flex-1 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-200 transition-all active:scale-[0.97] cursor-pointer"
+                    className="flex-1 min-h-11 py-2.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-200 transition-all active:scale-[0.97] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-500 focus-visible:ring-offset-2"
                   >
                     Ver comprobantes
                   </button>

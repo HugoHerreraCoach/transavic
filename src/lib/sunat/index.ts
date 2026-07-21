@@ -23,6 +23,7 @@ import { generarXMLComprobante, calcularTotales, r2 } from "./xml-builder";
 import { firmarXML } from "./xml-signer";
 import { enviarComprobante } from "./soap-client";
 import { horaActualLima, fechaHoyLima } from "./fechas";
+import { completarPostprocesoAceptadoPorId } from "./reconciliacion-cpe";
 import {
   MAX_OBSERVACION_CPE,
   normalizarObservacionSunat,
@@ -78,6 +79,11 @@ export interface OpcionesEmision {
    * `session.user.name`.
    */
   emitidoPor?: string;
+  /**
+   * Cliente interno para conservar el vinculo de cobranza en emisiones
+   * standalone. No forma parte del XML ni se envia a SUNAT.
+   */
+  clienteId?: string | null;
   /**
    * Para VENTA EN CAMPO (módulo Clientes Avícola): id de la fila `ventas_avicola`
    * que se está facturando. Se persiste en `comprobantes.venta_avicola_id` — único
@@ -292,6 +298,7 @@ export async function emitirComprobante(
           cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
           monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
           forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
+          cobranza_cliente_id,
           venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
         ) VALUES (
           ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
@@ -301,6 +308,7 @@ export async function emitirComprobante(
           ${"Comprobante registrado localmente. Certificado .p12 no configurado en env vars — no se envió a SUNAT."},
           ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
           ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+          ${opts.clienteId ?? null},
           ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
         )
       `;
@@ -357,10 +365,13 @@ export async function emitirComprobante(
     // 3.2) Firmar XML
     const { xmlFirmado, hashCpe } = firmarXML(xmlSinFirma, config);
 
-    // Campo/NC: reservar la fila en DB ANTES de llamar al SOAP. Los claims del
-    // endpoint ya serializaron el contador; estos índices son la segunda barrera
-    // y la fila `emitiendo` conserva XML/correlativo para recuperación.
+    // Reservar la fila en DB ANTES de llamar al SOAP. Además de Campo/NC, esto se
+    // hace para TODA factura/boleta: si Vercel termina después de que SUNAT recibió
+    // el ZIP, la misma fila/XML/correlativo queda disponible para CONSULTAR, en vez
+    // de perder el rastro y permitir que la asesora genere otro número.
     const debeReservarAntesDeSunat =
+      opts.tipo === TipoComprobante.FACTURA ||
+      opts.tipo === TipoComprobante.BOLETA ||
       !!opts.ventaAvicolaId ||
       (opts.tipo === TipoComprobante.NOTA_CREDITO &&
         !!opts.referenciaComprobanteId);
@@ -373,7 +384,8 @@ export async function emitirComprobante(
             monto_subtotal, monto_igv, monto_total, estado,
             hash_cpe, xml_firmado_base64, mensaje_sunat,
             forma_pago, fecha_vencimiento, fecha_emision, items_json,
-            referencia_comprobante_id, emitido_por, venta_avicola_id,
+            referencia_comprobante_id, emitido_por, cobranza_cliente_id,
+            venta_avicola_id,
             reemplaza_comprobante_id,
             observacion_comprobante
           ) VALUES (
@@ -386,6 +398,7 @@ export async function emitirComprobante(
             ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date,
             ${JSON.stringify(itemsNorm)}::jsonb,
             ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+            ${opts.clienteId ?? null},
             ${opts.ventaAvicolaId}, ${opts.reemplazaComprobanteId ?? null},
             ${observacionComprobante}
           )
@@ -420,9 +433,29 @@ export async function emitirComprobante(
           ? "observado"
           : resultadoEnvio.estado === EstadoSunat.RECHAZADA
             ? "rechazado"
+            : resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+              ? "por_confirmar"
             : "error";
 
     const observacionesStr = resultadoEnvio.observaciones?.join(" | ") ?? null;
+    const cdrLegible =
+      resultadoEnvio.tieneCdr ??
+      (!!resultadoEnvio.cdrBase64 &&
+        [
+          EstadoSunat.ACEPTADA,
+          EstadoSunat.ACEPTADA_CON_OBSERVACIONES,
+          EstadoSunat.RECHAZADA,
+        ].includes(resultadoEnvio.estado));
+    const mensajeEnvio =
+      resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null;
+    const mensajeVisible =
+      resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+        ? `SUNAT todavía está procesando ${serieNumero}. No emitas otro comprobante; el sistema verificará este mismo número automáticamente.`
+        : mensajeEnvio;
+    const proximaConsultaAt =
+      resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+        ? new Date(Date.now() + 15 * 60_000)
+        : null;
 
     if (reservaPreSunatId) {
       await sql`
@@ -431,8 +464,21 @@ export async function emitirComprobante(
           hash_cpe = ${hashCpe ?? null},
           xml_firmado_base64 = ${Buffer.from(xmlFirmado).toString("base64")},
           cdr_base64 = ${resultadoEnvio.cdrBase64 ?? null},
+          sunat_cdr_legible = ${cdrLegible},
           observaciones = ${observacionesStr},
-          mensaje_sunat = ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null}
+          mensaje_sunat = ${mensajeVisible},
+          sunat_codigo_envio = ${resultadoEnvio.codigoRespuesta ?? null},
+          sunat_mensaje_envio = ${mensajeEnvio},
+          sunat_siguiente_consulta_at = ${proximaConsultaAt},
+          sunat_no_existe_consecutivos = 0,
+          sunat_postproceso_estado = ${
+            [TipoComprobante.FACTURA, TipoComprobante.BOLETA].includes(opts.tipo) &&
+            [EstadoSunat.ACEPTADA, EstadoSunat.ACEPTADA_CON_OBSERVACIONES].includes(
+              resultadoEnvio.estado
+            )
+              ? "pendiente"
+              : null
+          }
         WHERE id = ${reservaPreSunatId}::uuid
       `;
     } else {
@@ -443,7 +489,10 @@ export async function emitirComprobante(
           monto_subtotal, monto_igv, monto_total, estado,
           hash_cpe, xml_firmado_base64, cdr_base64, observaciones, mensaje_sunat,
           forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
-          venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
+          cobranza_cliente_id,
+          venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante,
+          sunat_codigo_envio, sunat_mensaje_envio, sunat_siguiente_consulta_at,
+          sunat_cdr_legible, sunat_postproceso_estado
         ) VALUES (
           ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
           ${serie}, ${numero}, ${serieNumero},
@@ -453,24 +502,45 @@ export async function emitirComprobante(
           ${Buffer.from(xmlFirmado).toString("base64")},
           ${resultadoEnvio.cdrBase64 ?? null},
           ${observacionesStr},
-          ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null},
+          ${mensajeVisible},
           ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
           ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
-          ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
+          ${opts.clienteId ?? null},
+          ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante},
+          ${resultadoEnvio.codigoRespuesta ?? null}, ${mensajeEnvio}, ${proximaConsultaAt},
+          ${cdrLegible}, ${
+            [TipoComprobante.FACTURA, TipoComprobante.BOLETA].includes(opts.tipo) &&
+            [EstadoSunat.ACEPTADA, EstadoSunat.ACEPTADA_CON_OBSERVACIONES].includes(
+              resultadoEnvio.estado
+            )
+              ? "pendiente"
+              : null
+          }
         )
       `;
     }
 
-    // Solo asociar el número a la factura si SUNAT lo ACEPTÓ (aceptado u
-    // observado son válidos; rechazado/error NO debe ensuciar la cobranza).
     const sunatAcepto =
       resultadoEnvio.estado === EstadoSunat.ACEPTADA ||
       resultadoEnvio.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
-    if (sunatAcepto && opts.pedidoId) {
-      await sql`
-        UPDATE facturas SET numero_comprobante = ${serieNumero}
-        WHERE pedido_id = ${opts.pedidoId} AND numero_comprobante IS NULL
-      `;
+
+    // Toda aceptacion 01/03, inmediata o tardia, pasa por el MISMO helper con
+    // claim atomico. Si la funcion cae aqui, el cron retomara el estado
+    // `pendiente`; los endpoints no repiten estos efectos por su cuenta.
+    if (
+      sunatAcepto &&
+      reservaPreSunatId &&
+      (opts.tipo === TipoComprobante.FACTURA ||
+        opts.tipo === TipoComprobante.BOLETA)
+    ) {
+      try {
+        await completarPostprocesoAceptadoPorId(reservaPreSunatId);
+      } catch (errorPostproceso) {
+        console.error(
+          `SUNAT acepto ${serieNumero}, pero el postproceso quedo pendiente:`,
+          errorPostproceso
+        );
+      }
     }
 
     return {
@@ -479,6 +549,8 @@ export async function emitirComprobante(
       total,
       hashCpe,
       xmlFirmadoBase64: Buffer.from(xmlFirmado).toString("base64"),
+      proximaConsultaAt: proximaConsultaAt?.toISOString(),
+      tieneCdr: cdrLegible,
     };
   } catch (err) {
     if (
@@ -491,12 +563,30 @@ export async function emitirComprobante(
     // Igual registrar el intento fallido para auditoría. Si ya había una
     // reserva, se actualiza ESA fila (mismo correlativo) en vez de insertar.
     if (reservaPreSunatId) {
-      await sql`
-        UPDATE comprobantes
-        SET estado = 'error',
-            mensaje_sunat = ${`Error de emisión: ${mensaje.slice(0, 1000)}`}
-        WHERE id = ${reservaPreSunatId}::uuid
-      `;
+      if (
+        opts.tipo === TipoComprobante.FACTURA ||
+        opts.tipo === TipoComprobante.BOLETA
+      ) {
+        // Con fila/XML ya reservados, una excepción pudo ocurrir después de que
+        // SUNAT recibió el ZIP. El único estado seguro es indeterminado: primero
+        // se consulta este mismo número y jamás se consume otro correlativo.
+        await sql`
+          UPDATE comprobantes
+          SET estado = 'por_confirmar',
+              mensaje_sunat =
+                'La comunicación se interrumpió y SUNAT puede haber recibido el comprobante. No emitas otro; el sistema verificará este mismo número.',
+              sunat_mensaje_envio = ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
+              sunat_siguiente_consulta_at = NOW() + INTERVAL '15 minutes'
+          WHERE id = ${reservaPreSunatId}::uuid
+        `;
+      } else {
+        await sql`
+          UPDATE comprobantes
+          SET estado = 'error',
+              mensaje_sunat = ${`Error de emisión: ${mensaje.slice(0, 1000)}`}
+          WHERE id = ${reservaPreSunatId}::uuid
+        `;
+      }
     } else {
       try {
         await sql`
@@ -505,6 +595,7 @@ export async function emitirComprobante(
             cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
             monto_subtotal, monto_igv, monto_total, estado, mensaje_sunat,
             forma_pago, fecha_vencimiento, fecha_emision, items_json, referencia_comprobante_id, emitido_por,
+            cobranza_cliente_id,
             venta_avicola_id, reemplaza_comprobante_id, observacion_comprobante
           ) VALUES (
             ${opts.pedidoId ?? null}, ${config.ruc}, ${opts.empresa}, ${opts.tipo},
@@ -514,6 +605,7 @@ export async function emitirComprobante(
             ${`Error de emisión: ${mensaje.slice(0, 1000)}`},
             ${formaPagoDB}, ${fechaVencimiento ?? null}, ${fechaEmision}::date, ${JSON.stringify(itemsNorm)}::jsonb,
             ${opts.referenciaComprobanteId ?? null}, ${opts.emitidoPor ?? null},
+            ${opts.clienteId ?? null},
             ${opts.ventaAvicolaId ?? null}, ${opts.reemplazaComprobanteId ?? null}, ${observacionComprobante}
           )
         `;
@@ -527,11 +619,23 @@ export async function emitirComprobante(
         throw insertError;
       }
     }
+    const estadoIncierto =
+      !!reservaPreSunatId &&
+      (opts.tipo === TipoComprobante.FACTURA ||
+        opts.tipo === TipoComprobante.BOLETA);
     return {
       exito: false,
-      estado: EstadoSunat.ERROR,
+      estado: estadoIncierto
+        ? EstadoSunat.POR_CONFIRMAR
+        : EstadoSunat.ERROR,
       serieNumero,
-      error: mensaje,
+      error: estadoIncierto
+        ? "No se pudo confirmar la respuesta de SUNAT. No emitas otro comprobante; el sistema verificará este mismo número."
+        : mensaje,
+      proximaConsultaAt: estadoIncierto
+        ? new Date(Date.now() + 15 * 60_000).toISOString()
+        : undefined,
+      tieneCdr: false,
     };
   }
 }

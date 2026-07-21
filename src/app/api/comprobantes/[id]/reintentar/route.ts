@@ -35,6 +35,10 @@ import {
 import { notificarComprobanteConProblema } from "@/lib/notificaciones";
 import { asesoraPuedeVerComprobante } from "@/lib/comprobante-scope";
 import { esNotaCreditoTotalXml } from "@/lib/sunat/nota-credito";
+import {
+  completarPostprocesoAceptadoPorId,
+  conciliarComprobanteSunat,
+} from "@/lib/sunat/reconciliacion-cpe";
 
 export const dynamic = "force-dynamic";
 // El envío a SUNAT puede superar los ~15s default de Vercel (gotcha #30b).
@@ -148,13 +152,52 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         { status: 409 }
       );
     }
-    await sql`
-      UPDATE comprobantes
-      SET estado = 'error',
-          mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
-      WHERE id = ${id}::uuid AND estado = 'emitiendo'
-    `;
-    c.estado = "error";
+    if (c.tipo === "01" || c.tipo === "03") {
+      await sql`
+        UPDATE comprobantes
+        SET estado = 'por_confirmar',
+            mensaje_sunat = 'La emisión se interrumpió y SUNAT puede haber recibido el comprobante. Primero verifica este mismo número; no emitas otro.',
+            sunat_siguiente_consulta_at = NOW()
+        WHERE id = ${id}::uuid AND estado = 'emitiendo'
+      `;
+      c.estado = "por_confirmar";
+    } else {
+      // NC/ND conservan el flujo histórico de reintento.
+      await sql`
+        UPDATE comprobantes
+        SET estado = 'error',
+            mensaje_sunat = 'La emisión se interrumpió. Reintenta este mismo comprobante; no emitas otro correlativo.'
+        WHERE id = ${id}::uuid AND estado = 'emitiendo'
+      `;
+      c.estado = "error";
+    }
+  }
+
+  const esFacturaOBoleta = c.tipo === "01" || c.tipo === "03";
+
+  // Para 01/03, una fila con XML pudo llegar a SUNAT. Consultar SIEMPRE antes
+  // de reenviar el mismo ZIP evita que un timeout/0140 termine en duplicado.
+  if (
+    esFacturaOBoleta &&
+    (c.estado === "por_confirmar" ||
+      (c.estado === "error" && !!c.xml_firmado_base64))
+  ) {
+    const conciliado = await conciliarComprobanteSunat(id, {
+      forzar: true,
+      incluirError: c.estado === "error",
+    });
+    if (conciliado.estado !== "no_registrado") {
+      return NextResponse.json(
+        {
+          ...conciliado,
+          exito: ["aceptado", "observado"].includes(conciliado.estado),
+          serieNumero: c.serie_numero,
+          mensajeSunat: conciliado.mensaje,
+        },
+        { status: conciliado.definitivo ? 200 : 202 }
+      );
+    }
+    c.estado = "no_registrado";
   }
 
   if (c.estado === "rechazado") {
@@ -169,9 +212,14 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       { status: 409 }
     );
   }
-  if (c.estado !== "error") {
+  const estadoReintentable =
+    c.estado === "error" ||
+    (esFacturaOBoleta && c.estado === "no_registrado");
+  if (!estadoReintentable) {
     return NextResponse.json(
-      { error: `Solo se puede reintentar comprobantes en estado error. Estado actual: ${c.estado}` },
+      {
+        error: `Este comprobante no se puede reenviar en su estado actual: ${c.estado}.`,
+      },
       { status: 409 }
     );
   }
@@ -256,6 +304,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
   // Ambos adquieren el MISMO claim para que la ruta nueva no consuma un
   // correlativo mientras la anterior se está reenviando.
   let claimNcBase: { baseId: string; token: string } | null = null;
+  let envioIniciado = false;
   if (c.tipo === "07") {
     if (!c.referencia_comprobante_id) {
       return NextResponse.json(
@@ -386,7 +435,10 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
           mensaje_sunat = 'Reintentando envío a SUNAT con el mismo correlativo.'
       WHERE id = ${id}::uuid
         AND estado = ${c.estado}
-        AND estado = 'error'
+        AND (
+          estado = 'error'
+          OR (${esFacturaOBoleta} AND estado = 'no_registrado')
+        )
       RETURNING id
     `) as Array<{ id: string }>;
     if (claim.length === 0) {
@@ -396,6 +448,7 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       );
     }
 
+    envioIniciado = true;
     const resultadoEnvio = await enviarComprobante(
       xmlFirmado,
       c.tipo,
@@ -412,8 +465,26 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
           ? "observado"
           : resultadoEnvio.estado === EstadoSunat.RECHAZADA
             ? "rechazado"
+            : resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+              ? "por_confirmar"
             : "error";
     const observacionesStr = resultadoEnvio.observaciones?.join(" | ") ?? null;
+    const cdrLegible =
+      resultadoEnvio.tieneCdr ??
+      (!!resultadoEnvio.cdrBase64 &&
+        [
+          EstadoSunat.ACEPTADA,
+          EstadoSunat.ACEPTADA_CON_OBSERVACIONES,
+          EstadoSunat.RECHAZADA,
+        ].includes(resultadoEnvio.estado));
+    const mensajeResultado =
+      resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+        ? "SUNAT todavía no confirmó el resultado. El sistema verificará este mismo número automáticamente; no emitas otro comprobante."
+        : resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null;
+    const siguienteConsulta =
+      resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+        ? new Date(Date.now() + 15 * 60_000)
+        : null;
 
     await sql`
       UPDATE comprobantes SET
@@ -421,63 +492,48 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
         hash_cpe = ${hashCpe ?? null},
         xml_firmado_base64 = ${Buffer.from(xmlFirmado).toString("base64")},
         cdr_base64 = ${resultadoEnvio.cdrBase64 ?? null},
+        sunat_cdr_legible = ${cdrLegible},
         observaciones = ${observacionesStr},
-        mensaje_sunat = ${resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null}
+        mensaje_sunat = ${mensajeResultado},
+        sunat_codigo_envio = ${resultadoEnvio.codigoRespuesta ?? null},
+        sunat_mensaje_envio = ${
+          resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null
+        },
+        sunat_siguiente_consulta_at = ${siguienteConsulta},
+        sunat_no_existe_consecutivos = 0,
+        sunat_postproceso_estado = CASE
+          WHEN ${esFacturaOBoleta}
+            AND ${
+              resultadoEnvio.estado === EstadoSunat.ACEPTADA ||
+              resultadoEnvio.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES
+            }
+            THEN 'pendiente'
+          ELSE sunat_postproceso_estado
+        END
       WHERE id = ${id}::uuid
     `;
 
     const esPosPlanta =
       c.pedido_origen === "pos_planta" ||
       c.referencia_pedido_origen === "pos_planta";
-    const esCampo = !!(c.venta_avicola_id || c.referencia_venta_avicola_id);
 
-    // Si esta vez aceptó una factura/boleta de ejecutivas, asociarla a su
-    // cobranza. POS y Campo tienen carteras propias y nunca deben tocar
-    // `facturas`; una NC tampoco debe reemplazar el número del CPE original.
+    // Una aceptacion 01/03 pasa por el postproceso central, que deriva de sus
+    // vinculos si corresponde a Ejecutivas, Planta o Campo.
     const sunatAcepto =
       resultadoEnvio.estado === EstadoSunat.ACEPTADA ||
       resultadoEnvio.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES;
     if (
       sunatAcepto &&
-      c.pedido_id &&
-      !esPosPlanta &&
-      !esCampo &&
       (c.tipo === "01" || c.tipo === "03")
     ) {
       try {
-        await sql`
-          UPDATE facturas SET numero_comprobante = ${c.serie_numero}
-          WHERE pedido_id = ${c.pedido_id}::uuid AND numero_comprobante IS NULL
-        `;
-      } catch (errorCobranza) {
+        // Mismo helper que la aceptacion inmediata y la conciliacion tardia:
+        // reclama `pendiente→aplicando` antes de tocar cualquier cartera.
+        await completarPostprocesoAceptadoPorId(id);
+      } catch (errorPostproceso) {
         console.error(
-          "Reintento aceptado pero no se pudo enlazar la cobranza de Ejecutivas:",
-          errorCobranza
-        );
-      }
-    }
-
-    // El CPE POS aceptado se enlaza a la cobranza de planta, sin crear ni
-    // actualizar filas en `facturas`. Solo existe cobranza POS para ventas a
-    // crédito; en contado este UPDATE simplemente no encuentra filas.
-    if (
-      sunatAcepto &&
-      esPosPlanta &&
-      c.pedido_id &&
-      (c.tipo === "01" || c.tipo === "03")
-    ) {
-      try {
-        await sql`
-          UPDATE cobranzas_planta
-          SET comprobante_id = ${id}::uuid,
-              updated_at = NOW()
-          WHERE pedido_id = ${c.pedido_id}::uuid
-            AND comprobante_id IS NULL
-        `;
-      } catch (errorCobranzaPlanta) {
-        console.error(
-          "Reintento aceptado pero no se pudo enlazar la cobranza de Planta:",
-          errorCobranzaPlanta
+          "Reintento aceptado, pero el postproceso quedo pendiente:",
+          errorPostproceso
         );
       }
     }
@@ -533,75 +589,6 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // Regla de Ejecutivas: la emisión original falló y por eso NO creó
-    // cobranza; el reintento exitoso debe crearla (gap detectado con
-    // F002-83, 12 jun 2026 — quedó aceptada sin deuda registrada). Solo
-    // facturas/boletas (una NC no es deuda). `vincularCobranzaAComprobante` es
-    // idempotente ("un pedido = una cobranza"); el caso standalone se guarda
-    // contra duplicados por `comprobante_id`. Misma cascada de asesor que la
-    // emisión: pedido → emisora asesora → cartera del cliente.
-    if (
-      sunatAcepto &&
-      !c.venta_avicola_id &&
-      !esPosPlanta &&
-      (c.tipo === "01" || c.tipo === "03")
-    ) {
-      try {
-        const { vincularCobranzaAComprobante, crearFacturaStandalone, plazoDeCobranza } =
-          await import("@/lib/cobranzas");
-        // Plazo: si el comprobante fue a Crédito con vencimiento guardado, se
-        // respetan los días que faltan hasta esa fecha; si no, el plazo del cliente.
-        let plazoDias: number | null = null;
-        if (c.forma_pago === "Credito" && c.fecha_vencimiento) {
-          const venc =
-            c.fecha_vencimiento instanceof Date
-              ? c.fecha_vencimiento
-              : new Date(`${String(c.fecha_vencimiento).slice(0, 10)}T00:00:00`);
-          plazoDias = Math.max(0, Math.round((venc.getTime() - Date.now()) / 86_400_000));
-        }
-        if (c.pedido_id) {
-          let cobranzaAsesorId: string | null = c.pedido_asesor_id ?? null;
-          if (!cobranzaAsesorId && session.user.role === "asesor") {
-            cobranzaAsesorId = session.user.id;
-          }
-          if (!cobranzaAsesorId && c.pedido_cliente_id) {
-            const cliRows = (await sql`
-              SELECT asesor_id FROM clientes WHERE id = ${c.pedido_cliente_id}::uuid
-            `) as Array<{ asesor_id: string | null }>;
-            cobranzaAsesorId = cliRows[0]?.asesor_id ?? null;
-          }
-          await vincularCobranzaAComprobante({
-            pedidoId: c.pedido_id,
-            clienteNombre: c.cliente_razon_social || c.pedido_cliente || "Cliente",
-            clienteId: c.pedido_cliente_id,
-            asesorId: cobranzaAsesorId,
-            monto: Number(c.monto_total),
-            plazoDias: plazoDias ?? (await plazoDeCobranza(c.pedido_cliente_id)),
-            numeroComprobante: c.serie_numero,
-          });
-        } else {
-          const ya = (await sql`
-            SELECT id FROM facturas WHERE comprobante_id = ${id}::uuid LIMIT 1
-          `) as Array<{ id: string }>;
-          if (ya.length === 0) {
-            await crearFacturaStandalone({
-              clienteNombre: c.cliente_razon_social || "Cliente",
-              asesorId: session.user.role === "asesor" ? session.user.id : null,
-              monto: Number(c.monto_total),
-              plazoDias: plazoDias ?? (await plazoDeCobranza(null)),
-              numeroComprobante: c.serie_numero,
-              comprobanteId: id,
-            });
-          }
-        }
-      } catch (errCobranza) {
-        console.error(
-          "Reintento aceptado pero no se pudo crear la cobranza asociada:",
-          errCobranza
-        );
-      }
-    }
-
     // P2.10 — Si volvió a rechazar / errorear, re-notificar (admin + asesora).
     // El asesor_id del pedido (si lo hay) se busca por separado para no atar
     // este endpoint al schema completo del pedido.
@@ -637,13 +624,18 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       estado: estadoDB,
       serieNumero: c.serie_numero,
       sunatCaido: resultadoEnvio.sunatCaido,
-      mensaje: resultadoEnvio.sunatCaido
-        ? "SUNAT no está respondiendo (problema de sus servidores, no del sistema). El comprobante NO se emitió; intenta más tarde o emítelo manualmente desde el portal de SUNAT."
-        : sunatAcepto
+      mensaje:
+        resultadoEnvio.estado === EstadoSunat.POR_CONFIRMAR
+          ? "SUNAT todavía no confirmó el resultado. El sistema verificará este mismo número; no emitas otro comprobante."
+          : sunatAcepto
           ? "✅ SUNAT aceptó el comprobante en el reintento."
-          : "SUNAT volvió a rechazar. Revisar mensaje_sunat para detalle.",
+          : resultadoEnvio.estado === EstadoSunat.RECHAZADA
+            ? "SUNAT rechazó el comprobante. Revisa el detalle antes de corregirlo."
+            : "No se pudo completar el reintento. Revisa el detalle y conserva el mismo correlativo.",
       mensajeSunat: resultadoEnvio.descripcion ?? resultadoEnvio.error ?? null,
       observaciones: resultadoEnvio.observaciones,
+      proximaConsultaAt: siguienteConsulta?.toISOString(),
+      tieneCdr: cdrLegible,
     });
   } catch (err) {
     const dbError = err as { code?: string; constraint?: string };
@@ -657,15 +649,23 @@ export async function POST(_req: NextRequest, { params }: RouteParams) {
       );
     }
     const mensaje = err instanceof Error ? err.message : String(err);
+    const quedaPorConfirmar = esFacturaOBoleta && envioIniciado;
     await sql`
       UPDATE comprobantes SET
         estado = CASE
           WHEN estado IN ('aceptado', 'observado', 'rechazado') THEN estado
+          WHEN ${quedaPorConfirmar} THEN 'por_confirmar'
           ELSE 'error'
         END,
         mensaje_sunat = CASE
           WHEN estado IN ('aceptado', 'observado', 'rechazado') THEN mensaje_sunat
+          WHEN ${quedaPorConfirmar} THEN
+            'El reintento se interrumpió y SUNAT puede haber recibido el comprobante. El sistema verificará este mismo número; no emitas otro.'
           ELSE ${`Reintento fallido: ${mensaje.slice(0, 1000)}`}
+        END,
+        sunat_siguiente_consulta_at = CASE
+          WHEN ${quedaPorConfirmar} THEN NOW() + INTERVAL '15 minutes'
+          ELSE sunat_siguiente_consulta_at
         END
       WHERE id = ${id}::uuid
     `;

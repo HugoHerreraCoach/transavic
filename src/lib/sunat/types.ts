@@ -98,6 +98,8 @@ export enum MedioPago {
 /** Estado SUNAT del comprobante */
 export enum EstadoSunat {
   PENDIENTE = "PENDIENTE",
+  /** SUNAT pudo haber recibido el CPE, pero todavía no confirmó su estado final. */
+  POR_CONFIRMAR = "POR_CONFIRMAR",
   ACEPTADA = "ACEPTADA",
   ACEPTADA_CON_OBSERVACIONES = "ACEPTADA_CON_OBSERVACIONES",
   RECHAZADA = "RECHAZADA",
@@ -216,8 +218,16 @@ export interface ResultadoEmision {
   total?: number;
   error?: string;
   mensaje?: string;
+  /** Momento ISO sugerido para volver a consultar el estado, sin reenviar el CPE. */
+  proximaConsultaAt?: string;
+  /** Momento ISO en que SUNAT confirmó el estado mediante billConsultService. */
+  verificadoAt?: string;
+  /** Indica que se recuperó una constancia CDR legible. */
+  tieneCdr?: boolean;
+  /** La consulta no puede resolverse sola y debe quedar visible al administrador. */
+  requiereRevision?: boolean;
   /** true si el fallo fue porque SUNAT está caído/no disponible (NO un rechazo de
-   * datos). El front muestra un aviso amigable + sugerencia de emisión manual. */
+   * datos). Facturas/boletas deben consultarse antes de cualquier reintento. */
   sunatCaido?: boolean;
 }
 

@@ -92,8 +92,9 @@ Definidas en `.env` (no comiteado). Las críticas:
 | `SMTP_FROM_NAME`, `SMTP_FROM_EMAIL` | Override de remitente del correo (default name="Transavic", email=SMTP_USER) |
 | `APISPERU_TOKEN` | Token de apisperu.com (cuenta `transavicdev@gmail.com`) para consultar RUC/DNI y auto-llenar datos del cliente (form de clientes, módulo emitir comprobante). Solo server-side vía `/api/consulta-documento`. **Configurar también en Vercel.** |
 | `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` | Brevo (correos transaccionales, free 300/día). Si `BREVO_API_KEY` está, `lib/email.ts` usa la API de Brevo (preferida); si no, cae a SMTP/nodemailer. El sender debe estar verificado en Brevo (hoy `transavicdev@gmail.com`, activo). **Configurar también en Vercel.** |
-| `CRON_SECRET` | Secreto que protege los **5 cron jobs** de Vercel (`facturas-vencidas`, `recordatorios-asesoras`, `resumen-diario-sunat`, `daily-digest-admin`, `repartidores-oscuros`). Sin él devuelven **503**. Vercel lo manda como `Authorization: Bearer <CRON_SECRET>`. **Obligatorio en Vercel.** El cron de repartidores oscuros corre cada 10 min (`*/10` en `vercel.json`). Vercel Pro permite hasta 40 crons. |
+| `CRON_SECRET` | Secreto que protege los **6 cron jobs** de Vercel (`facturas-vencidas`, `recordatorios-asesoras`, `resumen-diario-sunat`, `daily-digest-admin`, `repartidores-oscuros`, `reconciliar-cpe-sunat`). Sin él devuelven **503**. Vercel lo manda como `Authorization: Bear <CRON_SECRET>`. **Obligatorio en Vercel.** Repartidores oscuros corre cada 10 min y reconciliación CPE cada 5 min. Vercel Pro permite hasta 40 crons. |
 | `AUTO_EMITIR_COMPROBANTE` | Flag opcional (`"true"`) para emitir el comprobante automáticamente al cerrar un pedido. Si no está o es falso, la emisión es manual desde `/dashboard/comprobantes`. |
+| `SUNAT_TRA_CONSULTA_CLIENT_ID`, `SUNAT_TRA_CONSULTA_CLIENT_SECRET`, `SUNAT_AVI_CONSULTA_CLIENT_ID`, `SUNAT_AVI_CONSULTA_CLIENT_SECRET` | OAuth de **Consulta Integrada de Comprobantes de Pago** para verificar boletas `03` por cada RUC. Se crean en una aplicación SUNAT de Consulta de Validez. Son nuevas, aún no están configuradas y **no son** `SUNAT_*_CLIENT_ID/SECRET` de GRE: no reutilizar, reemplazar ni rotar las credenciales de guías. Sin estas vars, la boleta queda `por_confirmar` + revisión y bloquea duplicados. |
 | `SUNAT_TRA_NOMBRE_COMERCIAL`, `SUNAT_TRA_DEPARTAMENTO`, `SUNAT_TRA_PROVINCIA`, `SUNAT_TRA_DISTRITO` (idem `SUNAT_AVI_*`) | Override del domicilio fiscal del emisor en el XML. El default del `DATOS_EMISOR_MAP` es placeholder ("LA VICTORIA"); en producción **conviene** setear el distrito/provincia/departamento reales. La dirección y el `UBIGEO` (lo legalmente crítico) ya se overridean con `SUNAT_*_DIRECCION` / `SUNAT_*_UBIGEO`. Además **`SUNAT_*_URBANIZACION`** → `cbc:CitySubdivisionName`: **vacío por defecto = se OMITE** del XML (un valor vacío dispara la observación SUNAT 4095); setealo solo si la ficha RUC tiene urbanización. |
 | `FIREBASE_PROJECT_ID` | ID del proyecto Firebase (Admin SDK en servidor) |
 | `FIREBASE_CLIENT_EMAIL` | Email de la cuenta de servicio de Firebase Admin SDK |
@@ -109,7 +110,7 @@ Definidas en `.env` (no comiteado). Las críticas:
 
 **.env.local (NO comiteado, override de `.env`)** apunta a la branch Neon `dev-hugo` para testing aislado de producción. Next.js lo carga con prioridad sobre `.env`. Sigue en `SUNAT_ENVIRONMENT=beta` (con `MODDATOS`) para testing local.
 
-**Producción (Vercel) ya tiene TODAS estas vars configuradas (30 may 2026):** las 24 del lanzamiento — todas las `SUNAT_*` reales (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET`, además de **todas las credenciales y llaves públicas de Firebase/FCM** provistas para notificaciones automáticas. Se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
+**Producción (Vercel) tiene configuradas las vars del lanzamiento (30 may 2026):** las `SUNAT_*` de emisión/GRE existentes (`APIFACTU`/`Transavic123`, `SUNAT_ENVIRONMENT=production`, certs `.p12` en base64), `APISPERU_TOKEN`, `BREVO_*`, `GEMINI_API_KEY`, `CRON_SECRET`, además de las credenciales y llaves públicas de Firebase/FCM. **Excepción nueva:** todavía faltan las cuatro `SUNAT_*_CONSULTA_CLIENT_*` de Consulta Integrada de boletas; no afirmar “todas” hasta crearlas por separado para ambos RUC. Las vars existentes se cargaron por `vercel env add` (cuenta `hugoherreracoach`, proyecto `hugoherrerateam/transavic`). Las credenciales reales viven SOLO en Vercel + `.env.local`/`CREDENCIALES-PRODUCCION.local.md` (gitignored), nunca en el repo.
 
 ---
 
@@ -340,6 +341,7 @@ El navegador solo pide ubicación al repartidor cuando el mapa está visible o h
 35. **Costo histórico POS (13 jul 2026):** `pedido_items.costo_unitario_snapshot` se toma del servidor al vender y no se recalcula. Si falta en una venta antigua, el costo total es desconocido, no cero. Solo admin/producción pueden verlo. Ver doc 10.
 36. **Reprogramación desde Producción (13 jul 2026):** Producción solo mueve a mañana Lima pedidos en estado productivo permitido; cambio, auditoría y notificación son atómicos e idempotentes. La alerta emergente no marca la campana como leída. Ver docs 04, 06 y 16.
 37. **Sincronización de Comprobante a Pedido (20 jul 2026)**: Al emitir un comprobante, si la asesora edita los ítems (`items_override`), la app ahora actualiza automáticamente la tabla `pedido_items` (cantidades reales, unidades, precios y subtotales reales) y la tabla `pedidos` (columna `detalle_final` y transición de estado no-entregado a `'Entregado'`). También se registra el historial de edición en `pedido_ediciones` para mantener la auditoría del ERP y evitar descuadres entre las planillas de las asesoras y las métricas de venta.
+38. **SUNAT 0140/transporte en factura o boleta NO es rechazo definitivo (20 jul 2026):** para CPE `01`/`03`, “Existe un Documento igual en Proceso”, timeout, HTTP 5xx, respuesta vacía o CDR ilegible significan `por_confirmar`; jamás reenvíes ni consumas otro correlativo mientras siga así. La consulta se divide: **factura 01/F** → SOAP `billConsultService.getStatus/getStatusCdr`; **boleta 03/B** → REST Consulta Integrada con RUC/tipo/serie/número + fecha + monto. `billConsultService` oficialmente solo admite factura/NC/ND serie F, no boleta. En REST, `estadoCp=1` acepta, `2` anula y `0` requiere dos consultas separadas; no entrega CDR ni rechazo. Las boletas necesitan `SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`, aplicaciones separadas de GRE: **nunca reutilizar ni rotar `SUNAT_*_CLIENT_ID/SECRET` de guías**. Sin credenciales, queda `por_confirmar` + revisión y bloquea duplicados. Cron (5 min) y **Verificar ahora** comparten claim y nunca llaman a `sendBill`. En BETA/`dev-hugo` solo mocks, sin mezclar producción. La NC 07, Resumen Diario y GRE 09 conservan sus flujos. La migración añade claims/metadatos y UNIQUE de deuda por `comprobante_id` y por pedido+serie-número; ya se validó en `dev-hugo`, pero producción sigue sin migración/deploy. Ver docs 11 y 24.
 
 ---
 
@@ -728,6 +730,8 @@ Antes de empezar cualquier tarea:
 | `src/lib/sunat/xml-builder.ts` | 677 | ✅ Genera XML UBL 2.1 (factura/boleta/nota crédito) |
 | `src/lib/sunat/xml-signer.ts` | 168 | ✅ Firma con cert .p12 + xml-crypto |
 | `src/lib/sunat/soap-client.ts` | 582 | ✅ POST a SUNAT + parsea CDR (descomprime PKZip) |
+| `src/lib/sunat/consulta-integrada-client.ts` | 310 | 🟡 Consulta REST posterior de boleta 03; contrato cubierto con mocks, credenciales/deploy pendientes |
+| `src/lib/sunat/reconciliacion-cpe.ts` | 583 | 🟡 Orquesta reconciliación SOAP 01/REST 03, claims y postproceso; validado solo en `dev-hugo` |
 | `src/lib/sunat/index.ts` | 240 | ✅ Orquesta XML → firma → SOAP → DB |
 | `src/lib/sunat/resumen-diario.ts` | ~250 | ✅ Helper compartido Resumen Diario (RC-) con idempotencia (cron + manual) |
 | `src/lib/sunat/pdf-comprobante.ts` | 885 | ✅ PDF formato SUNAT (jsPDF + jspdf-autotable) — sin QR (decisión, ver §13) |
@@ -737,11 +741,13 @@ Antes de empezar cualquier tarea:
 | `src/app/api/comprobantes/[id]/route.ts` | 175 | ✅ Detalle + items + emisor (para PDF) |
 | `src/app/api/comprobantes/[id]/xml/route.ts` | 56 | ✅ Descarga XML firmado |
 | `src/app/api/comprobantes/[id]/enviar/route.ts` | 165 | ✅ Envía PDF + XML por email |
-| `src/app/api/comprobantes/[id]/reintentar/route.ts` | 250 | ✅ Reintenta CPE solo en error + botón UI |
+| `src/app/api/comprobantes/[id]/reintentar/route.ts` | 250 | ✅ Reutiliza fila/XML/número; para 01/03 consulta antes y solo reenvía tras `no_registrado` |
+| `src/app/api/comprobantes/[id]/verificar-sunat/route.ts` | 103 | 🟡 Verificación manual 01/03 con scoping y claim compartido |
 | `src/app/api/comprobantes/[id]/anular/route.ts` | 189 | ✅ Comunicación de Baja (RA-) + botón UI |
 | `src/app/api/comprobantes/resumen-diario/route.ts` | ~80 | ✅ Resumen Diario (GET lista boletas, POST envía) → usa helper |
 | `src/app/api/comprobantes/consultar-ticket/route.ts` | ~110 | ✅ getStatus de ticket (baja/resumen) + persiste resultado |
 | `src/app/api/comprobantes/emitir/route.ts` | 164 | ✅ Emite comprobante real |
+| `src/app/api/cron/reconciliar-cpe-sunat/route.ts` | 59 | 🟡 Reconciliación automática cada 5 min; deploy de producción pendiente |
 | `src/app/dashboard/comprobantes/...` | — | ✅ UI: PDF ⬇, XML ⟨/⟩, Email ✉, N. Crédito, Baja, Reintentar + Resumen diario (header) |
 
 **Estado de testing (BETA, validado mayo 2026 con cert REAL):**
@@ -808,4 +814,3 @@ Para evitar la alteración de la secuencia de reparto por optimizaciones automá
 * **Respaldo de IA de Mistral**:
   * Se configuró la clave `MISTRAL_API_KEY` (cuenta `transavicdev@gmail.com`) en Vercel (Development y Production) y en los archivos `.env` locales.
   * Se implementó el soporte REST (`callMistral` con modelo `mistral-small-latest`) en `src/lib/gemini.ts`, integrado como tercer nivel de fallback en `callIA` (**Gemini $\rightarrow$ Groq $\rightarrow$ Mistral**).
-

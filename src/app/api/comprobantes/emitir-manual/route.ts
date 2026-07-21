@@ -634,21 +634,23 @@ export async function POST(request: Request) {
       };
     });
 
-    // Anti-duplicado: si ya hay un comprobante igual reciente (mismo cliente
-    // identificado + tipo + monto), avisar antes de duplicar — salvo que la
-    // asesora ya haya confirmado "emitir igual".
-    if (!parsed.data.ventaAvicolaId && !parsed.data.confirmarDuplicado && identificado) {
+    // Aceptado/observado mantiene la confirmación blanda por posible venta
+    // legítima. Un comprobante incierto bloquea incluso si el cliente intenta
+    // reutilizar `confirmarDuplicado` desde otra pestaña.
+    if (!parsed.data.ventaAvicolaId && identificado) {
       const dup = await buscarComprobanteDuplicado({
         empresa,
         tipo,
         clienteDocNum: numDoc,
         montoTotal: totalConIgv,
       });
-      if (dup) {
+      if (dup && (dup.bloqueante || !parsed.data.confirmarDuplicado)) {
         return NextResponse.json(
           {
             duplicado: dup,
-            mensaje: `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
+            mensaje: dup.bloqueante
+              ? `El comprobante ${dup.serieNumero} todavía debe resolverse con SUNAT. Verifica o reintenta ese mismo número; no emitas otro.`
+              : `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
           },
           { status: 409 }
         );
@@ -736,6 +738,7 @@ export async function POST(request: Request) {
       fechaEmision: parsed.data.fechaEmision,
       observacionComprobante: obs.value,
       emitidoPor: session.user.name?.trim() || undefined,
+      clienteId: cliente.id ?? null,
       // Venta de campo (Clientes Avícola): enlaza el comprobante a la venta y activa
       // el guard anti-cobranza de abajo. Para ejecutivas/suelto va null.
       ventaAvicolaId: parsed.data.ventaAvicolaId ?? null,
@@ -760,14 +763,10 @@ export async function POST(request: Request) {
       }
     }
 
-    // Regla de EJECUTIVAS (Transavic, jun 2026): toda factura o boleta,
-    // Contado o Crédito, crea su cobranza. El "contado"
-    // casi siempre se cobra días después; si el cliente ya pagó, la asesora marca
-    // la cobranza como pagada a mano en /cobranzas. (Se quitó el check "¿ya pagó
-    // en el acto?" porque confundía y dejaba ventas sin cobranza.) Solo se crea
-    // si SUNAT aceptó (o quedó pendiente por falta de cert); si fue rechazado/
-    // erró, no registramos deuda inválida ni duplicamos al reintentar. Campo
-    // se excluye porque su cartera es ventas_avicola - abonos_avicola.
+    // La aceptacion real 01/03 ya aplica cartera dentro de `emitirComprobante`
+    // mediante un unico postproceso con claim atomico (el cron puede retomarlo).
+    // Este bloque queda solo para el modo local SIN certificado, cuyo estado
+    // PENDIENTE nunca fue enviado a SUNAT y conserva el comportamiento historico.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
@@ -779,7 +778,9 @@ export async function POST(request: Request) {
     // del POS de planta (gotcha #42). El comprobante SUNAT igual se emite.
     const esCampo = !!parsed.data.ventaAvicolaId;
     const debeCrearCobranza =
-      !!resultado.serieNumero && emisionOk && !esCampo;
+      !!resultado.serieNumero &&
+      resultado.estado === EstadoSunat.PENDIENTE &&
+      !esCampo;
 
     if (debeCrearCobranza) {
       try {

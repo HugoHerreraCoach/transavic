@@ -54,6 +54,12 @@ interface Comprobante {
   estado: string;
   created_at: string;
   mensaje_sunat: string | null;
+  codigo_respuesta_sunat: string | null;
+  ultima_consulta_sunat_at: string | null;
+  proxima_consulta_sunat_at: string | null;
+  tiene_cdr: boolean;
+  requiere_revision_sunat: boolean;
+  revision_motivo_sunat: string | null;
   pedido_id: string | null;
   pedido_cliente: string | null;
   // Origen de la venta (para el chip de OPERACIÓN): venta_avicola_id lo marca como
@@ -147,6 +153,10 @@ function estadoUI(estado: string): {
       return { bg: "bg-amber-100", text: "text-amber-700", label: "Observado", Icon: FiAlertTriangle };
     case "pendiente":
       return { bg: "bg-blue-100", text: "text-blue-700", label: "Pendiente", Icon: FiClock };
+    case "por_confirmar":
+      return { bg: "bg-amber-100", text: "text-amber-800", label: "Por confirmar", Icon: FiClock };
+    case "no_registrado":
+      return { bg: "bg-blue-100", text: "text-blue-800", label: "No registrado", Icon: FiRefreshCw };
     case "rechazado":
       return { bg: "bg-red-100", text: "text-red-700", label: "Rechazado", Icon: FiXCircle };
     case "error":
@@ -168,8 +178,63 @@ function colorEstado(estado: string): string {
       return "bg-amber-100 text-amber-700";
     case "pendiente":
       return "bg-blue-100 text-blue-700";
+    case "por_confirmar":
+      return "bg-amber-100 text-amber-800";
+    case "no_registrado":
+      return "bg-blue-100 text-blue-800";
     default:
       return "bg-gray-100 text-gray-700";
+  }
+}
+
+function esCpePorConfirmar(c: Pick<Comprobante, "tipo" | "estado">): boolean {
+  return c.tipo !== "09" && c.estado === "por_confirmar";
+}
+
+function mensajeRevisionSunat(
+  c: Pick<
+    Comprobante,
+    "estado" | "revision_motivo_sunat" | "mensaje_sunat"
+  >
+): { amigable: string; tecnico: string } {
+  const motivo =
+    c.revision_motivo_sunat ??
+    c.mensaje_sunat ??
+    "El comprobante requiere revisión del administrador.";
+  const duplicado = /duplicad|más de un comprobante|otro comprobante aceptado/i.test(
+    motivo
+  );
+  return duplicado
+    ? {
+        amigable:
+          "Este pedido tiene más de un comprobante aceptado. No emitas otro; coordina cuál se corregirá con Nota de Crédito.",
+        tecnico: motivo,
+      }
+    : {
+        amigable:
+          c.estado === "por_confirmar"
+            ? "SUNAT todavía no pudo confirmar este comprobante. El número está protegido: no emitas otro."
+            : "Este comprobante requiere revisión del administrador.",
+        tecnico: motivo,
+      };
+}
+
+function normalizarEstadoLista(estado: unknown): string {
+  if (typeof estado !== "string") return "por_confirmar";
+  switch (estado.toUpperCase()) {
+    case "ACEPTADA":
+      return "aceptado";
+    case "ACEPTADA_CON_OBSERVACIONES":
+      return "observado";
+    case "RECHAZADA":
+      return "rechazado";
+    case "POR_CONFIRMAR":
+    case "PENDIENTE":
+      return "por_confirmar";
+    case "ANULADA":
+      return "anulado";
+    default:
+      return estado.toLowerCase();
   }
 }
 
@@ -2289,6 +2354,8 @@ export default function ComprobantesClient({
     serieNumero: string;
     amigable: string;
     tecnico: string;
+    porConfirmar?: boolean;
+    informativo?: boolean;
   } | null>(null);
   const [modalResumen, setModalResumen] = useState(false);
   // Modal de exportación a Excel: el contador elige el período antes de bajar.
@@ -2318,7 +2385,9 @@ export default function ComprobantesClient({
     c.tipo === "09"
       ? (userRole === "admin" || userRole === "asesor") &&
         ["error", "pendiente", "emitiendo", "rechazado"].includes(c.estado)
-      : (userRole === "admin" || userRole === "asesor") && c.estado === "error";
+      : (userRole === "admin" || userRole === "asesor") &&
+        (c.estado === "error" ||
+          ((c.tipo === "01" || c.tipo === "03") && c.estado === "no_registrado"));
   // NC rechazada (por datos) que aún NO fue reemplazada por una NC válida → ofrecer
   // emitir una NC NUEVA sobre su factura (con el monto ya corregido). Reemplaza al
   // inútil "Reintentar envío" para este caso.
@@ -2344,16 +2413,22 @@ export default function ComprobantesClient({
     c.tipo === "01" &&
     (c.estado === "aceptado" || c.estado === "observado") &&
     diasDesde(c.created_at) <= 7;
-  const [toast, setToast] = useState<{ tipo: "ok" | "error"; msg: string } | null>(null);
+  const [toast, setToast] = useState<{ tipo: "ok" | "error" | "info"; msg: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [modalEmitirGuiaCpe, setModalEmitirGuiaCpe] = useState<{ pedido?: Pedido | null; comprobante?: ComprobanteInfo | null } | null>(null);
   const [cargandoPedidoId, setCargandoPedidoId] = useState<string | null>(null);
   const [cargandoComprobanteId, setCargandoComprobanteId] = useState<string | null>(null);
+  const refrescoSilenciosoEnCursoRef = useRef(false);
+  const hayCpePorConfirmar = comprobantes.some(esCpePorConfirmar);
 
 
-  const fetchData = async () => {
-    setRefreshing(true);
-    setError(null);
+  const fetchData = async ({ silencioso = false }: { silencioso?: boolean } = {}) => {
+    if (silencioso && refrescoSilenciosoEnCursoRef.current) return;
+    if (silencioso) refrescoSilenciosoEnCursoRef.current = true;
+    else {
+      setRefreshing(true);
+      setError(null);
+    }
     try {
       const params = new URLSearchParams();
       if (filtroTipo !== "all") params.set("tipo", filtroTipo);
@@ -2376,10 +2451,11 @@ export default function ComprobantesClient({
       setComprobantes(json.data ?? []);
       setAlcanzoTope(Boolean(json.alcanzoTope));
     } catch (err) {
-      setError((err as Error).message);
+      if (!silencioso) setError((err as Error).message);
     } finally {
       setLoading(false);
-      setRefreshing(false);
+      if (silencioso) refrescoSilenciosoEnCursoRef.current = false;
+      else setRefreshing(false);
     }
   };
 
@@ -2387,6 +2463,39 @@ export default function ComprobantesClient({
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtroTipo, filtroEmpresa, filtroOperacion, pedidoIdFiltro, searchDebounced, filtroDesde, filtroHasta]);
+
+  // El cron reconcilia con SUNAT. Mientras haya un CPE por confirmar, esta vista
+  // solo refresca silenciosamente la DB para mostrar el resultado final sin que la
+  // asesora tenga que recargar. Las guías conservan su flujo independiente.
+  useEffect(() => {
+    if (!hayCpePorConfirmar) return;
+
+    const refrescarSiVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void fetchData({ silencioso: true });
+    };
+    const timer = setInterval(refrescarSiVisible, 60_000);
+    const alCambiarVisibilidad = () => {
+      if (document.visibilityState === "visible") refrescarSiVisible();
+    };
+    document.addEventListener("visibilitychange", alCambiarVisibilidad);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", alCambiarVisibilidad);
+    };
+    // `fetchData` usa los filtros vigentes; el efecto principal se recrea cuando
+    // cualquiera de ellos cambia.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    hayCpePorConfirmar,
+    filtroTipo,
+    filtroEmpresa,
+    filtroOperacion,
+    pedidoIdFiltro,
+    searchDebounced,
+    filtroDesde,
+    filtroHasta,
+  ]);
 
   // Debounce de la búsqueda server-side: no dispara un fetch en cada tecla.
   useEffect(() => {
@@ -2536,12 +2645,94 @@ export default function ComprobantesClient({
       const j = await res.json();
       if (!res.ok) throw new Error(j.error || j.detalle || `HTTP ${res.status}`);
       setToast({
-        tipo: j.exito ? "ok" : "error",
+        tipo:
+          j.exito
+            ? "ok"
+            : normalizarEstadoLista(j.estado) === "por_confirmar"
+              ? "info"
+              : "error",
         msg: j.mensaje || j.descripcion || (j.exito ? "Reintento enviado" : "SUNAT volvió a rechazar"),
       });
       fetchData();
     } catch (err) {
       setToast({ tipo: "error", msg: `Reintento falló: ${(err as Error).message}` });
+    } finally {
+      setAccionEnProgreso(null);
+    }
+  };
+
+  const verificarEnSunat = async (c: Comprobante) => {
+    if (!esCpePorConfirmar(c) || accionEnProgreso === c.id + "-verify") return;
+    setAccionEnProgreso(c.id + "-verify");
+    try {
+      const res = await fetch(`/api/comprobantes/${c.id}/verificar-sunat`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok && res.status !== 202) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : "No se pudo verificar el comprobante en SUNAT."
+        );
+      }
+
+      const estado = normalizarEstadoLista(data?.estado);
+      setComprobantes((actuales) =>
+        actuales.map((item) =>
+          item.id === c.id
+            ? {
+                ...item,
+                estado,
+                mensaje_sunat:
+                  typeof data?.mensaje === "string" ? data.mensaje : item.mensaje_sunat,
+                codigo_respuesta_sunat:
+                  typeof data?.codigoRespuesta === "string"
+                    ? data.codigoRespuesta
+                    : item.codigo_respuesta_sunat,
+                tiene_cdr:
+                  typeof data?.tieneCdr === "boolean" ? data.tieneCdr : item.tiene_cdr,
+                ultima_consulta_sunat_at:
+                  typeof data?.verificadoAt === "string"
+                    ? data.verificadoAt
+                    : item.ultima_consulta_sunat_at,
+                proxima_consulta_sunat_at:
+                  typeof data?.proximaConsultaAt === "string"
+                    ? data.proximaConsultaAt
+                    : null,
+                requiere_revision_sunat:
+                  typeof data?.requiereRevision === "boolean"
+                    ? data.requiereRevision
+                    : item.requiere_revision_sunat,
+                revision_motivo_sunat:
+                  typeof data?.motivoRevision === "string"
+                    ? data.motivoRevision
+                    : item.revision_motivo_sunat,
+              }
+            : item
+        )
+      );
+      setToast({
+        tipo:
+          estado === "por_confirmar"
+            ? "info"
+            : estado === "no_registrado"
+              ? "info"
+            : estado === "rechazado"
+              ? "error"
+              : "ok",
+        msg:
+          typeof data?.mensaje === "string"
+            ? data.mensaje
+            : estado === "por_confirmar"
+              ? "SUNAT todavía está procesando este comprobante. No emitas otro."
+              : `SUNAT confirmó el estado: ${estado}.`,
+      });
+    } catch (err) {
+      setToast({
+        tipo: "error",
+        msg: err instanceof Error ? err.message : "No se pudo verificar en SUNAT.",
+      });
     } finally {
       setAccionEnProgreso(null);
     }
@@ -2553,19 +2744,21 @@ export default function ComprobantesClient({
   // para la asesora: "F001-23", "Lucy", o el RUC).
   //
   // El filtro de estado se simplificó (mayo 2026) de 7 estados SUNAT crudos a
-  // 4 grupos que el usuario sí entiende. Los grupos cuadran EXACTO con los KPIs
+  // grupos que el usuario sí entiende. Los grupos cuadran EXACTO con los KPIs
   // de arriba (para que el KPI "Con problemas" clickeable filtre lo mismo):
   //   - aceptados  → aceptado + observado (SUNAT los validó; son fiscales OK)
   //   - problemas  → rechazado + error (hay que reintentar / emitir NC)
+  //   - por confirmar → SUNAT aún no dio un resultado definitivo; no reenviar
   //   - anulados   → anulado
-  // "pendiente" es transitorio (segundos) y tiene su propio KPI; queda dentro
-  // de "Todos", sin chip propio.
+  // El estado legacy "pendiente" queda dentro de "Todos".
   const perteneceAlEstado = (estado: string): boolean => {
     switch (filtroEstado) {
       case "aceptados":
         return estado === "aceptado" || estado === "observado";
       case "problemas":
-        return estado === "rechazado" || estado === "error";
+        return ["rechazado", "error", "no_registrado"].includes(estado);
+      case "por_confirmar":
+        return estado === "por_confirmar";
       case "anulados":
         return estado === "anulado";
       default:
@@ -2596,9 +2789,9 @@ export default function ComprobantesClient({
     (c) => c.estado === "aceptado" || c.estado === "observado"
   ).length;
   const statsProblemas = comprobantes.filter(
-    (c) => c.estado === "rechazado" || c.estado === "error"
+    (c) => ["rechazado", "error", "no_registrado"].includes(c.estado)
   ).length;
-  const statsPendientes = comprobantes.filter((c) => c.estado === "pendiente").length;
+  const statsPorConfirmar = comprobantes.filter(esCpePorConfirmar).length;
   const totalMontoFiltrado = comprobantesFiltrados.reduce(
     (acc, c) => acc + Number(c.monto_total || 0),
     0
@@ -2628,12 +2821,47 @@ export default function ComprobantesClient({
   // con el resto. Las guías (tipo='09') muestran "Imprimir" en lugar de "PDF".
   const celdaAcciones = (c: Comprobante) => {
     const isLoadingPdf = accionEnProgreso === c.id + "-pdf";
+    const verificando = accionEnProgreso === c.id + "-verify";
+    const reintentando = accionEnProgreso === c.id + "-retry";
     const abierto = menuAcciones?.c.id === c.id;
     const esGuia = c.tipo === "09";
+    const porConfirmar = esCpePorConfirmar(c);
+    const noRegistrado = c.tipo !== "09" && c.estado === "no_registrado";
 
     return (
       <div className="flex items-center justify-end gap-1">
-        {esGuia ? (
+        {porConfirmar ? (
+          <button
+            type="button"
+            onClick={() => void verificarEnSunat(c)}
+            disabled={verificando}
+            aria-busy={verificando}
+            aria-label={`Verificar ${c.serie_numero} en SUNAT`}
+            className="min-h-11 px-3 py-2 text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 rounded-lg flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600 focus-visible:ring-offset-2"
+          >
+            {verificando ? (
+              <FiRefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : (
+              <FiClock className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {verificando ? "Verificando…" : "Verificar ahora"}
+          </button>
+        ) : noRegistrado ? (
+          <button
+            type="button"
+            onClick={() => void reintentarEnvio(c)}
+            disabled={reintentando}
+            aria-busy={reintentando}
+            aria-label={`Reintentar ${c.serie_numero} con el mismo número`}
+            className="min-h-11 px-3 py-2 text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 rounded-lg flex items-center gap-1.5 disabled:opacity-60 disabled:cursor-wait focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2"
+          >
+            <FiRefreshCw
+              className={`h-3.5 w-3.5 ${reintentando ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
+            {reintentando ? "Reintentando…" : "Reintentar mismo número"}
+          </button>
+        ) : esGuia ? (
           <button
             onClick={() => descargarPDFGuia(c)}
             disabled={isLoadingPdf}
@@ -2656,7 +2884,13 @@ export default function ComprobantesClient({
         )}
         <button
           onClick={(e) => abrirMenuAcciones(e, c)}
-          title={esGuia ? "Más acciones (XML, CDR)" : "Más acciones (XML, CDR, correo, nota de crédito, anular…)"}
+          title={
+            porConfirmar
+              ? "Más acciones del comprobante"
+              : esGuia
+                ? "Más acciones (XML, CDR)"
+                : "Más acciones (XML, CDR, correo, nota de crédito, anular…)"
+          }
           aria-label="Más acciones"
           className={`p-1.5 rounded-md border btn-trigger-acciones ${
             abierto
@@ -2750,7 +2984,7 @@ export default function ComprobantesClient({
       </header>
 
       {/* ── KPIs: lo que la asesora necesita ver al abrir la pantalla.
-            Total · Aceptados · Problemas (rechazado/error/observado) · Pendientes
+            Total · Aceptados · Problemas (rechazado/error) · Por confirmar
             de SUNAT. El monto se ve abajo en el footer porque cambia con los
             filtros visibles. ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
@@ -2780,11 +3014,13 @@ export default function ComprobantesClient({
           onClick={statsProblemas > 0 ? () => setFiltroEstado("problemas") : undefined}
         />
         <KpiCard
-          color="blue"
+          color="amber"
           icon={<FiClock />}
-          label="Pendientes"
-          value={statsPendientes}
-          hint="Esperando respuesta"
+          label="Por confirmar"
+          value={statsPorConfirmar}
+          hint="No emitas otro"
+          highlight={statsPorConfirmar > 0}
+          onClick={statsPorConfirmar > 0 ? () => setFiltroEstado("por_confirmar") : undefined}
         />
       </div>
 
@@ -2792,7 +3028,7 @@ export default function ComprobantesClient({
         <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg flex items-center justify-between">
           <span>⚠️ No pude cargar los comprobantes: {error}</span>
           <button
-            onClick={fetchData}
+            onClick={() => void fetchData()}
             className="text-xs px-2 py-1 bg-red-600 text-white rounded hover:bg-red-700"
           >
             Reintentar
@@ -2850,7 +3086,7 @@ export default function ComprobantesClient({
           </button>
         )}
         <button
-          onClick={fetchData}
+          onClick={() => void fetchData()}
           disabled={refreshing}
           title="Refrescar"
           className="px-3 py-2 text-xs bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-1"
@@ -2944,6 +3180,7 @@ export default function ComprobantesClient({
           opciones={[
             { v: "all", l: "Todos" },
             { v: "aceptados", l: "Aceptados", swatch: "bg-green-500" },
+            { v: "por_confirmar", l: "Por confirmar", swatch: "bg-amber-500" },
             { v: "problemas", l: "Con problemas", swatch: "bg-red-500" },
           ]}
         />
@@ -3174,14 +3411,26 @@ export default function ComprobantesClient({
                   </div>
                 )}
               </div>
-              {(c.estado === "rechazado" ||
+              {(esCpePorConfirmar(c) ||
+                c.estado === "rechazado" ||
                 c.estado === "error" ||
-                c.estado === "observado") &&
+                c.estado === "no_registrado" ||
+                c.estado === "observado" ||
+                c.requiere_revision_sunat) &&
                 (() => {
+                  const porConfirmar = esCpePorConfirmar(c);
+                  const informativo = c.estado === "no_registrado";
                   // Sin mensaje guardado (filas históricas) → fallback por estado:
                   // la asesora siempre debe saber si el documento vale y qué hacer.
-                  const msg = c.mensaje_sunat
-                    ? mensajeSunatAmigable(c.mensaje_sunat)
+                  const msg = c.requiere_revision_sunat
+                    ? mensajeRevisionSunat(c)
+                    : porConfirmar
+                    ? {
+                        amigable: "SUNAT está procesando este comprobante. No emitas otro.",
+                        tecnico: c.mensaje_sunat ?? "Esperando confirmación de SUNAT.",
+                      }
+                    : c.mensaje_sunat
+                      ? mensajeSunatAmigable(c.mensaje_sunat)
                     : (() => {
                         const def = mensajeEstadoSinDetalle(c.estado);
                         return def ? { amigable: def, tecnico: def } : null;
@@ -3189,10 +3438,16 @@ export default function ComprobantesClient({
                   if (!msg) return null;
                   return (
                     <div
-                      className="mb-2 text-[11px] text-red-600 line-clamp-3"
+                      className={`mb-2 text-[11px] line-clamp-3 ${
+                        porConfirmar
+                          ? "font-medium text-amber-800"
+                          : informativo
+                            ? "font-medium text-blue-800"
+                            : "text-red-600"
+                      }`}
                       title={msg.tecnico}
                     >
-                      ⚠ {msg.amigable}
+                      {porConfirmar ? "◷" : "⚠"} {msg.amigable}
                     </div>
                   );
                 })()}
@@ -3347,13 +3602,24 @@ export default function ComprobantesClient({
                   <td className="px-3 py-2 text-center">
                     {(() => {
                       const ui = estadoUI(c.estado);
+                      const porConfirmar = esCpePorConfirmar(c);
+                      const informativo = c.estado === "no_registrado";
                       const conProblema =
-                        (c.estado === "rechazado" || c.estado === "error") ||
+                        c.requiere_revision_sunat ||
+                        porConfirmar ||
+                        (["rechazado", "error", "no_registrado"].includes(c.estado)) ||
                         (c.estado === "observado" && !!c.mensaje_sunat);
                       // El motivo se muestra VISIBLE bajo el chip (antes vivía solo
                       // en el tooltip del ⓘ y en PC nadie lo encontraba). Clic = detalle completo.
                       const msg = !conProblema
                         ? null
+                        : c.requiere_revision_sunat
+                          ? mensajeRevisionSunat(c)
+                        : porConfirmar
+                          ? {
+                              amigable: "SUNAT está procesando este comprobante. No emitas otro.",
+                              tecnico: c.mensaje_sunat ?? "Esperando confirmación de SUNAT.",
+                            }
                         : c.mensaje_sunat
                           ? mensajeSunatAmigable(c.mensaje_sunat)
                           : (() => {
@@ -3375,12 +3641,22 @@ export default function ComprobantesClient({
                                   serieNumero: c.serie_numero,
                                   amigable: msg.amigable,
                                   tecnico: msg.tecnico,
+                                  porConfirmar,
+                                  informativo,
                                 })
                               }
                               title="Haz clic para ver el detalle completo"
-                              className="mt-1 block w-full max-w-[230px] mx-auto text-left text-[10px] leading-snug text-red-600 hover:underline cursor-pointer"
+                              className={`mt-1 block w-full max-w-[230px] mx-auto text-left text-[10px] leading-snug hover:underline cursor-pointer ${
+                                porConfirmar
+                                  ? "font-medium text-amber-800"
+                                  : informativo
+                                    ? "font-medium text-blue-800"
+                                    : "text-red-600"
+                              }`}
                             >
-                              <span className="line-clamp-2">⚠ {msg.amigable}</span>
+                              <span className="line-clamp-2">
+                                {porConfirmar ? "◷" : "⚠"} {msg.amigable}
+                              </span>
                             </button>
                           )}
                         </div>
@@ -3495,7 +3771,13 @@ export default function ComprobantesClient({
             {(() => {
               const c = menuAcciones.c;
               const esGuia = c.tipo === "09";
-              const tieneCdr = c.estado === "aceptado" || c.estado === "observado";
+              const porConfirmar = esCpePorConfirmar(c);
+              const noRegistrado = !esGuia && c.estado === "no_registrado";
+              // GRE conserva su semántica actual. En CPE, la disponibilidad se
+              // decide por el archivo realmente guardado, no por el estado.
+              const tieneCdr = esGuia
+                ? c.estado === "aceptado" || c.estado === "observado"
+                : Boolean(c.tiene_cdr) && !porConfirmar;
               const itemCls =
                 "w-full px-3 py-2 text-sm flex items-center gap-2.5 hover:bg-gray-50 text-left text-gray-700 transition-colors";
               
@@ -3532,7 +3814,7 @@ export default function ComprobantesClient({
                   </div>
 
                   {/* SECCIÓN 2: COMUNICACIÓN */}
-                  {!esGuia && (
+                  {!esGuia && !porConfirmar && !noRegistrado && (
                     <div className="py-1">
                       <MenuHeader>Comunicación</MenuHeader>
                       <button onClick={() => { setMenuAcciones(null); setModalEnviar({ id: c.id, defaultEmail: "" }); }} className={itemCls}>
@@ -3704,7 +3986,11 @@ export default function ComprobantesClient({
                           )}
                           {reintentando
                             ? "Reintentando envío…"
-                            : esGuia ? "Reintentar emisión (mismo número)" : "Reintentar envío"}
+                            : esGuia
+                              ? "Reintentar emisión (mismo número)"
+                              : c.estado === "no_registrado"
+                                ? "Reintentar el mismo número"
+                                : "Reintentar envío"}
                         </button>
                       );
                     })()}
@@ -3720,7 +4006,13 @@ export default function ComprobantesClient({
         <ModalShell onClose={() => setModalMensajeSunat(null)}>
           <div className="px-6 pb-6">
             <h3 className="font-bold text-gray-800 flex items-center gap-2 mb-3">
-              <FiAlertTriangle className="text-red-600 flex-shrink-0" />
+              {modalMensajeSunat.porConfirmar ? (
+                <FiClock className="text-amber-600 flex-shrink-0" />
+              ) : modalMensajeSunat.informativo ? (
+                <FiRefreshCw className="text-blue-600 flex-shrink-0" />
+              ) : (
+                <FiAlertTriangle className="text-red-600 flex-shrink-0" />
+              )}
               Detalle SUNAT · {modalMensajeSunat.serieNumero}
             </h3>
             <p className="text-sm text-gray-700">{modalMensajeSunat.amigable}</p>
@@ -3904,8 +4196,13 @@ export default function ComprobantesClient({
       {/* Toast */}
       {toast && (
         <div
+          role={toast.tipo === "error" ? "alert" : "status"}
           className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg ${
-            toast.tipo === "ok" ? "bg-green-600 text-white" : "bg-red-600 text-white"
+            toast.tipo === "ok"
+              ? "bg-green-600 text-white"
+              : toast.tipo === "info"
+                ? "bg-amber-600 text-white"
+                : "bg-red-600 text-white"
           }`}
         >
           {toast.msg}
@@ -3914,6 +4211,11 @@ export default function ComprobantesClient({
 
       {/* Aviso amigable (sin jerga técnica) */}
       <div className="mt-6 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+        <p className="mb-2">
+          <strong>Si ves “Por confirmar”:</strong> no emitas otro comprobante. El
+          sistema volverá a consultar a SUNAT y mostrará el estado que confirme.
+          Si necesita intervención, lo indicará sin habilitar otra emisión.
+        </p>
         <strong>ℹ️ Cómo funciona:</strong> al emitir, el comprobante se transmite
         a <strong>SUNAT</strong> automáticamente para su validación (esto{" "}
         <strong>no</strong> es un correo al cliente). Para enviárselo al cliente
@@ -3938,7 +4240,7 @@ function KpiCard({
   highlight,
   onClick,
 }: {
-  color: "gray" | "green" | "red" | "blue";
+  color: "gray" | "green" | "red" | "blue" | "amber";
   icon: React.ReactNode;
   label: string;
   value: number | string;
@@ -3951,6 +4253,7 @@ function KpiCard({
     green: { bg: "bg-white border-gray-200", iconBg: "bg-green-100 text-green-600", text: "text-gray-800" },
     red: { bg: highlight ? "bg-red-50 border-red-300" : "bg-white border-gray-200", iconBg: "bg-red-100 text-red-600", text: highlight ? "text-red-700" : "text-gray-800" },
     blue: { bg: "bg-white border-gray-200", iconBg: "bg-blue-100 text-blue-600", text: "text-gray-800" },
+    amber: { bg: highlight ? "bg-amber-50 border-amber-300" : "bg-white border-gray-200", iconBg: "bg-amber-100 text-amber-700", text: highlight ? "text-amber-800" : "text-gray-800" },
   };
   const Tag = onClick ? "button" : "div";
   return (

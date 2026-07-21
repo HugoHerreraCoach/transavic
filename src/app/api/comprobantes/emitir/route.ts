@@ -42,7 +42,8 @@ const Schema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   observacionComprobante: z.string().optional().nullable(),
-  // Si la asesora ya confirmó el aviso de "comprobante duplicado", emite igual.
+  // Solo omite el aviso BLANDO por coincidencia de cliente/monto. Nunca permite
+  // saltarse el bloqueo duro de un comprobante existente para el mismo pedido.
   confirmarDuplicado: z.boolean().default(false),
   // ID de autorización de precio mínimo (aprobada por el admin).
   autorizacion_id: z.string().uuid().optional().nullable(),
@@ -71,6 +72,8 @@ const Schema = z.object({
 });
 
 export async function POST(request: Request) {
+  let claimPedido: { pedidoId: string; token: string } | null = null;
+
   try {
     const session = await auth();
     if (!session?.user) {
@@ -338,20 +341,113 @@ export async function POST(request: Request) {
       // VARIOS" (ver el cliente abajo). El nombre del cliente igual queda en el pedido.
     }
 
-    // Anti-duplicado: avisar si ya hay un comprobante igual reciente (mismo
-    // cliente identificado + tipo + monto), salvo que ya se haya confirmado.
-    if (!parsed.data.confirmarDuplicado && identificado) {
+    // Claim DURO por pedido: se adquiere antes de entrar al motor SUNAT (y, por
+    // tanto, antes de consumir un correlativo). A diferencia del aviso blando
+    // por cliente/monto, este bloqueo no admite confirmación ni override.
+    //
+    // La condición se revalida en el mismo UPDATE que toma el claim, cerrando la
+    // carrera entre dos pestañas. Un CPE rechazado/anulado libera una corrección;
+    // cualquier otro estado obliga a resolver o reintentar ESE mismo número.
+    const claimToken = crypto.randomUUID();
+    const claims = (await sql`
+      UPDATE pedidos p
+      SET facturacion_cpe_claim_token = ${claimToken}::uuid,
+          facturacion_cpe_claim_at = NOW()
+      WHERE p.id = ${parsed.data.pedido_id}::uuid
+        AND (
+          p.facturacion_cpe_claim_token IS NULL
+          OR p.facturacion_cpe_claim_at IS NULL
+          OR p.facturacion_cpe_claim_at < NOW() - INTERVAL '15 minutes'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM comprobantes c
+          WHERE c.pedido_id = p.id
+            AND c.tipo IN ('01', '03')
+            AND c.estado NOT IN ('rechazado', 'anulado')
+        )
+      RETURNING p.id
+    `) as Array<{ id: string }>;
+
+    if (claims.length === 0) {
+      const existentes = (await sql`
+        SELECT id, serie_numero, estado, created_at
+        FROM comprobantes
+        WHERE pedido_id = ${parsed.data.pedido_id}::uuid
+          AND tipo IN ('01', '03')
+          AND estado NOT IN ('rechazado', 'anulado')
+        ORDER BY
+          CASE
+            WHEN estado IN ('aceptado', 'observado') THEN 0
+            WHEN estado IN ('por_confirmar', 'emitiendo', 'pendiente') THEN 1
+            WHEN estado IN ('error', 'no_registrado') THEN 2
+            ELSE 3
+          END,
+          created_at DESC,
+          id DESC
+        LIMIT 1
+      `) as Array<{
+        id: string;
+        serie_numero: string;
+        estado: string;
+        created_at: string | Date;
+      }>;
+
+      const existente = existentes[0];
+      // Si todavía no hay fila, otra solicitud conserva el claim mientras crea
+      // la reserva `emitiendo`. Se informa igual como bloqueo temporal, sin
+      // inventar un número que aún no fue persistido.
+      const estadoBloqueante = existente?.estado ?? "emitiendo";
+      const numero = existente?.serie_numero ?? null;
+      const numeroTexto = numero ? ` ${numero}` : "";
+      const mensaje = ["por_confirmar", "emitiendo", "pendiente"].includes(
+        estadoBloqueante
+      )
+        ? `El comprobante${numeroTexto} de este pedido todavía está en proceso o por confirmar con SUNAT. Espera y usa "Verificar en SUNAT"; no emitas otro.`
+        : ["error", "no_registrado"].includes(estadoBloqueante)
+          ? `El comprobante${numeroTexto} de este pedido necesita reintento. Reintenta ese mismo número; no emitas otro correlativo.`
+          : ["aceptado", "observado"].includes(estadoBloqueante)
+            ? `Este pedido ya tiene el comprobante${numeroTexto} aceptado por SUNAT. No se puede emitir otro.`
+            : `Este pedido ya tiene un comprobante bloqueante${numeroTexto}. Revísalo antes de intentar otra emisión.`;
+
+      return NextResponse.json(
+        {
+          codigo: "pedido_ya_tiene_comprobante",
+          duplicado: {
+            id: existente?.id ?? null,
+            serieNumero: numero,
+            fecha: existente
+              ? typeof existente.created_at === "string"
+                ? existente.created_at
+                : existente.created_at.toISOString()
+              : null,
+            estado: estadoBloqueante,
+            bloqueante: true,
+          },
+          mensaje,
+        },
+        { status: 409 }
+      );
+    }
+
+    claimPedido = { pedidoId: parsed.data.pedido_id, token: claimToken };
+
+    // Por cliente/monto, aceptado es un aviso blando; un CPE incierto es un
+    // bloqueo duro que `confirmarDuplicado` nunca puede omitir.
+    if (identificado) {
       const dup = await buscarComprobanteDuplicado({
         empresa,
         tipo: parsed.data.tipo,
         clienteDocNum: cliNumDoc,
         montoTotal: totalConIgv,
       });
-      if (dup) {
+      if (dup && (dup.bloqueante || !parsed.data.confirmarDuplicado)) {
         return NextResponse.json(
           {
             duplicado: dup,
-            mensaje: `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
+            mensaje: dup.bloqueante
+              ? `El comprobante ${dup.serieNumero} todavía debe resolverse con SUNAT. Verifica o reintenta ese mismo número; no emitas otro.`
+              : `Ya emitiste un comprobante igual (${dup.serieNumero}) por S/ ${totalConIgv.toFixed(2)} a este cliente.`,
           },
           { status: 409 }
         );
@@ -404,14 +500,10 @@ export async function POST(request: Request) {
       });
     }
 
-    // Regla de EJECUTIVAS (Transavic, jun 2026): toda factura o boleta,
-    // Contado o Crédito, crea su cobranza. El "contado"
-    // casi siempre se cobra días después; si el cliente ya pagó, la asesora marca
-    // la cobranza como pagada a mano en /cobranzas. (Se quitó el check "¿ya pagó
-    // en el acto?" porque confundía y dejaba ventas sin cobranza.) Solo se crea
-    // si SUNAT aceptó (o quedó pendiente por falta de cert); si fue rechazado/
-    // erró, no registramos deuda inválida ni duplicamos al reintentar. Campo y
-    // Planta se excluyen porque tienen carteras propias.
+    // La aceptacion real 01/03 ya aplica cartera dentro de `emitirComprobante`
+    // mediante un unico postproceso con claim atomico (el cron puede retomarlo).
+    // Este bloque queda solo para el modo local SIN certificado, cuyo estado
+    // PENDIENTE nunca fue enviado a SUNAT y conserva el comportamiento historico.
     const emisionOk =
       resultado.estado === EstadoSunat.ACEPTADA ||
       resultado.estado === EstadoSunat.ACEPTADA_CON_OBSERVACIONES ||
@@ -422,7 +514,10 @@ export async function POST(request: Request) {
     // duplicaría la deuda y la reinyectaría en la cartera de ejecutivas (el comprobante
     // SUNAT igual se emite; solo se omite esta cobranza-fantasma).
     const esPos = pedido.origen === "pos_planta";
-    const debeCrearCobranza = !!resultado.serieNumero && emisionOk && !esPos;
+    const debeCrearCobranza =
+      !!resultado.serieNumero &&
+      resultado.estado === EstadoSunat.PENDIENTE &&
+      !esPos;
 
     if (debeCrearCobranza) {
       // Si la empresa emisora seleccionada en UI difiere de la del pedido, la sincronizamos en DB
@@ -508,7 +603,11 @@ export async function POST(request: Request) {
     // reservado/emitido el CPE, solo enlazamos esa fila existente para que una
     // NC posterior encuentre la cartera correcta. Contado no tiene cobranza y
     // el helper no modifica nada. Nunca crear `facturas` para Planta.
-    if (esPos && comprobanteId && emisionOk) {
+    if (
+      esPos &&
+      comprobanteId &&
+      resultado.estado === EstadoSunat.PENDIENTE
+    ) {
       try {
         const { vincularCobranzaPlantaAComprobante } = await import("@/lib/planta/saldos");
         await vincularCobranzaPlantaAComprobante(sql, {
@@ -729,5 +828,20 @@ export async function POST(request: Request) {
       { error: "Error al emitir comprobante" },
       { status: 500 }
     );
+  } finally {
+    if (claimPedido) {
+      try {
+        const sqlClaim = neon(process.env.DATABASE_URL!);
+        await sqlClaim`
+          UPDATE pedidos
+          SET facturacion_cpe_claim_token = NULL,
+              facturacion_cpe_claim_at = NULL
+          WHERE id = ${claimPedido.pedidoId}::uuid
+            AND facturacion_cpe_claim_token = ${claimPedido.token}::uuid
+        `;
+      } catch (error) {
+        console.error("No se pudo liberar el claim de facturación CPE del pedido:", error);
+      }
+    }
   }
 }

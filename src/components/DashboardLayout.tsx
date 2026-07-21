@@ -469,7 +469,7 @@ export default function DashboardLayout({
               <p className="text-xs text-gray-500 capitalize">{userRole}</p>
             </div>
             <button
-              onClick={() => signOut({ redirectTo: "/login" })}
+              onClick={() => { window.location.href = "/api/auth/logout"; }}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-red-600 bg-white hover:bg-red-50 border border-red-100 font-semibold transition-colors cursor-pointer shadow-sm"
             >
               <FiLogOut className="h-5 w-5" />
@@ -569,7 +569,7 @@ export default function DashboardLayout({
               )}
 
               <button
-                onClick={() => signOut({ redirectTo: "/login" })}
+                onClick={() => { window.location.href = "/api/auth/logout"; }}
                 title="Cerrar Sesión"
                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-red-600 bg-white border border-red-50 hover:bg-red-50 font-medium transition-colors cursor-pointer shadow-sm ${isSidebarCollapsed ? "justify-center px-0" : ""}`}
               >

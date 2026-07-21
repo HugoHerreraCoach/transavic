@@ -1714,3 +1714,68 @@ Correcciones de estado a notas históricas:
 - los mensajes listos para soporte viven en
   [`soporte/cambios-2026-07-13.md`](./soporte/cambios-2026-07-13.md) y no deben
   enviarse antes del despliegue autorizado.
+
+## 2026-07-20 — Reconciliación de respuestas temporales SUNAT 01/03 (implementación local)
+
+**Origen del cambio:** la factura F002-412 recibió primero el Fault 0140, “Existe un
+Documento igual en Proceso”. La aplicación lo mostró como rechazo definitivo y se
+generó F002-413. La verificación posterior, de solo lectura, confirmó que SUNAT había
+aceptado **ambas** facturas. El XML, la firma y los totales no eran la causa: faltaba
+distinguir una respuesta temporal de un rechazo tributario y consultar el mismo número.
+
+Se preparó una corrección acotada al postenvío de factura `01` y boleta `03`:
+
+- 0140, fallos de transporte/HTTP 5xx, respuesta vacía y CDR ilegible quedan
+  `por_confirmar`, con un mensaje explícito de **no emitir otro comprobante**;
+- para factura `01` serie F, `billConsultService.getStatus` consulta el
+  RUC/tipo/serie/número ya guardado y `getStatusCdr` recupera después la constancia;
+- para boleta `03` serie B, la API REST Consulta Integrada busca por
+  RUC/tipo/serie/número + fecha de emisión + monto exacto; `estadoCp=1` confirma
+  aceptación, `2` anulación y `0` exige otra consulta independiente;
+- el cron `/api/cron/reconciliar-cpe-sunat` corre cada 5 minutos en lotes pequeños y
+  el botón **Verificar ahora** usa la misma lógica y el mismo claim de consulta;
+- la lista refresca pendientes visibles y diferencia claramente Por confirmar,
+  Aceptado/Observado y Rechazado;
+- un claim por pedido impide consumir otro correlativo mientras el primer CPE está
+  `emitiendo` o `por_confirmar`; la aceptación tardía aplica una sola vez los efectos
+  internos de Ejecutivas/Planta y no crea `facturas` para Campo;
+- dos respuestas `0011` SOAP (01) o dos `estadoCp=0` normalizados a `0011` (03),
+  separadas después de la espera, llevan a `no_registrado`; solo ese resultado
+  habilita reenviar la misma fila, XML y número;
+- Consulta Integrada no entrega CDR ni estado de rechazo. Una boleta confirmada por
+  esa vía queda aceptada sin CDR; sin credenciales queda `por_confirmar`, requiere
+  revisión y sigue bloqueando un segundo correlativo.
+
+La consulta REST exige credenciales OAuth nuevas y separadas por emisor:
+`SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`.
+No hacen fallback a `SUNAT_TRA_CLIENT_ID/SECRET` ni `SUNAT_AVI_CLIENT_ID/SECRET`, que
+son de GRE. **Nunca se reutilizan ni rotan las credenciales GRE para este fin.**
+
+La migración aditiva
+`scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` agrega únicamente metadatos
+de envío/consulta, disponibilidad legible del CDR, claims e índices. Incluye dos
+UNIQUE defensivos en `facturas`: uno por `comprobante_id` y otro por pedido +
+serie-número (`pedido_id`, `numero_comprobante`); si encuentra deuda histórica
+duplicada, falla para exigir auditoría en vez de borrar datos. La
+**reclasificación de estado** se limita al caso histórico exacto 0140; los CDR
+históricos ya presentes solo reciben su marca de legibilidad. El rollback es
+`scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql` y aborta si detecta claims
+recientes.
+
+**Límite de riesgo:** no se modificaron XML UBL, firma, ítems, IGV, redondeos,
+totales, correlativos, NC `07`, Resumen Diario ni GRE `09` REST/OAuth/tickets.
+La prueba `npm run test:reconciliacion-sunat` usa respuestas SOAP 01 y REST 03
+simuladas más contratos backend/UI; no llama a SUNAT ni a una base real.
+
+**Límite oficial:** `billConsultService` solo acepta factura/NC/ND con serie F; una
+boleta B se verifica por Consulta Integrada REST. Ambos clientes están deshabilitados
+fuera de producción. La validación en `dev-hugo` fue de migración/esquema y los
+contratos se cubrieron con mocks. No hubo E2E de consulta en BETA ni cruce hacia
+producción.
+
+**Estado de despliegue:** la migración se aplicó y verificó únicamente en `dev-hugo`
+(`br-tiny-frost-aduw14pu`): 824 CDR históricos quedaron marcados como legibles y una
+sola fila con el caso exacto 0140 pasó a `por_confirmar`. El código permanece en el
+worktree. Aún no existen las cuatro credenciales nuevas ni un E2E REST 03. Al cierre
+de esta entrada, **la migración no se ha aplicado en producción y el código/cron
+nuevo no se han desplegado en producción**.

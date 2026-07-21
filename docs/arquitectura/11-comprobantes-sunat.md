@@ -1,8 +1,8 @@
 # 11 — Módulo de Facturación y SUNAT (CPE)
 
-> **Última verificación contra código:** 2026-07-13
-> **Estado:** código y esquema de facturación de Campo en producción; no existían CPE de Campo emitidos al corte de la verificación
-> **Archivos clave:** `src/lib/sunat/index.ts`, `xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `parse-cpe-items.ts`, `fechas.ts`, `src/app/api/comprobantes/`
+> **Última verificación contra código:** 2026-07-20
+> **Estado:** el motor vigente de facturación está en producción; la migración de reconciliación 01/03 ya se aplicó y verificó únicamente en `dev-hugo`, mientras su migración y deploy a producción siguen pendientes
+> **Archivos clave:** `src/lib/sunat/index.ts`, `xml-builder.ts`, `xml-signer.ts`, `soap-client.ts`, `consulta-integrada-client.ts`, `reconciliacion-cpe.ts`, `efectos-aceptacion-cpe.ts`, `parse-cpe-items.ts`, `fechas.ts`, `src/app/api/comprobantes/`, `src/app/api/cron/reconciliar-cpe-sunat/`
 
 Este documento describe la emisión de facturas (01), boletas (03) y Notas de Crédito (07), incluida la concurrencia, los reintentos y la relación con las tres operaciones de venta.
 
@@ -55,12 +55,17 @@ sequenceDiagram
     API->>XML: Construir y firmar XML UBL 2.1
     API->>DB: Insertar/reservar comprobante en estado emitiendo
     API->>SUNAT: Enviar ZIP por SOAP
-    SUNAT-->>API: CDR o error
+    SUNAT-->>API: CDR, rechazo o respuesta indeterminada
     API->>DB: Actualizar la misma fila con XML/CDR/estado
-    API->>DB: Crear/actualizar la cartera correcta y liberar claim
+    alt aceptación confirmada
+        API->>DB: Aplicar una sola vez la cartera correcta
+    else estado por confirmar
+        API->>DB: Programar consulta del mismo número
+    end
+    API->>DB: Liberar claim de emisión
 ```
 
-La fila `emitiendo` existe **antes** de la llamada externa. Esto evita que un doble clic consuma dos correlativos o cree dos documentos mientras SUNAT tarda. La lista sanea reservas atascadas con más de 15 minutos y las convierte en error recuperable.
+La fila `emitiendo` existe **antes** de la llamada externa. Esto evita que un doble clic consuma dos correlativos o cree dos documentos mientras SUNAT tarda. En factura/boleta, una reserva atascada con más de 15 minutos ya no se presume fallida: pasa a `por_confirmar` y se consulta por su mismo RUC, tipo, serie y número. La reserva atascada de una NC conserva su tratamiento propio.
 
 Los errores de unicidad se traducen a conflictos de dominio (409), no a un 500 genérico.
 
@@ -85,6 +90,22 @@ Los errores de unicidad se traducen a conflictos de dominio (409), no a un 500 g
 
 Los claims vencen tras 15 minutos. El índice es la barrera definitiva; el claim cierra la ventana de negocio antes de insertar.
 
+### Factura/boleta desde pedido
+
+- `pedidos.facturacion_cpe_claim_token/at` serializa la emisión 01/03 desde antes de consumir el correlativo.
+- El servidor vuelve a comprobar, dentro del mismo `UPDATE`, que el pedido no tenga otro CPE activo.
+- `emitiendo`, `pendiente` y `por_confirmar` son estados bloqueantes: una segunda solicitud recibe 409 y no llama a SUNAT.
+- La confirmación manual de un posible duplicado no puede saltarse este bloqueo. Mientras SUNAT no dé un resultado definitivo, **jamás se crea otro correlativo para reemplazarlo**.
+
+### Defensa final de la deuda
+
+La migración agrega dos índices únicos en `facturas`, además de los claims de emisión/postproceso:
+
+- `uq_facturas_comprobante_id_cpe` impide más de una deuda con el mismo `comprobante_id`.
+- `uq_facturas_pedido_serie_cpe` impide repetir el mismo pedido + serie-número (`pedido_id`, `numero_comprobante`).
+
+Estos índices protegen incluso si una función muere después del `INSERT` y otro runtime recupera el postproceso. No limpian datos en silencio: si encuentran duplicados históricos, la migración falla y obliga a auditarlos antes de continuar.
+
 ---
 
 ## 5. Construcción, unidades, IGV y fecha
@@ -103,16 +124,56 @@ Reglas:
 
 ---
 
-## 6. Respuesta SUNAT y estados internos
+## 6. Respuesta SUNAT, estado indeterminado y reconciliación
 
-`soap-client.ts` descomprime el CDR con `fflate`. La clasificación es fail-safe:
+`soap-client.ts` descomprime el CDR con `fflate`. La clasificación de factura/boleta es fail-safe:
 
 - CDR legible y aceptación → `aceptado` u `observado`.
-- Código de rechazo → `rechazado`.
-- CDR/SOAP ilegible o transporte incierto → `error`, nunca aceptado por defecto.
+- Rechazo tributario concluyente → `rechazado`.
 - Reserva en curso → `emitiendo`.
+- SOAP Fault **0140** (`Existe un Documento igual en Proceso`), timeout, corte de red, HTTP 5xx, respuesta vacía o CDR ilegible → `por_confirmar`; ninguno prueba rechazo ni autoriza otro correlativo.
+- Dos evidencias de ausencia separadas después de la espera inicial —`0011` SOAP para factura o `estadoCp=0` REST normalizado a `0011` para boleta— → `no_registrado`; recién entonces el reintento seguro puede reutilizar la misma fila, XML y número.
 
-`mensaje_sunat` y `cdr_base64` se conservan para auditoría. El ZIP CDR se descarga crudo; no se reconstruye con un parser ZIP casero.
+`por_confirmar` significa exactamente: **SUNAT pudo haber recibido el comprobante, pero todavía no confirmó su estado final**. La UI lo muestra en ámbar, bloquea “emitir otro”, ofrece **Verificar ahora** y refresca la lista visible cada 60 segundos.
+
+La consulta posterior se separa por tipo; no existe un único servicio válido para ambos:
+
+| CPE | Fuente oficial de verificación | Datos de búsqueda | Resultado utilizable |
+|---|---|---|---|
+| Factura `01`, serie F | SOAP `billConsultService.getStatus`; después `getStatusCdr` | RUC emisor, tipo, serie y número | `0001` aceptado, `0002` rechazado, `0003` anulado, `0011` no encontrado; puede recuperar CDR |
+| Boleta `03`, serie B | API REST **Consulta Integrada de Comprobantes de Pago** | RUC emisor, tipo, serie, número, fecha de emisión y monto exacto | `estadoCp=1` aceptado, `estadoCp=2` anulado, `estadoCp=0` no encontrado; no devuelve CDR ni rechazo |
+
+`billConsultService` oficialmente admite factura, Nota de Crédito y Nota de Débito **con serie F**; no admite boletas. Aunque SUNAT permite consultar 07/08 allí, este reconciliador sigue acotado a `01`/`03`: la NC `07` conserva su flujo estabilizado.
+
+Para factura, `getStatus=0001` confirma la aceptación y `getStatusCdr` intenta recuperar la constancia. Si el CDR aún no está disponible, la factura permanece aceptada y solo se reprograma la recuperación del ZIP.
+
+Para boleta, `estadoCp=0` se normaliza internamente como evidencia `0011`: deben existir dos consultas independientes después de la espera antes de pasar a `no_registrado`. Como Consulta Integrada no informa rechazo ni entrega CDR, una boleta aceptada por esta vía queda `aceptado` con `tieneCdr=false` sin iniciar un recuperador de CDR. Un rechazo concluyente de 03 solo puede venir del CDR recibido durante `sendBill`, no de esta consulta REST.
+
+La transición tardía a aceptado/observado ejecuta con claim de postproceso los efectos internos de la operación. Si el proceso muere en `aplicando`, el cron puede reclamarlo después y los índices únicos de deuda impiden duplicados.
+
+### Credenciales REST de boletas
+
+Cada RUC necesita una aplicación propia de **Consulta de Validez de Comprobantes** y estas variables nuevas:
+
+- `SUNAT_TRA_CONSULTA_CLIENT_ID` / `SUNAT_TRA_CONSULTA_CLIENT_SECRET`.
+- `SUNAT_AVI_CONSULTA_CLIENT_ID` / `SUNAT_AVI_CONSULTA_CLIENT_SECRET`.
+
+Son credenciales OAuth distintas de `SUNAT_TRA_CLIENT_ID/SECRET` y `SUNAT_AVI_CLIENT_ID/SECRET`, que pertenecen a GRE. `getSunatConfig()` no hace fallback entre ellas. **Nunca reutilices, reemplaces ni rotes las credenciales GRE para habilitar la consulta de boletas.**
+
+Si falta fecha/monto o las credenciales REST de la empresa, la boleta conserva `por_confirmar`, marca `sunat_requiere_revision`, muestra que requiere configuración y sigue bloqueando cualquier duplicado; no se presume aceptada, rechazada ni no registrada.
+
+**Límite de ambiente:** ambos mecanismos de consulta se usan solo en producción. En local/BETA con `dev-hugo` no se consulta ningún endpoint productivo ni se cruzan RUC, correlativos o estados. La migración/queries SQL se validan en `dev-hugo`; los contratos SOAP 01 y REST 03 se prueban con mocks mediante `npm run test:reconciliacion-sunat`. No existe E2E de consulta en BETA y, por ahora, tampoco E2E REST 03 porque aún no se han creado las cuatro credenciales nuevas.
+
+El cron `GET /api/cron/reconciliar-cpe-sunat`, protegido por `CRON_SECRET`, corre cada 5 minutos y procesa un lote pequeño en secuencia. Selecciona SOAP para 01 o REST para 03 y **nunca reenvía el CPE**. El endpoint manual `POST /api/comprobantes/[id]/verificar-sunat` aplica el mismo scoping admin/asesora y el mismo claim, por lo que cron y botón no duplican trabajo.
+
+`mensaje_sunat`, los códigos/mensajes de envío y consulta, sus timestamps, `cdr_base64` y la marca `sunat_cdr_legible` se conservan para auditoría. El ZIP CDR se descarga crudo; no se reconstruye con un parser ZIP casero ni se muestra como disponible hasta haberlo validado.
+
+### Límite deliberado del cambio
+
+- Aplica únicamente al postenvío de factura `01` y boleta `03`; la emisión original de ambas sigue por `sendBill`, pero su verificación posterior usa SOAP 01 o REST 03 según corresponda.
+- La NC `07` conserva su clasificación, claim, reintento y reglas de cartera actuales.
+- La GRE `09` conserva por completo su flujo REST/OAuth/ticket en `comprobantes_guias`.
+- No cambia XML UBL, firma, ítems, IGV, redondeos, totales, correlativos, Resumen Diario ni Comunicación de Baja.
 
 ---
 
@@ -134,12 +195,16 @@ Detalle de carteras: [13-cobranzas-facturas.md](./13-cobranzas-facturas.md).
 
 ## 8. Reintentos
 
-El reintento opera sobre la **misma fila y el mismo correlativo** cuando el estado es `error`:
+Un CPE 01/03 en `por_confirmar` **no se reenvía**: el botón, el cron y cualquier preflight consultan primero su mismo número por el mecanismo correcto. Si una boleta no tiene credenciales REST, permanece bloqueada y en revisión; esa falta de configuración nunca autoriza otro correlativo.
+
+Cuando la consulta concluye `no_registrado`, el reintento opera sobre la **misma fila y el mismo correlativo**:
 
 1. Si existe `xml_firmado_base64`, reenvía exactamente ese XML.
 2. Si no existe, reconstruye desde `items_json`.
 3. Si tampoco hay `items_json`/fuente confiable, aborta; nunca fabrica una línea genérica.
 4. Al aceptar SUNAT, crea/enlaza solo la cartera que corresponde a la operación.
+
+El camino legacy de un `error` 01/03 con XML también hace una consulta previa antes de reenviar, porque un error de transporte histórico pudo ocultar un CPE ya registrado. Un timeout de esa consulta vuelve a `por_confirmar`; no abre la puerta a un documento nuevo.
 
 Un CPE rechazado por SUNAT no se reenvía ciegamente como si fuera un error de red. Para una
 factura/boleta 01/03 de **Campo**, se conserva XML/CDR y se emite otro correlativo enlazado mediante
@@ -207,5 +272,18 @@ Si cambias emisión, revisa siempre:
 - metas y `ventas_facturadas`;
 - roles/scoping;
 - migración, rollback y orden de despliegue.
+
+Para reconciliación 01/03 agrega obligatoriamente:
+
+- 0140 y fallos de transporte → `por_confirmar`, nunca `rechazado`;
+- factura 01: `getStatus` 0001/0002/0003/0011 y recuperación posterior con `getStatusCdr`;
+- boleta 03: Consulta Integrada con fecha+monto, `estadoCp` 1/2/0, sin CDR ni estado de rechazo;
+- ausencia de credenciales REST → revisión + bloqueo, nunca fallback a credenciales GRE;
+- concurrencia entre cron, **Verificar ahora** y otra solicitud de emisión;
+- ninguna llamada a `sendBill` mientras siga `por_confirmar`;
+- efectos de aceptación tardía idempotentes en Ejecutivas, Campo y Planta;
+- regresión explícita de NC 07, GRE 09 y Resumen Diario sin cambios.
+
+La migración aditiva es `scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql` y su reversa es `scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql`. Se aplicó correctamente por `psql` solo en `dev-hugo` (`br-tiny-frost-aduw14pu`): marcó 824 CDR históricos como legibles y reclasificó una única fila exacta 0140 a `por_confirmar`. El archivo final también crea los dos índices únicos defensivos de deuda. La validación de consultas usa mocks SOAP 01/REST 03: no hubo E2E BETA, no hay credenciales/E2E REST 03 y no se llamó desde desarrollo a producción. Al 20 de julio de 2026 **no se ha aplicado ni desplegado en producción**.
 
 Ejecuta el runbook de [24-pruebas-regresion-despliegue.md](./24-pruebas-regresion-despliegue.md).

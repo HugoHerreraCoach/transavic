@@ -54,6 +54,9 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           c.serie_numero, c.cliente_doc_tipo, c.cliente_doc_num, c.cliente_razon_social,
           c.monto_subtotal, c.monto_igv, c.monto_total, c.moneda,
           c.estado, c.hash_cpe, c.xml_firmado_base64, c.cdr_base64,
+          c.sunat_cdr_legible, c.sunat_codigo_envio, c.sunat_codigo_consulta,
+          c.sunat_ultima_consulta_at, c.sunat_siguiente_consulta_at,
+          c.sunat_requiere_revision, c.sunat_revision_motivo,
           c.observaciones, c.mensaje_sunat, c.created_at, c.fecha_emision,
           c.forma_pago, c.fecha_vencimiento, c.emitido_por, c.observacion_comprobante,
           p.asesor_id AS pedido_asesor_id,
@@ -84,6 +87,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     hash_cpe: string | null;
     xml_firmado_base64: string | null;
     cdr_base64: string | null;
+    sunat_cdr_legible: boolean;
+    sunat_codigo_envio: string | null;
+    sunat_codigo_consulta: string | null;
+    sunat_ultima_consulta_at: string | Date | null;
+    sunat_siguiente_consulta_at: string | Date | null;
+    sunat_requiere_revision: boolean;
+    sunat_revision_motivo: string | null;
     observaciones: string | null;
     observacion_comprobante: string | null;
     mensaje_sunat: string | null;
@@ -288,6 +298,13 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     hashCpe: c.hash_cpe,
     xmlFirmadoBase64: c.xml_firmado_base64,
     cdrBase64: c.cdr_base64,
+    tieneCdr: c.sunat_cdr_legible,
+    codigoRespuestaSunat:
+      c.sunat_codigo_consulta ?? c.sunat_codigo_envio ?? null,
+    ultimaConsultaSunatAt: c.sunat_ultima_consulta_at,
+    proximaConsultaSunatAt: c.sunat_siguiente_consulta_at,
+    requiereRevisionSunat: c.sunat_requiere_revision,
+    revisionMotivoSunat: c.sunat_revision_motivo,
     observaciones: c.observaciones ? c.observaciones.split(" | ") : null,
     observacionComprobante: observacionXml || c.observacion_comprobante || null,
     mensajeSunat: c.mensaje_sunat,

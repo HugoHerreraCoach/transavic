@@ -20,7 +20,8 @@
     "test:pagos-proveedores": "node --no-warnings scripts/test-pagos-proveedores.mjs",
     "test:pagos-proveedores:db": "RUN_DB_TESTS=1 node --no-warnings scripts/test-pagos-proveedores-db.mjs",
     "test:operaciones-julio:db": "RUN_DB_TESTS=1 node --no-warnings scripts/test-operaciones-julio-db.mjs",
-    "test:reprogramacion-produccion": "node scripts/test-reprogramacion-produccion.mjs"
+    "test:reprogramacion-produccion": "node scripts/test-reprogramacion-produccion.mjs",
+    "test:reconciliacion-sunat": "node scripts/test-reconciliacion-cpe-sunat.mjs"
   },
   "dependencies": {
     "@capacitor-community/background-geolocation": "^1.2.26",

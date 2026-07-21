@@ -64,7 +64,7 @@ export function mensajeSunatAmigable(mensaje: string): MensajeSunat {
   if (esMensajeSunatCaido(tecnico)) {
     return {
       amigable:
-        "SUNAT estuvo fuera de servicio en ese momento; el documento NO llegó a registrarse. Verifica si ya se emitió un reemplazo antes de reintentar.",
+        "SUNAT no confirmó si registró el comprobante. No emitas otro; verifica este mismo número cuando el servicio vuelva a responder.",
       tecnico,
     };
   }
@@ -87,10 +87,16 @@ export function mensajeSunatAmigable(mensaje: string): MensajeSunat {
  * cosas: si el documento vale y qué hacer.
  */
 export function mensajeEstadoSinDetalle(estado: string): string | null {
+  if (estado === "por_confirmar" || estado === "emitiendo") {
+    return "SUNAT todavía no confirma el resultado. El sistema lo verificará automáticamente; no emitas otro comprobante.";
+  }
   if (estado === "error") {
     // Corto a propósito: en móvil (360px) la card corta a ~3 líneas y la
     // garantía "no se duplica" debe entrar SÍ o SÍ.
-    return 'Falló la conexión con SUNAT. NO quedó registrado — usa ⋯ → "Reintentar envío" (mismo número, no se duplica).';
+    return 'No se pudo confirmar el resultado. Primero verifica este mismo número; si SUNAT confirma que no existe, usa ⋯ → "Reintentar envío".';
+  }
+  if (estado === "no_registrado") {
+    return 'SUNAT no encontró este número en dos consultas separadas. Usa ⋯ → "Reintentar envío" para conservar el mismo correlativo.';
   }
   if (estado === "rechazado") {
     return "SUNAT lo rechazó; NO quedó registrado. Si fue una caída de SUNAT, reintenta el envío; si es por datos, consulta al administrador.";

@@ -31,7 +31,8 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   const sql = neon(process.env.DATABASE_URL!);
   // Scoping (Antonio jun 2026): admin ve todo; la asesora SOLO sus comprobantes.
   const rows = (await sql`
-        SELECT c.serie_numero, c.cdr_base64, c.ruc_emisor, c.tipo,
+        SELECT c.serie_numero, c.cdr_base64, c.sunat_cdr_legible,
+               c.ruc_emisor, c.tipo,
                c.emitido_por, p.asesor_id AS pedido_asesor_id
         FROM comprobantes c
         LEFT JOIN pedidos p ON p.id = c.pedido_id
@@ -39,6 +40,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
       `) as Array<{
     serie_numero: string;
     cdr_base64: string | null;
+    sunat_cdr_legible: boolean;
     ruc_emisor: string;
     tipo: string;
     emitido_por: string | null;
@@ -55,11 +57,11 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
   })) {
     return NextResponse.json({ error: "Comprobante no encontrado" }, { status: 404 });
   }
-  if (!c.cdr_base64) {
+  if (!c.cdr_base64 || !c.sunat_cdr_legible) {
     return NextResponse.json(
       {
         error:
-          "Este comprobante no tiene CDR: SUNAT lo entrega solo cuando el comprobante fue ACEPTADO. Revisa el estado del comprobante.",
+          "La constancia CDR todavía no está disponible o no pudo verificarse. Revisa el estado del comprobante y vuelve a intentarlo después.",
       },
       { status: 404 }
     );

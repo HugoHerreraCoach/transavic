@@ -1,7 +1,7 @@
 # 24 — Pruebas de Regresión y Despliegue de Cambios Transversales
 
-> **Última verificación:** 2026-07-13
-> **Alcance actual:** core desplegado y paquete operativo de `codex/cambios-operativos-julio` todavía no desplegado: proveedores, detalle/costo POS, reprogramación y conciliación de Ejecutivas.
+> **Última verificación:** 2026-07-20
+> **Alcance actual:** core desplegado; la reconciliación de respuestas indeterminadas SUNAT para factura/boleta está implementada en el worktree y su esquema ya fue migrado/verificado únicamente en `dev-hugo`. Producción no está migrada ni tiene desplegado este cambio.
 
 Este runbook convierte los invariantes de los docs [11](./11-comprobantes-sunat.md),
 [13](./13-cobranzas-facturas.md), [21](./21-clientes-avicola.md),
@@ -22,6 +22,8 @@ Antes de ejecutar SQL, confirma de forma explícita:
 - que `.env.local` apunta a `dev-hugo` para pruebas locales;
 - que no se está heredando por accidente una `DATABASE_URL` de producción desde el proceso.
 
+SUNAT publica `billConsultService` únicamente para producción y solo para factura/NC/ND con serie F; una boleta B no se consulta allí. La boleta 03 usa la API REST Consulta Integrada, también deshabilitada por el código fuera de producción. Una prueba local/BETA nunca debe llamar ninguno de esos endpoints productivos con un CPE de `dev-hugo`. En desarrollo se valida el esquema con Postgres y los contratos SOAP 01/REST 03 con mocks; los ambientes no se mezclan.
+
 No imprimas credenciales en consola ni las copies a la documentación. Para scripts locales, carga la URL correcta de `.env.local` de forma controlada; no asumas que `source .env.local` pisa una variable ya exportada.
 
 ---
@@ -34,6 +36,7 @@ Ejecuta desde la raíz:
 npx tsc --noEmit
 npm run lint
 git diff --check
+npm run test:reconciliacion-sunat
 npm run test:observaciones
 npm run test:estado-cuenta-avicola
 npm run test:operaciones-facturacion
@@ -50,6 +53,7 @@ Reglas:
 - `test:estado-cuenta-avicola` cubre una venta, tres abonos del mismo día y un abono anulado; si cambia el libro mayor o PDF, amplía esa prueba.
 - `test:operaciones-facturacion` cubre la clasificación Ejecutivas/Campo/Planta y que solo los
   códigos de NC total `01`, `02`, `06` retiren una cartera completa.
+- `test:reconciliacion-sunat` usa SOAP 01 y REST 03 simulados más contratos de código/UI; no llama a SUNAT ni a la base de datos real.
 
 ---
 
@@ -162,9 +166,26 @@ Verifica que:
 6. Si es total (`01`, `02` o `06`) y queda aceptada, debe anular automáticamente la venta de Campo;
    la operación manual posterior debe ser idempotente.
 
-### 5.3 Reserva atascada
+### 5.3 Factura/boleta con respuesta indeterminada
 
-Simular una fila `emitiendo` o claim con más de 15 minutos en desarrollo. Al listar/reintentar, debe pasar a `error` o liberar el claim según el flujo, sin consumir un correlativo nuevo.
+Probar con dobles controlados: SOAP para el envío y la consulta de factura 01; REST para la consulta de boleta 03. No usar una emisión real solo para provocar una caída ni llamar endpoints productivos desde `dev-hugo`:
+
+1. Hacer que `sendBill` de una factura `01` y una boleta `03` devuelva, por separado, Fault 0140, timeout, HTTP 5xx, respuesta vacía y CDR ilegible.
+2. En todos esos casos debe conservarse un solo `comprobantes.id`, XML y correlativo en `por_confirmar`; no debe decir `rechazado`, crear cartera todavía ni habilitar otra emisión.
+3. Repetir la solicitud del mismo pedido mientras está `emitiendo`/`por_confirmar`: debe responder 409 antes de consumir correlativo o llamar a SUNAT. `confirmarDuplicado` no puede saltar el bloqueo.
+4. Verificar que el formulario muestre **POR CONFIRMAR CON SUNAT**, oculte acciones de nueva emisión/PDF prematuro, indique que no se emita otro y permita **Verificar ahora**.
+5. **Factura 01/F:** probar `getStatus`: `0001` → aceptado; `0002` → rechazado; `0003` → anulado; primer `0011` → sigue `por_confirmar`. Tras `0001`, `getStatusCdr` con CDR legible lo deja descargable; si falta, la factura queda aceptada y solo se reprograma la constancia.
+6. **Boleta 03/B:** el mock REST debe enviar RUC/tipo/serie/número + fecha de emisión `DD/MM/YYYY` + monto a dos decimales. `estadoCp=1` → aceptado sin CDR; `2` → anulado; `0` → sigue `por_confirmar`. La API no puede producir `rechazado` ni entregar CDR.
+7. Después de la espera inicial, dos `0011` SOAP separados (01) o dos `estadoCp=0` separados normalizados a `0011` (03) deben producir `no_registrado`; el único reintento permitido reutiliza la misma fila, XML y número.
+8. Quitar `SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y luego `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`: cada boleta debe quedar `por_confirmar`, con revisión/configuración visible y el duplicado bloqueado. No debe intentar `SUNAT_*_CLIENT_ID/SECRET` de GRE.
+9. Disparar cron y **Verificar ahora** a la vez: el claim de consulta debe permitir una sola consulta efectiva y ambos caminos deben converger en el mismo estado.
+10. La aceptación tardía debe crear/enlazar una sola vez la cartera de Ejecutivas o Planta; Campo no debe crear `facturas`. Repetir cron/botón no puede duplicar el efecto.
+11. Intentar dos veces el postproceso y confirmar que los índices únicos impiden otra deuda por `comprobante_id` o por pedido + `numero_comprobante`.
+12. Con la lista abierta y visible, confirmar que refresca los pendientes cada 60 segundos. El cron debe ejecutar `/api/cron/reconciliar-cpe-sunat` cada 5 minutos y procesar lotes pequeños sin `sendBill`.
+
+### 5.4 Reserva atascada
+
+Simular una fila `emitiendo` o claim con más de 15 minutos en desarrollo. Una factura/boleta debe pasar a `por_confirmar` y consultar el mismo número; no debe pasar directamente a `error` ni reenviarse. La NC conserva su recuperación propia. Un claim vencido sí puede liberarse, sin consumir un correlativo nuevo.
 
 ---
 
@@ -179,6 +200,8 @@ Por operación, fuerza un error controlado antes/después de reservar la fila y 
 - Campo nunca crea `facturas`;
 - Planta conserva su cartera propia y nunca crea `facturas` por un reintento;
 - el estado final y el mensaje SUNAT quedan auditables.
+
+En 01/03, `por_confirmar` nunca es un estado reintentable por envío. El preflight de un `error` histórico con XML debe consultar primero; si SUNAT no responde, vuelve a `por_confirmar`. Solo `no_registrado`, obtenido después de las consultas previstas, permite reenviar el mismo XML y número.
 
 Un rechazo por datos no debe tratarse como una simple caída de red: requiere corregir los datos fiscales/XML mediante un flujo que preserve la auditoría y la exclusión concurrente.
 
@@ -196,6 +219,12 @@ Para un CPE de cada operación:
 - exportar XLSX y comprobar que CPE y NC conservan la operación del documento base.
 
 La operación se deriva del CPE; la empresa emisora sigue siendo una dimensión independiente.
+
+Regresión de aislamiento obligatoria para la reconciliación:
+
+- una NC `07` sigue usando su claim, clasificación y reintento actual; aunque `billConsultService` oficialmente admite NC serie F, este cambio no la incorpora al cron ni al endpoint **Verificar ahora** de 01/03;
+- una GRE `09` sigue usando sus credenciales REST/OAuth/ticket y `comprobantes_guias`; nunca se reutilizan ni rotan esas credenciales para Consulta Integrada;
+- el Resumen Diario de boletas conserva su propio ticket/cron y no se confunde con la consulta REST individual de validez de la boleta.
 
 ---
 
@@ -235,21 +264,105 @@ Prueba la URL directa y la API; no basta con mirar el sidebar.
 
 ---
 
-## 10. Pase a producción
+## 10. Migración de reconciliación 01/03
+
+La migración es aditiva y no modifica XML, firma, ítems, IGV, totales, correlativos, NC ni GRE. Ya fue aplicada en `dev-hugo`; esta es la receta reproducible para una branch de desarrollo nueva o una reejecución idempotente:
+
+```bash
+DB_DEV_URL="$(sed -n 's/^DATABASE_URL_UNPOOLED=//p' .env.local | tail -n 1 | sed -e 's/^"//' -e 's/"$//')"
+test -n "$DB_DEV_URL"
+psql "$DB_DEV_URL" -1 -v ON_ERROR_STOP=1 -f scripts/migrate-reconciliacion-cpe-sunat-2026-07-20.sql
+unset DB_DEV_URL
+```
+
+Antes de ejecutarla, confirma que la URL sea la branch `dev-hugo` sin imprimir la credencial. Después verifica:
+
+```sql
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND (
+    (table_name = 'comprobantes' AND column_name IN (
+      'sunat_codigo_envio', 'sunat_mensaje_envio',
+      'sunat_codigo_consulta', 'sunat_cdr_legible',
+      'sunat_ultima_consulta_at',
+      'sunat_siguiente_consulta_at', 'sunat_consultas_count',
+      'sunat_no_existe_consecutivos', 'sunat_consulta_claim_at',
+      'sunat_requiere_revision', 'sunat_revision_motivo',
+      'sunat_postproceso_estado', 'sunat_postproceso_at',
+      'sunat_postproceso_error'
+    ))
+    OR (table_name = 'pedidos' AND column_name IN (
+      'facturacion_cpe_claim_token', 'facturacion_cpe_claim_at'
+    ))
+  )
+ORDER BY table_name, column_name;
+
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN (
+    'idx_comprobantes_sunat_por_confirmar',
+    'idx_comprobantes_sunat_cdr_pendiente',
+    'idx_comprobantes_sunat_postproceso',
+    'idx_pedidos_facturacion_cpe_claim',
+    'uq_facturas_comprobante_id_cpe',
+    'uq_facturas_pedido_serie_cpe'
+  );
+
+SELECT tipo, estado, COUNT(*)
+FROM comprobantes
+WHERE estado IN ('por_confirmar', 'no_registrado')
+GROUP BY tipo, estado
+ORDER BY tipo, estado;
+```
+
+El backfill de estado es deliberadamente estricto: solo reclasifica a `por_confirmar` filas 01/03 con XML cuyo mensaje histórico contiene exactamente “Documento igual en Proceso”. No reinterpreta en masa otros rechazos o errores históricos. Por separado, marca `sunat_cdr_legible=TRUE` en CPE históricos aceptados/observados/rechazados que ya tienen `cdr_base64`, para que la disponibilidad de la constancia siga siendo retrocompatible.
+
+Antes de confiar en los índices únicos defensivos, el entorno debe quedar sin resultados en ambas consultas:
+
+```sql
+SELECT comprobante_id, COUNT(*)
+FROM facturas
+WHERE comprobante_id IS NOT NULL
+GROUP BY comprobante_id
+HAVING COUNT(*) > 1;
+
+SELECT pedido_id, numero_comprobante, COUNT(*)
+FROM facturas
+WHERE pedido_id IS NOT NULL
+  AND COALESCE(numero_comprobante, '') <> ''
+GROUP BY pedido_id, numero_comprobante
+HAVING COUNT(*) > 1;
+```
+
+La migración falla si hay duplicados; no los borra ni elige una deuda “ganadora” automáticamente.
+
+### Rollback
+
+`scripts/rollback-reconciliacion-cpe-sunat-2026-07-20.sql` se ejecuta únicamente después de retirar el código que usa las columnas. Aborta si existe cualquier claim de facturación/consulta, postproceso `pendiente`/`aplicando`, CPE 01/03 `emitiendo`/`por_confirmar`/`no_registrado` o fila marcada para revisión. Solo con el sistema drenado traduce los estados nuevos a `error`, elimina los dos índices únicos defensivos y después retira índices/columnas. No lo ejecutes como reacción automática ante una intermitencia de SUNAT.
+
+**Estado al 20 de julio de 2026:** la migración/esquema se validó solo en `dev-hugo` (`br-tiny-frost-aduw14pu`): 824 CDR históricos legibles y una fila exacta 0140 reclasificada. Los contratos SOAP 01 y REST 03 se prueban con mocks. Aún no existen las cuatro credenciales nuevas de Consulta Integrada y no hay E2E 03. La migración y el cron/código nuevo **no están aplicados ni desplegados en producción**.
+
+---
+
+## 11. Pase a producción
 
 1. Congelar y revisar el diff.
 2. Respaldar/consultar conteos clave.
-3. Aplicar migraciones por `psql -1 -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md).
+3. Aplicar migraciones por `psql -1 -v ON_ERROR_STOP=1` en el orden documentado en [20](./20-migracion-produccion.md). Para reconciliación 01/03, la migración debe quedar activa **antes** del código que lee sus columnas.
 4. Ejecutar consultas de verificación.
 5. Solo entonces activar el deploy del código.
 6. Realizar smoke test de lectura antes de emitir documentos reales.
 7. Emitir un caso real controlado por operación aplicable.
-8. Revisar logs, CDR, cobranzas y Ventas Generales.
-9. Conservar el rollback solo como plan de contingencia evaluado, no automático.
+8. Crear una aplicación **Consulta de Validez de Comprobantes** por RUC y cargar `SUNAT_TRA_CONSULTA_CLIENT_ID/SECRET` y `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET`. No modificar `SUNAT_TRA_CLIENT_ID/SECRET` ni `SUNAT_AVI_CLIENT_ID/SECRET` de GRE.
+9. Confirmar `CRON_SECRET`, el registro `*/5 * * * *` de `/api/cron/reconciliar-cpe-sunat` y una ejecución autorizada del cron.
+10. Revisar logs, CDR, cobranzas y Ventas Generales; una consulta transitoria nunca debe disparar `sendBill`.
+11. Conservar el rollback solo como plan de contingencia evaluado, no automático.
 
 Registra en el historial qué migración se aplicó, a qué rama/base y con qué verificación. No anotes secretos.
 
-## 11. Matriz de regresión del 13 jul 2026
+## 12. Matriz de regresión del 13 jul 2026
 
 ### Proveedores
 

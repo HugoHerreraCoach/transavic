@@ -15,7 +15,10 @@ const SUNAT_ENDPOINTS = {
   beta: {
     factura: "https://e-beta.sunat.gob.pe/ol-ti-itcpfegem-beta/billService?wsdl",
     guia: "https://e-beta.sunat.gob.pe/ol-ti-itemision-guia-gem-beta/billService?wsdl",
-    consultaCdr: "https://e-beta.sunat.gob.pe/ol-it-wsconscpegem-beta/billConsultService?wsdl",
+    // SUNAT no publica un billConsultService equivalente para BETA. El cliente
+    // de consulta detecta este ambiente y conserva el CPE por confirmar sin
+    // intentar una URL inventada ni mezclar comprobantes de prueba/producción.
+    consultaCdr: "",
   },
   production: {
     factura: "https://e-factura.sunat.gob.pe/ol-ti-itcpfegem/billService?wsdl",
@@ -115,6 +118,9 @@ export interface SunatConfig {
   solPassword: string;
   clientId: string;
   clientSecret: string;
+  /** OAuth client_credentials de Consulta Integrada (NO son los de GRE). */
+  consultaClientId: string;
+  consultaClientSecret: string;
   certificatePath: string;
   certificatePassword: string;
   certificateBase64: string;
@@ -167,6 +173,13 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
 
   const clientId = process.env[`${prefix}_CLIENT_ID`] || "";
   const clientSecret = process.env[`${prefix}_CLIENT_SECRET`] || "";
+  // Aplicacion separada creada en SOL > Consulta de Validez de Comprobantes.
+  // No hacer fallback a CLIENT_ID/SECRET: esas credenciales pertenecen a GRE
+  // (clientessol/password) y mezclarlas puede romper o bloquear las guias.
+  const consultaClientId =
+    process.env[`${prefix}_CONSULTA_CLIENT_ID`] || "";
+  const consultaClientSecret =
+    process.env[`${prefix}_CONSULTA_CLIENT_SECRET`] || "";
 
   if (!isBeta && (!solUser || !solPassword)) {
     throw new Error(
@@ -191,6 +204,8 @@ export function getSunatConfig(empresa: EmpresaId = EMPRESA_DEFAULT): SunatConfi
     solPassword,
     clientId,
     clientSecret,
+    consultaClientId,
+    consultaClientSecret,
     certificatePath: "",
     certificatePassword: process.env[`${prefix}_CERT_PASS`] || "",
     certificateBase64: process.env[`${prefix}_CERT_B64`] || "",
