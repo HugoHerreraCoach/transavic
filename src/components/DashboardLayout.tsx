@@ -34,7 +34,6 @@ import {
   FiSettings,
   FiDollarSign,
 } from "react-icons/fi";
-import { signOut } from "next-auth/react";
 import NotificationBell from "./NotificationBell";
 import FloatingAssistant from "./FloatingAssistant";
 import CmdKModal from "./CmdKModal";
