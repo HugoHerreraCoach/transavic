@@ -1,12 +1,16 @@
 import { authSignOut } from "@/auth";
-import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 
 export const dynamic = "force-dynamic";
 
 // Usamos una función GET porque accederemos a esta ruta con un simple enlace
 export async function GET() {
+  const headersList = await headers();
+  const host = headersList.get("x-forwarded-host") || headersList.get("host") || "app.transavic.com";
+  const protocol = host.includes("localhost") ? "http" : "https";
+  const absoluteRedirectUrl = `${protocol}://${host}/login`;
+
   await authSignOut({
-    redirect: false, // Evitamos que NextAuth intente resolver la URL absoluta
+    redirectTo: absoluteRedirectUrl,
   });
-  redirect("/login"); // Redirigimos usando la utilidad nativa de Next.js
 }

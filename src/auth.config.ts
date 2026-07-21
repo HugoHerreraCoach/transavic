@@ -27,6 +27,7 @@ declare module "next-auth" {
 const METODOS_LECTURA = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export const authConfig = {
+  trustHost: true,
   pages: {
     signIn: "/login",
   },
