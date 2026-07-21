@@ -25,7 +25,10 @@ interface BotSettings {
 
 const DEFAULT_SETTINGS: BotSettings = {
   isActive: false,
-  welcomeMessage: "¡Hola! Bienvenido a Transavic / Avícola de Tony. ¿En qué podemos ayudarte hoy?",
+  // Sin nombre de marca: esta configuración es COMPARTIDA por las dos, y el saludo
+  // con las dos marcas juntas confundía al cliente que escribió solo a una. La
+  // identidad de marca la pone el bot de IA (PERFIL_MARCA en bot-orchestrator.ts).
+  welcomeMessage: "¡Hola! Gracias por escribirnos. ¿En qué podemos ayudarte hoy?",
   button1Text: "Ver catálogo de precios",
   response1: "¡Hola! Puedes revisar nuestros productos en stock y precios actualizados en: [LINK]",
   button2Text: "Realizar un pedido",

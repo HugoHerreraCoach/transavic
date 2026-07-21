@@ -71,6 +71,8 @@ type RespuestaRapida = {
   text: string;
   mediaUrl?: string;
   mediaType?: "image" | "video" | "document" | "dynamic_card";
+  /** Marca dueña de la respuesta. Ausente = sirve para las dos. */
+  empresa?: string;
 };
 
 /**
@@ -1160,6 +1162,17 @@ function ChatPane({
   const [filteredReplies, setFilteredReplies] = useState<RespuestaRapida[]>([]);
   const [quickReplySelectedIndex, setQuickReplySelectedIndex] = useState(0);
 
+  // Respuestas de la marca del lead (más las que no declaran marca). El texto de
+  // una respuesta rápida se envía TAL CUAL, así que una escrita para una marca no
+  // debe poder mandarse al cliente de la otra.
+  const respuestasDeLaMarca = useMemo(
+    () =>
+      quickReplies.filter(
+        (r) => !r.empresa || !lead?.empresa || r.empresa === lead.empresa
+      ),
+    [quickReplies, lead?.empresa]
+  );
+
   // Ficha derecha states
   const [editingNotes, setEditingNotes] = useState(false);
   const [guardandoFicha, setGuardandoFicha] = useState(false);
@@ -1234,7 +1247,7 @@ function ChatPane({
     const match = val.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
     if (match) {
       const filterText = match[1].toLowerCase();
-      const matched = quickReplies.filter((r) => r.shortcut.startsWith(filterText));
+      const matched = respuestasDeLaMarca.filter((r) => r.shortcut.startsWith(filterText));
       setFilteredReplies(matched);
       setQuickReplySelectedIndex(0);
     } else {
@@ -1802,7 +1815,7 @@ function ChatPane({
                     } else {
                       const newVal = newMessage.endsWith(" ") || newMessage === "" ? newMessage + "/" : newMessage + " /";
                       setNewMessage(newVal);
-                      setFilteredReplies(quickReplies);
+                      setFilteredReplies(respuestasDeLaMarca);
                       setQuickReplySelectedIndex(0);
                     }
                   }}
@@ -2132,6 +2145,7 @@ function ChatPane({
           onSend={handleSendTemplate}
           leadName={lead?.nombre || ""}
           userName={sessionUser.name || ""}
+          empresa={lead?.empresa}
         />
       )}
 

@@ -10,7 +10,11 @@ interface QuickReply {
   mediaUrl?: string;
   mediaType?: "image" | "video" | "document";
   mediaName?: string;
+  /** Marca dueña de la respuesta. Ausente = sirve para las dos. */
+  empresa?: string;
 }
+
+const MARCAS = ["Transavic", "Avícola de Tony"] as const;
 
 interface QuickRepliesManagerProps {
   isOpen: boolean;
@@ -36,6 +40,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
   // Form State
   const [shortcut, setShortcut] = useState("");
   const [text, setText] = useState("");
+  const [empresa, setEmpresa] = useState(""); // "" = las dos marcas
   const [mediaFileBase64, setMediaFileBase64] = useState<string | null>(null);
   const [mediaName, setMediaName] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<"image" | "video" | "document" | null>(null);
@@ -65,6 +70,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
   const resetForm = () => {
     setShortcut("");
     setText("");
+    setEmpresa("");
     setMediaFileBase64(null);
     setMediaName(null);
     setMediaType(null);
@@ -77,6 +83,7 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
     setEditingReply(reply);
     setShortcut(reply.shortcut);
     setText(reply.text);
+    setEmpresa(reply.empresa || "");
     setMediaFileBase64(reply.mediaUrl || null);
     setMediaType(reply.mediaType || null);
     setMediaName(reply.mediaName || null);
@@ -130,17 +137,25 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
         mediaUrl: mediaFileBase64 || undefined,
         mediaType: mediaType || undefined,
         mediaName: mediaName || undefined,
+        empresa: empresa || undefined,
       };
+
+      // El atajo debe ser único DENTRO de la marca: dos marcas pueden tener su
+      // propio "/precios", pero una respuesta común choca con las de cualquier marca.
+      const chocaConOtra = (r: QuickReply) =>
+        r.id !== newReply.id &&
+        r.shortcut === newReply.shortcut &&
+        (!r.empresa || !newReply.empresa || r.empresa === newReply.empresa);
+
+      if (replies.some(chocaConOtra)) {
+        alert("Ya existe una respuesta rápida con este atajo para esa marca.");
+        setSaving(false);
+        return;
+      }
 
       if (editingReply) {
         updatedReplies = updatedReplies.map((r) => (r.id === editingReply.id ? newReply : r));
       } else {
-        // Validar atajo único
-        if (replies.some((r) => r.shortcut === newReply.shortcut)) {
-          alert("Ya existe una respuesta rápida con este atajo.");
-          setSaving(false);
-          return;
-        }
         updatedReplies.push(newReply);
       }
 
@@ -239,6 +254,17 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
                   <div className="min-w-0 flex-1">
                     <span className="font-mono font-bold text-xs text-indigo-600 block">/{reply.shortcut}</span>
                     <p className="text-[11px] text-gray-500 truncate mt-0.5">{reply.text}</p>
+                    {reply.empresa && (
+                      <span
+                        className={`inline-flex items-center text-[9px] px-1.5 py-0.2 rounded mt-1 mr-1 font-bold border ${
+                          reply.empresa === "Transavic"
+                            ? "bg-red-50 border-red-100 text-red-600"
+                            : "bg-amber-50 border-amber-100 text-amber-700"
+                        }`}
+                      >
+                        {reply.empresa}
+                      </span>
+                    )}
                     {reply.mediaType && (
                       <span className="inline-flex items-center gap-0.5 text-[9px] bg-purple-50 border border-purple-100 text-purple-600 px-1.5 py-0.2 rounded mt-1 font-bold">
                         📎 {ETIQUETAS_TIPO_ADJUNTO[reply.mediaType] ?? reply.mediaType}
@@ -319,6 +345,27 @@ export default function QuickRepliesManager({ isOpen, onClose }: QuickRepliesMan
                       className="w-full border border-gray-200 rounded-r-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                     />
                   </div>
+                </div>
+
+                {/* Marca */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Marca</label>
+                  <select
+                    value={empresa}
+                    onChange={(e) => setEmpresa(e.target.value)}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                  >
+                    <option value="">Las dos marcas</option>
+                    {MARCAS.map((m) => (
+                      <option key={m} value={m}>
+                        Solo {m}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-[9px] text-gray-400">
+                    El atajo solo aparece en los chats de la marca elegida. Úsalo cuando el texto
+                    nombre a la empresa o hable de sus precios.
+                  </p>
                 </div>
 
                 {/* Text Message */}

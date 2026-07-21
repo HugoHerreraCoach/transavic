@@ -87,6 +87,23 @@ repartieron entre 3 asesoras distintas. Datos de prueba borrados y `.env.local` 
 (`estado_asignacion`, `candidato_actual`, `candidatos_nivel`…) — cualquier lead nuevo reventaba ahí.
 Se alineó aplicando `scripts/migrate-lead-claim.sql` (producción sí las tenía).
 
+### Textos del CRM por marca (mismo día, después de auditar la cuenta de Meta)
+Con dos marcas en la misma bandeja, un texto escrito para una podía enviarse a un cliente de la otra:
+- **Plantillas** (`TemplateModal.tsx`): el default `saludo_personalizado` decía *"del equipo comercial de
+  Transavic y Avícola de Tony"*. Ahora hay un saludo POR MARCA (mismo `name`, textos distintos: en Meta
+  las plantillas viven **por cuenta de WhatsApp**, así que cada marca resuelve la suya) y el modal recibe
+  `empresa` y **solo ofrece las de esa marca** (las que no declaran marca siguen sirviendo para ambas).
+  Si la marca no tiene ninguna, avisa y deshabilita el envío en lugar de mandar una plantilla inexistente
+  (error 132001 de Meta).
+- **Respuestas rápidas** (`crm_quick_replies`): campo `empresa` opcional; el gestor tiene selector
+  ("Las dos marcas" / "Solo …") y etiqueta de color en la lista, y el chat solo ofrece las de la marca del
+  lead. El atajo ahora es único **dentro de la marca** (cada marca puede tener su `/precios`; una común
+  choca con todas). Estas se envían con el texto LITERAL, así que eran las más riesgosas.
+- **Bot de bienvenida** (`WelcomeBotConfig`): su saludo por defecto ya no nombra a ninguna marca — esa
+  configuración es compartida y la identidad la pone `PERFIL_MARCA` del bot de IA.
+
+Todo es retrocompatible: lo ya guardado en `settings` no tiene `empresa` y sigue apareciendo en las dos.
+
 ### Lo que falta (trámite de Antonio en Meta, runbook completo en el plan)
 Crear la WABA en TONIO LADT → método de pago → app propia *"Avicola de Tony CRM"* → alta y verificación
 del número → System User propio con token permanente → `POST /{phone_number_id}/register` con el PIN

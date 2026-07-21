@@ -15,6 +15,8 @@ interface TemplateModalProps {
   ) => Promise<void>;
   leadName?: string;
   userName?: string;
+  /** Marca a la que escribió el cliente: filtra las plantillas que se ofrecen. */
+  empresa?: string;
 }
 
 interface WhatsAppTemplate {
@@ -23,6 +25,13 @@ interface WhatsAppTemplate {
   language: string;
   status: string;
   category: string;
+  /**
+   * Marca dueña de la plantilla. Ausente = sirve para las dos.
+   * Las plantillas REALES viven en Meta por cuenta de WhatsApp: dos marcas pueden
+   * tener una plantilla con el mismo `name` y textos distintos, y cada una se
+   * resuelve en su propia cuenta al enviarla.
+   */
+  empresa?: string;
   components: {
     type: "HEADER" | "BODY" | "FOOTER" | "BUTTONS";
     format?: "TEXT" | "IMAGE" | "DOCUMENT" | "VIDEO";
@@ -33,15 +42,30 @@ interface WhatsAppTemplate {
 
 const DEFAULT_TEMPLATES: WhatsAppTemplate[] = [
   {
-    id: "saludo_personalizado",
+    id: "saludo_personalizado_tra",
     name: "saludo_personalizado",
     language: "es",
     status: "APPROVED",
     category: "UTILITY",
+    empresa: "Transavic",
     components: [
       {
         type: "BODY",
-        text: "¡Hola {{1}}! Te saluda {{2}} del equipo comercial de Transavic y Avícola de Tony. Es un gusto saludarte. ¿En qué te podemos ayudar hoy?",
+        text: "¡Hola {{1}}! Te saluda {{2}} del equipo comercial de Transavic. Es un gusto saludarte. ¿En qué te podemos ayudar hoy?",
+      },
+    ],
+  },
+  {
+    id: "saludo_personalizado_avi",
+    name: "saludo_personalizado",
+    language: "es",
+    status: "APPROVED",
+    category: "UTILITY",
+    empresa: "Avícola de Tony",
+    components: [
+      {
+        type: "BODY",
+        text: "¡Hola {{1}}! Te saluda {{2}} del equipo comercial de La Avícola de Tony. Es un gusto saludarte. ¿En qué te podemos ayudar hoy?",
       },
     ],
   },
@@ -66,9 +90,17 @@ export default function TemplateModal({
   onSend,
   leadName = "",
   userName = "",
+  empresa,
 }: TemplateModalProps) {
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>(DEFAULT_TEMPLATES);
   const [selectedTemplate, setSelectedTemplate] = useState("saludo_personalizado");
+
+  // Solo las plantillas de la marca del lead (más las que no declaran marca).
+  // Sin esto, a un cliente de una marca se le podía ofrecer el texto de la otra.
+  const plantillasVisibles = React.useMemo(
+    () => templates.filter((t) => !t.empresa || !empresa || t.empresa === empresa),
+    [templates, empresa]
+  );
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -111,9 +143,17 @@ export default function TemplateModal({
     fetchTemplates();
   }, [isOpen]);
 
+  // Si la plantilla elegida no pertenece a esta marca, caer en la primera visible.
+  useEffect(() => {
+    if (plantillasVisibles.length === 0) return;
+    if (!plantillasVisibles.some((t) => t.name === selectedTemplate)) {
+      setSelectedTemplate(plantillasVisibles[0].name);
+    }
+  }, [plantillasVisibles, selectedTemplate]);
+
   // Parse required variables on template change
   useEffect(() => {
-    const template = templates.find((t) => t.name === selectedTemplate);
+    const template = plantillasVisibles.find((t) => t.name === selectedTemplate);
     if (template) {
       setSelectedTemplateData(template);
       const bodyComp = template.components.find((c) => c.type === "BODY");
@@ -144,7 +184,7 @@ export default function TemplateModal({
       setRequiredVars([]);
       setVariables({});
     }
-  }, [selectedTemplate, templates, leadName, userName]);
+  }, [selectedTemplate, plantillasVisibles, leadName, userName]);
 
   const handleSend = async () => {
     setSending(true);
@@ -200,12 +240,24 @@ export default function TemplateModal({
                   onChange={(e) => setSelectedTemplate(e.target.value)}
                   className="w-full border border-gray-200 bg-white rounded-xl px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  {templates.map((t) => (
+                  {plantillasVisibles.map((t) => (
                     <option key={t.id} value={t.name}>
                       {t.name} ({t.language.toUpperCase()})
                     </option>
                   ))}
                 </select>
+                {empresa && (
+                  <p className="text-[10px] text-gray-400 pt-0.5">
+                    Se enviará desde el número de <span className="font-bold text-gray-500">{empresa}</span>.
+                    La plantilla debe existir aprobada en esa cuenta de WhatsApp.
+                  </p>
+                )}
+                {plantillasVisibles.length === 0 && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                    No hay plantillas registradas para {empresa}. Créalas en su cuenta de WhatsApp y
+                    agrégalas aquí antes de enviar.
+                  </p>
+                )}
               </div>
 
               {/* Dynamic Variables Inputs */}
@@ -259,7 +311,7 @@ export default function TemplateModal({
           </button>
           <button
             onClick={handleSend}
-            disabled={sending || loading}
+            disabled={sending || loading || plantillasVisibles.length === 0}
             className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <FiSend size={12} /> {sending ? "Enviando..." : "Enviar"}
