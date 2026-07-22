@@ -239,7 +239,10 @@ Pendiente ──asignar──▶ Asignado ──iniciar viaje──▶ En_Camino
 - **Componentes cliente:** `"use client"` en la primera línea cuando usan hooks/eventos.
 - **Naming de archivos:** `kebab-case.tsx` (`dashboard-content.tsx`), excepto componentes compartidos (`PedidoForm.tsx`, `DashboardLayout.tsx`).
 - **No usar emojis en strings de Paragraph de reportlab** (cuando generes PDFs) — usar texto plano.
-- **Verificación segura de tipos:** Para verificar tipos en desarrollo local sin romper el caché de Webpack del usuario (`npm run dev`), utilizar SIEMPRE `npx tsc --noEmit` en lugar de `npm run build`.
+- **Reglas de API Routes en Next.js App Router (`route.ts`)**:
+  - **NO exportar funciones auxiliares desde un `route.ts`**: Los archivos `route.ts` sólo deben exportar métodos HTTP estándar (`GET`, `POST`, `PUT`, `DELETE`, etc.) y opciones de configuración (`dynamic`). Exportar helpers personalizados rompe la validación de tipos del compilador de Next.js en Vercel.
+  - **Extraer helpers a `src/lib/`**: Cualquier función lógica o helper compartida debe crearse en un módulo dentro de `src/lib/` (ej. `src/lib/prestamos.ts`) e importarse desde los endpoints.
+- **Verificación Pre-Deploy**: Antes de enviar cambios a `main` para despliegue automático en Vercel, validar siempre la compilación de producción ejecutando `npm run build` localmente para atrapar cualquier incompatibilidad de rutas o tipos de Next.js.
 - **Mensajes para WhatsApp (Soporte):** Siempre que el usuario pida redactar una respuesta o mensaje para enviar por WhatsApp (a Antonio, a las asesoras o al grupo de soporte), se debe entregar listo para copiar y pegar dentro de un bloque de código markdown. El mensaje debe ser corto, sumamente directo, fácil de entender (bajo la filosofía de "No me hagas pensar") e incluir el formato nativo de WhatsApp (`*` para negritas, etc.) y emojis de forma natural.
 
 ---
