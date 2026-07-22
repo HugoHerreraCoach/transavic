@@ -85,16 +85,6 @@ export async function POST(req: Request) {
     // Si recibimos devolución (DEVOLUCION_RECIBIDA): Ellos pagan lo que deben -> Saldo Baja (-)
     // Si recibimos un préstamo (PRESTAMO_RECIBIDO): Nosotros debemos -> Saldo Baja (-)
     // Si otorgamos devolución (DEVOLUCION_OTORGADA): Nosotros pagamos -> Saldo Sube (+)
-    let factor = 0;
-    if (data.tipoMovimiento === 'PRESTAMO_OTORGADO' || data.tipoMovimiento === 'DEVOLUCION_OTORGADA') {
-      factor = 1;
-    } else if (data.tipoMovimiento === 'PRESTAMO_RECIBIDO' || data.tipoMovimiento === 'DEVOLUCION_RECIBIDA') {
-      factor = -1;
-    }
-
-    const diffJabas = data.jabas * factor;
-    const diffPeso = data.pesoKg * factor;
-
     // 1. Registrar Transacción
     await sql`
       INSERT INTO prestamos_transacciones 
@@ -103,15 +93,9 @@ export async function POST(req: Request) {
         (${data.proveedorId}, ${data.productoId}, ${data.tipoMovimiento}, ${data.jabas}, ${data.pesoKg}, ${data.fecha}::date, ${data.notas || null}, ${session.user.id})
     `;
 
-    // 2. Upsert Saldo
-    await sql`
-      INSERT INTO prestamos_saldos (proveedor_id, producto_id, jabas, peso_kg)
-      VALUES (${data.proveedorId}, ${data.productoId}, ${diffJabas}, ${diffPeso})
-      ON CONFLICT (proveedor_id, producto_id) DO UPDATE SET
-        jabas = prestamos_saldos.jabas + EXCLUDED.jabas,
-        peso_kg = prestamos_saldos.peso_kg + EXCLUDED.peso_kg,
-        updated_at = NOW()
-    `;
+    // 2. Recalcular Saldo con la función centralizada
+    const { recalcularSaldo } = await import("./[id]/route");
+    await recalcularSaldo(data.proveedorId, data.productoId);
 
     return NextResponse.json({ success: true, message: "Movimiento registrado exitosamente." });
   } catch (error: unknown) {

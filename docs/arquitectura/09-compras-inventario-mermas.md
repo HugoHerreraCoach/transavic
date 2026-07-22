@@ -286,9 +286,11 @@ Entre avícolas es normal prestarse mercadería (jabas o kg de pollo) cuando a u
 **Endpoints** (ambos `admin` + `produccion`):
 - `GET /api/prestamos/saldos` — saldo neto por proveedor+producto (join con nombres).
 - `GET /api/prestamos/transacciones[?proveedorId=...]` — historial completo o kardex por proveedor.
-- `POST /api/prestamos/transacciones` — registra el movimiento Y actualiza el saldo (upsert).
+- `POST /api/prestamos/transacciones` — registra el movimiento Y recalcula el saldo.
+- `PUT /api/prestamos/transacciones/[id]` — edita un movimiento existente (peso, jabas, fecha, tipo, notas) Y recalcula automáticamente el saldo.
+- `DELETE /api/prestamos/transacciones/[id]` — elimina un movimiento Y recalcula el saldo.
 
-### 8.1 Semántica del signo del saldo
+### 8.1 Semántica del signo y recálculo de saldos
 
 `prestamos_saldos.jabas` / `peso_kg` es un **neto con signo**: **positivo = el proveedor nos debe; negativo = nosotros le debemos**. El factor lo determina el tipo de movimiento:
 
@@ -301,15 +303,36 @@ Entre avícolas es normal prestarse mercadería (jabas o kg de pollo) cuando a u
 
 Regla mnemotécnica verificada en el código: **todo lo "OTORGADO" (mercadería que SALE de nuestras manos) suma; todo lo "RECIBIDO" (mercadería que ENTRA) resta.**
 
-```ts
-if (data.tipoMovimiento === 'PRESTAMO_OTORGADO' || data.tipoMovimiento === 'DEVOLUCION_OTORGADA') {
-  factor = 1;
-} else if (data.tipoMovimiento === 'PRESTAMO_RECIBIDO' || data.tipoMovimiento === 'DEVOLUCION_RECIBIDA') {
-  factor = -1;
-}
+### 8.2 Recálculo centralizado de saldos (`recalcularSaldo`)
+
+Para evitar inconsistencias o desfasajes por ediciones o eliminaciones, la función `recalcularSaldo(proveedorId, productoId)` ejecuta una sumatoria agregada sobre `prestamos_transacciones`:
+
+```sql
+SELECT 
+  COALESCE(SUM(
+    CASE 
+      WHEN tipo_movimiento IN ('PRESTAMO_OTORGADO', 'DEVOLUCION_OTORGADA') THEN jabas 
+      WHEN tipo_movimiento IN ('PRESTAMO_RECIBIDO', 'DEVOLUCION_RECIBIDA') THEN -jabas 
+      ELSE 0 
+    END
+  ), 0)::int AS total_jabas,
+  COALESCE(SUM(
+    CASE 
+      WHEN tipo_movimiento IN ('PRESTAMO_OTORGADO', 'DEVOLUCION_OTORGADA') THEN peso_kg 
+      WHEN tipo_movimiento IN ('PRESTAMO_RECIBIDO', 'DEVOLUCION_RECIBIDA') THEN -peso_kg 
+      ELSE 0 
+    END
+  ), 0)::numeric AS total_peso
+FROM prestamos_transacciones
+WHERE proveedor_id = $1 AND producto_id = $2;
 ```
 
-El `POST` inserta la transacción y hace upsert del saldo (`ON CONFLICT (proveedor_id, producto_id) DO UPDATE` sumando jabas y kg con el factor aplicado).
+E inserta/actualiza (`ON CONFLICT (proveedor_id, producto_id) DO UPDATE`) en `prestamos_saldos`. Se ejecuta tras cualquier `POST`, `PUT` o `DELETE`.
+
+### 8.3 Capacidades del Frontend (`/dashboard/prestamos`)
+- **Edición y Eliminación en Kardex**: Botones directos ✏️ Editar y 🗑️ Eliminar en el historial.
+- **Ajuste Directo de Saldo**: Botón ⚙️ Ajustar en la tabla principal para fijar el saldo final deseado en kilos/jabas sin cálculos manuales.
+- **KPIs y Filtros**: Tarjetas resumen de totales en kilos (*Nos Deben*, *Debemos*, *Saldos Activos*), buscador global y filtros por estado.
 
 > **Matiz honesto:** los préstamos hoy NO mueven `inventario_lotes` ni el kardex del §4. Si la mercadería prestada distorsiona el stock visible, la válvula actual es un ajuste manual (§6). Integrarlos como tipo de kardex propio es una decisión futura (misma conversación que el rediseño de mermas, §7.3).
 
@@ -326,7 +349,8 @@ El `POST` inserta la transacción y hace upsert del saldo (`ON CONFLICT (proveed
 | `/api/inventario` | POST | admin+produccion | Ajuste ± con motivo de lista cerrada (detalle obligatorio si "Otro") |
 | `/api/mermas` | GET / POST | sesión / admin+produccion | Registro de merma (informativa), vínculo opcional `compra_id` |
 | `/api/prestamos/saldos` | GET | admin+produccion | Saldos netos en especie por proveedor+producto |
-| `/api/prestamos/transacciones` | GET / POST | admin+produccion | Historial / registrar movimiento + upsert de saldo |
+| `/api/prestamos/transacciones` | GET / POST | admin+produccion | Historial / registrar movimiento Y recalcular saldo |
+| `/api/prestamos/transacciones/[id]` | PUT / DELETE | admin+produccion | Editar/eliminar movimiento Y recalcular saldo |
 | `/api/cuentas-por-pagar` | GET / POST | admin | Deudas con proveedores y su pago (detalle en doc [10 §6](./10-pos-caja-tesoreria.md)) |
 
 ## Adenda 13 jul 2026 — compra, deuda y anticipos
