@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
+import { recalcularSaldo } from "@/lib/prestamos";
 
 export const dynamic = "force-dynamic";
 
@@ -94,7 +95,6 @@ export async function POST(req: Request) {
     `;
 
     // 2. Recalcular Saldo con la función centralizada
-    const { recalcularSaldo } = await import("./[id]/route");
     await recalcularSaldo(data.proveedorId, data.productoId);
 
     return NextResponse.json({ success: true, message: "Movimiento registrado exitosamente." });
