@@ -227,7 +227,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               'campo', 'reprogramacion',
               'etiqueta', 'Reprogramación',
               'antes', TO_CHAR(fecha_anterior, 'YYYY-MM-DD'),
-              'despues', ${descripcionCambio}
+              'despues', ${descripcionCambio}::text
             ))
           FROM actualizado
           RETURNING id
@@ -343,7 +343,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
               'campo', 'fecha_pedido',
               'etiqueta', 'Reprogramación',
               'antes', TO_CHAR(fecha_anterior, 'YYYY-MM-DD'),
-              'despues', ${descripcionCambio}
+              'despues', ${descripcionCambio}::text
             ))
           FROM actualizado
           RETURNING id
