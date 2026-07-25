@@ -50,12 +50,15 @@ export async function GET(req: NextRequest) {
         p.created_at::text AS created_at,
         p.anulada,
         p.anulacion_motivo,
+        p.notas,
         COALESCE(det.total, 0)::float8 AS total,
         -- 'Credito' si el pedido tuvo cobranza de planta (aunque esté anulada por anular la
         -- venta) — así una venta a crédito anulada no se muestra engañosamente como 'Contado'.
         CASE WHEN EXISTS (SELECT 1 FROM cobranzas_planta cpx WHERE cpx.pedido_id = p.id)
              THEN 'Credito' ELSE 'Contado' END AS tipo_pago,
         pago.cuenta_nombre,
+        pago.cuenta_id,
+        cp.cliente_planta_id,
         co.serie_numero AS comprobante_serie_numero,
         co.tipo         AS comprobante_tipo,
         co.estado       AS comprobante_estado,
@@ -65,6 +68,7 @@ export async function GET(req: NextRequest) {
         SELECT
           SUM(COALESCE(pi.subtotal_real, pi.subtotal, 0)) AS total,
           jsonb_agg(jsonb_build_object(
+            'producto_id', pi.producto_id,
             'producto_nombre', pi.producto_nombre,
             'cantidad', pi.cantidad::float8,
             'unidad', pi.unidad,
@@ -74,19 +78,26 @@ export async function GET(req: NextRequest) {
             'subtotal_costo', CASE
               WHEN pi.costo_unitario_snapshot IS NULL THEN NULL
               ELSE ROUND(pi.cantidad * pi.costo_unitario_snapshot, 2)::float8
-            END
+            END,
+            'notas', pi.notas
           ) ORDER BY pi.created_at, pi.id) AS items
         FROM pedido_items pi
         WHERE pi.pedido_id = p.id
       ) det ON TRUE
       LEFT JOIN LATERAL (
-        SELECT cta.nombre AS cuenta_nombre
+        SELECT cta.nombre AS cuenta_nombre, cta.id AS cuenta_id
         FROM transacciones t
         JOIN cuentas_bancarias cta ON cta.id = t.cuenta_id
         WHERE t.referencia_id = p.id AND t.tipo = 'ingreso'
         ORDER BY t.created_at, t.id
         LIMIT 1
       ) pago ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT cliente_planta_id
+        FROM cobranzas_planta cpx
+        WHERE cpx.pedido_id = p.id
+        LIMIT 1
+      ) cp ON TRUE
       LEFT JOIN LATERAL (
         SELECT serie_numero, tipo, estado
         FROM comprobantes cc

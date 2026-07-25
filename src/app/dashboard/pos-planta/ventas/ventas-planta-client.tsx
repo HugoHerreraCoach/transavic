@@ -22,6 +22,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import DetalleVentaPos from "@/components/planta/DetalleVentaPos";
+import SearchableSelect from "@/components/SearchableSelect";
 import { OPERACIONES } from "@/lib/operaciones-venta";
 import type { ItemDetalleVentaPos } from "@/lib/planta/ventas-pos";
 
@@ -61,6 +62,27 @@ function etiquetaFecha(fecha: string, hoy: string): string {
 const fmtSoles = (n: number) =>
   `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+interface Cuenta {
+  id: string;
+  nombre: string;
+  tipo: string;
+  activa?: boolean;
+}
+
+interface Cliente {
+  id: string;
+  nombre: string;
+  ruc_dni: string | null;
+  telefono: string | null;
+}
+
+interface Producto {
+  id: string;
+  nombre: string;
+  unidad: string;
+  precio_venta: number | string;
+}
+
 interface VentaPlanta {
   id: string;
   cliente: string | null;
@@ -77,6 +99,9 @@ interface VentaPlanta {
   costo_completo: boolean;
   tipo_pago: string;
   cuenta_nombre: string | null;
+  cuenta_id: string | null;
+  cliente_planta_id: string | null;
+  notas: string | null;
   comprobante_serie_numero: string | null;
   comprobante_tipo: string | null;
   comprobante_estado: string | null;
@@ -104,14 +129,195 @@ export default function VentasPlantaClient() {
   const [nuevaFechaVenta, setNuevaFechaVenta] = useState<string>("");
   const [modificandoFecha, setModificandoFecha] = useState(false);
 
+  // Estados para la Edición de Venta Completa
+  const [editandoVenta, setEditandoVenta] = useState<VentaPlanta | null>(null);
+  const [editFecha, setEditFecha] = useState("");
+  const [editClienteId, setEditClienteId] = useState("");
+  const [editTipoPago, setEditTipoPago] = useState<"Contado" | "Credito">("Contado");
+  const [editCuentaId, setEditCuentaId] = useState("");
+  const [editNotas, setEditNotas] = useState("");
+  const [editItems, setEditItems] = useState<Array<{
+    productoId: string;
+    productoNombre: string;
+    cantidad: number;
+    unidad: string;
+    precioUnitario: number;
+    notas?: string | null;
+  }>>([]);
+  const [editEmpresa, setEditEmpresa] = useState<"Transavic" | "Avícola de Tony">("Avícola de Tony");
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+
+  const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [catalogoProductos, setCatalogoProductos] = useState<Producto[]>([]);
+
+  useEffect(() => {
+    // Cargar cuentas bancarias
+    fetch("/api/cuentas")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setCuentas(data.filter(c => c.activa !== false));
+        }
+      })
+      .catch(() => {});
+
+    // Cargar clientes de planta
+    fetch("/api/clientes-planta?activo=true")
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data.clientes)) {
+          setClientes(data.clientes);
+        }
+      })
+      .catch(() => {});
+
+    // Cargar catálogo de productos
+    fetch("/api/productos")
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setCatalogoProductos(data);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const clienteOptions = useMemo(() => {
+    return [
+      { id: "", nombre: "Venta Rápida (Sin Cliente Registrado)" },
+      ...clientes.map(c => ({
+        id: c.id,
+        nombre: `${c.nombre} ${c.ruc_dni ? `(${c.ruc_dni})` : ""}`.trim()
+      }))
+    ];
+  }, [clientes]);
+
+  const productoOptions = useMemo(() => {
+    return [
+      { id: "", nombre: "Buscar producto..." },
+      ...catalogoProductos.map(p => ({
+        id: p.id,
+        nombre: `${p.nombre} (${p.unidad}) — S/ ${Number(p.precio_venta).toFixed(2)}`
+      }))
+    ];
+  }, [catalogoProductos]);
+
+  const editTotal = useMemo(() => {
+    return editItems.reduce((acc, it) => acc + (it.cantidad * it.precioUnitario), 0);
+  }, [editItems]);
+
+  const iniciarEdicion = (v: VentaPlanta) => {
+    setEditandoVenta(v);
+    setEditFecha(v.fecha);
+    setEditClienteId(v.cliente_planta_id || "");
+    setEditTipoPago(v.tipo_pago === "Credito" ? "Credito" : "Contado");
+    setEditCuentaId(v.cuenta_id || "");
+    setEditNotas(v.notas || "");
+    setEditEmpresa(v.empresa as "Transavic" | "Avícola de Tony");
+    setEditItems(
+      v.items.map((it: ItemDetalleVentaPos) => ({
+        productoId: it.producto_id || "",
+        productoNombre: it.producto_nombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+        precioUnitario: it.precio_unitario,
+        notas: it.notas || ""
+      }))
+    );
+  };
+
+  const alAgregarProducto = (prodId: string) => {
+    if (!prodId) return;
+    const prod = catalogoProductos.find(p => p.id === prodId);
+    if (!prod) return;
+    if (editItems.some(i => i.productoId === prod.id)) {
+      setToast({ tipo: "error", texto: "El producto ya está en la lista" });
+      return;
+    }
+    setEditItems([
+      ...editItems,
+      {
+        productoId: prod.id,
+        productoNombre: prod.nombre,
+        cantidad: 1,
+        unidad: prod.unidad || "uni",
+        precioUnitario: Number(prod.precio_venta) || 0,
+        notas: ""
+      }
+    ]);
+  };
+
+  async function guardarCambiosVenta() {
+    if (!editandoVenta) return;
+    if (editItems.length === 0) {
+      setToast({ tipo: "error", texto: "Debe ingresar al menos un producto" });
+      return;
+    }
+    if (editTipoPago === "Contado" && !editCuentaId) {
+      setToast({ tipo: "error", texto: "Debe seleccionar una cuenta bancaria/caja para pagos al Contado" });
+      return;
+    }
+    if (editTipoPago === "Credito" && !editClienteId) {
+      setToast({ tipo: "error", texto: "Debe seleccionar un cliente de planta para ventas al Crédito" });
+      return;
+    }
+
+    setGuardandoEdicion(true);
+    try {
+      const res = await fetch(`/api/pos/ventas/${editandoVenta.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          empresa: editEmpresa,
+          items: editItems,
+          tipo_pago: editTipoPago,
+          cuenta_id: editTipoPago === "Contado" ? editCuentaId : null,
+          cliente_planta_id: editClienteId || null,
+          notas_generales: editNotas || null,
+          fecha: editFecha
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setEditandoVenta(null);
+        setToast({ tipo: "ok", texto: "Venta editada correctamente." });
+        fetchData();
+      } else {
+        setToast({ tipo: "error", texto: typeof data.error === "string" ? data.error : "Error al guardar la venta." });
+      }
+    } catch {
+      setToast({ tipo: "error", texto: "Error de conexión al guardar cambios." });
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  }
+
   async function confirmarEditarFecha() {
     if (!editandoFecha || !nuevaFechaVenta) return;
     setModificandoFecha(true);
     try {
-      const res = await fetch(`/api/pos/ventas/${editandoFecha.id}/fecha`, {
+      const itemsPayload = editandoFecha.items.map((it: ItemDetalleVentaPos) => ({
+        productoId: it.producto_id || "",
+        productoNombre: it.producto_nombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+        precioUnitario: it.precio_unitario,
+        notas: it.notas || ""
+      }));
+
+      const res = await fetch(`/api/pos/ventas/${editandoFecha.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fecha: nuevaFechaVenta }),
+        body: JSON.stringify({
+          empresa: editandoFecha.empresa,
+          items: itemsPayload,
+          tipo_pago: editandoFecha.tipo_pago === "Credito" ? "Credito" : "Contado",
+          cuenta_id: editandoFecha.cuenta_id || null,
+          cliente_planta_id: editandoFecha.cliente_planta_id || null,
+          notas_generales: editandoFecha.notas || null,
+          fecha: nuevaFechaVenta
+        }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -400,11 +606,11 @@ export default function VentasPlantaClient() {
                   <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
                     <button
                       type="button"
-                      onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(true); }}
+                      onClick={() => iniciarEdicion(v)}
                       className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
-                      title="Anula esta venta y te lleva al POS para volver a hacerla"
+                      title="Modificar los detalles de esta venta directamente"
                     >
-                      <FiEdit2 size={13} /> Editar (anular y rehacer)
+                      <FiEdit2 size={13} /> Editar venta
                     </button>
                     <button
                       type="button"
@@ -532,6 +738,253 @@ export default function VentasPlantaClient() {
                 className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 transition cursor-pointer"
               >
                 {modificandoFecha ? "Guardando..." : "Guardar fecha"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar venta */}
+      {editandoVenta && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden my-8 animate-in fade-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100 flex-shrink-0">
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-violet-100 text-violet-600 flex-shrink-0">
+                <FiEdit2 size={18} />
+              </span>
+              <div>
+                <h3 className="font-bold text-gray-900 leading-tight">Editar Venta de Planta</h3>
+                <p className="text-[11px] text-gray-500">ID: {editandoVenta.id}</p>
+              </div>
+              <button onClick={() => setEditandoVenta(null)} className="ml-auto p-1.5 rounded-full text-gray-400 hover:bg-gray-100 cursor-pointer">
+                <FiX size={16} />
+              </button>
+            </div>
+
+            {/* Content (Scrollable) */}
+            <div className="p-5 space-y-4 overflow-y-auto flex-grow text-sm">
+              {/* Grid 1: Empresa & Fecha */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Empresa</label>
+                  <select
+                    value={editEmpresa}
+                    onChange={(e) => setEditEmpresa(e.target.value as "Transavic" | "Avícola de Tony")}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="Avícola de Tony">Avícola de Tony (RUC 10)</option>
+                    <option value="Transavic">Transavic (RUC 20)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Fecha de venta</label>
+                  <input
+                    type="date"
+                    value={editFecha}
+                    max={hoy}
+                    onChange={(e) => setEditFecha(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Cliente */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Cliente de Planta</label>
+                <SearchableSelect
+                  value={editClienteId}
+                  onChange={setEditClienteId}
+                  options={clienteOptions}
+                  placeholder="Seleccione Cliente..."
+                  searchPlaceholder="Buscar cliente..."
+                />
+              </div>
+
+              {/* Grid 2: Tipo de Pago & Caja */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 mb-1">Método de Pago</label>
+                  <div className="grid grid-cols-2 gap-1 bg-gray-100 p-0.5 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setEditTipoPago("Contado")}
+                      className={`py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                        editTipoPago === "Contado"
+                          ? "bg-white text-indigo-700 shadow-sm"
+                          : "text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      Contado
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditTipoPago("Credito")}
+                      className={`py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                        editTipoPago === "Credito"
+                          ? "bg-white text-indigo-700 shadow-sm"
+                          : "text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      Crédito
+                    </button>
+                  </div>
+                </div>
+                {editTipoPago === "Contado" ? (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-500 mb-1">Caja / Cuenta de destino</label>
+                    <select
+                      value={editCuentaId}
+                      onChange={(e) => setEditCuentaId(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                    >
+                      <option value="" disabled>Elige la caja o cuenta</option>
+                      {cuentas.map(c => (
+                        <option key={c.id} value={c.id}>{c.nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-end">
+                    <div className="p-2 w-full bg-indigo-50 border border-indigo-100 rounded-lg text-xs text-indigo-700 font-medium">
+                      Deuda del cliente (por cobrar).
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Items Section */}
+              <div className="border-t border-gray-150 pt-4">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="font-bold text-gray-900 text-xs uppercase tracking-wider">Productos de la Venta</h4>
+                  <span className="text-xs text-gray-500 font-medium">Líneas: {editItems.length}</span>
+                </div>
+
+                {/* Table of items */}
+                <div className="border border-gray-200 rounded-xl overflow-hidden mb-3">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 font-bold text-gray-500">
+                        <th className="p-2.5">Producto</th>
+                        <th className="p-2.5 w-24 text-center">Cantidad</th>
+                        <th className="p-2.5 w-16 text-center">Unidad</th>
+                        <th className="p-2.5 w-24 text-center">P. Unit.</th>
+                        <th className="p-2.5 w-24 text-right">Subtotal</th>
+                        <th className="p-2.5 w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-150">
+                      {editItems.map((item, index) => (
+                        <tr key={index} className="hover:bg-gray-50/50">
+                          <td className="p-2.5 font-semibold text-gray-800">
+                            {item.productoNombre}
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <input
+                              type="number"
+                              step="any"
+                              value={item.cantidad || ""}
+                              min="0.01"
+                              onChange={(e) => {
+                                const newQty = parseFloat(e.target.value) || 0;
+                                const updated = [...editItems];
+                                updated[index].cantidad = newQty;
+                                setEditItems(updated);
+                              }}
+                              className="w-20 px-1.5 py-1 border border-gray-300 rounded text-center font-bold"
+                            />
+                          </td>
+                          <td className="p-2.5 text-center text-gray-500 font-medium">
+                            <span className="bg-gray-100 px-1.5 py-0.5 rounded text-[10px] uppercase font-bold">{item.unidad}</span>
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <input
+                              type="number"
+                              step="any"
+                              value={item.precioUnitario || ""}
+                              min="0"
+                              onChange={(e) => {
+                                const newPrice = parseFloat(e.target.value) || 0;
+                                const updated = [...editItems];
+                                updated[index].precioUnitario = newPrice;
+                                setEditItems(updated);
+                              }}
+                              className="w-20 px-1.5 py-1 border border-gray-300 rounded text-center font-bold"
+                            />
+                          </td>
+                          <td className="p-2.5 text-right font-bold text-gray-800">
+                            S/ {(item.cantidad * item.precioUnitario).toFixed(2)}
+                          </td>
+                          <td className="p-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditItems(editItems.filter((_, idx) => idx !== index));
+                              }}
+                              className="p-1 text-red-500 hover:bg-red-50 rounded cursor-pointer animate-none"
+                              title="Quitar producto"
+                            >
+                              <FiTrash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {editItems.length === 0 && (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-gray-400 font-medium italic bg-gray-50/50">
+                            No hay productos agregados a la venta.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Add product to items */}
+                <div className="flex gap-2 items-center">
+                  <div className="flex-grow">
+                    <SearchableSelect
+                      value=""
+                      onChange={alAgregarProducto}
+                      options={productoOptions}
+                      placeholder="Buscar producto para agregar..."
+                      searchPlaceholder="Escribe el nombre del producto..."
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Notas generales */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Notas / Observaciones de Venta</label>
+                <input
+                  type="text"
+                  value={editNotas}
+                  onChange={(e) => setEditNotas(e.target.value)}
+                  placeholder="Ej. Venta rápida mostrador, despacho planta, etc."
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                  maxLength={250}
+                />
+              </div>
+
+              {/* Total Display */}
+              <div className="flex justify-between items-center bg-violet-50 border border-violet-100 rounded-xl p-3 px-4">
+                <span className="font-extrabold text-violet-800 text-xs uppercase tracking-wider">Total de la Venta:</span>
+                <span className="font-black text-violet-900 text-lg">S/ {editTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex flex-col-reverse gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 sm:flex-row sm:justify-end flex-shrink-0">
+              <button onClick={() => setEditandoVenta(null)} className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-800 cursor-pointer">
+                Cancelar
+              </button>
+              <button
+                onClick={guardarCambiosVenta}
+                disabled={guardandoEdicion || editItems.length === 0}
+                className="inline-flex items-center justify-center gap-1.5 px-5 py-2.5 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 transition cursor-pointer"
+              >
+                {guardandoEdicion ? "Guardando..." : "Guardar cambios"}
               </button>
             </div>
           </div>

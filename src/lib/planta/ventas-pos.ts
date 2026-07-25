@@ -1,6 +1,7 @@
 export type TipoPagoPos = "Contado" | "Credito";
 
 export interface ItemDetalleVentaPos {
+  producto_id?: string;
   producto_nombre: string;
   cantidad: number;
   unidad: string;
@@ -8,6 +9,7 @@ export interface ItemDetalleVentaPos {
   subtotal_venta: number;
   costo_unitario: number | null;
   subtotal_costo: number | null;
+  notas?: string | null;
 }
 
 type FilaDetalleCruda = Record<string, unknown>;
@@ -62,6 +64,7 @@ export function normalizarItemsDetalleVentaPos(value: unknown): ItemDetalleVenta
             );
 
       return {
+        producto_id: typeof item.producto_id === "string" ? item.producto_id : undefined,
         producto_nombre:
           typeof item.producto_nombre === "string" && item.producto_nombre.trim()
             ? item.producto_nombre
@@ -74,6 +77,7 @@ export function normalizarItemsDetalleVentaPos(value: unknown): ItemDetalleVenta
         ),
         costo_unitario: costoUnitario,
         subtotal_costo: subtotalCosto,
+        notas: typeof item.notas === "string" ? item.notas : null,
       };
     });
 }
