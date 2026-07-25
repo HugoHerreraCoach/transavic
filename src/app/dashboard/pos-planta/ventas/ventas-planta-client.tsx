@@ -100,6 +100,33 @@ export default function VentasPlantaClient() {
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   // Las anuladas se OCULTAN por defecto (no hacen ruido visual); se pueden mostrar a demanda.
   const [mostrarAnuladas, setMostrarAnuladas] = useState(false);
+  const [editandoFecha, setEditandoFecha] = useState<VentaPlanta | null>(null);
+  const [nuevaFechaVenta, setNuevaFechaVenta] = useState<string>("");
+  const [modificandoFecha, setModificandoFecha] = useState(false);
+
+  async function confirmarEditarFecha() {
+    if (!editandoFecha || !nuevaFechaVenta) return;
+    setModificandoFecha(true);
+    try {
+      const res = await fetch(`/api/pos/ventas/${editandoFecha.id}/fecha`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fecha: nuevaFechaVenta }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setEditandoFecha(null);
+        setToast({ tipo: "ok", texto: "Fecha de venta actualizada correctamente." });
+        fetchData();
+      } else {
+        setToast({ tipo: "error", texto: typeof data.error === "string" ? data.error : "No se pudo actualizar la fecha." });
+      }
+    } catch {
+      setToast({ tipo: "error", texto: "Error de conexión al actualizar la fecha." });
+    } finally {
+      setModificandoFecha(false);
+    }
+  }
 
   const rango = useMemo(() => {
     if (modo === "semana") return { desde: lunesDeSemana(fecha), hasta: fecha === hoy ? hoy : sumarDias(lunesDeSemana(fecha), 6) };
@@ -374,15 +401,23 @@ export default function VentasPlantaClient() {
                     <button
                       type="button"
                       onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(true); }}
-                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
                       title="Anula esta venta y te lleva al POS para volver a hacerla"
                     >
                       <FiEdit2 size={13} /> Editar (anular y rehacer)
                     </button>
                     <button
                       type="button"
+                      onClick={() => { setEditandoFecha(v); setNuevaFechaVenta(v.fecha); }}
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
+                      title="Modificar la fecha de esta venta"
+                    >
+                      <FiCalendar size={13} /> Editar fecha
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(false); }}
-                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 cursor-pointer"
                     >
                       <FiTrash2 size={13} /> Anular
                     </button>
@@ -397,21 +432,32 @@ export default function VentasPlantaClient() {
       {/* Modal anular */}
       {anulando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
             <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100">
-              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-red-100 text-red-600 flex-shrink-0">
-                <FiTrash2 size={18} />
+              <span className={`flex items-center justify-center w-9 h-9 rounded-full ${irAlPosDespues ? "bg-amber-100 text-amber-600" : "bg-red-100 text-red-600"} flex-shrink-0`}>
+                {irAlPosDespues ? <FiEdit2 size={18} /> : <FiTrash2 size={18} />}
               </span>
-              <h3 className="font-bold text-gray-900">Anular esta venta</h3>
+              <h3 className="font-bold text-gray-900">
+                {irAlPosDespues ? "Rehacer venta (Editar)" : "Anular esta venta"}
+              </h3>
               <button onClick={() => setAnulando(null)} className="ml-auto p-1.5 rounded-full text-gray-400 hover:bg-gray-100">
                 <FiX size={16} />
               </button>
             </div>
             <div className="px-5 py-4 space-y-3 text-sm">
               <p className="text-gray-700">
-                Se <strong>devolverá el stock</strong> de los productos y se <strong>revertirá el cobro</strong>
-                {anulando.tipo_pago === "Credito" ? " (se anula la deuda)" : ` de ${fmtSoles(anulando.total)} en ${anulando.cuenta_nombre || "la caja"}`}.
-                Esta acción queda registrada.
+                {irAlPosDespues ? (
+                  <>
+                    Esta acción <strong>anulará la venta actual</strong> (devolviendo el stock y revertiendo el cobro) 
+                    y te <strong>redirigirá al POS</strong> con los datos cargados para que puedas rehacerla.
+                  </>
+                ) : (
+                  <>
+                    Se <strong>devolverá el stock</strong> de los productos y se <strong>revertirá el cobro</strong>
+                    {anulando.tipo_pago === "Credito" ? " (se anula la deuda)" : ` de ${fmtSoles(anulando.total)} en ${anulando.cuenta_nombre || "la caja"}`}.
+                    Esta acción queda registrada.
+                  </>
+                )}
               </p>
               <div>
                 <label className="block text-xs font-semibold text-gray-500 mb-1">Motivo (opcional)</label>
@@ -430,9 +476,62 @@ export default function VentasPlantaClient() {
               <button
                 onClick={confirmarAnular}
                 disabled={procesando}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 transition"
+                className={`inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg ${irAlPosDespues ? "bg-amber-600 hover:bg-amber-700" : "bg-red-600 hover:bg-red-700"} text-white disabled:opacity-60 transition`}
               >
-                <FiTrash2 size={15} /> {procesando ? "Anulando…" : "Sí, anular venta"}
+                {irAlPosDespues ? (
+                  <>{procesando ? "Preparando..." : "Sí, anular y rehacer en POS"}</>
+                ) : (
+                  <>
+                    <FiTrash2 size={15} /> {procesando ? "Anulando…" : "Sí, anular venta"}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar fecha */}
+      {editandoFecha && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100">
+              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-violet-100 text-violet-600 flex-shrink-0">
+                <FiCalendar size={18} />
+              </span>
+              <h3 className="font-bold text-gray-900">Editar fecha de venta</h3>
+              <button onClick={() => setEditandoFecha(null)} className="ml-auto p-1.5 rounded-full text-gray-400 hover:bg-gray-100">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm">
+              <p className="text-gray-700">
+                Selecciona la nueva fecha para la venta de <strong>{editandoFecha.razon_social || editandoFecha.cliente || "Venta al paso"}</strong> de <strong>{fmtSoles(editandoFecha.total)}</strong>.
+              </p>
+              <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-800 space-y-1">
+                <p className="font-bold">⚠️ Restricciones contables:</p>
+                <p>· No se puede modificar si la caja de la fecha origen o destino ya está cerrada.</p>
+                <p>· No se puede modificar si ya tiene un comprobante SUNAT activo.</p>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Nueva Fecha</label>
+                <input
+                  type="date"
+                  value={nuevaFechaVenta}
+                  max={hoy}
+                  onChange={(e) => setNuevaFechaVenta(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                />
+              </div>
+            </div>
+            <div className="flex flex-col-reverse gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 sm:flex-row sm:justify-end">
+              <button onClick={() => setEditandoFecha(null)} className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-800">Cancelar</button>
+              <button
+                onClick={confirmarEditarFecha}
+                disabled={modificandoFecha || !nuevaFechaVenta}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 transition cursor-pointer"
+              >
+                {modificandoFecha ? "Guardando..." : "Guardar fecha"}
               </button>
             </div>
           </div>

@@ -155,6 +155,22 @@ export default function PosClient({
   const [showNotesInput, setShowNotesInput] = useState(false);
   const [loading, setLoading] = useState(false);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [fechaVenta, setFechaVenta] = useState<string>("");
+
+  const hoy = useMemo(() => {
+    const d = new Date();
+    const limaDate = new Date(d.toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const yyyy = limaDate.getFullYear();
+    const mm = String(limaDate.getMonth() + 1).padStart(2, "0");
+    const dd = String(limaDate.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }, []);
+
+  useEffect(() => {
+    if (hoy && !fechaVenta) {
+      setFechaVenta(hoy);
+    }
+  }, [hoy, fechaVenta]);
   const [favoritos, setFavoritos] = useState<string[]>([]);
   const [pendientes, setPendientes] = useState(0);
   const [sincronizando, setSincronizando] = useState(false);
@@ -399,6 +415,7 @@ export default function PosClient({
     setSelectedClienteId("");
     setTipoPago("Contado");
     setCarritoAbierto(false);
+    setFechaVenta(hoy);
   };
 
   // Encola la venta en la cola offline compartida y limpia el carrito
@@ -435,7 +452,8 @@ export default function PosClient({
         precioUnitario: i.precioUnitario,
         notas: null
       })),
-      notas_generales: notasGenerales || null
+      notas_generales: notasGenerales || null,
+      fecha: fechaVenta || hoy
     };
 
     if (isOffline || !navigator.onLine) {
@@ -976,6 +994,18 @@ export default function PosClient({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Fecha de venta */}
+          <div className="space-y-1">
+            <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fecha de venta:</label>
+            <input
+              type="date"
+              value={fechaVenta}
+              max={hoy}
+              onChange={(e) => setFechaVenta(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-2 py-1 text-[10px] outline-none focus:ring-1 focus:ring-indigo-500 font-semibold bg-white shadow-sm cursor-pointer"
+            />
           </div>
 
           {/* Notas de Venta (Opcional/Colapsable) */}

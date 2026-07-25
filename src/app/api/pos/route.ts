@@ -31,6 +31,7 @@ const PosSaleSchema = z.object({
   // Cliente de PLANTA (tabla propia clientes_planta), NO el de ejecutivas.
   cliente_planta_id: z.string().uuid().optional().nullable(),
   notas_generales: z.string().optional().nullable(),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Formato YYYY-MM-DD").optional(),
 }).refine((data) => {
   if (data.tipo_pago === "Contado" && !data.cuenta_id) {
     return false;
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { id: bodyId, empresa, items, tipo_pago, cuenta_id, cliente_planta_id, notas_generales } = result.data;
+    const { id: bodyId, empresa, items, tipo_pago, cuenta_id, cliente_planta_id, notas_generales, fecha } = result.data;
     const usuario_id = session.user.id;
     const usuario_nombre = session.user.name || "POS Usuario";
 
@@ -154,7 +155,7 @@ export async function POST(req: NextRequest) {
       sql`
         INSERT INTO pedidos (
           id, cliente, cliente_id, razon_social, ruc_dni, fecha_pedido, detalle, detalle_final, estado,
-          empresa, asesor_id, entregado_por, origen
+          empresa, asesor_id, entregado_por, origen, created_at
         )
         VALUES (
           ${pedido_id},
@@ -162,14 +163,18 @@ export async function POST(req: NextRequest) {
           NULL,
           ${razonSocial},
           ${rucDni},
-          (NOW() AT TIME ZONE 'America/Lima')::date,
+          COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date),
           ${detalleDerivado},
           ${detalleDerivado},
           'Entregado',
           ${empresa},
           ${usuario_id},
           ${usuario_nombre},
-          'pos_planta'
+          'pos_planta',
+          COALESCE(
+            (${fecha ?? null}::date + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima',
+            NOW()
+          )
         )
       `,
       // 2. Items e inventario (lote flexible, puede quedar negativo)
@@ -220,8 +225,13 @@ export async function POST(req: NextRequest) {
           WHERE id = ${cuenta_id}
           RETURNING id
         )
-        INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id)
-        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta Rápida - Pedido ' || ${pedido_id}, ${pedido_id}
+        INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id, fecha, created_at)
+        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta Rápida - Pedido ' || ${pedido_id}, ${pedido_id},
+               COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date),
+               COALESCE(
+                 (${fecha ?? null}::date + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima',
+                 NOW()
+               )
         FROM update_cuenta
       `);
     } else {
@@ -232,13 +242,18 @@ export async function POST(req: NextRequest) {
         INSERT INTO cobranzas_planta (
           id, pedido_id, cliente_planta_id, cliente_nombre,
           monto, plazo_dias, fecha_emision, fecha_vencimiento,
-          estado, empresa, notas, creado_por
+          estado, empresa, notas, creado_por, created_at
         )
         VALUES (
           ${cobranza_id}, ${pedido_id}, ${cliente_planta_id}, ${clienteNombre},
-          ${total_venta}, ${plazoPagoDias}, (NOW() AT TIME ZONE 'America/Lima')::date,
-          (NOW() AT TIME ZONE 'America/Lima')::date + ${plazoPagoDias}::int,
-          'Pendiente', ${empresa}, ${notas_generales || null}, ${usuario_id}
+          ${total_venta}, ${plazoPagoDias}, 
+          COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date),
+          COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date) + ${plazoPagoDias}::int,
+          'Pendiente', ${empresa}, ${notas_generales || null}, ${usuario_id},
+          COALESCE(
+            (${fecha ?? null}::date + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima',
+            NOW()
+          )
         )
       `);
     }
