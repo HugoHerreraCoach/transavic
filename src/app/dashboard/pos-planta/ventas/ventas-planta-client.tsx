@@ -125,9 +125,6 @@ export default function VentasPlantaClient() {
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   // Las anuladas se OCULTAN por defecto (no hacen ruido visual); se pueden mostrar a demanda.
   const [mostrarAnuladas, setMostrarAnuladas] = useState(false);
-  const [editandoFecha, setEditandoFecha] = useState<VentaPlanta | null>(null);
-  const [nuevaFechaVenta, setNuevaFechaVenta] = useState<string>("");
-  const [modificandoFecha, setModificandoFecha] = useState(false);
 
   // Estados para la Edición de Venta Completa
   const [editandoVenta, setEditandoVenta] = useState<VentaPlanta | null>(null);
@@ -293,46 +290,7 @@ export default function VentasPlantaClient() {
     }
   }
 
-  async function confirmarEditarFecha() {
-    if (!editandoFecha || !nuevaFechaVenta) return;
-    setModificandoFecha(true);
-    try {
-      const itemsPayload = editandoFecha.items.map((it: ItemDetalleVentaPos) => ({
-        productoId: it.producto_id || "",
-        productoNombre: it.producto_nombre,
-        cantidad: it.cantidad,
-        unidad: it.unidad,
-        precioUnitario: it.precio_unitario,
-        notas: it.notas || ""
-      }));
 
-      const res = await fetch(`/api/pos/ventas/${editandoFecha.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          empresa: editandoFecha.empresa,
-          items: itemsPayload,
-          tipo_pago: editandoFecha.tipo_pago === "Credito" ? "Credito" : "Contado",
-          cuenta_id: editandoFecha.cuenta_id || null,
-          cliente_planta_id: editandoFecha.cliente_planta_id || null,
-          notas_generales: editandoFecha.notas || null,
-          fecha: nuevaFechaVenta
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setEditandoFecha(null);
-        setToast({ tipo: "ok", texto: "Fecha de venta actualizada correctamente." });
-        fetchData();
-      } else {
-        setToast({ tipo: "error", texto: typeof data.error === "string" ? data.error : "No se pudo actualizar la fecha." });
-      }
-    } catch {
-      setToast({ tipo: "error", texto: "Error de conexión al actualizar la fecha." });
-    } finally {
-      setModificandoFecha(false);
-    }
-  }
 
   const rango = useMemo(() => {
     if (modo === "semana") return { desde: lunesDeSemana(fecha), hasta: fecha === hoy ? hoy : sumarDias(lunesDeSemana(fecha), 6) };
@@ -555,83 +513,89 @@ export default function VentasPlantaClient() {
         </div>
       ) : (
         <div className="space-y-2">
-          {ventasVisibles.map((v) => (
-            <details
-              key={v.id}
-              className={`group rounded-xl border bg-white ${v.anulada ? "border-gray-200 opacity-60" : "border-gray-200"}`}
-            >
-              <summary className="flex min-h-14 cursor-pointer list-none items-start gap-3 rounded-xl px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 sm:px-4 [&::-webkit-details-marker]:hidden">
-                <div className="w-12 flex-shrink-0 text-center">
-                  <p className="text-[10px] uppercase text-gray-400 font-bold">Hora</p>
-                  <p className="font-mono font-bold text-gray-800 text-sm">{v.hora}</p>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 truncate">
-                    {v.razon_social || v.cliente || "Venta al paso"}
-                    {v.anulada && <span className="ml-2 text-xs text-red-500 font-bold">· ANULADA</span>}
-                  </p>
-                  <p className="text-xs text-gray-500 truncate">
-                    {v.items.length === 0
-                      ? "Sin ítems registrados"
-                      : `${v.items.length} ${v.items.length === 1 ? "producto" : "productos"} · Toca para ver peso, precio y costo`}
-                  </p>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
-                    {v.tipo_pago === "Credito"
-                      ? "Crédito"
-                      : `Contado · ${v.cuenta_nombre || "Cuenta no disponible"}`}
-                    {v.anulada && v.anulacion_motivo ? ` · ${v.anulacion_motivo}` : ""}
-                  </p>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="font-black text-gray-900">{fmtSoles(v.total)}</p>
-                  {v.comprobante_serie_numero && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 mt-1">
-                      <FiCheckCircle size={11} /> {v.comprobante_serie_numero}
-                    </span>
+          {ventasVisibles.map((v) => {
+            const noEditable = v.comprobante_serie_numero && ["aceptado", "observado", "pendiente", "emitiendo"].includes(v.comprobante_estado || "");
+            return (
+              <details
+                key={v.id}
+                className={`group rounded-xl border bg-white ${v.anulada ? "border-gray-200 opacity-60" : "border-gray-200"}`}
+              >
+                <summary className="flex min-h-14 cursor-pointer list-none items-start gap-3 rounded-xl px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 sm:px-4 [&::-webkit-details-marker]:hidden">
+                  <div className="w-12 flex-shrink-0 text-center">
+                    <p className="text-[10px] uppercase text-gray-400 font-bold">Hora</p>
+                    <p className="font-mono font-bold text-gray-800 text-sm">{v.hora}</p>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">
+                      {v.razon_social || v.cliente || "Venta al paso"}
+                      {v.anulada && <span className="ml-2 text-xs text-red-500 font-bold">· ANULADA</span>}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {v.items.length === 0
+                        ? "Sin ítems registrados"
+                        : `${v.items.length} ${v.items.length === 1 ? "producto" : "productos"} · Toca para ver peso, precio y costo`}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">
+                      {v.tipo_pago === "Credito"
+                        ? "Crédito"
+                        : `Contado · ${v.cuenta_nombre || "Cuenta no disponible"}`}
+                      {v.anulada && v.anulacion_motivo ? ` · ${v.anulacion_motivo}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="font-black text-gray-900">{fmtSoles(v.total)}</p>
+                    {v.comprobante_serie_numero && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700 mt-1">
+                        <FiCheckCircle size={11} /> {v.comprobante_serie_numero}
+                      </span>
+                    )}
+                  </div>
+                  <FiChevronDown
+                    className="mt-1 flex-shrink-0 text-violet-500 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+                    aria-hidden="true"
+                  />
+                </summary>
+                <div className="border-t border-gray-100 px-3 pb-3 pt-3 sm:px-4">
+                  <DetalleVentaPos
+                    items={v.items}
+                    total={v.total}
+                    costoTotal={v.costo_total}
+                    costoCompleto={v.costo_completo}
+                  />
+                  {!v.anulada && (
+                    <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
+                      <button
+                        type="button"
+                        disabled={Boolean(noEditable)}
+                        onClick={() => iniciarEdicion(v)}
+                        className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 ${
+                          noEditable
+                            ? "border-gray-100 bg-gray-50 text-gray-400 opacity-50 cursor-not-allowed"
+                            : "border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer"
+                        }`}
+                        title={noEditable ? `No se puede editar: esta venta tiene comprobante SUNAT activo (${v.comprobante_serie_numero})` : "Modificar los detalles de esta venta directamente"}
+                      >
+                        <FiEdit2 size={13} /> Editar venta
+                      </button>
+                      <button
+                        type="button"
+                        disabled={Boolean(noEditable)}
+                        onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(false); }}
+                        className={`inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 ${
+                          noEditable
+                            ? "border-gray-100 bg-gray-50 text-gray-450 opacity-50 cursor-not-allowed"
+                            : "border-red-200 bg-red-50 text-red-700 hover:bg-red-100 cursor-pointer"
+                        }`}
+                        title={noEditable ? `No se puede anular: esta venta tiene comprobante SUNAT activo (${v.comprobante_serie_numero}). Emite una Nota de Crédito.` : "Anular venta"}
+                      >
+                        <FiTrash2 size={13} /> Anular
+                      </button>
+                    </div>
                   )}
                 </div>
-                <FiChevronDown
-                  className="mt-1 flex-shrink-0 text-violet-500 transition-transform group-open:rotate-180 motion-reduce:transition-none"
-                  aria-hidden="true"
-                />
-              </summary>
-              <div className="border-t border-gray-100 px-3 pb-3 pt-3 sm:px-4">
-                <DetalleVentaPos
-                  items={v.items}
-                  total={v.total}
-                  costoTotal={v.costo_total}
-                  costoCompleto={v.costo_completo}
-                />
-                {!v.anulada && (
-                  <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
-                    <button
-                      type="button"
-                      onClick={() => iniciarEdicion(v)}
-                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
-                      title="Modificar los detalles de esta venta directamente"
-                    >
-                      <FiEdit2 size={13} /> Editar venta
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setEditandoFecha(v); setNuevaFechaVenta(v.fecha); }}
-                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 cursor-pointer"
-                      title="Modificar la fecha de esta venta"
-                    >
-                      <FiCalendar size={13} /> Editar fecha
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setAnulando(v); setMotivo(""); setIrAlPosDespues(false); }}
-                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-bold text-red-700 transition hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 cursor-pointer"
-                    >
-                      <FiTrash2 size={13} /> Anular
-                    </button>
-                  </div>
-                )}
-              </div>
-            </details>
-          ))}
+              </details>
+            );
+          })}
         </div>
       )}
 
@@ -697,52 +661,7 @@ export default function VentasPlantaClient() {
         </div>
       )}
 
-      {/* Modal editar fecha */}
-      {editandoFecha && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-2.5 px-5 py-4 border-b border-gray-100">
-              <span className="flex items-center justify-center w-9 h-9 rounded-full bg-violet-100 text-violet-600 flex-shrink-0">
-                <FiCalendar size={18} />
-              </span>
-              <h3 className="font-bold text-gray-900">Editar fecha de venta</h3>
-              <button onClick={() => setEditandoFecha(null)} className="ml-auto p-1.5 rounded-full text-gray-400 hover:bg-gray-100">
-                <FiX size={16} />
-              </button>
-            </div>
-            <div className="px-5 py-4 space-y-3 text-sm">
-              <p className="text-gray-700">
-                Selecciona la nueva fecha para la venta de <strong>{editandoFecha.razon_social || editandoFecha.cliente || "Venta al paso"}</strong> de <strong>{fmtSoles(editandoFecha.total)}</strong>.
-              </p>
-              <div className="bg-amber-50 border border-amber-100 rounded-lg p-3 text-xs text-amber-800 space-y-1">
-                <p className="font-bold">⚠️ Restricciones contables:</p>
-                <p>· No se puede modificar si la caja de la fecha origen o destino ya está cerrada.</p>
-                <p>· No se puede modificar si ya tiene un comprobante SUNAT activo.</p>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 mb-1">Nueva Fecha</label>
-                <input
-                  type="date"
-                  value={nuevaFechaVenta}
-                  max={hoy}
-                  onChange={(e) => setNuevaFechaVenta(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
-                />
-              </div>
-            </div>
-            <div className="flex flex-col-reverse gap-2 px-5 py-4 border-t border-gray-100 bg-gray-50 sm:flex-row sm:justify-end">
-              <button onClick={() => setEditandoFecha(null)} className="px-4 py-2.5 text-sm font-medium text-gray-600 hover:text-gray-800">Cancelar</button>
-              <button
-                onClick={confirmarEditarFecha}
-                disabled={modificandoFecha || !nuevaFechaVenta}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-60 transition cursor-pointer"
-              >
-                {modificandoFecha ? "Guardando..." : "Guardar fecha"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+
 
       {/* Modal editar venta */}
       {editandoVenta && (
