@@ -383,14 +383,14 @@ export async function POST(request: Request) {
       // aceptada del pedido", que podría ser otra). Si solo vino pedido_id, descubrirla.
       const compRows = finalComprobanteId
         ? await sql`
-            SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
+            SELECT id, empresa, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
             FROM comprobantes
             WHERE id = ${finalComprobanteId}::uuid
               AND tipo IN ('01', '03')
             LIMIT 1
           `
         : await sql`
-            SELECT id, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
+            SELECT id, empresa, cliente_razon_social, cliente_doc_num, cliente_doc_tipo, xml_firmado_base64, items_json
             FROM comprobantes
             WHERE pedido_id = ${finalPedidoId}::uuid
               AND estado IN ('aceptado', 'observado')
@@ -400,6 +400,9 @@ export async function POST(request: Request) {
           `;
       if (compRows.length > 0) {
         finalComprobanteId = compRows[0].id as string;
+        if (compRows[0].empresa) {
+          empresaString = compRows[0].empresa as string;
+        }
         // El destinatario de la guía debe COINCIDIR con la factura. Solo se sobrescribe si el
         // llamador NO mandó override explícito y la factura tiene receptor identificado (RUC/DNI);
         // una boleta sin documento mantiene el flujo de override (no se pisa con datos inválidos).

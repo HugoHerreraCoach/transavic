@@ -73,6 +73,12 @@ function limpiarObservacionInput(value: string): string {
 }
 
 export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito }: EmitirGuiaModalProps) {
+  // Empresa elegida para la emisión (transavic | avicola). Prioriza el comprobante si existe.
+  const [empresaElegida, setEmpresaElegida] = useState<"transavic" | "avicola">(() => {
+    const rawEmpresa = comprobante?.empresa || pedido?.empresa || "transavic";
+    return rawEmpresa.toLowerCase().startsWith("av") ? "avicola" : "transavic";
+  });
+
   const [repartidores, setRepartidores] = useState<MotorizadoUser[]>([]);
   const [repartidorId, setRepartidorId] = useState<string>("");
   const [choferDni, setChoferDni] = useState<string>("");
@@ -172,7 +178,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
               );
               if (factura?.id) {
                 const resDet = await fetch(`/api/comprobantes/${factura.id}`);
-                if (resDet.ok) data = await resDet.json();
+                if (resDet.ok) {
+                  data = await resDet.json();
+                  if (active && data?.empresa) {
+                    setEmpresaElegida(data.empresa.toLowerCase().startsWith("av") ? "avicola" : "transavic");
+                  }
+                }
               }
             }
           } catch {
@@ -187,6 +198,9 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
           const res = await fetch(`/api/comprobantes/${comprobante.id}`);
           if (!res.ok) throw new Error("Fallo al obtener ítems");
           data = await res.json();
+          if (active && data?.empresa) {
+            setEmpresaElegida(data.empresa.toLowerCase().startsWith("av") ? "avicola" : "transavic");
+          }
         }
 
         if (active && data) {
@@ -282,6 +296,10 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
 
   // Inicializar campos de dirección, repartidor y override de destinatario
   useEffect(() => {
+    // Inicializar empresa emisora basada en la prioridad: comprobante primero, luego pedido
+    const rawEmpresa = comprobante?.empresa || pedido?.empresa || "transavic";
+    setEmpresaElegida(rawEmpresa.toLowerCase().startsWith("av") ? "avicola" : "transavic");
+
     if (pedido) {
       setRepartidorId(pedido.repartidor_id || "");
       setDireccionLlegada(pedido.direccion || "");
@@ -618,17 +636,12 @@ export default function EmitirGuiaModal({ pedido, comprobante, onClose, onExito 
   // Empresa emisora (espejo de empresaFromPedidoString del backend: la misma
   // heurística que usará la emisión, así el banner nunca miente). Define el RUC
   // (20 Transavic / 10 Avícola) y la serie (T001 / T002) de la guía.
-  const empresaKey = (pedido?.empresa || comprobante?.empresa || "")
-    .toLowerCase()
-    .startsWith("av")
-    ? "avicola"
-    : "transavic";
   const EMPRESA_BANNER = {
     transavic: { logo: "/transavic.jpg", nombre: "Transavic", serie: "T001", chip: "bg-red-50 border-red-200 text-red-800" },
     avicola: { logo: "/avicola.jpg", nombre: "Avícola de Tony", serie: "T002", chip: "bg-amber-50 border-amber-200 text-amber-800" },
   } as const;
-  const emisorUI = EMPRESA_BANNER[empresaKey];
-  const emisorRuc = empresasMap?.[empresaKey]?.ruc;
+  const emisorUI = EMPRESA_BANNER[empresaElegida];
+  const emisorRuc = empresasMap?.[empresaElegida]?.ruc;
 
   // Con M1/L los datos del chofer son opcionales (SUNAT los permite omitir).
   const choferOk = indicadorM1L || !!(repartidorId && choferDni && choferLicencia && vehiculoPlaca && choferNombres && choferApellidos);
