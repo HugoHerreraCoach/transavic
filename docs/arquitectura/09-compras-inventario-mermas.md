@@ -149,15 +149,28 @@ ORDER BY ci.producto_id, c.fecha DESC, c.created_at DESC
 
 El `GET` sin parámetros devuelve las últimas 100 compras con sus ítems ya mapeados (join en memoria por `compra_id`).
 
+### 3.4 Anulación de compras — `POST /api/compras/[id]/anular` (26 jul 2026)
+
+Para corregir errores de registro (como asignar un proveedor equivocado o montos erróneos), un administrador o usuario autorizado puede anular la compra. Este proceso se ejecuta como una **transacción atómica** para evitar descuadres en el inventario o la caja:
+
+1. **Validación Financiera**: Verifica si la cuenta por pagar vinculada a la compra tiene `monto_pagado > 0`. Si ya tiene pagos, se bloquea la anulación y exige revertir primero los abonos en la Ficha del Proveedor.
+2. **Reversión de Inventario**: Por cada ítem de la compra que no sea un servicio, se calcula el cambio opuesto:
+   * Si la fila fue de ingreso de mercadería, se **resta** la cantidad del stock en `inventario_lotes`.
+   * Si fue una devolución al proveedor, se **suma** la cantidad devuelta de vuelta al stock.
+3. **Registro en Kardex**: Se inserta un movimiento en `inventario_movimientos` con el tipo `'anulacion_compra'` especificando el **motivo de la anulación** ingresado por el usuario, el ID del operador y la referencia a la compra.
+4. **Baja Financiera**: Se elimina físicamente la deuda de `cuentas_por_pagar`.
+5. **Estado de la Compra**: Se actualiza la cabecera en `compras` a `estado = 'Anulado'`.
+
 ---
 
 ## 4. POLÍTICA DE INVENTARIO (decisión de Hugo, 5 jul 2026)
 
-El stock (`inventario_lotes`) lo mueven **exactamente cuatro** flujos, y cada movimiento deja fila en el kardex `inventario_movimientos`:
+El stock (`inventario_lotes`) lo mueven **exactamente cinco** flujos, y cada movimiento deja fila en el kardex `inventario_movimientos`:
 
 | Flujo | Signo | Tipo de kardex | Dónde vive |
 |---|---|---|---|
 | Compra de mercadería | **+** peso neto | `compra` | `POST /api/compras` (§3) |
+| Anulación de compra | **−** peso neto (o **+** si fue devolución) | `anulacion_compra` | `POST /api/compras/[id]/anular` (§3.4) |
 | Venta de mostrador (POS) | **−** cantidad | `venta_pos` | `POST /api/pos` (doc [10 §2](./10-pos-caja-tesoreria.md)) |
 | Pedido normal al pasar a **ENTREGADO** | **−** `COALESCE(cantidad_real, cantidad)` | `entrega` | `POST /api/pedidos/[id]/entregar` → `descontarInventarioPedido()` |
 | Reversión de una entrega | **+** lo descontado | `reversion` | `PATCH /api/pedidos/[id]/entregar` → `reponerInventarioPedido()` |

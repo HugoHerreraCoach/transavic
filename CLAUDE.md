@@ -580,3 +580,18 @@ Cuando el cliente (Antonio u otros asesores) reporte errores de la SUNAT (ej. ca
 - **Estructura "No me hagas pensar"**: Usa negritas, listas con viñetas cortas, títulos claros y emojis para que el mensaje sea escaneable al instante.
 - **Responsabilidad clara**: Explicar de manera directa y sencilla que es una falla externa de la SUNAT (puede durar horas o días a nivel nacional) y que nuestro sistema está funcionando bien.
 - **Alternativa urgente**: Sugerir que si la emisión es crítica y no se puede esperar, lo realicen directamente ingresando al **Portal Web de la SUNAT**.
+
+---
+
+## 15. Anulación de Compras de Mercadería (26 jul 2026)
+
+Para subsanar registros de compras erróneos de la madrugada:
+- **API `POST /api/compras/[id]/anular`**: Exige rol `admin` o `produccion` y motivo obligatorio ($\ge$ 5 chars).
+  - *Restricción:* Falla si la deuda en `cuentas_por_pagar` ya registra pagos (`monto_pagado > 0`).
+  - *Inventario y Kardex:* Reversa de forma opuesta las cantidades no-servicios en `inventario_lotes` e ingresa movimiento en `inventario_movimientos` con tipo `'anulacion_compra'`.
+  - *Deudas:* Elimina la deuda en `cuentas_por_pagar`.
+  - *Cabecera:* Coloca `estado = 'Anulado'` en la tabla `compras`.
+- **UIs**:
+  - En **Historial** (`compras-client.tsx`): Fila en gris opaco para compras anuladas, badge rojo "Anulada" y botón `FiTrash2` con modal interactivo para ingresar el motivo.
+  - En **Ficha Proveedor** (`ficha-proveedor-client.tsx`): Botón "Anular Compra" en tarjetas de deudas sin abonos, con prompt para ingresar motivo.
+

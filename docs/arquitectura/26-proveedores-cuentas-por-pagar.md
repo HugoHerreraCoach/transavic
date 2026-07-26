@@ -103,10 +103,12 @@ neto del conjunto es cero; ninguna de las dos evidencias se edita ni se elimina.
 | `POST /api/cuentas-por-pagar` | `admin` | Compatibilidad: delega al servicio canónico. |
 | `POST /api/cuentas-por-pagar/deuda` | `admin` | Crear deuda manual y consumir anticipo disponible. |
 | `POST /api/compras` | `admin|produccion` según regla existente | Crea compra/deuda y aplica anticipo bajo bloqueo. |
+| `POST /api/compras/[id]/anular` | `admin|produccion` | Anula compra de mercadería, reversa stock, Kardex y borra deuda. |
 
 Producción conserva el mantenimiento operativo de proveedores y compras, pero no
 puede abrir la ficha, ver saldos financieros, registrar pagos ni generar el estado
-de cuenta.
+de cuenta. Sin embargo, comparte con el administrador el permiso técnico para anular
+compras si fuese necesario.
 
 ## 6. Ficha y PDF
 
@@ -114,6 +116,7 @@ de cuenta.
 
 - deuda anterior, compras, pagos, deuda pendiente y saldo a favor;
 - documentos con productos, pesos, costos, aplicaciones y saldo restante;
+- **botón "Anular Compra"** en cada documento de compra (deshabilitado si ya tiene abonos/pagos registrados) que permite dar de baja la compra y su deuda con motivo obligatorio;
 - cada pago como tarjeta independiente con fecha, hora, cuenta y referencia;
 - anticipos disponibles, pagos anulados y sus contraasientos visibles;
 - libro cronológico filtrable por fechas.
