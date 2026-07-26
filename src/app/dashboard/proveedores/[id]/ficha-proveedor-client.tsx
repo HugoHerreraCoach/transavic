@@ -369,6 +369,11 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
   const [generandoPdf, setGenerandoPdf] = useState<"compartir" | "descargar" | null>(null);
   const estadoRef = useRef<HTMLElement>(null);
 
+  // Estados para el modal personalizado de anulación de compra
+  const [compraAnulando, setCompraAnulando] = useState<{ id: string; tipo_doc: string; nro_doc: string; monto_pagado: number } | null>(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState("");
+  const [anulando, setAnulando] = useState(false);
+
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
@@ -434,32 +439,28 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
     }
   };
 
-  const anularCompra = async (compraId: string, tipoDoc: string, nroDoc: string, montoPagado: number) => {
-    if (montoPagado > 0.009) {
-      setError(`No se puede anular esta compra porque ya registra ${dinero(montoPagado)} pagados. Primero revierte los abonos correspondientes.`);
-      return;
-    }
-    const motivo = window.prompt(`¿Anular compra (Doc: ${tipoDoc} ${nroDoc})? Esta acción descontará automáticamente el stock y borrará la deuda. Motivo (mínimo 5 caracteres):`);
-    if (!motivo) return;
-    if (motivo.trim().length < 5) {
-      setError("El motivo de la anulación debe tener al menos 5 caracteres.");
-      return;
-    }
-
+  const handleConfirmarAnulacionCompra = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!compraAnulando || motivoAnulacion.trim().length < 5) return;
+    setAnulando(true);
     try {
       setError(null);
       setMensaje(null);
-      const res = await fetch(`/api/compras/${compraId}/anular`, {
+      const res = await fetch(`/api/compras/${compraAnulando.id}/anular`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ motivo: motivo.trim() }),
+        body: JSON.stringify({ motivo: motivoAnulacion.trim() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "No se pudo anular la compra.");
       setMensaje("Compra anulada, stock descontado de inventario y deuda eliminada.");
+      setCompraAnulando(null);
+      setMotivoAnulacion("");
       cargar();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "No se pudo anular la compra.");
+    } finally {
+      setAnulando(false);
     }
   };
 
@@ -516,9 +517,16 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                       </button>
                     ) : (
                       <button
-                        onClick={() => anularCompra(deuda.compra_id!, deuda.tipo_doc || "Doc", deuda.nro_doc || "001", deuda.monto_pagado)}
+                        onClick={() =>
+                          setCompraAnulando({
+                            id: deuda.compra_id!,
+                            tipo_doc: deuda.tipo_doc || "Doc",
+                            nro_doc: deuda.nro_doc || "001",
+                            monto_pagado: deuda.monto_pagado,
+                          })
+                        }
                         disabled={deuda.monto_pagado > 0.009}
-                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer"
+                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer inline-flex items-center justify-center"
                         title="Anular la compra de mercadería, reversando el stock e inventario"
                       >
                         <FiTrash2 className="mr-1.5 inline" />Anular Compra
@@ -593,6 +601,71 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
 
       {modalPago && <ModalPago ficha={ficha} cuentas={cuentas} deudaInicial={deudaInicial} onClose={() => setModalPago(false)} onGuardado={(texto) => { setModalPago(false); setMensaje(texto); cargar(); }} />}
       {deudaAEditar && <ModalEditarDeuda proveedorNombre={ficha.proveedor.razon_social} deuda={deudaAEditar} onClose={() => setDeudaAEditar(null)} onGuardado={(texto) => { setDeudaAEditar(null); setMensaje(texto); cargar(); }} />}
+
+      {/* Modal "Anular Compra" */}
+      {compraAnulando && (
+        <div
+          className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4 animate-in fade-in duration-200"
+          onClick={() => !anulando && setCompraAnulando(null)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center bg-gray-50 px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="font-black text-gray-900">Anular Compra de Mercadería</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{ficha.proveedor.razon_social} — Doc: {compraAnulando.tipo_doc} {compraAnulando.nro_doc}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !anulando && setCompraAnulando(null)}
+                className="text-gray-400 hover:text-gray-600 rounded-lg p-1 hover:bg-gray-100 transition-all cursor-pointer"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarAnulacionCompra} className="p-6 space-y-4">
+              <p className="text-xs text-red-700 bg-red-50 border border-red-100 p-3 rounded-2xl">
+                ⚠️ <b>Atención:</b> Esta acción descontará automáticamente el stock ingresado del inventario y eliminará la cuenta por pagar asociada. No se puede deshacer.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                  Motivo de la anulación (Mínimo 5 caracteres)
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={motivoAnulacion}
+                  onChange={(e) => setMotivoAnulacion(e.target.value)}
+                  placeholder="Ej: Se registró con el proveedor equivocado o datos incorrectos..."
+                  className="block w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-gray-50"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setCompraAnulando(null)}
+                  disabled={anulando}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={anulando || motivoAnulacion.trim().length < 5}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95"
+                >
+                  {anulando ? "Anulando…" : "Confirmar Anulación"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
