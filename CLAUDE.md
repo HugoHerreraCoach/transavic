@@ -602,4 +602,8 @@ Para corregir digitaciones incorrectas de compras e información de proveedores 
     - Reemplaza `window.prompt` de anulación por modal React/Tailwind.
     - Alinea el botón de anular compra a la derecha (`sm:ml-auto`) para consistencia y agrega tooltips de advertencia si la deuda tiene pagos aplicados.
     - **Compresión de espacio:** Se redujeron los padding y margins verticales del encabezado (`space-y-4` general en main, `p-4` en header, link de regreso compacto `text-xs py-0.5`, y botones de acción de cabecera a `min-h-10 text-sm`) para aumentar la densidad de información arriba y permitir ver las boletas sin hacer scroll inmediato.
+    - **Botón «Editar Compra»:** Agrega el botón `FiEdit2` al lado de anulación. Redirige a `/dashboard/compras?editar_compra=${id}` para precarga automática.
+- **Directrices de UX/UI Críticas**:
+  - **Evitar Scroll en Inputs Numéricos (`type="number"`):** Para prevenir que la rueda del mouse altere los valores digitados al hacer scroll en formularios y tablas, aplicar siempre `onWheel={(e) => (e.target as HTMLInputElement).blur()}` en React.
+  - **Doble Selección Visual en Sidebar:** Los enlaces principales/destacados (`isPrimary`) inactivos no deben compartir tonos de color con el estado activo (ej. evitar rojos/rosados si el activo es rojo). Deben usar colores grises neutros de acción (`bg-gray-50/80`, `border-gray-200`, `text-gray-700`) e íconos grises (`text-gray-500`) para no confundir al usuario sobre la página en la que se encuentra.
 

@@ -837,4 +837,10 @@ Para subsanar digitaciones incorrectas de manera flexible, se introdujo el mecan
 - **UI en Ficha de Proveedor (`ficha-proveedor-client.tsx`)**:
   * En la pestaña de deudas, los documentos de compra muestran el botón "Anular Compra" que solicita motivo mediante modal interactivo en React (reemplazando al `window.prompt` nativo). Se alinea siempre a la derecha (`sm:ml-auto`) y muestra tooltips informativos con cursor `not-allowed` si ya tiene abonos aplicados.
   * **Optimización de Espacio:** Se comprimieron las alturas, márgenes y rellenos (`space-y-4` general, paddings `p-4` en header, link de regreso a un discreto `text-xs py-0.5`, y botones de acción a `min-h-10 text-sm`) para maximizar la densidad de información y dar visibilidad inmediata a los documentos de deuda sin obligar a hacer scroll.
+  * **Botón «Editar Compra»:** Agregado junto a "Anular Compra" que enlaza a `/dashboard/compras?editar_compra=${compra_id}`.
+- **UI en Compras (`compras-client.tsx`)**:
+  * **Edición de Compra con Pagos:** Al cargar una compra que ya tiene abonos aplicados, se deshabilitan por completo visualmente los selectores de productos y los inputs de pesos/precios de la tabla, y se muestra un banner contextual color ámbar instruyendo a Marianela cómo proceder (anular abonos).
+  * **Prevención de Scroll en Inputs Numéricos:** Se desactivó el cambio involuntario de números mediante el scroll de la rueda del mouse aplicando `onWheel={(e) => e.target.blur()}` en todos los inputs numéricos de detalle.
+- **Diseño de Sidebar (`DashboardLayout.tsx`)**:
+  * Se neutralizaron los estilos de botones destacados o primarios (`isPrimary` como "Venta Rápida") cuando no están activos, utilizando colores grises (`bg-gray-50/80`, `border-gray-200`, `text-gray-700`) e íconos grises (`text-gray-500`) en lugar de colores rojos/rosados, evitando la confusión de doble selección visual simultánea.
 
