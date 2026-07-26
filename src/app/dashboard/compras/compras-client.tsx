@@ -193,7 +193,14 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       }
       if (prodRes.ok) {
         const prodData = await prodRes.json();
-        setProductos(prodData.data || prodData);
+        const lista = Array.isArray(prodData)
+          ? prodData
+          : Array.isArray(prodData?.data)
+          ? prodData.data
+          : [];
+        setProductos(lista);
+      } else {
+        mostrarToast("No se pudo cargar el catálogo de productos.", "error");
       }
       if (compRes.ok) setCompras(await compRes.json());
     } catch (error) {
@@ -1192,6 +1199,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                       min="0"
                       value={items[filaSexoEdicion].jabas_macho || ""}
                       onChange={(e) => handleItemChange(filaSexoEdicion, "jabas_macho", Number(e.target.value))}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-indigo-400"
                     />
                   </div>
@@ -1202,6 +1210,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                       min="0"
                       value={items[filaSexoEdicion].sueltos_macho || ""}
                       onChange={(e) => handleItemChange(filaSexoEdicion, "sueltos_macho", Number(e.target.value))}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-indigo-400"
                     />
                   </div>
@@ -1219,6 +1228,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                       min="0"
                       value={items[filaSexoEdicion].jabas_hembra || ""}
                       onChange={(e) => handleItemChange(filaSexoEdicion, "jabas_hembra", Number(e.target.value))}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-pink-400"
                     />
                   </div>
@@ -1229,6 +1239,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                       min="0"
                       value={items[filaSexoEdicion].sueltos_hembra || ""}
                       onChange={(e) => handleItemChange(filaSexoEdicion, "sueltos_hembra", Number(e.target.value))}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-pink-400"
                     />
                   </div>

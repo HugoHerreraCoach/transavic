@@ -234,6 +234,20 @@ export default function DashboardLayout({
     window.addEventListener("toggle-mobile-sidebar", handleToggleMobile);
     return () => window.removeEventListener("toggle-mobile-sidebar", handleToggleMobile);
   }, []);
+
+  // Prevenir que la rueda del ratón/trackpad cambie valores en cualquier <input type="number"> del ERP
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement &&
+        document.activeElement.type === "number"
+      ) {
+        document.activeElement.blur();
+      }
+    };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, []);
   
   // Estado para acordeones. Todos abiertos por defecto.
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() => {
