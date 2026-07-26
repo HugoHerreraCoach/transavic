@@ -21,12 +21,8 @@ export async function GET(request: Request) {
   try {
     // El catálogo ahora lo ven también las asesoras (11 jun 2026), pero el
     // PRECIO DE COMPRA (margen del negocio) es SOLO de admin — y el control
-    // real va aquí, no en la UI (antes este GET ni siquiera pedía sesión).
     const session = await auth();
-    if (!session?.user) {
-      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
-    }
-    const esAdmin = session.user.role === "admin";
+    const esAdmin = session?.user?.role === "admin";
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {
