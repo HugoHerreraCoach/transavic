@@ -1,35 +1,44 @@
 // scripts/run-migration.mjs
-import 'dotenv/config';
-import { neon } from '@neondatabase/serverless';
+import { neon } from "@neondatabase/serverless";
+import dotenv from "dotenv";
+import fs from "fs";
+import path from "path";
 
-const sql = neon(process.env.DATABASE_URL);
+dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env" });
 
-async function run() {
-  try {
-    // 1. Add column
-    await sql`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS asesor_id UUID REFERENCES users(id) ON DELETE SET NULL`;
-    console.log('✅ Columna asesor_id agregada');
-
-    // 2. Assign existing clients to admin
-    await sql`UPDATE clientes SET asesor_id = (SELECT id FROM users WHERE role = 'admin' LIMIT 1) WHERE asesor_id IS NULL`;
-    console.log('✅ Clientes existentes asignados al admin');
-
-    // 3. Create index
-    await sql`CREATE INDEX IF NOT EXISTS idx_clientes_asesor_id ON clientes(asesor_id)`;
-    console.log('✅ Índice creado');
-
-    // 4. Verify
-    const count = await sql`SELECT COUNT(*) as total FROM clientes`;
-    console.log('Total clientes:', count[0].total);
-
-    const sample = await sql`SELECT id, nombre, asesor_id FROM clientes LIMIT 3`;
-    console.log('Muestra:', JSON.stringify(sample, null, 2));
-
-    console.log('\n🎉 Migración completada exitosamente');
-  } catch (e) {
-    console.error('❌ Error:', e.message);
-  }
-  process.exit(0);
+const dbUrl = process.env.DATABASE_URL;
+if (!dbUrl) {
+  console.error("DATABASE_URL no encontrada.");
+  process.exit(1);
 }
 
-run();
+const sql = neon(dbUrl);
+
+async function main() {
+  const sqlPath = path.resolve("scripts/migrate-rendimiento-sexo-2026-07-26.sql");
+  console.log(`Leyendo migración desde: ${sqlPath}`);
+  const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+
+  console.log("Ejecutando sentencias SQL...");
+  const cleanedSql = sqlContent
+    .split("\n")
+    .filter(line => !line.trim().startsWith("--"))
+    .join("\n");
+
+  const queries = cleanedSql
+    .split(";")
+    .map(q => q.trim())
+    .filter(q => q.length > 0);
+
+  for (const q of queries) {
+    console.log(`Ejecutando: ${q}`);
+    await sql.query(q);
+  }
+  console.log("¡Migración ejecutada con éxito en la base de datos!");
+}
+
+main().catch(err => {
+  console.error("Error al ejecutar migración:", err);
+  process.exit(1);
+});

@@ -17,9 +17,11 @@ const CompraItemSchema = z.object({
   peso_bruto: z.number().positive(),
   peso_tara: z.number().nonnegative(),
   costo_unitario: z.number().nonnegative(),
-  // 'devolucion' = mercadería que se le devuelve al proveedor en esta guía:
-  // RESTA del total (deuda) y del inventario (decisión Hugo/Nelita, 9 jul 2026).
   tipo: z.enum(["ingreso", "devolucion"]).default("ingreso"),
+  jabas_macho: z.number().int().nonnegative().optional(),
+  jabas_hembra: z.number().int().nonnegative().optional(),
+  sueltos_macho: z.number().int().nonnegative().optional(),
+  sueltos_hembra: z.number().int().nonnegative().optional(),
 });
 
 // Las líneas SIN peso (servicios, insumos, "producto adicional") son un cargo del
@@ -142,11 +144,23 @@ export async function POST(req: Request) {
       const signo = item.tipo === "devolucion" ? -1 : 1;
       const subtotalItem = Number((signo * peso_neto * item.costo_unitario).toFixed(2));
       totalAcumulado += subtotalItem;
+
+      const jMacho = item.jabas_macho || 0;
+      const jHembra = item.jabas_hembra || 0;
+      const sMacho = item.sueltos_macho || 0;
+      const sHembra = item.sueltos_hembra || 0;
+      const total_pollos = (jMacho * 7) + sMacho + (jHembra * 9) + sHembra;
+
       return {
         ...item,
         servicio,
         peso_neto,
-        subtotalItem
+        subtotalItem,
+        jabas_macho: jMacho,
+        jabas_hembra: jHembra,
+        sueltos_macho: sMacho,
+        sueltos_hembra: sHembra,
+        total_pollos
       };
     });
     totalAcumulado = Number(totalAcumulado.toFixed(2));
@@ -189,8 +203,14 @@ export async function POST(req: Request) {
       `,
       ...itemsProcesados.flatMap((item) => [
         sql`
-          INSERT INTO compra_items (compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal, tipo)
-          VALUES (${compraId}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${item.peso_neto}, ${item.costo_unitario}, ${item.subtotalItem}, ${item.tipo})
+          INSERT INTO compra_items (
+            compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal, tipo,
+            jabas_macho, jabas_hembra, sueltos_macho, sueltos_hembra, total_pollos
+          )
+          VALUES (
+            ${compraId}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${item.peso_neto}, ${item.costo_unitario}, ${item.subtotalItem}, ${item.tipo},
+            ${item.jabas_macho}, ${item.jabas_hembra}, ${item.sueltos_macho}, ${item.sueltos_hembra}, ${item.total_pollos}
+          )
         `,
         // Inventario: los SERVICIOS (pelada, flete…) no son mercadería y no tocan
         // stock ni kardex. La devolución RESTA (cantidad negativa, kardex propio).

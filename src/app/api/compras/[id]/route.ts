@@ -19,6 +19,10 @@ const CompraItemSchema = z.object({
   peso_tara: z.number().nonnegative(),
   costo_unitario: z.number().nonnegative(),
   tipo: z.enum(["ingreso", "devolucion"]).default("ingreso"),
+  jabas_macho: z.number().int().nonnegative().optional(),
+  jabas_hembra: z.number().int().nonnegative().optional(),
+  sueltos_macho: z.number().int().nonnegative().optional(),
+  sueltos_hembra: z.number().int().nonnegative().optional(),
 });
 
 const CompraSchema = z.object({
@@ -75,6 +79,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         peso_neto: Number(item.peso_neto),
         costo_unitario: Number(item.costo_unitario),
         subtotal: Number(item.subtotal),
+        jabas_macho: Number(item.jabas_macho || 0),
+        jabas_hembra: Number(item.jabas_hembra || 0),
+        sueltos_macho: Number(item.sueltos_macho || 0),
+        sueltos_hembra: Number(item.sueltos_hembra || 0),
+        total_pollos: Number(item.total_pollos || 0),
       }))
     });
   } catch (error: unknown) {
@@ -259,10 +268,22 @@ export async function PUT(req: Request, { params }: RouteParams) {
         const factorSigno = item.tipo === "devolucion" ? -1 : 1;
         nuevoTotalAcumulado += subtotalItem * factorSigno;
 
+        const jMacho = item.jabas_macho || 0;
+        const jHembra = item.jabas_hembra || 0;
+        const sMacho = item.sueltos_macho || 0;
+        const sHembra = item.sueltos_hembra || 0;
+        const total_pollos = (jMacho * 7) + sMacho + (jHembra * 9) + sHembra;
+
         queries.push(
           sql`
-            INSERT INTO compra_items (compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal, tipo)
-            VALUES (${id}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${pesoNeto}, ${item.costo_unitario}, ${subtotalItem}, ${item.tipo})
+            INSERT INTO compra_items (
+              compra_id, producto_id, jabas, peso_bruto, peso_tara, peso_neto, costo_unitario, subtotal, tipo,
+              jabas_macho, jabas_hembra, sueltos_macho, sueltos_hembra, total_pollos
+            )
+            VALUES (
+              ${id}, ${item.producto_id}, ${item.jabas}, ${item.peso_bruto}, ${item.peso_tara}, ${pesoNeto}, ${item.costo_unitario}, ${subtotalItem}, ${item.tipo},
+              ${jMacho}, ${jHembra}, ${sMacho}, ${sHembra}, ${total_pollos}
+            )
           `
         );
 

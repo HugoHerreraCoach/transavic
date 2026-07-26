@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { FiLoader, FiCalendar, FiBox, FiCopy, FiFileText } from "react-icons/fi";
+import { FiLoader, FiBox, FiCopy, FiFileText, FiEdit, FiX, FiCheck, FiInfo } from "react-icons/fi";
 import { toLocalDateString } from "@/lib/utils";
 
 interface ProductoCuadre {
@@ -11,9 +11,16 @@ interface ProductoCuadre {
   producto_categoria: string;
   jabas_compradas: number;
   kg_comprados: number;
+  jabas_macho: number;
+  jabas_hembra: number;
+  sueltos_macho: number;
+  sueltos_hembra: number;
+  total_pollos: number;
+  kg_merma_estimada: number;
   kg_ejecutivas: number;
   kg_planta: number;
   kg_campo: number;
+  kg_ajuste: number;
   kg_vendidos: number;
   diferencia: number;
 }
@@ -21,6 +28,35 @@ interface ProductoCuadre {
 interface CuadreFisicoResponse {
   fecha: string;
   productos: ProductoCuadre[];
+}
+
+interface DetalleItem {
+  compra_id?: string;
+  venta_id?: string;
+  pedido_id?: string;
+  ajuste_id?: string;
+  fecha: string;
+  proveedor_nombre?: string;
+  cliente_nombre?: string;
+  nro_doc?: string;
+  nro_guia?: string;
+  nro_pedido?: string;
+  item_id: string;
+  jabas?: number;
+  peso_bruto?: number;
+  peso_tara?: number;
+  kilos: number;
+  precio_unitario?: number;
+  costo_unitario?: number;
+  precio_kg?: number;
+  motivo?: string;
+  usuario_nombre?: string;
+  jabas_macho?: number;
+  jabas_hembra?: number;
+  sueltos_macho?: number;
+  sueltos_hembra?: number;
+  total_pollos?: number;
+  created_at?: string;
 }
 
 export default function CuadreMermasTab() {
@@ -32,6 +68,24 @@ export default function CuadreMermasTab() {
   const [error, setError] = useState<string | null>(null);
   const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
   const [copiando, setCopiando] = useState<boolean>(false);
+
+  // Estados para Modal de Detalle y Edición
+  const [modalAbierto, setModalAbierto] = useState<boolean>(false);
+  const [modalCanal, setModalCanal] = useState<"compras" | "campo" | "ejecutivas" | "planta" | "ajuste" | null>(null);
+  const [modalProducto, setModalProducto] = useState<{ id: string; nombre: string } | null>(null);
+  const [cargandoDetalle, setCargandoDetalle] = useState<boolean>(false);
+  const [detalleItems, setDetalleItems] = useState<DetalleItem[]>([]);
+  const [guardandoItem, setGuardandoItem] = useState<string | null>(null);
+
+  // Estados para Edición Inline de Item (Compras/Ventas de Campo)
+  const [editandoItemId, setEditandoItemId] = useState<string | null>(null);
+  const [editKilos, setEditKilos] = useState<string>("");
+  const [editJabas, setEditJabas] = useState<string>("");
+
+  // Estados para Registro de Ajuste Manual
+  const [ajusteKilos, setAjusteKilos] = useState<string>("");
+  const [ajusteMotivo, setAjusteMotivo] = useState<string>("");
+  const [guardandoAjuste, setGuardandoAjuste] = useState<boolean>(false);
 
   // Sincronizar fechas según el tipo de período
   useEffect(() => {
@@ -59,39 +113,253 @@ export default function CuadreMermasTab() {
     }
   }, [tipoPeriodo]);
 
+  const cargarCuadre = useCallback(async () => {
+    if (!fechaInicio || !fechaFin) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/reportes/cuadre-fisico?desde=${fechaInicio}&hasta=${fechaFin}`);
+      if (!res.ok) {
+        throw new Error("No se pudo cargar el cuadre físico");
+      }
+      const json = await res.json();
+      setData(json);
+    } catch (err) {
+      console.error("Error cargando cuadre físico:", err);
+      setError("Error al calcular el cuadre de mermas físicas.");
+    } finally {
+      setLoading(false);
+    }
+  }, [fechaInicio, fechaFin]);
+
   // Cargar datos al cambiar las fechas
   useEffect(() => {
-    if (!fechaInicio || !fechaFin) return;
-
-    const fetchCuadre = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`/api/reportes/cuadre-fisico?desde=${fechaInicio}&hasta=${fechaFin}`);
-        if (!res.ok) {
-          throw new Error("No se pudo cargar el cuadre físico");
-        }
-        const json = await res.json();
-        setData(json);
-      } catch (err) {
-        console.error("Error cargando cuadre físico:", err);
-        setError("Error al calcular el cuadre de mermas físicas.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCuadre();
-  }, [fechaInicio, fechaFin]);
+    cargarCuadre();
+  }, [cargarCuadre]);
 
   // Aritmética de Totales
   const totalJabasCompra = data?.productos.reduce((acc, p) => acc + p.jabas_compradas, 0) ?? 0;
   const totalCompra = data?.productos.reduce((acc, p) => acc + p.kg_comprados, 0) ?? 0;
+  const totalJabasMacho = data?.productos.reduce((acc, p) => acc + (p.jabas_macho ?? 0), 0) ?? 0;
+  const totalJabasHembra = data?.productos.reduce((acc, p) => acc + (p.jabas_hembra ?? 0), 0) ?? 0;
+  const totalSueltosMacho = data?.productos.reduce((acc, p) => acc + (p.sueltos_macho ?? 0), 0) ?? 0;
+  const totalSueltosHembra = data?.productos.reduce((acc, p) => acc + (p.sueltos_hembra ?? 0), 0) ?? 0;
+  const totalPollos = data?.productos.reduce((acc, p) => acc + (p.total_pollos ?? 0), 0) ?? 0;
+  const totalMermaEstimada = data?.productos.reduce((acc, p) => acc + (p.kg_merma_estimada ?? 0), 0) ?? 0;
   const totalEjecutivas = data?.productos.reduce((acc, p) => acc + p.kg_ejecutivas, 0) ?? 0;
   const totalPlanta = data?.productos.reduce((acc, p) => acc + p.kg_planta, 0) ?? 0;
   const totalCampo = data?.productos.reduce((acc, p) => acc + p.kg_campo, 0) ?? 0;
+  const totalAjuste = data?.productos.reduce((acc, p) => acc + (p.kg_ajuste ?? 0), 0) ?? 0;
   const totalVenta = data?.productos.reduce((acc, p) => acc + p.kg_vendidos, 0) ?? 0;
   const totalDiferencia = data?.productos.reduce((acc, p) => acc + p.diferencia, 0) ?? 0;
+
+  // Cargar detalles transaccionales del canal para el modal
+  const obtenerDetalles = useCallback(async (productoId: string, canal: "compras" | "campo" | "ejecutivas" | "planta" | "ajuste") => {
+    setCargandoDetalle(true);
+    setDetalleItems([]);
+    setEditandoItemId(null);
+    try {
+      const res = await fetch(`/api/reportes/cuadre-fisico/detalle?desde=${fechaInicio}&hasta=${fechaFin}&producto_id=${productoId}&canal=${canal}`);
+      if (res.ok) {
+        const json = await res.json();
+        setDetalleItems(json.items || []);
+        if (canal === "ajuste" && json.items && json.items.length > 0) {
+          const primerAjuste = json.items[0];
+          setAjusteKilos(primerAjuste.kilos.toString());
+          setAjusteMotivo(primerAjuste.motivo);
+        } else if (canal === "ajuste") {
+          setAjusteKilos("");
+          setAjusteMotivo("");
+        }
+      }
+    } catch (err) {
+      console.error("Error al cargar detalle transaccional:", err);
+    } finally {
+      setCargandoDetalle(false);
+    }
+  }, [fechaInicio, fechaFin]);
+
+  // Abrir Modal de Detalle/Edición
+  const abrirModal = (producto: { id: string; nombre: string }, canal: "compras" | "campo" | "ejecutivas" | "planta" | "ajuste") => {
+    setModalProducto(producto);
+    setModalCanal(canal);
+    setModalAbierto(true);
+    obtenerDetalles(producto.id, canal);
+  };
+
+  // Guardar Edición Inline de una compra o venta de campo
+  const handleGuardarItem = async (itemId: string, originalItem: DetalleItem) => {
+    setGuardandoItem(itemId);
+    try {
+      const kilos = parseFloat(editKilos);
+      const jabas = parseInt(editJabas);
+      if (isNaN(kilos) || kilos <= 0) {
+        alert("Ingrese un peso válido mayor a 0");
+        setGuardandoItem(null);
+        return;
+      }
+      if (isNaN(jabas) || jabas < 0) {
+        alert("Ingrese una cantidad de jabas válida (mínimo 0)");
+        setGuardandoItem(null);
+        return;
+      }
+
+      if (modalCanal === "compras") {
+        // Para compras, necesitamos cargar la compra completa, modificar el item específico y guardar
+        const resGet = await fetch(`/api/compras/${originalItem.compra_id}`);
+        if (!resGet.ok) throw new Error("No se pudo obtener el detalle de la compra para editar");
+        const compra = await resGet.json();
+
+        // Modificar los datos del item correspondiente
+        const itemsModificados = compra.items.map((it: { id: string; jabas?: number; peso_bruto?: number; peso_tara?: number }) => {
+          if (it.id === itemId) {
+            // El backend recalcula peso_neto y subtotal en base a peso_bruto, peso_tara y costo_unitario.
+            // Para mantener la consistencia simplificada: peso_bruto = kilos, peso_tara = 0
+            return {
+              ...it,
+              jabas,
+              peso_bruto: kilos,
+              peso_tara: 0,
+            };
+          }
+          return it;
+        });
+
+        const resPut = await fetch(`/api/compras/${originalItem.compra_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            proveedor_id: compra.proveedor_id,
+            fecha: compra.fecha.split("T")[0],
+            tipo_doc: compra.tipo_doc,
+            nro_doc: compra.nro_doc,
+            items: itemsModificados,
+          }),
+        });
+
+        if (!resPut.ok) {
+          const errData = await resPut.json();
+          throw new Error(errData.error || "No se pudo actualizar la compra");
+        }
+      } else if (modalCanal === "campo") {
+        // Para ventas de campo, obtenemos la venta, modificamos el item y guardamos
+        const resGet = await fetch(`/api/avicola/ventas/${originalItem.venta_id}`);
+        if (!resGet.ok) throw new Error("No se pudo obtener el detalle de la venta");
+        const venta = await resGet.json();
+
+        const itemsModificados = venta.items.map((it: { id: string; jabas?: number; peso_kg?: number }) => {
+          if (it.id === itemId) {
+            return {
+              ...it,
+              jabas,
+              peso_kg: kilos,
+            };
+          }
+          return it;
+        });
+
+        const resPut = await fetch(`/api/avicola/ventas/${originalItem.venta_id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cliente_id: venta.cliente_id,
+            fecha: venta.fecha.split("T")[0],
+            nro_guia: venta.nro_guia,
+            glosa: venta.glosa,
+            items: itemsModificados,
+          }),
+        });
+
+        if (!resPut.ok) {
+          const errData = await resPut.json();
+          throw new Error(errData.error || "No se pudo actualizar la venta de campo");
+        }
+      }
+
+      setEditandoItemId(null);
+      if (modalProducto && modalCanal) {
+        await obtenerDetalles(modalProducto.id, modalCanal);
+      }
+      cargarCuadre();
+    } catch (err) {
+      console.error(err);
+      const msg = err instanceof Error ? err.message : "Error al actualizar la transacción";
+      alert(msg);
+    } finally {
+      setGuardandoItem(null);
+    }
+  };
+
+  // Guardar Ajuste Manual de Merma
+  const handleGuardarAjuste = async () => {
+    if (!modalProducto) return;
+    const kilos = parseFloat(ajusteKilos);
+    if (isNaN(kilos)) {
+      alert("Ingrese un valor numérico de kilos (puede ser negativo para mermas)");
+      return;
+    }
+    if (!ajusteMotivo || ajusteMotivo.trim().length < 3) {
+      alert("Ingrese una justificación de al menos 3 caracteres");
+      return;
+    }
+
+    setGuardandoAjuste(true);
+    try {
+      const res = await fetch("/api/reportes/cuadre-fisico/ajuste", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha: fechaInicio, // Usamos fecha de inicio (del período/día)
+          producto_id: modalProducto.id,
+          kilos_ajuste: kilos,
+          motivo: ajusteMotivo.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "No se pudo registrar el ajuste");
+      }
+
+      alert("Ajuste físico guardado correctamente.");
+      setModalAbierto(false);
+      cargarCuadre();
+    } catch (err) {
+      console.error(err);
+      const msg = err instanceof Error ? err.message : "Error al registrar ajuste";
+      alert(msg);
+    } finally {
+      setGuardandoAjuste(false);
+    }
+  };
+
+  // Eliminar Ajuste Manual
+  const handleEliminarAjuste = async () => {
+    if (!modalProducto) return;
+    if (!confirm("¿Está seguro de eliminar este ajuste físico?")) return;
+
+    setGuardandoAjuste(true);
+    try {
+      const res = await fetch(`/api/reportes/cuadre-fisico/ajuste?fecha=${fechaInicio}&producto_id=${modalProducto.id}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "No se pudo eliminar el ajuste");
+      }
+
+      alert("Ajuste físico eliminado.");
+      setModalAbierto(false);
+      cargarCuadre();
+    } catch (err) {
+      console.error(err);
+      const msg = err instanceof Error ? err.message : "Error al eliminar ajuste";
+      alert(msg);
+    } finally {
+      setGuardandoAjuste(false);
+    }
+  };
 
   // Formatear fecha para el encabezado
   const formatFechaEncabezado = (fechaStr: string) => {
@@ -294,7 +562,7 @@ export default function CuadreMermasTab() {
     } finally {
       setCopiando(false);
     }
-  }, [data, totalCompra, totalJabasCompra, totalVenta, totalDiferencia]);
+  }, [data, totalCompra, totalJabasCompra, totalVenta, totalDiferencia, fechaInicio, fechaFin]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -437,6 +705,9 @@ export default function CuadreMermasTab() {
                         Total Vendido
                       </th>
                       <th rowSpan={2} className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                        Ajuste Manual
+                      </th>
+                      <th rowSpan={2} className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
                         Diferencia (Merma)
                       </th>
                     </tr>
@@ -454,27 +725,71 @@ export default function CuadreMermasTab() {
                       <tr key={i} className="hover:bg-gray-50/50 transition-colors">
                         <td className="py-3 pr-2">
                           <div className="font-bold text-gray-900">{p.producto_nombre}</div>
-                          <div className="text-[10px] text-gray-400 mt-0.5 capitalize">
-                            {p.producto_categoria}
+                          <div className="flex flex-wrap items-center gap-x-2 text-[10px] text-gray-400 mt-0.5 capitalize font-medium">
+                            <span>{p.producto_categoria}</span>
+                            {p.total_pollos > 0 && (
+                              <span className="text-indigo-600 font-bold bg-indigo-50 px-1 py-0.5 rounded-sm flex items-center gap-0.5">
+                                🐤 {p.total_pollos} aves (♂{((p.jabas_macho || 0) * 7) + (p.sueltos_macho || 0)} | ♀{((p.jabas_hembra || 0) * 9) + (p.sueltos_hembra || 0)})
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="py-3 text-right font-medium tabular-nums text-gray-500 bg-amber-50/5 pr-2">
                           {p.jabas_compradas > 0 ? `${p.jabas_compradas} jab.` : "—"}
                         </td>
-                        <td className="py-3 text-right font-bold tabular-nums text-gray-900 bg-amber-50/10 pr-2">
-                          {p.kg_comprados > 0 ? `${p.kg_comprados.toFixed(2)} kg` : "—"}
+                        <td 
+                          onClick={() => abrirModal({ id: p.producto_id, nombre: p.producto_nombre }, "compras")}
+                          className="py-3 text-right font-bold tabular-nums text-gray-900 bg-amber-50/10 pr-2 cursor-pointer hover:bg-amber-100/50 transition-colors group relative"
+                          title="Haga clic para auditar o editar compras"
+                        >
+                          <span className="border-b border-dashed border-amber-400 pb-0.5 group-hover:text-amber-800">
+                            {p.kg_comprados > 0 ? `${p.kg_comprados.toFixed(2)} kg` : "—"}
+                          </span>
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-blue-600/80">
-                          {p.kg_ejecutivas > 0 ? `${p.kg_ejecutivas.toFixed(2)} kg` : "—"}
+                        <td 
+                          onClick={() => abrirModal({ id: p.producto_id, nombre: p.producto_nombre }, "ejecutivas")}
+                          className="py-3 text-right font-medium tabular-nums text-blue-600/80 cursor-pointer hover:bg-blue-50/40 transition-colors group relative"
+                          title="Haga clic para ver detalle de ventas ejecutivas"
+                        >
+                          <span className="border-b border-dashed border-blue-300 pb-0.5 group-hover:text-blue-800">
+                            {p.kg_ejecutivas > 0 ? `${p.kg_ejecutivas.toFixed(2)} kg` : "—"}
+                          </span>
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-amber-600/80">
-                          {p.kg_campo > 0 ? `${p.kg_campo.toFixed(2)} kg` : "—"}
+                        <td 
+                          onClick={() => abrirModal({ id: p.producto_id, nombre: p.producto_nombre }, "campo")}
+                          className="py-3 text-right font-medium tabular-nums text-amber-600/80 cursor-pointer hover:bg-amber-50/30 transition-colors group relative"
+                          title="Haga clic para auditar o editar ventas de campo"
+                        >
+                          <span className="border-b border-dashed border-amber-400 pb-0.5 group-hover:text-amber-800">
+                            {p.kg_campo > 0 ? `${p.kg_campo.toFixed(2)} kg` : "—"}
+                          </span>
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-violet-600/80">
-                          {p.kg_planta > 0 ? `${p.kg_planta.toFixed(2)} kg` : "—"}
+                        <td 
+                          onClick={() => abrirModal({ id: p.producto_id, nombre: p.producto_nombre }, "planta")}
+                          className="py-3 text-right font-medium tabular-nums text-violet-600/80 cursor-pointer hover:bg-violet-50/30 transition-colors group relative"
+                          title="Haga clic para ver detalle de ventas en planta"
+                        >
+                          <span className="border-b border-dashed border-violet-400 pb-0.5 group-hover:text-violet-800">
+                            {p.kg_planta > 0 ? `${p.kg_planta.toFixed(2)} kg` : "—"}
+                          </span>
                         </td>
                         <td className="py-3 text-right font-bold tabular-nums text-gray-900 bg-gray-50/50">
                           {p.kg_vendidos > 0 ? `${p.kg_vendidos.toFixed(2)} kg` : "—"}
+                        </td>
+                        <td 
+                          onClick={() => abrirModal({ id: p.producto_id, nombre: p.producto_nombre }, "ajuste")}
+                          className="py-3 text-right font-semibold tabular-nums text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors"
+                          title="Haga clic para registrar ajuste manual"
+                        >
+                          {p.kg_ajuste !== 0 ? (
+                            <span className={`border-b border-dashed pb-0.5 ${p.kg_ajuste > 0 ? "text-emerald-600 border-emerald-400 font-bold" : "text-rose-600 border-rose-400 font-bold"}`}>
+                              {p.kg_ajuste > 0 ? `+${p.kg_ajuste.toFixed(2)}` : p.kg_ajuste.toFixed(2)} kg
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 hover:text-gray-500 border-b border-dashed border-gray-200 pb-0.5 font-normal">
+                              + Ajuste
+                            </span>
+                          )}
                         </td>
                         <td className={`py-3 text-right font-black tabular-nums ${
                           p.diferencia < 0 
@@ -483,7 +798,12 @@ export default function CuadreMermasTab() {
                             ? "text-blue-600 bg-blue-50/10" 
                             : "text-gray-500"
                         }`}>
-                          {p.diferencia !== 0 ? `${p.diferencia.toFixed(2)} kg` : "0.00 kg"}
+                          <div>{p.diferencia !== 0 ? `${p.diferencia.toFixed(2)} kg` : "0.00 kg"}</div>
+                          {p.kg_merma_estimada > 0 && (
+                            <div className="text-[9px] font-bold text-gray-400 mt-0.5" title="Merma teórica estimada de beneficio">
+                              Est: {p.kg_merma_estimada.toFixed(2)} kg
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -491,7 +811,12 @@ export default function CuadreMermasTab() {
                     {/* Fila de Totales */}
                     <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
                       <td className="py-3.5 pl-2 text-xs uppercase font-bold text-gray-600">
-                        TOTAL CONSOLIDADO
+                        <div>TOTAL CONSOLIDADO</div>
+                        {totalPollos > 0 && (
+                          <div className="text-[9px] text-indigo-600 font-bold mt-0.5 capitalize Normal flex items-center gap-0.5">
+                            🐤 {totalPollos} aves (♂{((totalJabasMacho * 7) + totalSueltosMacho)} | ♀{((totalJabasHembra * 9) + totalSueltosHembra)})
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 text-right tabular-nums text-gray-600 bg-amber-50/10 pr-2">
                         {totalJabasCompra > 0 ? `${totalJabasCompra} jab.` : "—"}
@@ -511,10 +836,18 @@ export default function CuadreMermasTab() {
                       <td className="py-3.5 text-right tabular-nums text-gray-900 bg-gray-50">
                         {totalVenta > 0 ? `${totalVenta.toFixed(2)} kg` : "—"}
                       </td>
+                      <td className="py-3.5 text-right tabular-nums text-gray-700">
+                        {totalAjuste !== 0 ? `${totalAjuste > 0 ? "+" : ""}${totalAjuste.toFixed(2)} kg` : "—"}
+                      </td>
                       <td className={`py-3.5 text-right tabular-nums text-sm font-black ${
                         totalDiferencia < 0 ? "text-red-700 bg-red-50/40" : "text-blue-700 bg-blue-50/20"
                       }`}>
-                        {totalDiferencia.toFixed(2)} kg
+                        <div>{totalDiferencia.toFixed(2)} kg</div>
+                        {totalMermaEstimada > 0 && (
+                          <div className="text-[9px] font-bold text-gray-400 mt-0.5">
+                            Est: {totalMermaEstimada.toFixed(2)} kg
+                          </div>
+                        )}
                       </td>
                     </tr>
                   </tbody>
@@ -537,6 +870,236 @@ export default function CuadreMermasTab() {
             </div>
           )}
         </>
+      )}
+
+      {/* Slide-over de Auditoría y Ajustes */}
+      {modalAbierto && modalProducto && modalCanal && (
+        <div className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex justify-end transition-opacity duration-300">
+          <div className="bg-white w-full max-w-lg h-full shadow-2xl flex flex-col p-6 overflow-y-auto relative animate-in slide-in-from-right duration-200">
+            {/* Cabecera */}
+            <div className="flex justify-between items-start border-b border-gray-100 pb-4 mb-5">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-widest text-red-600 block mb-1">
+                  {modalCanal === "compras" && "Carga y Compras"}
+                  {modalCanal === "campo" && "Ventas de Campo"}
+                  {modalCanal === "ejecutivas" && "Ventas Ejecutivas"}
+                  {modalCanal === "planta" && "Ventas de Planta"}
+                  {modalCanal === "ajuste" && "Ajuste de Auditoría"}
+                </span>
+                <h3 className="text-base font-black text-gray-900 leading-tight">
+                  {modalProducto.nombre}
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  {fechaInicio === fechaFin 
+                    ? `Período: ${formatFechaCorto(fechaInicio)}`
+                    : `Período: ${formatFechaCorto(fechaInicio)} al ${formatFechaCorto(fechaFin)}`}
+                </p>
+              </div>
+              <button 
+                onClick={() => setModalAbierto(false)}
+                className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-900 transition-colors cursor-pointer"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Contenido principal */}
+            <div className="flex-1 flex flex-col">
+              {cargandoDetalle ? (
+                <div className="flex flex-col items-center justify-center py-20 flex-1">
+                  <FiLoader className="h-8 w-8 text-red-600 animate-spin mb-2" />
+                  <span className="text-xs text-gray-500 font-medium">Cargando registros...</span>
+                </div>
+              ) : modalCanal === "ajuste" ? (
+                /* VISTA AJUSTE MANUAL */
+                <div className="flex flex-col gap-5 flex-1">
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex gap-3 text-amber-800 text-xs leading-relaxed">
+                    <FiInfo className="h-5 w-5 shrink-0 mt-0.5" />
+                    <div>
+                      Los ajustes manuales modifican el cuadre físico final sumando o restando kilos directos al balance. 
+                      Úsalo para registrar mermas extraordinarias, mermas por traslado o corrección de balanza.
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-gray-700">Ajuste Neto (kg):</label>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      value={ajusteKilos} 
+                      onChange={(e) => setAjusteKilos(e.target.value)} 
+                      placeholder="Ej: -5.50 o 10.00"
+                      className="px-3.5 py-2 border border-gray-200 rounded-xl text-sm bg-white text-gray-900 focus:ring-2 focus:ring-red-200 outline-none w-full"
+                    />
+                    <span className="text-[10px] text-gray-400">Usa números negativos (-) para mermas o pérdidas, y positivos (+) para excedentes.</span>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold text-gray-700">Justificación / Motivo:</label>
+                    <textarea 
+                      rows={3}
+                      value={ajusteMotivo} 
+                      onChange={(e) => setAjusteMotivo(e.target.value)} 
+                      placeholder="Indique el motivo detallado del ajuste..."
+                      className="px-3.5 py-2 border border-gray-200 rounded-xl text-sm bg-white text-gray-900 focus:ring-2 focus:ring-red-200 outline-none w-full resize-none"
+                    />
+                  </div>
+
+                  <div className="mt-auto pt-4 border-t border-gray-100 flex gap-2">
+                    {detalleItems.length > 0 && (
+                      <button 
+                        onClick={handleEliminarAjuste}
+                        disabled={guardandoAjuste}
+                        className="px-4 py-2 border border-red-200 hover:bg-red-50 text-red-700 text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        Eliminar Ajuste
+                      </button>
+                    )}
+                    <button 
+                      onClick={handleGuardarAjuste}
+                      disabled={guardandoAjuste}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-700 hover:bg-red-800 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {guardandoAjuste ? <FiLoader className="animate-spin" /> : <FiCheck />}
+                      <span>Guardar Ajuste Físico</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* VISTA DESGLOSE DE DOCUMENTOS */
+                <div className="flex flex-col gap-4 flex-1">
+                  {detalleItems.length === 0 ? (
+                    <div className="text-center py-20 text-xs text-gray-400 font-medium">
+                      No se encontraron transacciones registradas para este canal.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {detalleItems.map((item, index) => {
+                        const esEdicion = editandoItemId === item.item_id;
+                        const esEditable = ["compras", "campo"].includes(modalCanal);
+
+                        return (
+                          <div 
+                            key={index} 
+                            className={`border rounded-xl p-4 transition-all ${
+                              esEdicion 
+                                ? "border-red-500 bg-red-50/10 shadow-sm" 
+                                : "border-gray-100 bg-gray-50/30 hover:border-gray-200"
+                            }`}
+                          >
+                            <div className="flex justify-between items-start gap-2 mb-2.5">
+                              <div>
+                                <span className="text-[10px] text-gray-400 font-medium">{formatFechaCorto(item.fecha)}</span>
+                                <h4 className="text-xs font-bold text-gray-900 mt-0.5">
+                                  {item.proveedor_nombre || item.cliente_nombre || "Cliente General"}
+                                </h4>
+                                <span className="text-[10px] text-gray-500 mt-1 block">
+                                  Doc: <strong className="text-gray-700">{item.nro_doc || item.nro_guia || item.nro_pedido || "Sin Nro"}</strong>
+                                </span>
+                              </div>
+
+                              {esEditable && !esEdicion && (
+                                <button 
+                                  onClick={() => {
+                                    setEditandoItemId(item.item_id);
+                                    setEditKilos(item.kilos.toString());
+                                    setEditJabas(item.jabas?.toString() || "0");
+                                  }}
+                                  className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-700 transition-colors cursor-pointer"
+                                  title="Editar transacción"
+                                >
+                                  <FiEdit className="h-4 w-4" />
+                                </button>
+                              )}
+                            </div>
+
+                            {esEdicion ? (
+                              /* FORMULARIO EDICIÓN INLINE */
+                              <div className="flex flex-col gap-3 border-t border-red-100 pt-3 mt-1.5">
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-bold text-gray-500">Jabas:</label>
+                                    <input 
+                                      type="number" 
+                                      value={editJabas} 
+                                      onChange={(e) => setEditJabas(e.target.value)} 
+                                      className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white text-gray-900 focus:ring-1 focus:ring-red-200 outline-none w-full"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-bold text-gray-500">Kilos Netos:</label>
+                                    <input 
+                                      type="number" 
+                                      step="0.01"
+                                      value={editKilos} 
+                                      onChange={(e) => setEditKilos(e.target.value)} 
+                                      className="px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs bg-white text-gray-900 focus:ring-1 focus:ring-red-200 outline-none w-full"
+                                    />
+                                  </div>
+                                </div>
+
+                                <div className="flex justify-end gap-2 pt-1">
+                                  <button 
+                                    onClick={() => setEditandoItemId(null)}
+                                    className="px-3 py-1.5 border border-gray-200 hover:bg-gray-50 text-gray-600 text-xs font-semibold rounded-lg transition-colors cursor-pointer"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button 
+                                    onClick={() => handleGuardarItem(item.item_id, item)}
+                                    disabled={guardandoItem === item.item_id}
+                                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-red-700 hover:bg-red-800 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                                  >
+                                    {guardandoItem === item.item_id ? <FiLoader className="animate-spin" /> : <FiCheck />}
+                                    <span>Guardar</span>
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* VISTA DE VALORES */
+                              <div className="flex items-center gap-4 text-xs mt-1 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+                                {item.jabas !== undefined && (
+                                  <div>
+                                    <span className="text-[10px] text-gray-400 font-semibold block uppercase">Jabas</span>
+                                    <span className="font-bold text-gray-700">{item.jabas} jab.</span>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-[10px] text-gray-400 font-semibold block uppercase font-mono">Kilos</span>
+                                  <span className="font-extrabold text-red-600">{item.kilos.toFixed(2)} kg</span>
+                                </div>
+                                {item.total_pollos !== undefined && item.total_pollos > 0 && (
+                                   <div className="border-l border-gray-200 pl-3">
+                                     <span className="text-[10px] text-gray-400 font-semibold block uppercase">Aves (♂|♀)</span>
+                                     <span className="font-bold text-indigo-600">
+                                       🐤 {item.total_pollos} (♂{((item.jabas_macho || 0) * 7) + (item.sueltos_macho || 0)}|♀{((item.jabas_hembra || 0) * 9) + (item.sueltos_hembra || 0)})
+                                     </span>
+                                   </div>
+                                 )}
+                                {item.precio_unitario !== undefined && (
+                                  <div className="ml-auto text-right">
+                                    <span className="text-[10px] text-gray-400 block uppercase">P. Unitario</span>
+                                    <span className="font-semibold text-gray-600">S/ {item.precio_unitario.toFixed(2)}</span>
+                                  </div>
+                                )}
+                                {item.costo_unitario !== undefined && (
+                                  <div className="ml-auto text-right">
+                                    <span className="text-[10px] text-gray-400 block uppercase">Costo Unit.</span>
+                                    <span className="font-semibold text-gray-600">S/ {item.costo_unitario.toFixed(2)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

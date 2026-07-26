@@ -32,6 +32,11 @@ interface CompraItemInput {
   costo_unitario: number;
   /** 'devolucion' = mercadería devuelta al proveedor: RESTA del total y del stock. */
   tipo: TipoFila;
+  jabas_macho?: number;
+  jabas_hembra?: number;
+  sueltos_macho?: number;
+  sueltos_hembra?: number;
+  total_pollos?: number;
 }
 
 interface CompraRecord {
@@ -56,6 +61,11 @@ interface CompraRecord {
     costo_unitario: number;
     subtotal: number;
     tipo?: TipoFila;
+    jabas_macho?: number;
+    jabas_hembra?: number;
+    sueltos_macho?: number;
+    sueltos_hembra?: number;
+    total_pollos?: number;
   }[];
 }
 
@@ -68,6 +78,11 @@ const filaVacia = (): CompraItemInput => ({
   peso_tara: 0,
   costo_unitario: 0,
   tipo: "ingreso",
+  jabas_macho: 0,
+  jabas_hembra: 0,
+  sueltos_macho: 0,
+  sueltos_hembra: 0,
+  total_pollos: 0,
 });
 
 export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }) {
@@ -78,6 +93,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [compras, setCompras] = useState<CompraRecord[]>([]);
+  const [filaSexoEdicion, setFilaSexoEdicion] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Form State
@@ -675,6 +691,22 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                               Servicio: cantidad × precio, no entra al inventario
                             </p>
                           )}
+                          {!servicio && item.producto_id && productos.find(p => p.id === item.producto_id)?.categoria === "Pollo" && (
+                            <div className="mt-1.5 flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setFilaSexoEdicion(idx)}
+                                className="inline-flex items-center gap-1 text-[9px] font-black text-indigo-600 hover:text-indigo-800 cursor-pointer bg-indigo-50 hover:bg-indigo-100/70 px-2 py-0.5 rounded-md transition-colors uppercase tracking-wider"
+                              >
+                                ⚖️ Macho / Hembra
+                              </button>
+                              {((item.jabas_macho || 0) > 0 || (item.jabas_hembra || 0) > 0 || (item.sueltos_macho || 0) > 0 || (item.sueltos_hembra || 0) > 0) && (
+                                <span className="text-[10px] text-gray-500 font-medium">
+                                  Cant: <strong className="text-gray-800">{((item.jabas_macho || 0) * 7) + (item.sueltos_macho || 0) + ((item.jabas_hembra || 0) * 9) + (item.sueltos_hembra || 0)}</strong> aves
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 pr-2">
                           <select
@@ -1114,6 +1146,111 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Desglose Macho / Hembra */}
+      {filaSexoEdicion !== null && items[filaSexoEdicion] && (
+        <div className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Cabecera */}
+            <div className="bg-gray-50 border-b border-gray-100 px-5 py-4 flex justify-between items-center">
+              <div>
+                <h3 className="font-black text-gray-900 text-sm">⚖️ Clasificación Macho / Hembra</h3>
+                <span className="text-[10px] text-gray-500 font-semibold block mt-0.5">
+                  {items[filaSexoEdicion].producto_id 
+                    ? productos.find(p => p.id === items[filaSexoEdicion].producto_id)?.nombre 
+                    : "Producto"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFilaSexoEdicion(null)}
+                className="text-gray-400 hover:text-gray-600 rounded-lg p-1 hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <FiX size={16} />
+              </button>
+            </div>
+
+            {/* Cuerpo */}
+            <div className="p-5 space-y-4">
+              {/* Bloque Machos */}
+              <div className="bg-indigo-50/30 border border-indigo-100/50 p-3 rounded-xl space-y-2.5">
+                <span className="text-[10px] font-extrabold text-indigo-700 uppercase tracking-wider block">Pollo Macho (7 aves/jaba)</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 font-bold mb-1">Jabas:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={items[filaSexoEdicion].jabas_macho || ""}
+                      onChange={(e) => handleItemChange(filaSexoEdicion, "jabas_macho", Number(e.target.value))}
+                      className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-indigo-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 font-bold mb-1">Aves Sueltas:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={items[filaSexoEdicion].sueltos_macho || ""}
+                      onChange={(e) => handleItemChange(filaSexoEdicion, "sueltos_macho", Number(e.target.value))}
+                      className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-indigo-400"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Bloque Hembras */}
+              <div className="bg-pink-50/20 border border-pink-100/30 p-3 rounded-xl space-y-2.5">
+                <span className="text-[10px] font-extrabold text-pink-700 uppercase tracking-wider block">Pollo Hembra (9 aves/jaba)</span>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-gray-400 font-bold mb-1">Jabas:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={items[filaSexoEdicion].jabas_hembra || ""}
+                      onChange={(e) => handleItemChange(filaSexoEdicion, "jabas_hembra", Number(e.target.value))}
+                      className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-pink-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-gray-400 font-bold mb-1">Aves Sueltas:</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={items[filaSexoEdicion].sueltos_hembra || ""}
+                      onChange={(e) => handleItemChange(filaSexoEdicion, "sueltos_hembra", Number(e.target.value))}
+                      className="block w-full text-right rounded-lg border-gray-300 py-1.5 px-2 text-gray-900 bg-white text-xs outline-none focus:ring-1 focus:ring-pink-400"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Totalizador */}
+              <div className="border-t border-gray-100 pt-3 flex justify-between items-center text-xs">
+                <span className="font-bold text-gray-500">Total Aves Estimado:</span>
+                <span className="font-black text-gray-900 text-sm">
+                  {((items[filaSexoEdicion].jabas_macho || 0) * 7) + 
+                   (items[filaSexoEdicion].sueltos_macho || 0) + 
+                   ((items[filaSexoEdicion].jabas_hembra || 0) * 9) + 
+                   (items[filaSexoEdicion].sueltos_hembra || 0)} aves
+                </span>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="bg-gray-50 border-t border-gray-100 px-5 py-3.5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setFilaSexoEdicion(null)}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition-colors cursor-pointer"
+              >
+                Aceptar Desglose
+              </button>
+            </div>
           </div>
         </div>
       )}
