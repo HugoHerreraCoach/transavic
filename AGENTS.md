@@ -844,3 +844,24 @@ Para subsanar digitaciones incorrectas de manera flexible, se introdujo el mecan
 - **Diseño de Sidebar (`DashboardLayout.tsx`)**:
   * Se neutralizaron los estilos de botones destacados o primarios (`isPrimary` como "Venta Rápida") cuando no están activos, utilizando colores grises (`bg-gray-50/80`, `border-gray-200`, `text-gray-700`) e íconos grises (`text-gray-500`) en lugar de colores rojos/rosados, evitando la confusión de doble selección visual simultánea.
 
+---
+
+## 18. Rendimiento por Sexo, Cuadre de Mermas y Aprendizajes Clave (26 jul 2026)
+
+* **Clasificación Macho / Hembra en Compras**:
+  - Habilitada para compras de aves vivas (*Gallina colorada* y *Gallina doble pechuga*). Las columnas `jabas_macho`, `jabas_hembra`, `sueltos_macho`, `sueltos_hembra` y `total_pollos` en `compra_items` calculan el total estimado de aves y alimentan los reportes de rendimiento y mermas por sexo.
+  - La interfaz de `/dashboard/compras` incluye un botón flotante `⚖️ Clasificar Sexo` por fila con su modal de desglose interactivo.
+* **Cuadre de Mermas Físicas y Ajustes de Auditoría**:
+  - Pestaña `/dashboard/reportes` (Cuadre de Mermas) que consolida Compras, Ventas de Campo, Ventas Ejecutivas, Ventas de Planta POS y Ajustes Manuales.
+  - Tabla `ajustes_cuadre_fisico` (`id`, `fecha`, `producto_id`, `kilos_ajuste`, `motivo`, `usuario_id`) que permite realizar ajustes contables y mermas extraordinarias sin alterar pedidos ni facturas cerradas.
+* **Invariantes UX de Interacción**:
+  - **Bloqueo Global del Scroll en Inputs Numéricos:** Se desactivó el cambio involuntario de números al scrollear el mouse en todos los `<input type="number">` del ERP mediante un listener de ventana global en `DashboardLayout.tsx` (`document.activeElement.blur()`) + estilos CSS en `globals.css` que ocultan los spinners incrementales WebKit/Firefox.
+  - **Cierre por Backdrop Click:** Todo modal flotante o Slide-over de auditoría permite el cierre directo al hacer clic en el área oscura de fondo (`onClick={() => setOpen(false)}` con `e.stopPropagation()` en el panel).
+* **Regla de Oro en Consultas SQL de Reportes**:
+  - En la tabla `pedidos`, el nombre del cliente vive en `cliente` (NO `cliente_nombre`), y el número de guía en `numero_guia` (NO `nro_pedido`).
+  - Usar siempre `LEFT JOIN clientes c ON c.id = p.cliente_id` con `COALESCE(c.nombre, p.cliente, 'Cliente General')` para evitar omitir pedidos creados sin cliente de directorio.
+  - Todas las consultas de reportes diarios deben filtrar por la fecha operativa `p.fecha_pedido`, no por `p.created_at`.
+* **Regla de Despliegue de Migraciones en Producción (Neon)**:
+  - Al incorporar campos o tablas SQL nuevas, ejecutar siempre la migración en la base de datos de producción (`postgresql://...neon.tech/neondb`) usando las credenciales de `.env.production.local` (`DATABASE_URL_UNPOOLED`) **antes o al mismo tiempo** de subir a `main`, evitando que el servidor devuelva HTTP 500 en producción por columnas no encontradas.
+
+
