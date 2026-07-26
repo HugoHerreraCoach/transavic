@@ -43,11 +43,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const sql = neon(process.env.DATABASE_URL!);
     
-    // Obtener cabecera de la compra
+    // Obtener cabecera de la compra con su monto pagado asociado
     const compras = await sql`
-      SELECT c.*, p.razon_social AS proveedor_nombre
+      SELECT c.*, p.razon_social AS proveedor_nombre,
+             COALESCE(cxp.monto_pagado, 0)::float8 AS monto_pagado
       FROM compras c
       JOIN proveedores p ON c.proveedor_id = p.id
+      LEFT JOIN cuentas_por_pagar cxp ON c.id = cxp.compra_id
       WHERE c.id = ${id}
     `;
 

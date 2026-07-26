@@ -113,6 +113,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
 
   // Estado para la edición de compras
   const [compraEditandoId, setCompraEditandoId] = useState<string | null>(null);
+  const [compraTienePagos, setCompraTienePagos] = useState(false);
 
   // Categorías existentes (para el select del modal) + "Insumos" garantizada.
   const categoriasExistentes = Array.from(
@@ -243,6 +244,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       }
 
       setCompraEditandoId(compraId);
+      setCompraTienePagos(data.monto_pagado > 0.009);
       setActiveTab("nuevo");
       mostrarToast(`Editando compra ${data.tipo_doc} ${data.nro_doc}`, "info");
     } catch (err: unknown) {
@@ -254,6 +256,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
 
   const cancelarEdicionCompra = () => {
     setCompraEditandoId(null);
+    setCompraTienePagos(false);
     setProveedorId("");
     setNroDoc("");
     setItems([filaVacia()]);
@@ -441,6 +444,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       setNroDoc("");
       setItems([filaVacia()]);
       setCompraEditandoId(null);
+      setCompraTienePagos(false);
       setActiveTab("historial");
 
       // Recargar historial
@@ -509,6 +513,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                 <label className="block text-sm font-semibold text-gray-700">Proveedor</label>
                 <SearchableSelect
                   required
+                  disabled={compraTienePagos || compraEditandoId !== null}
                   value={proveedorId}
                   onChange={setProveedorId}
                   options={proveedores
@@ -576,26 +581,43 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                 {esAdmin && (
                   <button
                     type="button"
+                    disabled={compraTienePagos}
                     onClick={() => {
                       // Auto-selecciona en la primera fila sin producto (si hay).
                       const vacia = items.findIndex((it) => !it.producto_id);
                       abrirModalProducto(vacia >= 0 ? vacia : null);
                     }}
-                    title="Crear un producto que falta en el catálogo (insumos, etc.)"
-                    className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                    title={compraTienePagos ? "No se pueden crear ni agregar productos si la compra ya registra pagos." : "Crear un producto que falta en el catálogo (insumos, etc.)"}
+                    className="text-xs bg-emerald-50 text-emerald-700 hover:bg-emerald-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-emerald-50"
                   >
                     <FiBox /> Nuevo producto
                   </button>
                 )}
                 <button
                   type="button"
+                  disabled={compraTienePagos}
                   onClick={handleAddItem}
-                  className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                  title={compraTienePagos ? "No se pueden agregar filas si la compra ya registra pagos." : "Agregar una nueva fila"}
+                  className="text-xs bg-indigo-50 text-indigo-700 hover:bg-indigo-100 px-3 py-2 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-indigo-50"
                 >
                   <FiPlus /> Agregar Fila
                 </button>
               </div>
             </div>
+
+            {compraTienePagos && (
+              <div className="mx-6 mt-2 mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-800 space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-sm text-amber-900">
+                  ⚠️ Edición Restringida (Compra con pagos)
+                </p>
+                <p>
+                  Esta compra ya registra abonos en la Ficha del Proveedor. Por seguridad contable y financiera, no se permite modificar los productos, precios o kilos.
+                </p>
+                <p className="font-semibold text-amber-700">
+                  Solo puedes corregir el número del documento y la fecha. Para editar precios o kilos, primero debes anular sus pagos en la Ficha del Proveedor.
+                </p>
+              </div>
+            )}
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm min-w-[1000px]">
@@ -622,7 +644,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                     const ultimoCosto = item.producto_id ? ultimosCostos[item.producto_id] : undefined;
 
                     return (
-                      <tr key={idx} className={`align-middle ${esDevolucion ? "bg-red-50/60" : ""}`}>
+                      <tr key={idx} className={`align-middle ${esDevolucion ? "bg-red-50/60" : ""} ${compraTienePagos ? "opacity-75 bg-gray-50/20" : ""}`}>
                         <td
                           className="py-3 pr-4"
                           ref={(el) => {
@@ -631,6 +653,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                         >
                           <SearchableSelect
                             required
+                            disabled={compraTienePagos}
                             value={item.producto_id}
                             onChange={(val) => handleItemChange(idx, "producto_id", val)}
                             options={productos.map(p => ({
@@ -650,9 +673,10 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                         <td className="py-3 pr-4">
                           <select
                             value={item.tipo}
+                            disabled={compraTienePagos}
                             onChange={(e) => handleItemChange(idx, "tipo", e.target.value as TipoFila)}
                             title="Devolución: resta del total de la guía y del inventario"
-                            className={`block w-28 rounded-xl py-2.5 px-2 shadow-sm text-xs font-bold cursor-pointer ${
+                            className={`block w-28 rounded-xl py-2.5 px-2 shadow-sm text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100 ${
                               esDevolucion
                                 ? "border-red-300 bg-red-50 text-red-700 focus:border-red-500 focus:ring-red-500"
                                 : "border-gray-300 bg-gray-50 text-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
@@ -666,9 +690,10 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                           <input
                             type="number"
                             min="0"
-                            disabled={servicio}
+                            disabled={servicio || compraTienePagos}
                             value={servicio ? "" : item.jabas || ""}
                             onChange={(e) => handleItemChange(idx, "jabas", Number(e.target.value))}
+                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
                             className="block w-20 ml-auto text-right rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                           />
                         </td>
@@ -677,12 +702,13 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             type="number"
                             step="0.01"
                             min="0"
-                            required
+                            disabled={compraTienePagos}
                             placeholder={servicio ? "Cant." : "0.00"}
                             title={servicio ? "Cantidad del servicio (ej. pollos pelados)" : "Peso bruto en kg"}
                             value={item.peso_bruto || ""}
                             onChange={(e) => handleItemChange(idx, "peso_bruto", Number(e.target.value))}
-                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs"
+                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </td>
                         <td className="py-3 pr-4">
@@ -690,10 +716,11 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             type="number"
                             step="0.01"
                             min="0"
-                            disabled={servicio}
+                            disabled={servicio || compraTienePagos}
                             placeholder="0.00"
                             value={servicio ? "" : item.peso_tara || ""}
                             onChange={(e) => handleItemChange(idx, "peso_tara", Number(e.target.value))}
+                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
                             className={`block w-24 ml-auto text-right rounded-xl py-2.5 px-3 text-gray-900 shadow-sm bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed ${
                               taraInvalida
                                 ? "border-red-500 ring-1 ring-red-400 focus:border-red-500 focus:ring-red-500"
@@ -714,14 +741,16 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             type="number"
                             step="0.01"
                             min="0"
+                            disabled={compraTienePagos}
                             required
                             placeholder="0.00"
                             value={item.costo_unitario || ""}
                             onChange={(e) => handleItemChange(idx, "costo_unitario", Number(e.target.value))}
                             onKeyDown={handleEnterEnCosto}
-                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs"
+                            onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           />
-                          {ultimoCosto != null && (
+                          {ultimoCosto != null && !compraTienePagos && (
                             <button
                               type="button"
                               onClick={() => handleItemChange(idx, "costo_unitario", ultimoCosto)}
@@ -738,9 +767,9 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                         <td className="py-3 text-right">
                           <button
                             type="button"
-                            disabled={items.length === 1}
+                            disabled={items.length === 1 || compraTienePagos}
                             onClick={() => handleRemoveItem(idx)}
-                            className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-30 transition-colors cursor-pointer"
+                            className="p-2 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-20 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors cursor-pointer"
                           >
                             <FiTrash2 className="w-4 h-4" />
                           </button>

@@ -18,6 +18,7 @@ interface SearchableSelectProps {
   searchPlaceholder?: string;
   className?: string;
   required?: boolean;
+  disabled?: boolean;
 }
 
 export default function SearchableSelect({
@@ -28,6 +29,7 @@ export default function SearchableSelect({
   searchPlaceholder = "Buscar...",
   className = "",
   required = false,
+  disabled = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -81,8 +83,9 @@ export default function SearchableSelect({
       <button
         ref={triggerRef}
         type="button"
+        disabled={disabled}
         onClick={() => setIsOpen(!isOpen)}
-        className="flex w-full items-center justify-between rounded-xl border border-gray-300 bg-gray-50 py-2.5 px-3.5 text-left text-xs text-gray-900 shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+        className="flex w-full items-center justify-between rounded-xl border border-gray-300 bg-gray-50 py-2.5 px-3.5 text-left text-xs text-gray-900 shadow-sm transition-colors hover:border-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed disabled:bg-gray-100"
       >
         <span className={selectedOption ? "text-gray-900 font-medium" : "text-gray-400"}>
           {selectedOption
