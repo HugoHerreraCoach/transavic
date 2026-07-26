@@ -7,6 +7,8 @@ export const metadata = {
   title: "Módulo de Compras | Transavic",
 };
 
+import { Suspense } from "react";
+
 export default async function ComprasPage() {
   const session = await auth();
   
@@ -31,7 +33,9 @@ export default async function ComprasPage() {
         </p>
       </div>
 
-      <ComprasClient esAdmin={session.user.role === "admin"} />
+      <Suspense fallback={<div className="text-center py-12 text-gray-400 font-medium">Iniciando módulo de compras...</div>}>
+        <ComprasClient esAdmin={session.user.role === "admin"} />
+      </Suspense>
     </div>
   );
 }

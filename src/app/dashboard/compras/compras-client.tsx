@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText, FiX, FiEdit2 } from "react-icons/fi";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
@@ -70,6 +71,9 @@ const filaVacia = (): CompraItemInput => ({
 });
 
 export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }) {
+  const searchParams = useSearchParams();
+  const editarCompraParam = searchParams ? searchParams.get("editar_compra") : null;
+
   const [activeTab, setActiveTab] = useState<"nuevo" | "historial">("nuevo");
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -122,6 +126,14 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       setTipoDoc((prev) => (p.tipos_doc_compra.includes(prev) ? prev : p.tipos_doc_compra[0]));
     });
   }, []);
+
+  // Carga automática de edición por query param (desde la Ficha del Proveedor)
+  useEffect(() => {
+    if (editarCompraParam && proveedores.length > 0 && productos.length > 0) {
+      iniciarEdicionCompra(editarCompraParam);
+      window.history.replaceState(null, "", "/dashboard/compras");
+    }
+  }, [editarCompraParam, proveedores, productos]);
 
   // Al cambiar de proveedor, traer sus últimos costos por producto
   useEffect(() => {

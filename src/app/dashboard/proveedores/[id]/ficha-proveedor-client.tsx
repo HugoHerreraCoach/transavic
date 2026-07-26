@@ -516,25 +516,38 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                         <FiEdit2 className="mr-1.5 inline" />Editar
                       </button>
                     ) : (
-                      <button
-                        onClick={() =>
-                          setCompraAnulando({
-                            id: deuda.compra_id!,
-                            tipo_doc: deuda.tipo_doc || "Doc",
-                            nro_doc: deuda.nro_doc || "001",
-                            monto_pagado: deuda.monto_pagado,
-                          })
-                        }
-                        disabled={deuda.monto_pagado > 0.009}
-                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 hover:border-red-300 hover:text-red-700 hover:shadow-sm hover:shadow-red-50 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:border-red-200 disabled:hover:text-red-600 disabled:hover:shadow-none disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed inline-flex items-center justify-center sm:ml-auto"
-                        title={
-                          deuda.monto_pagado > 0.009
-                            ? "No se puede anular esta compra porque ya registra abonos. Revierte primero los pagos en 'Pagos separados'."
-                            : "Anular la compra de mercadería, reversando el stock e inventario"
-                        }
-                      >
-                        <FiTrash2 className="mr-1.5 inline" />Anular Compra
-                      </button>
+                      <div className="flex gap-2 sm:ml-auto">
+                        <Link
+                          href={`/dashboard/compras?editar_compra=${deuda.compra_id}`}
+                          className="min-h-10 rounded-xl border border-gray-200 bg-white px-4 text-sm font-bold text-gray-700 hover:bg-gray-50 active:scale-95 transition-all cursor-pointer inline-flex items-center justify-center shadow-xs"
+                          title={
+                            deuda.monto_pagado > 0.009
+                              ? "Editar datos del documento (la compra ya registra abonos; precios y pesos bloqueados)"
+                              : "Editar esta compra (precios, cantidades, documentos)"
+                          }
+                        >
+                          <FiEdit2 className="mr-1.5 inline font-bold" />Editar Compra
+                        </Link>
+                        <button
+                          onClick={() =>
+                            setCompraAnulando({
+                              id: deuda.compra_id!,
+                              tipo_doc: deuda.tipo_doc || "Doc",
+                              nro_doc: deuda.nro_doc || "001",
+                              monto_pagado: deuda.monto_pagado,
+                            })
+                          }
+                          disabled={deuda.monto_pagado > 0.009}
+                          className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 hover:border-red-300 hover:text-red-700 hover:shadow-sm hover:shadow-red-50 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:border-red-200 disabled:hover:text-red-600 disabled:hover:shadow-none disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed inline-flex items-center justify-center"
+                          title={
+                            deuda.monto_pagado > 0.009
+                              ? "No se puede anular esta compra porque ya registra abonos. Revierte primero los pagos en 'Pagos separados'."
+                              : "Anular la compra de mercadería, reversando el stock e inventario"
+                          }
+                        >
+                          <FiTrash2 className="mr-1.5 inline" />Anular Compra
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}
