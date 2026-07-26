@@ -65,7 +65,9 @@ interface AuditoriaClienteResponse {
 }
 
 export default function CuadreConsolidadoTab() {
-  const [fecha, setFecha] = useState<string>("");
+  const [fechaInicio, setFechaInicio] = useState<string>("");
+  const [fechaFin, setFechaFin] = useState<string>("");
+  const [tipoPeriodo, setTipoPeriodo] = useState<"hoy" | "ayer" | "7dias" | "personalizado">("hoy");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
@@ -82,23 +84,42 @@ export default function CuadreConsolidadoTab() {
   const [errorAuditoria, setErrorAuditoria] = useState<string | null>(null);
   const [copiandoAuditoria, setCopiandoAuditoria] = useState<boolean>(false);
 
-  // Inicializar fecha de hoy (Lima)
+  // Sincronizar fechas según el tipo de período
   useEffect(() => {
     const hoy = toLocalDateString(new Date());
-    setFecha(hoy);
-  }, []);
+    if (tipoPeriodo === "hoy") {
+      setFechaInicio(hoy);
+      setFechaFin(hoy);
+    } else if (tipoPeriodo === "ayer") {
+      const ayer = new Date();
+      ayer.setDate(ayer.getDate() - 1);
+      const ayerStr = toLocalDateString(ayer);
+      setFechaInicio(ayerStr);
+      setFechaFin(ayerStr);
+    } else if (tipoPeriodo === "7dias") {
+      const sieteDiasAgo = new Date();
+      sieteDiasAgo.setDate(sieteDiasAgo.getDate() - 6);
+      setFechaInicio(toLocalDateString(sieteDiasAgo));
+      setFechaFin(hoy);
+    } else if (tipoPeriodo === "personalizado") {
+      if (!fechaInicio) {
+        setFechaInicio(hoy);
+        setFechaFin(hoy);
+      }
+    }
+  }, [tipoPeriodo]);
 
   // Cargar datos consolidados
   useEffect(() => {
-    if (!fecha) return;
+    if (!fechaInicio || !fechaFin) return;
 
     const fetchConsolidado = async () => {
       setLoading(true);
       setError(null);
       try {
         const [resFin, resFis] = await Promise.all([
-          fetch(`/api/reportes/balance-asesoras?desde=${fecha}&hasta=${fecha}&asesor_id=todos`),
-          fetch(`/api/reportes/cuadre-fisico?fecha=${fecha}`)
+          fetch(`/api/reportes/balance-asesoras?desde=${fechaInicio}&hasta=${fechaFin}&asesor_id=todos`),
+          fetch(`/api/reportes/cuadre-fisico?desde=${fechaInicio}&hasta=${fechaFin}`)
         ]);
 
         if (!resFin.ok || !resFis.ok) {
@@ -119,7 +140,7 @@ export default function CuadreConsolidadoTab() {
     };
 
     fetchConsolidado();
-  }, [fecha]);
+  }, [fechaInicio, fechaFin]);
 
   // Aritmética de Totales Financieros
   const totalKg = clientes.reduce((acc, c) => acc + c.kg_vendidos, 0);
@@ -163,7 +184,7 @@ export default function CuadreConsolidadoTab() {
     setErrorAuditoria(null);
     setAuditoriaData(null);
     try {
-      const url = `/api/reportes/balance-asesoras/cliente?cliente_id=${clienteId}&desde=${fecha}&hasta=${fecha}`;
+      const url = `/api/reportes/balance-asesoras/cliente?cliente_id=${clienteId}&desde=${fechaInicio}&hasta=${fechaFin}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("No se pudo cargar la auditoría");
       const json = await res.json();
@@ -174,7 +195,7 @@ export default function CuadreConsolidadoTab() {
     } finally {
       setLoadingAuditoria(false);
     }
-  }, [fecha]);
+  }, [fechaInicio, fechaFin]);
 
   // Copiar extracto de auditoría del cliente a WhatsApp
   const handleCopiarTextoAuditoria = useCallback(async () => {
@@ -182,12 +203,17 @@ export default function CuadreConsolidadoTab() {
     setCopiandoAuditoria(true);
     try {
       const { cliente, saldo_anterior, transacciones } = auditoriaData;
+      const periodoTexto =
+        fechaInicio === fechaFin
+          ? formatFechaCorta(fechaInicio)
+          : `Del ${formatFechaCorta(fechaInicio)} al ${formatFechaCorta(fechaFin)}`;
+
       let texto = `*DETALLE DE CUENTA - TRANSAVIC* 📋\n`;
       texto += `👤 *Cliente:* ${cliente.nombre}\n`;
       if (cliente.ruc_dni) texto += `📄 *Doc:* ${cliente.ruc_dni}\n`;
-      texto += `📅 *Fecha:* ${formatFechaCorta(fecha)}\n\n`;
+      texto += `📅 *Periodo:* ${periodoTexto}\n\n`;
       texto += `💵 *Saldo Anterior:* S/ ${saldo_anterior.toFixed(2)}\n\n`;
-      texto += `*Movimientos del Día:*\n`;
+      texto += `*Movimientos del Período:*\n`;
       texto += `----------------------------\n`;
 
       let saldoAcumulado = saldo_anterior;
@@ -213,15 +239,20 @@ export default function CuadreConsolidadoTab() {
     } finally {
       setCopiandoAuditoria(false);
     }
-  }, [auditoriaData, fecha]);
+  }, [auditoriaData, fechaInicio, fechaFin]);
 
   // Copiar Resumen Consolidado Completo para WhatsApp
   const handleCopiarTexto = useCallback(async () => {
     if (!clientes.length && !productos.length) return;
     setCopiando(true);
 
+    const periodoTexto =
+      fechaInicio === fechaFin
+        ? formatFechaLabel(fechaInicio)
+        : `Del ${formatFechaCorta(fechaInicio)} al ${formatFechaCorta(fechaFin)}`;
+
     let texto = `*CUADRE DIARIO CONSOLIDADO TRANSAVIC* 🐔💰\n`;
-    texto += `📅 *Fecha:* ${formatFechaLabel(fecha)}\n\n`;
+    texto += `📅 *Periodo:* ${periodoTexto}\n\n`;
 
     texto += `*1. BALANCE DE CARTERA (CLIENTES)*\n`;
     texto += `-----------------------------------\n`;
@@ -245,7 +276,7 @@ export default function CuadreConsolidadoTab() {
     } finally {
       setCopiando(false);
     }
-  }, [clientes, productos, fecha, totalPendiente, totalDiferenciaKilos]);
+  }, [clientes, productos, fechaInicio, fechaFin, totalPendiente, totalDiferenciaKilos]);
 
   // Exportar PDF vectorial (con paginación automática para no cortar clientes ni productos)
   const handleExportarPDF = async () => {
@@ -275,7 +306,12 @@ export default function CuadreConsolidadoTab() {
         doc.setTextColor(107, 114, 128);
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9.5);
-        doc.text(formatFechaLabel(fecha), 148.5, 34, { align: "center" });
+
+        const periodoTexto =
+          fechaInicio === fechaFin
+            ? formatFechaLabel(fechaInicio)
+            : `Del ${formatFechaCorta(fechaInicio)} al ${formatFechaCorta(fechaFin)}`;
+        doc.text(periodoTexto, 148.5, 34, { align: "center" });
 
         doc.setDrawColor(229, 231, 235);
         doc.setLineWidth(0.5);
@@ -483,7 +519,7 @@ export default function CuadreConsolidadoTab() {
 
       renderFooter();
 
-      doc.save(`cuadre-consolidado-${fecha}.pdf`);
+      doc.save(`cuadre-consolidado-${fechaInicio}-a-${fechaFin}.pdf`);
     } catch (err) {
       console.error("Error al generar PDF consolidado:", err);
       alert("Error al generar el PDF.");
@@ -496,14 +532,48 @@ export default function CuadreConsolidadoTab() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
       {/* Controles de Vista */}
       <div className="bg-white border border-gray-200 rounded-2xl p-5 mb-6 shadow-xs flex flex-col md:flex-row md:items-end justify-between gap-5">
-        <div className="flex items-center gap-2">
-          <FiCalendar className="text-gray-400" />
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-red-200 outline-none cursor-pointer"
-          />
+        <div className="flex flex-col gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            {(["hoy", "ayer", "7dias", "personalizado"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setTipoPeriodo(mode)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider border transition-all cursor-pointer ${
+                  tipoPeriodo === mode
+                    ? "bg-red-600 text-white border-red-600 shadow-sm"
+                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                {mode === "hoy" && "Hoy"}
+                {mode === "ayer" && "Ayer"}
+                {mode === "7dias" && "Últimos 7 días"}
+                {mode === "personalizado" && "Personalizado"}
+              </button>
+            ))}
+          </div>
+
+          {tipoPeriodo === "personalizado" && (
+            <div className="flex flex-col sm:flex-row items-center gap-3 border-t border-gray-100 pt-3">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-gray-500 font-semibold">Desde:</span>
+                <input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => setFechaInicio(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-red-200"
+                />
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-gray-500 font-semibold">Hasta:</span>
+                <input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => setFechaFin(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-red-200"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {(!loading && !error) && (clientes.length > 0 || productos.length > 0) && (
@@ -545,7 +615,7 @@ export default function CuadreConsolidadoTab() {
         <>
           {clientes.length === 0 && productos.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center text-gray-500 text-sm shadow-xs">
-              No se registraron transacciones financieras ni ingresos físicos de pollo para la fecha seleccionada.
+              No se registraron transacciones financieras ni ingresos físicos de pollo para el período seleccionado.
             </div>
           ) : (
             <div className="border border-gray-200 rounded-2xl overflow-x-auto shadow-xs bg-white w-full">
@@ -563,7 +633,9 @@ export default function CuadreConsolidadoTab() {
                       Cuadre Diario Consolidado (Financiero y de Stock)
                     </h1>
                     <p className="text-[11px] font-semibold text-gray-500 mt-1 capitalize">
-                      {formatFechaLabel(fecha)}
+                      {fechaInicio === fechaFin
+                        ? formatFechaLabel(fechaInicio)
+                        : `Del ${formatFechaCorta(fechaInicio)} al ${formatFechaCorta(fechaFin)}`}
                     </p>
                   </div>
                   <div className="text-right">

@@ -19,9 +19,10 @@ export async function GET(req: NextRequest) {
   }
 
   const { searchParams } = new URL(req.url);
-  const fechaParam = searchParams.get("fecha");
+  const desdeParam = searchParams.get("desde") || searchParams.get("fecha");
+  const hastaParam = searchParams.get("hasta") || desdeParam;
 
-  if (fechaParam && !FECHA_REGEX.test(fechaParam)) {
+  if ((desdeParam && !FECHA_REGEX.test(desdeParam)) || (hastaParam && !FECHA_REGEX.test(hastaParam))) {
     return NextResponse.json(
       { error: "Formato de fecha inválido. Usar YYYY-MM-DD" },
       { status: 400 }
@@ -32,12 +33,15 @@ export async function GET(req: NextRequest) {
     const sql = neon(process.env.DATABASE_URL!);
 
     // Obtener fecha por defecto (hoy en Lima)
-    let fecha = fechaParam;
-    if (!fecha) {
+    let desde = desdeParam;
+    let hasta = hastaParam;
+    if (!desde || !hasta) {
       const hoyRows = (await sql`
         SELECT (NOW() AT TIME ZONE 'America/Lima')::date::text AS hoy
       `) as Array<{ hoy: string }>;
-      fecha = hoyRows[0]?.hoy || new Date().toISOString().split("T")[0];
+      const hoy = hoyRows[0]?.hoy || new Date().toISOString().split("T")[0];
+      desde = desde || hoy;
+      hasta = hasta || hoy;
     }
 
     const rows = await sql`
@@ -48,26 +52,26 @@ export async function GET(req: NextRequest) {
         WHERE categoria IN ('Pollo', 'Carnes') AND activo IS NOT FALSE
       ),
       compras_dia AS (
-        -- Sumatoria de kilos e ingresados por compras completadas en el día
+        -- Sumatoria de kilos e ingresados por compras completadas en el rango de fechas
         SELECT 
           ci.producto_id,
           COALESCE(SUM(ci.peso_neto), 0)::numeric(14, 2) AS kg_comprados,
           COALESCE(SUM(ci.jabas), 0)::int AS jabas_compradas
         FROM compra_items ci
         JOIN compras c ON c.id = ci.compra_id
-        WHERE c.fecha = ${fecha}::date
+        WHERE c.fecha BETWEEN ${desde}::date AND ${hasta}::date
           AND c.estado <> 'Anulado'
           AND COALESCE(ci.tipo, 'ingreso') = 'ingreso'
         GROUP BY ci.producto_id
       ),
       ventas_ejecutivas AS (
-        -- Sumatoria de kilos reales pesados para ejecutivas/delivery en el día
+        -- Sumatoria de kilos reales pesados para ejecutivas/delivery en el rango de fechas
         SELECT 
           pi.producto_id,
           COALESCE(SUM(COALESCE(pi.cantidad_real, pi.cantidad, 0)), 0)::numeric(14, 2) AS kg_ejecutivas
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
@@ -75,13 +79,13 @@ export async function GET(req: NextRequest) {
         GROUP BY pi.producto_id
       ),
       ventas_planta AS (
-        -- Sumatoria de kilos del POS de planta en el día
+        -- Sumatoria de kilos del POS de planta en el rango de fechas
         SELECT 
           pi.producto_id,
           COALESCE(SUM(pi.cantidad), 0)::numeric(14, 2) AS kg_planta
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
@@ -89,13 +93,13 @@ export async function GET(req: NextRequest) {
         GROUP BY pi.producto_id
       ),
       ventas_campo AS (
-        -- Sumatoria de kilos en las ventas de campo en el día
+        -- Sumatoria de kilos en las ventas de campo en el rango de fechas
         SELECT 
           vi.producto_id,
           COALESCE(SUM(vi.peso_kg), 0)::numeric(14, 2) AS kg_campo
         FROM venta_avicola_items vi
         JOIN ventas_avicola v ON v.id = vi.venta_id
-        WHERE v.fecha = ${fecha}::date
+        WHERE v.fecha BETWEEN ${desde}::date AND ${hasta}::date
           AND NOT v.anulada
         GROUP BY vi.producto_id
       )
@@ -123,7 +127,8 @@ export async function GET(req: NextRequest) {
     `;
 
     return NextResponse.json({
-      fecha,
+      desde,
+      hasta,
       productos: rows,
     });
   } catch (error) {

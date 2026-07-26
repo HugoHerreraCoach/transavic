@@ -24,28 +24,50 @@ interface CuadreFisicoResponse {
 }
 
 export default function CuadreMermasTab() {
-  const [fecha, setFecha] = useState<string>("");
+  const [fechaInicio, setFechaInicio] = useState<string>("");
+  const [fechaFin, setFechaFin] = useState<string>("");
+  const [tipoPeriodo, setTipoPeriodo] = useState<"hoy" | "ayer" | "7dias" | "personalizado">("hoy");
   const [data, setData] = useState<CuadreFisicoResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
   const [copiando, setCopiando] = useState<boolean>(false);
 
-  // Inicializar fecha de hoy (Lima) al montar
+  // Sincronizar fechas según el tipo de período
   useEffect(() => {
     const hoy = toLocalDateString(new Date());
-    setFecha(hoy);
-  }, []);
+    if (tipoPeriodo === "hoy") {
+      setFechaInicio(hoy);
+      setFechaFin(hoy);
+    } else if (tipoPeriodo === "ayer") {
+      const ayer = new Date();
+      ayer.setDate(ayer.getDate() - 1);
+      const ayerStr = toLocalDateString(ayer);
+      setFechaInicio(ayerStr);
+      setFechaFin(ayerStr);
+    } else if (tipoPeriodo === "7dias") {
+      const sieteDiasAgo = new Date();
+      sieteDiasAgo.setDate(sieteDiasAgo.getDate() - 6);
+      setFechaInicio(toLocalDateString(sieteDiasAgo));
+      setFechaFin(hoy);
+    } else if (tipoPeriodo === "personalizado") {
+      // Dejar los que ya están o poner hoy
+      if (!fechaInicio) {
+        setFechaInicio(hoy);
+        setFechaFin(hoy);
+      }
+    }
+  }, [tipoPeriodo]);
 
-  // Cargar datos al cambiar la fecha
+  // Cargar datos al cambiar las fechas
   useEffect(() => {
-    if (!fecha) return;
+    if (!fechaInicio || !fechaFin) return;
 
     const fetchCuadre = async () => {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/reportes/cuadre-fisico?fecha=${fecha}`);
+        const res = await fetch(`/api/reportes/cuadre-fisico?desde=${fechaInicio}&hasta=${fechaFin}`);
         if (!res.ok) {
           throw new Error("No se pudo cargar el cuadre físico");
         }
@@ -60,7 +82,7 @@ export default function CuadreMermasTab() {
     };
 
     fetchCuadre();
-  }, [fecha]);
+  }, [fechaInicio, fechaFin]);
 
   // Aritmética de Totales
   const totalJabasCompra = data?.productos.reduce((acc, p) => acc + p.jabas_compradas, 0) ?? 0;
@@ -84,6 +106,12 @@ export default function CuadreMermasTab() {
     });
   };
 
+  const formatFechaCorto = (fechaStr: string) => {
+    if (!fechaStr) return "";
+    const [y, m, d] = fechaStr.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
   // Exportar a PDF vectorial usando jsPDF (Horizontal para que entren todas las columnas)
   const handleExportarPDF = async () => {
     if (!data) return;
@@ -95,6 +123,11 @@ export default function CuadreMermasTab() {
         unit: "mm",
         format: "a4",
       });
+
+      const periodoTexto =
+        fechaInicio === fechaFin
+          ? formatFechaEncabezado(fechaInicio)
+          : `Del ${formatFechaCorto(fechaInicio)} al ${formatFechaCorto(fechaFin)}`;
 
       // Cabecera Corporativa
       doc.setFillColor(220, 38, 38); // Rojo
@@ -112,7 +145,7 @@ export default function CuadreMermasTab() {
       doc.setTextColor(107, 114, 128);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(10);
-      doc.text(formatFechaEncabezado(data.fecha), 148.5, 38, { align: "center" });
+      doc.text(periodoTexto, 148.5, 38, { align: "center" });
 
       // Línea divisoria
       doc.setDrawColor(229, 231, 235);
@@ -221,7 +254,7 @@ export default function CuadreMermasTab() {
       doc.setTextColor(156, 163, 175);
       doc.text("Transavic & La Avícola de Tony · Módulo de Control de Mermas de Carga", 148.5, 198, { align: "center" });
 
-      doc.save(`cuadre-mermas-${data.fecha}.pdf`);
+      doc.save(`cuadre-mermas-${fechaInicio}-a-${fechaFin}.pdf`);
     } catch (err) {
       console.error("Error al generar PDF:", err);
       alert("Error al generar el PDF.");
@@ -234,8 +267,13 @@ export default function CuadreMermasTab() {
     if (!data) return;
     setCopiando(true);
 
+    const periodoTexto =
+      fechaInicio === fechaFin
+        ? formatFechaEncabezado(fechaInicio)
+        : `Del ${formatFechaCorto(fechaInicio)} al ${formatFechaCorto(fechaFin)}`;
+
     let texto = `*CUADRE FÍSICO DE STOCK Y MERMAS* 📦\n`;
-    texto += `📅 *Fecha:* ${formatFechaEncabezado(data.fecha)}\n\n`;
+    texto += `📅 *Periodo:* ${periodoTexto}\n\n`;
     texto += `*Detalle por Producto:*\n`;
     texto += `-----------------------\n`;
 
@@ -262,14 +300,48 @@ export default function CuadreMermasTab() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
       {/* Controles de Vista */}
       <div className="bg-white border border-gray-200 rounded-2xl p-5 mb-6 shadow-xs flex flex-col md:flex-row md:items-end justify-between gap-5">
-        <div className="flex items-center gap-2">
-          <FiCalendar className="text-gray-400" />
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
-            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white focus:ring-2 focus:ring-red-200 outline-none"
-          />
+        <div className="flex flex-col gap-3 w-full md:w-auto">
+          <div className="flex flex-wrap items-center gap-2">
+            {(["hoy", "ayer", "7dias", "personalizado"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setTipoPeriodo(mode)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider border transition-all cursor-pointer ${
+                  tipoPeriodo === mode
+                    ? "bg-red-600 text-white border-red-600 shadow-sm"
+                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                {mode === "hoy" && "Hoy"}
+                {mode === "ayer" && "Ayer"}
+                {mode === "7dias" && "Últimos 7 días"}
+                {mode === "personalizado" && "Personalizado"}
+              </button>
+            ))}
+          </div>
+
+          {tipoPeriodo === "personalizado" && (
+            <div className="flex flex-col sm:flex-row items-center gap-3 border-t border-gray-100 pt-3">
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-gray-500 font-semibold">Desde:</span>
+                <input
+                  type="date"
+                  value={fechaInicio}
+                  onChange={(e) => setFechaInicio(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-red-200"
+                />
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <span className="text-xs text-gray-500 font-semibold">Hasta:</span>
+                <input
+                  type="date"
+                  value={fechaFin}
+                  onChange={(e) => setFechaFin(e.target.value)}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-900 bg-white outline-none focus:ring-2 focus:ring-red-200"
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {data && data.productos.length > 0 && (
@@ -312,7 +384,7 @@ export default function CuadreMermasTab() {
         <>
           {data.productos.length === 0 ? (
             <div className="bg-white border border-gray-200 rounded-2xl p-12 text-center text-gray-500 text-sm shadow-xs">
-              No se registraron movimientos de compra ni venta de carnes para la fecha seleccionada.
+              No se registraron movimientos de compra ni venta de carnes para el período seleccionado.
             </div>
           ) : (
             <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-xs bg-white">
@@ -330,7 +402,9 @@ export default function CuadreMermasTab() {
                       Cuadración Física e Inventario Diario
                     </h1>
                     <p className="text-[11px] font-semibold text-gray-500 mt-1 capitalize">
-                      {formatFechaEncabezado(data.fecha)}
+                      {fechaInicio === fechaFin
+                        ? formatFechaEncabezado(fechaInicio)
+                        : `Del ${formatFechaCorto(fechaInicio)} al ${formatFechaCorto(fechaFin)}`}
                     </p>
                   </div>
                   <div className="text-right">
