@@ -49,6 +49,9 @@ async function main() {
   
   // 2. Agregar campos de sexo macho/hembra
   await ejecutarSQLFile("scripts/migrate-rendimiento-sexo-2026-07-26.sql");
+
+  // 3. Agregar columna rendimiento_porcentaje a la tabla productos
+  await ejecutarSQLFile("scripts/migrate-productos-rendimiento-2026-07-26.sql");
   
   console.log("¡Todas las migraciones se han ejecutado con éxito en producción!");
 }
