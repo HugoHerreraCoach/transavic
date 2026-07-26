@@ -468,18 +468,18 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
   if (!ficha) return <div className="mx-auto max-w-xl rounded-2xl border border-red-100 bg-red-50 p-6 text-red-700"><p className="font-bold">{error || "Proveedor no encontrado."}</p><Link href="/dashboard/proveedores" className="mt-3 inline-block underline">Volver a proveedores</Link></div>;
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <header className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
-        <Link href="/dashboard/proveedores" className="inline-flex min-h-10 items-center gap-2 text-sm font-bold text-gray-500 hover:text-indigo-700"><FiArrowLeft /> Proveedores</Link>
-        <div className="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <main className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      <header className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm sm:px-5 sm:py-4">
+        <Link href="/dashboard/proveedores" className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-indigo-700 py-0.5"><FiArrowLeft /> Proveedores</Link>
+        <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-black text-gray-950 sm:text-3xl">{ficha.proveedor.razon_social}</h1>{!ficha.proveedor.activo && <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-bold text-gray-600">Inactivo</span>}</div>
-            <p className="mt-1 text-sm text-gray-500">{ficha.proveedor.ruc ? `RUC ${ficha.proveedor.ruc}` : "Sin RUC"}{ficha.proveedor.telefono ? ` - ${ficha.proveedor.telefono}` : ""}</p>
+            <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-black text-gray-950 sm:text-3xl leading-none">{ficha.proveedor.razon_social}</h1>{!ficha.proveedor.activo && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-bold text-gray-600">Inactivo</span>}</div>
+            <p className="mt-1 text-xs text-gray-500">{ficha.proveedor.ruc ? `RUC ${ficha.proveedor.ruc}` : "Sin RUC"}{ficha.proveedor.telefono ? ` - ${ficha.proveedor.telefono}` : ""}</p>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <button onClick={() => { setDeudaInicial(null); setModalPago(true); }} className="min-h-11 rounded-xl bg-indigo-600 px-4 font-bold text-white hover:bg-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"><FiDollarSign className="mr-2 inline" />Registrar pago</button>
-            <button onClick={() => estadoRef.current?.scrollIntoView({ behavior: "smooth" })} className="min-h-11 rounded-xl bg-gray-900 px-4 font-bold text-white hover:bg-black"><FiFileText className="mr-2 inline" />Estado de cuenta</button>
-            <button onClick={cargar} disabled={cargando} className="min-h-11 rounded-xl border border-gray-200 bg-white px-4 font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50"><FiRefreshCw className={`mr-2 inline ${cargando ? "animate-spin" : ""}`} />Refrescar</button>
+            <button onClick={() => { setDeudaInicial(null); setModalPago(true); }} className="min-h-10 rounded-xl bg-indigo-600 px-4 font-bold text-white hover:bg-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 text-sm"><FiDollarSign className="mr-1 inline" />Registrar pago</button>
+            <button onClick={() => estadoRef.current?.scrollIntoView({ behavior: "smooth" })} className="min-h-10 rounded-xl bg-gray-900 px-4 font-bold text-white hover:bg-black text-sm"><FiFileText className="mr-1 inline" />Estado de cuenta</button>
+            <button onClick={cargar} disabled={cargando} className="min-h-10 rounded-xl border border-gray-200 bg-white px-4 font-bold text-gray-700 hover:bg-gray-50 disabled:opacity-50 text-sm"><FiRefreshCw className={`mr-1 inline ${cargando ? "animate-spin" : ""}`} />Refrescar</button>
           </div>
         </div>
       </header>

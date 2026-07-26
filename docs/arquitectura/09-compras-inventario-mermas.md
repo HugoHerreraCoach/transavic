@@ -161,16 +161,31 @@ Para corregir errores de registro (como asignar un proveedor equivocado o montos
 4. **Baja Financiera**: Se elimina físicamente la deuda de `cuentas_por_pagar`.
 5. **Estado de la Compra**: Se actualiza la cabecera en `compras` a `estado = 'Anulado'`.
 
+### 3.5 Edición flexible de compras — `PUT /api/compras/[id]` (26 jul 2026)
+
+Permite actualizar los costos unitarios, pesos, tara, jabas y datos informativos del comprobante. Para garantizar la consistencia física y contable, se implementa la siguiente lógica atómica:
+
+1. **Restricción de Pagos**:
+   * Si `cuentas_por_pagar.monto_pagado > 0.009` (tiene abonos aplicados), se bloquea cualquier cambio físico en los ítems (productos, pesos, precios). Únicamente se permite modificar datos documentarios (tipo, número de documento y fecha).
+2. **Ajuste Neto de Stock**:
+   * Si el documento no registra pagos, se permite la edición completa de los ítems de compra. El backend calcula la diferencia neta de kilos: `diferencia = peso_nuevo - peso_viejo` (respetando signos de devolución).
+   * Si `diferencia != 0`, se actualiza el stock en `inventario_lotes` y se añade un registro al Kardex (`inventario_movimientos`) con el tipo `'ajuste_compra'`.
+3. **Re-escritura y Recálculo**:
+   * Se eliminan físicamente y se re-insertan los ítems en `compra_items`.
+   * Se recalculan los totales de la cabecera `compras` y el monto total en `cuentas_por_pagar.monto_deuda`. Si el total de la compra resulta `0`, se borra la cuenta por pagar.
+   * Si cambia la fecha del documento, la `fecha_vencimiento` de la deuda se actualiza sumando 30 días automáticamente.
+
 ---
 
 ## 4. POLÍTICA DE INVENTARIO (decisión de Hugo, 5 jul 2026)
 
-El stock (`inventario_lotes`) lo mueven **exactamente cinco** flujos, y cada movimiento deja fila en el kardex `inventario_movimientos`:
+El stock (`inventario_lotes`) lo mueven **exactamente seis** flujos, y cada movimiento deja fila en el kardex `inventario_movimientos`:
 
 | Flujo | Signo | Tipo de kardex | Dónde vive |
 |---|---|---|---|
 | Compra de mercadería | **+** peso neto | `compra` | `POST /api/compras` (§3) |
 | Anulación de compra | **−** peso neto (o **+** si fue devolución) | `anulacion_compra` | `POST /api/compras/[id]/anular` (§3.4) |
+| Edición de compra | **+ / −** diferencia de kilos | `ajuste_compra` | `PUT /api/compras/[id]` (§3.5) |
 | Venta de mostrador (POS) | **−** cantidad | `venta_pos` | `POST /api/pos` (doc [10 §2](./10-pos-caja-tesoreria.md)) |
 | Pedido normal al pasar a **ENTREGADO** | **−** `COALESCE(cantidad_real, cantidad)` | `entrega` | `POST /api/pedidos/[id]/entregar` → `descontarInventarioPedido()` |
 | Reversión de una entrega | **+** lo descontado | `reversion` | `PATCH /api/pedidos/[id]/entregar` → `reponerInventarioPedido()` |

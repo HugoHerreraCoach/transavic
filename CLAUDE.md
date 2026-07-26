@@ -583,15 +583,23 @@ Cuando el cliente (Antonio u otros asesores) reporte errores de la SUNAT (ej. ca
 
 ---
 
-## 15. Anulación de Compras de Mercadería (26 jul 2026)
+## 15. Anulación y Edición Flexible de Compras (26 jul 2026)
 
-Para subsanar registros de compras erróneos de la madrugada:
-- **API `POST /api/compras/[id]/anular`**: Exige rol `admin` o `produccion` y motivo obligatorio ($\ge$ 5 chars).
-  - *Restricción:* Falla si la deuda en `cuentas_por_pagar` ya registra pagos (`monto_pagado > 0`).
-  - *Inventario y Kardex:* Reversa de forma opuesta las cantidades no-servicios en `inventario_lotes` e ingresa movimiento en `inventario_movimientos` con tipo `'anulacion_compra'`.
-  - *Deudas:* Elimina la deuda en `cuentas_por_pagar`.
-  - *Cabecera:* Coloca `estado = 'Anulado'` en la tabla `compras`.
+Para corregir digitaciones incorrectas de compras e información de proveedores de días anteriores:
+- **Anulación (`POST /api/compras/[id]/anular`)**:
+  - Exige rol `admin` o `produccion` y motivo obligatorio ($\ge$ 5 chars).
+  - *Restricción:* Falla si la deuda en `cuentas_por_pagar` ya registra pagos (`monto_pagado > 0.009`).
+  - *Inventario:* Reversa de forma opuesta las cantidades no-servicios en `inventario_lotes` e ingresa movimiento en `inventario_movimientos` con tipo `'anulacion_compra'`.
+  - *Deudas:* Elimina la deuda en `cuentas_por_pagar`. Coloca `estado = 'Anulado'` en la tabla `compras`.
+- **Edición Flexible (`PUT /api/compras/[id]`)**:
+  - Exige rol `admin` o `produccion`.
+  - *Restricción:* Si ya registra pagos (`monto_pagado > 0.009`), se bloquean los cambios a ítems de la compra (pesos, precios). Solo se permite editar datos de cabecera/documentarios.
+  - *Inventario:* Si no tiene pagos, calcula la diferencia neta (`nuevo - viejo`) y la aplica a `inventario_lotes` registrando en el Kardex con tipo `'ajuste_compra'`.
+  - *Recálculo:* Reescribe `compra_items`, recalculando totales de `compras` y modificando `monto_deuda` y `fecha_vencimiento` (fecha de compra + 30 días) en la deuda vinculada.
 - **UIs**:
-  - En **Historial** (`compras-client.tsx`): Fila en gris opaco para compras anuladas, badge rojo "Anulada" y botón `FiTrash2` con modal interactivo para ingresar el motivo.
-  - En **Ficha Proveedor** (`ficha-proveedor-client.tsx`): Botón "Anular Compra" en tarjetas de deudas sin abonos, con prompt para ingresar motivo.
+  - En **Historial** (`compras-client.tsx`): Agrega columna de acciones con botones `FiTrash2` (modal para anular) y `FiEdit2` (cambia el formulario dinámicamente a modo edición precargando todos los campos desde el GET de compras).
+  * En **Ficha Proveedor** (`ficha-proveedor-client.tsx`): 
+    - Reemplaza `window.prompt` de anulación por modal React/Tailwind.
+    - Alinea el botón de anular compra a la derecha (`sm:ml-auto`) para consistencia y agrega tooltips de advertencia si la deuda tiene pagos aplicados.
+    - **Compresión de espacio:** Se redujeron los padding y margins verticales del encabezado (`space-y-4` general en main, `p-4` en header, link de regreso compacto `text-xs py-0.5`, y botones de acción de cabecera a `min-h-10 text-sm`) para aumentar la densidad de información arriba y permitir ver las boletas sin hacer scroll inmediato.
 

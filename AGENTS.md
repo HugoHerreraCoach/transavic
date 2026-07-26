@@ -820,14 +820,21 @@ Para evitar la alteración de la secuencia de reparto por optimizaciones automá
 
 ---
 
-## 17. Anulación de Compras de Mercadería (26 jul 2026)
+## 17. Anulación y Edición Flexible de Compras de Mercadería (26 jul 2026)
 
-Para subsanar digitaciones incorrectas, se introdujo el mecanismo de anulación en compras, integrando la reversión contable y el inventario en una única transacción atómica:
-- **API `POST /api/compras/[id]/anular`**: Exige rol `admin` o `produccion` y un motivo obligatorio de mínimo 5 caracteres. 
-  - *Validación:* Si la deuda correspondiente en `cuentas_por_pagar` ya registra pagos (`monto_pagado > 0.009`), la anulación se bloquea (se debe anular primero el abono desde la ficha financiera).
-  - *Inventario y Kardex:* Por cada ítem no-servicio de la compra, se inserta una cantidad inversa en `inventario_lotes` (restando stock si ingresó, sumándolo si fue devolución) y se crea una fila en `inventario_movimientos` con tipo `'anulacion_compra'` anotando el motivo.
-  - *Deudas:* Elimina la fila de la deuda asociada en `cuentas_por_pagar`.
-  - *Estado:* Actualiza la cabecera en `compras` a `estado = 'Anulado'`.
-- **UI en Historial (`compras-client.tsx`)**: Se agregaron las columnas Estado ("Completada"/"Anulada") y Acciones (botón `FiTrash2` para administradores). Si se anula la compra, la fila adopta estilo opaco `opacity-60`. Un modal flotante solicita el motivo de forma amigable.
-- **UI en Ficha de Proveedor (`ficha-provider-client.tsx`)**: En la pestaña de deudas, los documentos de compra muestran un botón "Anular Compra" que ejecuta la API tras confirmar con motivo por prompt. Se auto-deshabilita si el saldo pagado es mayor a cero.
+Para subsanar digitaciones incorrectas de manera flexible, se introdujo el mecanismo de anulación y de edición de compras, integrando la consistencia física del inventario, Kardex y tesorería en transacciones atómicas:
+- **Anulación (`POST /api/compras/[id]/anular`)**: Exige rol `admin` o `produccion` y un motivo de mínimo 5 caracteres. 
+  - *Validación:* Si la deuda correspondiente en `cuentas_por_pagar` ya registra pagos (`monto_pagado > 0.009`), la acción se bloquea (se deben revertir los pagos primero).
+  - *Inventario:* Por cada ítem no-servicio de la compra, se inserta una cantidad inversa en `inventario_lotes` y se añade una fila al Kardex (`inventario_movimientos`) con el tipo `'anulacion_compra'`.
+  - *Deuda:* Elimina la deuda asociada en `cuentas_por_pagar`. Pasa la cabecera `compras.estado` a `'Anulado'`.
+- **Edición Flexible (`PUT /api/compras/[id]`)**: Exige rol `admin` o `produccion`.
+  - *Validación Financiera:* Si la compra ya registra pagos, se **bloquea la modificación física de los ítems** (precios, pesos, productos) para evitar descuadres en los egresos bancarios. Solo se permite editar datos documentarios (tipo/número de documento y fecha).
+  - *Recálculo de Stock:* Si no tiene pagos, se permite cambiar todo. El backend calcula la diferencia neta de kilos (`nuevo - viejo`) por producto, actualiza `inventario_lotes` y registra la diferencia en el Kardex con tipo `'ajuste_compra'`.
+  - *Actualización Contable:* Reescribe los ítems de `compra_items`, recalcula subtotales, IGV y total general en `compras`, y actualiza `monto_deuda` y `fecha_vencimiento` (fecha compra + 30 días) en `cuentas_por_pagar`.
+- **UI en Historial (`compras-client.tsx`)**: 
+  * Se agregaron las columnas Estado ("Completada"/"Anulada") y Acciones (botón `FiTrash2` de anular y botón `FiEdit2` de editar).
+  * Al editar, el formulario cambia dinámicamente de título a "Editar Compra de Mercadería ✏️", precarga todos los datos anteriores de la API, y permite guardar o cancelar el modo edición.
+- **UI en Ficha de Proveedor (`ficha-proveedor-client.tsx`)**:
+  * En la pestaña de deudas, los documentos de compra muestran el botón "Anular Compra" que solicita motivo mediante modal interactivo en React (reemplazando al `window.prompt` nativo). Se alinea siempre a la derecha (`sm:ml-auto`) y muestra tooltips informativos con cursor `not-allowed` si ya tiene abonos aplicados.
+  * **Optimización de Espacio:** Se comprimieron las alturas, márgenes y rellenos (`space-y-4` general, paddings `p-4` en header, link de regreso a un discreto `text-xs py-0.5`, y botones de acción a `min-h-10 text-sm`) para maximizar la densidad de información y dar visibilidad inmediata a los documentos de deuda sin obligar a hacer scroll.
 

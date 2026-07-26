@@ -104,6 +104,7 @@ neto del conjunto es cero; ninguna de las dos evidencias se edita ni se elimina.
 | `POST /api/cuentas-por-pagar/deuda` | `admin` | Crear deuda manual y consumir anticipo disponible. |
 | `POST /api/compras` | `admin|produccion` según regla existente | Crea compra/deuda y aplica anticipo bajo bloqueo. |
 | `POST /api/compras/[id]/anular` | `admin|produccion` | Anula compra de mercadería, reversa stock, Kardex y borra deuda. |
+| `PUT /api/compras/[id]` | `admin|produccion` | Edita compra de mercadería (precios, cantidades, nro doc). Bloquea cambios físicos si ya registra pagos. |
 
 Producción conserva el mantenimiento operativo de proveedores y compras, pero no
 puede abrir la ficha, ver saldos financieros, registrar pagos ni generar el estado
