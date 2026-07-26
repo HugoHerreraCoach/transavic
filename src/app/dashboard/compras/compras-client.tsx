@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText, FiX } from "react-icons/fi";
+import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText, FiX, FiEdit2 } from "react-icons/fi";
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
@@ -107,6 +107,9 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
   const [motivoAnulacion, setMotivoAnulacion] = useState("");
   const [anulando, setAnulando] = useState(false);
 
+  // Estado para la edición de compras
+  const [compraEditandoId, setCompraEditandoId] = useState<string | null>(null);
+
   // Categorías existentes (para el select del modal) + "Insumos" garantizada.
   const categoriasExistentes = Array.from(
     new Set(["Insumos", ...productos.map((p) => p.categoria).filter(Boolean)])
@@ -193,6 +196,56 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
     } finally {
       setAnulando(false);
     }
+  };
+
+  const iniciarEdicionCompra = async (compraId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/compras/${compraId}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "No se pudo obtener el detalle de la compra.");
+      }
+      const data = await res.json();
+
+      // Cargar cabecera
+      setProveedorId(data.proveedor_id || "");
+      setFecha(data.fecha ? String(data.fecha).slice(0, 10) : new Date().toISOString().split("T")[0]);
+      setTipoDoc(data.tipo_doc || "Factura");
+      setNroDoc(data.nro_doc || "");
+
+      if (Array.isArray(data.items)) {
+        setItems(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data.items.map((it: any) => ({
+            producto_id: it.producto_id || "",
+            jabas: Number(it.jabas) || 0,
+            peso_bruto: Number(it.peso_bruto) || 0,
+            peso_tara: Number(it.peso_tara) || 0,
+            costo_unitario: Number(it.costo_unitario) || 0,
+            tipo: it.tipo || "ingreso",
+          }))
+        );
+      } else {
+        setItems([filaVacia()]);
+      }
+
+      setCompraEditandoId(compraId);
+      setActiveTab("nuevo");
+      mostrarToast(`Editando compra ${data.tipo_doc} ${data.nro_doc}`, "info");
+    } catch (err: unknown) {
+      mostrarToast(err instanceof Error ? err.message : "Error al cargar la compra.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const cancelarEdicionCompra = () => {
+    setCompraEditandoId(null);
+    setProveedorId("");
+    setNroDoc("");
+    setItems([filaVacia()]);
+    setActiveTab("historial");
   };
 
   const handleAddItem = () => {
@@ -341,8 +394,11 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
     }
 
     try {
-      const res = await fetch("/api/compras", {
-        method: "POST",
+      const url = compraEditandoId ? `/api/compras/${compraEditandoId}` : "/api/compras";
+      const method = compraEditandoId ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           proveedor_id: proveedorId,
@@ -356,17 +412,24 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       const result = await res.json();
 
       if (!res.ok) {
-        throw new Error(result.error || "Error al registrar la compra.");
+        throw new Error(result.error || `Error al ${compraEditandoId ? "editar" : "registrar"} la compra.`);
       }
 
-      mostrarToast("Compra registrada. Inventario actualizado y deuda al proveedor anotada.", "exito");
+      mostrarToast(
+        compraEditandoId
+          ? "Compra editada con éxito. Inventario y deudas actualizados."
+          : "Compra registrada. Inventario actualizado y deuda al proveedor anotada.",
+        "exito"
+      );
 
       // Recordar el proveedor para la próxima carga
       if (proveedorId) localStorage.setItem(CLAVE_ULTIMO_PROVEEDOR, proveedorId);
 
-      // Resetear formulario
+      // Resetear formulario y salir del modo edición
       setNroDoc("");
       setItems([filaVacia()]);
+      setCompraEditandoId(null);
+      setActiveTab("historial");
 
       // Recargar historial
       const compRes = await fetch("/api/compras");
@@ -395,10 +458,18 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
               : "border-transparent text-gray-500 hover:text-gray-700"
           }`}
         >
-          Nueva Compra
+          {compraEditandoId ? "Editar Compra ✏️" : "Nueva Compra"}
         </button>
         <button
-          onClick={() => setActiveTab("historial")}
+          onClick={() => {
+            setActiveTab("historial");
+            if (compraEditandoId) {
+              setCompraEditandoId(null);
+              setProveedorId("");
+              setNroDoc("");
+              setItems([filaVacia()]);
+            }
+          }}
           className={`py-3 px-6 font-semibold border-b-2 text-sm transition-all cursor-pointer ${
             activeTab === "historial"
               ? "border-indigo-600 text-indigo-600"
@@ -418,7 +489,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
           {/* Recepcion Info */}
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-6">
             <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <FiBox className="text-indigo-600" /> Datos del Comprobante / Recepción
+              <FiBox className="text-indigo-600" /> {compraEditandoId ? "Editar Compra de Mercadería" : "Datos del Comprobante / Recepción"}
             </h2>
             
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -701,13 +772,23 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
           </div>
 
           {/* Submit */}
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-3">
+            {compraEditandoId && (
+              <button
+                type="button"
+                onClick={cancelarEdicionCompra}
+                disabled={submitting}
+                className="px-6 py-3.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-all cursor-pointer active:scale-95"
+              >
+                Cancelar Edición
+              </button>
+            )}
             <button
               type="submit"
               disabled={submitting}
               className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3.5 rounded-xl font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-2 disabled:opacity-50 cursor-pointer active:scale-95"
             >
-              <FiSave className="w-5 h-5" /> {submitting ? "Procesando..." : "Registrar Carga"}
+              <FiSave className="w-5 h-5" /> {submitting ? "Procesando..." : (compraEditandoId ? "Guardar Cambios" : "Registrar Carga")}
             </button>
           </div>
         </form>
@@ -783,23 +864,33 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             </span>
                           )}
                         </td>
-                        <td className="p-4 text-right">
+                        <td className="p-4 text-right space-x-1">
                           {!esAnulada && esAdmin && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setCompraAnulando({
-                                  id: c.id,
-                                  proveedor: c.proveedor_nombre,
-                                  total: Number(c.total),
-                                  nro_doc: c.nro_doc,
-                                })
-                              }
-                              title="Anular esta compra de mercadería"
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-sm hover:shadow-red-50/55 active:scale-90 transition-all cursor-pointer inline-flex items-center rounded-lg"
-                            >
-                              <FiTrash2 className="w-4.5 h-4.5" />
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => iniciarEdicionCompra(c.id)}
+                                title="Editar esta compra (precios, cantidades, documentos)"
+                                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 hover:shadow-sm hover:shadow-indigo-50/55 active:scale-90 transition-all cursor-pointer inline-flex items-center rounded-lg"
+                              >
+                                <FiEdit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCompraAnulando({
+                                    id: c.id,
+                                    proveedor: c.proveedor_nombre,
+                                    total: Number(c.total),
+                                    nro_doc: c.nro_doc,
+                                  })
+                                }
+                                title="Anular esta compra de mercadería"
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-sm hover:shadow-red-50/55 active:scale-90 transition-all cursor-pointer inline-flex items-center rounded-lg"
+                              >
+                                <FiTrash2 className="w-4.5 h-4.5" />
+                              </button>
+                            </>
                           )}
                         </td>
                       </tr>
