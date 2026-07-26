@@ -333,7 +333,7 @@ export default function DashboardLayout({
           active && item.isPrimary
             ? "bg-red-600 text-white shadow-md scale-[1.02]"
             : active
-            ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600"
+            ? "bg-gradient-to-r from-red-100 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600"
             : item.isPrimary
             ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs mt-2 mb-2"
             : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
@@ -374,7 +374,7 @@ export default function DashboardLayout({
             active && isPrimary
               ? "bg-red-600 text-white shadow-md"
               : active
-              ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 font-semibold"
+              ? "bg-gradient-to-r from-red-100 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 font-semibold"
               : isPrimary
               ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs"
               : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
