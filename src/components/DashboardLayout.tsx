@@ -335,11 +335,15 @@ export default function DashboardLayout({
             : active
             ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600"
             : item.isPrimary
-            ? "bg-red-600 text-white shadow-sm mt-2 mb-2"
+            ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs mt-2 mb-2"
             : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
         }`}
       >
-        <span className={`transition-transform duration-200 ${item.isPrimary ? "text-white" : active ? "scale-110 text-red-600" : ""}`}>{item.icon}</span>
+        <span className={`transition-transform duration-200 ${
+          item.isPrimary 
+            ? active ? "text-white" : "text-red-500" 
+            : active ? "scale-110 text-red-600" : ""
+        }`}>{item.icon}</span>
         <span>
           {item.label}
           {item.isBeta && <ChipBeta />}
@@ -368,18 +372,20 @@ export default function DashboardLayout({
           ${isPrimary ? 'mb-1 font-semibold' : ''}
           ${
             active && isPrimary
-              ? "bg-red-700 text-white shadow-sm"
+              ? "bg-red-600 text-white shadow-md"
               : active
               ? "bg-gradient-to-r from-red-50 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 font-semibold"
               : isPrimary
-              ? "bg-red-600 text-white hover:bg-red-700 shadow-sm"
+              ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs"
               : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
           }
           ${isSidebarCollapsed && isPrimary ? "w-10 h-10 p-0 mx-auto justify-center" : ""}
         `}
       >
         <span className={`relative flex-shrink-0 transition-transform duration-200 ${
-          isPrimary ? "text-white" : active ? "text-red-600 scale-110" : "text-gray-500"
+          isPrimary 
+            ? active ? "text-white" : "text-red-500" 
+            : active ? "text-red-600 scale-110" : "text-gray-500"
         }`}>
           {item.icon}
           {badgePara(item.href) > 0 && (
