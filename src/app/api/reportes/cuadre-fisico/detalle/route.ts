@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
         SELECT 
           v.id AS venta_id,
           v.fecha::text AS fecha,
-          c.nombre AS cliente_nombre,
+          COALESCE(c.nombre, 'Cliente Campo') AS cliente_nombre,
           v.numero_guia AS nro_guia,
           vi.id AS item_id,
           0::int AS jabas,
@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
           vi.precio_kg::float8 AS precio_unitario
         FROM venta_avicola_items vi
         JOIN ventas_avicola v ON v.id = vi.venta_id
-        JOIN clientes_avicola c ON c.id = v.cliente_id
+        LEFT JOIN clientes_avicola c ON c.id = v.cliente_id
         WHERE v.fecha BETWEEN ${desde}::date AND ${hasta}::date
           AND vi.producto_id = ${producto_id}
           AND NOT v.anulada
@@ -108,20 +108,19 @@ export async function GET(req: NextRequest) {
         SELECT 
           p.id AS pedido_id,
           (p.created_at AT TIME ZONE 'America/Lima')::date::text AS fecha,
-          c.nombre AS cliente_nombre,
+          COALESCE(c.nombre, p.cliente, 'Cliente General') AS cliente_nombre,
           p.nro_pedido,
           pi.id AS item_id,
           COALESCE(pi.cantidad_real, pi.cantidad, 0)::float8 AS kilos,
           pi.precio_unitario::float8 AS precio_unitario
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
-        JOIN clientes c ON c.id = p.cliente_id
+        LEFT JOIN clientes c ON c.id = p.cliente_id
         WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
           AND pi.producto_id = ${producto_id}
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
-          AND pi.unidad IN ('kg', 'KGM')
         ORDER BY p.created_at DESC
       `;
     } else if (canal === "planta") {
@@ -129,7 +128,7 @@ export async function GET(req: NextRequest) {
         SELECT 
           p.id AS pedido_id,
           (p.created_at AT TIME ZONE 'America/Lima')::date::text AS fecha,
-          COALESCE(c.nombre, p.cliente) AS cliente_nombre,
+          COALESCE(c.nombre, p.cliente, 'Venta en Planta') AS cliente_nombre,
           p.nro_pedido,
           pi.id AS item_id,
           pi.cantidad::float8 AS kilos,
@@ -142,7 +141,6 @@ export async function GET(req: NextRequest) {
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
-          AND pi.unidad IN ('kg', 'KGM')
         ORDER BY p.created_at DESC
       `;
     } else if (canal === "ajuste") {

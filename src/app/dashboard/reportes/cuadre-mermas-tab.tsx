@@ -874,8 +874,14 @@ export default function CuadreMermasTab() {
 
       {/* Slide-over de Auditoría y Ajustes */}
       {modalAbierto && modalProducto && modalCanal && (
-        <div className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex justify-end transition-opacity duration-300">
-          <div className="bg-white w-full max-w-lg h-full shadow-2xl flex flex-col p-6 overflow-y-auto relative animate-in slide-in-from-right duration-200">
+        <div 
+          onClick={() => setModalAbierto(false)}
+          className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex justify-end transition-opacity duration-300 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-lg h-full shadow-2xl flex flex-col p-6 overflow-y-auto relative animate-in slide-in-from-right duration-200 cursor-default"
+          >
             {/* Cabecera */}
             <div className="flex justify-between items-start border-b border-gray-100 pb-4 mb-5">
               <div>

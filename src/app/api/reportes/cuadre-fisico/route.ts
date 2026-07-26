@@ -80,7 +80,6 @@ export async function GET(req: NextRequest) {
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
-          AND pi.unidad IN ('kg', 'KGM')
         GROUP BY pi.producto_id
       ),
       ventas_planta AS (
@@ -94,7 +93,6 @@ export async function GET(req: NextRequest) {
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
-          AND pi.unidad IN ('kg', 'KGM')
         GROUP BY pi.producto_id
       ),
       ventas_campo AS (

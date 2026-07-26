@@ -1152,8 +1152,14 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
 
       {/* Modal Desglose Macho / Hembra */}
       {filaSexoEdicion !== null && items[filaSexoEdicion] && (
-        <div className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+        <div 
+          onClick={() => setFilaSexoEdicion(null)}
+          className="fixed inset-0 bg-black/45 backdrop-blur-xs z-50 flex items-center justify-center p-4 cursor-pointer"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-2xl w-full max-w-sm shadow-2xl border border-gray-100 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 cursor-default"
+          >
             {/* Cabecera */}
             <div className="bg-gray-50 border-b border-gray-100 px-5 py-4 flex justify-between items-center">
               <div>
