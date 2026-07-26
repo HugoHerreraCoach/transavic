@@ -1,10 +1,9 @@
 // src/app/dashboard/reportes/cuadre-consolidado-tab.tsx
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { 
   FiCalendar, 
-  FiDownload, 
   FiLoader, 
   FiUsers, 
   FiBox, 
@@ -12,9 +11,9 @@ import {
   FiX, 
   FiEye, 
   FiAlertCircle,
-  FiActivity
+  FiActivity,
+  FiFileText
 } from "react-icons/fi";
-import { toJpeg } from "html-to-image";
 import { toLocalDateString } from "@/lib/utils";
 import { formatSoles } from "./ui";
 
@@ -69,7 +68,7 @@ export default function CuadreConsolidadoTab() {
   const [fecha, setFecha] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [exportando, setExportando] = useState<boolean>(false);
+  const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
   const [copiando, setCopiando] = useState<boolean>(false);
 
   // Datos financieros y físicos
@@ -82,8 +81,6 @@ export default function CuadreConsolidadoTab() {
   const [auditoriaData, setAuditoriaData] = useState<AuditoriaClienteResponse | null>(null);
   const [errorAuditoria, setErrorAuditoria] = useState<string | null>(null);
   const [copiandoAuditoria, setCopiandoAuditoria] = useState<boolean>(false);
-
-  const reportRef = useRef<HTMLDivElement>(null);
 
   // Inicializar fecha de hoy (Lima)
   useEffect(() => {
@@ -250,29 +247,250 @@ export default function CuadreConsolidadoTab() {
     }
   }, [clientes, productos, fecha, totalPendiente, totalDiferenciaKilos]);
 
-  // Exportar Imagen
-  const handleExportar = useCallback(async () => {
-    const el = reportRef.current;
-    if (!el) return;
-    setExportando(true);
+  // Exportar PDF vectorial (con paginación automática para no cortar clientes ni productos)
+  const handleExportarPDF = async () => {
+    if (!clientes.length && !productos.length) return;
+    setExportandoPDF(true);
     try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.98,
-        pixelRatio: 2.5,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        skipFonts: true
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
       });
-      const link = document.createElement("a");
-      link.download = `cuadre-consolidado-${fecha}.jpg`;
-      link.href = dataUrl;
-      link.click();
+
+      const renderHeader = () => {
+        doc.setFillColor(220, 38, 38);
+        doc.rect(0, 0, 297, 12, "F");
+
+        doc.setTextColor(220, 38, 38);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(14);
+        doc.text("TRANSAVIC & LA AVÍCOLA DE TONY", 148.5, 22, { align: "center" });
+
+        doc.setTextColor(31, 41, 55);
+        doc.setFontSize(15);
+        doc.text("Cuadre Diario Consolidado (Financiero y de Stock)", 148.5, 29, { align: "center" });
+
+        doc.setTextColor(107, 114, 128);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9.5);
+        doc.text(formatFechaLabel(fecha), 148.5, 34, { align: "center" });
+
+        doc.setDrawColor(229, 231, 235);
+        doc.setLineWidth(0.5);
+        doc.line(15, 38, 282, 38);
+      };
+
+      const renderFooter = () => {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(156, 163, 175);
+        doc.text("Transavic & La Avícola de Tony · Control Diario Consolidado", 148.5, 198, { align: "center" });
+      };
+
+      renderHeader();
+      let y = 45;
+
+      // --- SECCIÓN 1: CARTERA FINANCIERA POR CLIENTE ---
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(31, 41, 55);
+      doc.text("1. Cartera Financiera por Cliente", 15, y);
+
+      y += 4;
+      const renderHeaderClientes = (currentY: number) => {
+        doc.setFillColor(243, 244, 246);
+        doc.rect(15, currentY, 267, 8, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(55, 65, 81);
+        doc.text("Cliente", 18, currentY + 5.5);
+        doc.text("Kilos Vendidos", 100, currentY + 5.5, { align: "right" });
+        doc.text("Venta (Guía S/)", 135, currentY + 5.5, { align: "right" });
+        doc.text("Saldo Anterior", 170, currentY + 5.5, { align: "right" });
+        doc.text("A Cuenta (Cobros)", 205, currentY + 5.5, { align: "right" });
+        doc.text("Descuentos", 240, currentY + 5.5, { align: "right" });
+        doc.text("Saldo Pendiente", 277, currentY + 5.5, { align: "right" });
+      };
+
+      renderHeaderClientes(y);
+      y += 8;
+
+      clientes.forEach((c) => {
+        if (y > 180) {
+          renderFooter();
+          doc.addPage();
+          renderHeader();
+          y = 45;
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(31, 41, 55);
+          doc.text("1. Cartera Financiera por Cliente (Continuación)", 15, y);
+          y += 4;
+          renderHeaderClientes(y);
+          y += 8;
+        }
+
+        doc.setDrawColor(243, 244, 246);
+        doc.line(15, y + 6, 282, y + 6);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(31, 41, 55);
+        doc.text(c.cliente_nombre, 18, y + 4.5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(75, 85, 99);
+        doc.text(c.kg_vendidos > 0 ? `${c.kg_vendidos.toFixed(2)} kg` : "—", 100, y + 4.5, { align: "right" });
+        doc.text(c.monto_venta > 0 ? c.monto_venta.toFixed(2) : "—", 135, y + 4.5, { align: "right" });
+        doc.text(c.saldo_anterior > 0 ? c.saldo_anterior.toFixed(2) : "—", 170, y + 4.5, { align: "right" });
+        doc.text(c.cobrado > 0 ? `-${c.cobrado.toFixed(2)}` : "—", 205, y + 4.5, { align: "right" });
+        doc.text(c.descuento > 0 ? `-${c.descuento.toFixed(2)}` : "—", 240, y + 4.5, { align: "right" });
+
+        if (c.saldo_pendiente > 0) {
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(220, 38, 38);
+        }
+        doc.text(c.saldo_pendiente > 0 ? c.saldo_pendiente.toFixed(2) : "0.00", 277, y + 4.5, { align: "right" });
+        doc.setTextColor(75, 85, 99);
+
+        y += 7;
+      });
+
+      // Total Cartera
+      if (y > 180) {
+        renderFooter();
+        doc.addPage();
+        renderHeader();
+        y = 45;
+      }
+
+      doc.setFillColor(249, 250, 251);
+      doc.rect(15, y, 267, 9, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(31, 41, 55);
+      doc.text("TOTALES CARTERA FINANCIERA", 18, y + 6);
+      doc.text(`${totalKg.toFixed(2)} kg`, 100, y + 6, { align: "right" });
+      doc.text(totalVenta.toFixed(2), 135, y + 6, { align: "right" });
+      doc.text(totalSaldoAnt.toFixed(2), 170, y + 6, { align: "right" });
+      doc.text(totalCobrado > 0 ? `-${totalCobrado.toFixed(2)}` : "—", 205, y + 6, { align: "right" });
+      doc.text(totalDescuento > 0 ? `-${totalDescuento.toFixed(2)}` : "—", 240, y + 6, { align: "right" });
+      doc.setTextColor(220, 38, 38);
+      doc.text(totalPendiente.toFixed(2), 277, y + 6, { align: "right" });
+
+      y += 16;
+
+      // --- SECCIÓN 2: CUADRACIÓN FÍSICA Y MERMAS ---
+      if (y > 140) {
+        renderFooter();
+        doc.addPage();
+        renderHeader();
+        y = 45;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(31, 41, 55);
+      doc.text("2. Cuadración Física y Control de Mermas (Stock)", 15, y);
+
+      y += 4;
+      const renderHeaderProductos = (currentY: number) => {
+        doc.setFillColor(243, 244, 246);
+        doc.rect(15, currentY, 267, 8, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(55, 65, 81);
+        doc.text("Producto", 18, currentY + 5.5);
+        doc.text("Jabas Compra", 100, currentY + 5.5, { align: "right" });
+        doc.text("Kilos Compra (Carga)", 145, currentY + 5.5, { align: "right" });
+        doc.text("Kilos Vendidos", 195, currentY + 5.5, { align: "right" });
+        doc.text("Merma / Diferencia (kg)", 277, currentY + 5.5, { align: "right" });
+      };
+
+      renderHeaderProductos(y);
+      y += 8;
+
+      productos.forEach((p) => {
+        if (y > 180) {
+          renderFooter();
+          doc.addPage();
+          renderHeader();
+          y = 45;
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(31, 41, 55);
+          doc.text("2. Cuadración Física y Control de Mermas (Continuación)", 15, y);
+          y += 4;
+          renderHeaderProductos(y);
+          y += 8;
+        }
+
+        doc.setDrawColor(243, 244, 246);
+        doc.line(15, y + 6, 282, y + 6);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(31, 41, 55);
+        doc.text(p.producto_nombre, 18, y + 4.5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(75, 85, 99);
+        doc.text(p.jabas_compradas > 0 ? `${p.jabas_compradas} jab.` : "—", 100, y + 4.5, { align: "right" });
+        doc.text(p.kg_comprados > 0 ? `${p.kg_comprados.toFixed(2)} kg` : "—", 145, y + 4.5, { align: "right" });
+        doc.text(p.kg_vendidos > 0 ? `${p.kg_vendidos.toFixed(2)} kg` : "—", 195, y + 4.5, { align: "right" });
+
+        if (p.diferencia < 0) {
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(220, 38, 38);
+        } else if (p.diferencia > 0) {
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(37, 99, 235);
+        }
+        doc.text(`${p.diferencia.toFixed(2)} kg`, 277, y + 4.5, { align: "right" });
+        doc.setTextColor(75, 85, 99);
+
+        y += 7;
+      });
+
+      // Total Productos
+      if (y > 180) {
+        renderFooter();
+        doc.addPage();
+        renderHeader();
+        y = 45;
+      }
+
+      doc.setFillColor(249, 250, 251);
+      doc.rect(15, y, 267, 9, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(31, 41, 55);
+      doc.text("TOTALES STOCK Y MERMAS", 18, y + 6);
+      doc.text(totalJabasCompra > 0 ? `${totalJabasCompra} jab.` : "—", 100, y + 6, { align: "right" });
+      doc.text(`${totalCompraKilos.toFixed(2)} kg`, 145, y + 6, { align: "right" });
+      doc.text(`${totalVendidoKilos.toFixed(2)} kg`, 195, y + 6, { align: "right" });
+
+      if (totalDiferenciaKilos < 0) {
+        doc.setTextColor(220, 38, 38);
+      } else if (totalDiferenciaKilos > 0) {
+        doc.setTextColor(37, 99, 235);
+      }
+      doc.text(`${totalDiferenciaKilos.toFixed(2)} kg`, 277, y + 6, { align: "right" });
+
+      renderFooter();
+
+      doc.save(`cuadre-consolidado-${fecha}.pdf`);
     } catch (err) {
-      console.error("Error al exportar:", err);
+      console.error("Error al generar PDF consolidado:", err);
+      alert("Error al generar el PDF.");
     } finally {
-      setExportando(false);
+      setExportandoPDF(false);
     }
-  }, [fecha]);
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -291,12 +509,12 @@ export default function CuadreConsolidadoTab() {
         {(!loading && !error) && (clientes.length > 0 || productos.length > 0) && (
           <div className="flex gap-2 w-full md:w-auto">
             <button
-              onClick={handleExportar}
-              disabled={exportando}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+              onClick={handleExportarPDF}
+              disabled={exportandoPDF}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {exportando ? <FiLoader className="animate-spin" /> : <FiDownload />}
-              <span>Exportar</span>
+              {exportandoPDF ? <FiLoader className="animate-spin" /> : <FiFileText />}
+              <span>Descargar PDF</span>
             </button>
             <button
               onClick={handleCopiarTexto}
@@ -331,9 +549,7 @@ export default function CuadreConsolidadoTab() {
             </div>
           ) : (
             <div className="border border-gray-200 rounded-2xl overflow-x-auto shadow-xs bg-white w-full">
-              {/* Contenedor fotografiado por html-to-image */}
               <div 
-                ref={reportRef} 
                 className="bg-white p-6 flex flex-col gap-6 select-none"
                 style={{ width: "1200px", minWidth: "1200px" }}
               >
@@ -341,7 +557,7 @@ export default function CuadreConsolidadoTab() {
                 <div className="flex justify-between items-end border-b border-gray-100 pb-4">
                   <div>
                     <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
-                      TRANSAVIC & EL TONY
+                      TRANSAVIC & AVÍCOLA DE TONY
                     </h2>
                     <h1 className="text-lg font-black text-gray-900 tracking-tight">
                       Cuadre Diario Consolidado (Financiero y de Stock)
@@ -530,7 +746,7 @@ export default function CuadreConsolidadoTab() {
                 {/* Pie de Página */}
                 <div className="flex justify-between items-center pt-3 border-t border-gray-100">
                   <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                    Transavic & El Tony · Módulo Integrador del Día
+                    Transavic & Avícola de Tony · Módulo Integrador del Día
                   </span>
                   <span className="text-[9px] text-gray-400 font-semibold">
                     Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}
@@ -640,7 +856,7 @@ export default function CuadreConsolidadoTab() {
                         No se registran movimientos dentro de esta fecha.
                       </p>
                     ) : (
-                      <div className="border border-gray-100 rounded-xl overflow-hidden shadow-xs bg-white">
+                      <div className="border border-gray-100 rounded-xl overflow-hidden shadow-xs bg-white bg-white">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
                             <tr className="bg-gray-50 border-b border-gray-100 font-bold text-gray-500">

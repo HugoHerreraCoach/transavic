@@ -1,9 +1,8 @@
 // src/app/dashboard/reportes/cuadre-mermas-tab.tsx
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { FiDownload, FiShare2, FiLoader, FiCalendar, FiBox, FiCopy } from "react-icons/fi";
-import { toJpeg } from "html-to-image";
+import { useState, useEffect, useCallback } from "react";
+import { FiLoader, FiCalendar, FiBox, FiCopy, FiFileText } from "react-icons/fi";
 import { toLocalDateString } from "@/lib/utils";
 
 interface ProductoCuadre {
@@ -29,10 +28,8 @@ export default function CuadreMermasTab() {
   const [data, setData] = useState<CuadreFisicoResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
-  const [exportando, setExportando] = useState<boolean>(false);
+  const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
   const [copiando, setCopiando] = useState<boolean>(false);
-
-  const reportRef = useRef<HTMLDivElement>(null);
 
   // Inicializar fecha de hoy (Lima) al montar
   useEffect(() => {
@@ -65,73 +62,6 @@ export default function CuadreMermasTab() {
     fetchCuadre();
   }, [fecha]);
 
-  // Exportar a JPG para compartir por WhatsApp
-  const handleExportar = useCallback(async () => {
-    const el = reportRef.current;
-    if (!el || !data) return;
-
-    setExportando(true);
-    try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.98,
-        pixelRatio: 2.5,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        skipFonts: true,
-      });
-
-      const link = document.createElement("a");
-      link.download = `cuadre-mermas-${data.fecha}.jpg`;
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      console.error("Error al exportar cuadre:", err);
-      alert("Hubo un error al generar la imagen del reporte. Inténtalo de nuevo.");
-    } finally {
-      setExportando(false);
-    }
-  }, [data]);
-
-  // Compartir nativamente
-  const handleCompartir = useCallback(async () => {
-    const el = reportRef.current;
-    if (!el || !data) return;
-
-    setExportando(true);
-    try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.98,
-        pixelRatio: 2.5,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        skipFonts: true,
-      });
-
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-      const file = new File([blob], `cuadre-mermas-${data.fecha}.jpg`, {
-        type: "image/jpeg",
-      });
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Cuadre de Mermas - ${data.fecha}`,
-          text: `Resumen de conciliación física Transavic.`,
-        });
-      } else {
-        const link = document.createElement("a");
-        link.download = `cuadre-mermas-${data.fecha}.jpg`;
-        link.href = dataUrl;
-        link.click();
-      }
-    } catch (err) {
-      console.error("Error al compartir cuadre:", err);
-    } finally {
-      setExportando(false);
-    }
-  }, [data]);
-
   // Aritmética de Totales
   const totalJabasCompra = data?.productos.reduce((acc, p) => acc + p.jabas_compradas, 0) ?? 0;
   const totalCompra = data?.productos.reduce((acc, p) => acc + p.kg_comprados, 0) ?? 0;
@@ -152,6 +82,152 @@ export default function CuadreMermasTab() {
       month: "long",
       year: "numeric",
     });
+  };
+
+  // Exportar a PDF vectorial usando jsPDF (Horizontal para que entren todas las columnas)
+  const handleExportarPDF = async () => {
+    if (!data) return;
+    setExportandoPDF(true);
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Cabecera Corporativa
+      doc.setFillColor(220, 38, 38); // Rojo
+      doc.rect(0, 0, 297, 12, "F");
+
+      doc.setTextColor(220, 38, 38);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("TRANSAVIC & AVÍCOLA DE TONY", 148.5, 24, { align: "center" });
+
+      doc.setTextColor(31, 41, 55);
+      doc.setFontSize(16);
+      doc.text("Cuadración Física e Inventario Diario (Mermas)", 148.5, 32, { align: "center" });
+
+      doc.setTextColor(107, 114, 128);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(10);
+      doc.text(formatFechaEncabezado(data.fecha), 148.5, 38, { align: "center" });
+
+      // Línea divisoria
+      doc.setDrawColor(229, 231, 235);
+      doc.setLineWidth(0.5);
+      doc.line(15, 43, 282, 43);
+
+      let y = 50;
+
+      // Cabecera de la tabla
+      doc.setFillColor(243, 244, 246);
+      doc.rect(15, y, 267, 10, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(55, 65, 81);
+      doc.text("Producto", 18, y + 6.5);
+      doc.text("Compra (kg)", 90, y + 6.5, { align: "right" });
+      doc.text("Venta Ejec. (kg)", 125, y + 6.5, { align: "right" });
+      doc.text("Venta Campo (kg)", 160, y + 6.5, { align: "right" });
+      doc.text("Venta Planta (kg)", 195, y + 6.5, { align: "right" });
+      doc.text("Total Venta (kg)", 230, y + 6.5, { align: "right" });
+      doc.text("Merma (kg)", 277, y + 6.5, { align: "right" });
+
+      y += 10;
+
+      // Filas
+      data.productos.forEach((p) => {
+        if (y > 185) {
+          doc.addPage();
+          y = 20;
+          doc.setFillColor(243, 244, 246);
+          doc.rect(15, y, 267, 10, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(9);
+          doc.setTextColor(55, 65, 81);
+          doc.text("Producto", 18, y + 6.5);
+          doc.text("Compra (kg)", 90, y + 6.5, { align: "right" });
+          doc.text("Venta Ejec. (kg)", 125, y + 6.5, { align: "right" });
+          doc.text("Venta Campo (kg)", 160, y + 6.5, { align: "right" });
+          doc.text("Venta Planta (kg)", 195, y + 6.5, { align: "right" });
+          doc.text("Total Venta (kg)", 230, y + 6.5, { align: "right" });
+          doc.text("Merma (kg)", 277, y + 6.5, { align: "right" });
+          y += 10;
+        }
+
+        doc.setDrawColor(243, 244, 246);
+        doc.line(15, y + 8, 282, y + 8);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(31, 41, 55);
+        doc.text(p.producto_nombre, 18, y + 5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8.5);
+        doc.setTextColor(75, 85, 99);
+        doc.text(p.kg_comprados > 0 ? p.kg_comprados.toFixed(2) : "—", 90, y + 5, { align: "right" });
+        doc.text(p.kg_ejecutivas > 0 ? p.kg_ejecutivas.toFixed(2) : "—", 125, y + 5, { align: "right" });
+        doc.text(p.kg_campo > 0 ? p.kg_campo.toFixed(2) : "—", 160, y + 5, { align: "right" });
+        doc.text(p.kg_planta > 0 ? p.kg_planta.toFixed(2) : "—", 195, y + 5, { align: "right" });
+        doc.text(p.kg_vendidos > 0 ? p.kg_vendidos.toFixed(2) : "—", 230, y + 5, { align: "right" });
+
+        // Pintar la merma de color distintivo
+        if (p.diferencia < 0) {
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(220, 38, 38); // Rojo
+        } else if (p.diferencia > 0) {
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(37, 99, 235); // Azul
+        } else {
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(107, 114, 128);
+        }
+        doc.text(`${p.diferencia.toFixed(2)} kg`, 277, y + 5, { align: "right" });
+
+        y += 8;
+      });
+
+      // Fila de totales consolidado
+      y += 2;
+      doc.setFillColor(249, 250, 251);
+      doc.rect(15, y, 267, 12, "F");
+      doc.setDrawColor(209, 213, 219);
+      doc.setLineWidth(0.5);
+      doc.rect(15, y, 267, 12, "D");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(31, 41, 55);
+      doc.text("TOTAL CONSOLIDADO", 18, y + 7.5);
+      doc.text(totalCompra > 0 ? `${totalCompra.toFixed(2)} kg` : "—", 90, y + 7.5, { align: "right" });
+      doc.text(totalEjecutivas > 0 ? `${totalEjecutivas.toFixed(2)} kg` : "—", 125, y + 7.5, { align: "right" });
+      doc.text(totalCampo > 0 ? `${totalCampo.toFixed(2)} kg` : "—", 160, y + 7.5, { align: "right" });
+      doc.text(totalPlanta > 0 ? `${totalPlanta.toFixed(2)} kg` : "—", 195, y + 7.5, { align: "right" });
+      doc.text(totalVenta > 0 ? `${totalVenta.toFixed(2)} kg` : "—", 230, y + 7.5, { align: "right" });
+
+      if (totalDiferencia < 0) {
+        doc.setTextColor(220, 38, 38);
+      } else if (totalDiferencia > 0) {
+        doc.setTextColor(37, 99, 235);
+      }
+      doc.text(`${totalDiferencia.toFixed(2)} kg`, 277, y + 7.5, { align: "right" });
+
+      // Footer
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(156, 163, 175);
+      doc.text("Transavic & Avícola de Tony · Módulo de Control de Mermas de Carga", 148.5, 198, { align: "center" });
+
+      doc.save(`cuadre-mermas-${data.fecha}.pdf`);
+    } catch (err) {
+      console.error("Error al generar PDF:", err);
+      alert("Error al generar el PDF.");
+    } finally {
+      setExportandoPDF(false);
+    }
   };
 
   const handleCopiarTexto = useCallback(async () => {
@@ -199,20 +275,12 @@ export default function CuadreMermasTab() {
         {data && data.productos.length > 0 && (
           <div className="flex gap-2 w-full md:w-auto">
             <button
-              onClick={handleExportar}
-              disabled={exportando}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+              onClick={handleExportarPDF}
+              disabled={exportandoPDF}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {exportando ? <FiLoader className="animate-spin" /> : <FiDownload />}
-              <span>Exportar</span>
-            </button>
-            <button
-              onClick={handleCompartir}
-              disabled={exportando}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {exportando ? <FiLoader className="animate-spin" /> : <FiShare2 />}
-              <span>Compartir por WhatsApp</span>
+              {exportandoPDF ? <FiLoader className="animate-spin" /> : <FiFileText />}
+              <span>Descargar PDF</span>
             </button>
             <button
               onClick={handleCopiarTexto}
@@ -248,9 +316,7 @@ export default function CuadreMermasTab() {
             </div>
           ) : (
             <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-xs bg-white">
-              {/* Contenedor que será fotografiado por html-to-image */}
               <div
-                ref={reportRef}
                 className="bg-white p-6 flex flex-col gap-6 select-none overflow-x-auto"
                 style={{ width: "100%", minWidth: "900px" }}
               >
@@ -258,7 +324,7 @@ export default function CuadreMermasTab() {
                 <div className="flex justify-between items-end border-b border-gray-100 pb-4">
                   <div>
                     <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
-                      TRANSAVIC & EL TONY
+                      TRANSAVIC & AVÍCOLA DE TONY
                     </h2>
                     <h1 className="text-lg font-black text-gray-900 tracking-tight">
                       Cuadración Física e Inventario Diario
@@ -383,7 +449,7 @@ export default function CuadreMermasTab() {
                 {/* Pie de Página */}
                 <div className="flex justify-between items-center pt-3 border-t border-gray-100">
                   <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                    Transavic & El Tony · Módulo de Control de Mermas de Carga
+                    Transavic & Avícola de Tony · Módulo de Control de Mermas de Carga
                   </span>
                   <span className="text-[9px] text-gray-400">
                     Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}

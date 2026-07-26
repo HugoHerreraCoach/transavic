@@ -20,6 +20,8 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const fechaParam = searchParams.get("fecha");
+  const fechaInicioParam = searchParams.get("fecha_inicio");
+  const fechaFinParam = searchParams.get("fecha_fin");
 
   if (fechaParam && !FECHA_REGEX.test(fechaParam)) {
     return NextResponse.json(
@@ -28,16 +30,38 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  if (fechaInicioParam && !FECHA_REGEX.test(fechaInicioParam)) {
+    return NextResponse.json(
+      { error: "Formato de fecha_inicio inválido. Usar YYYY-MM-DD" },
+      { status: 400 }
+    );
+  }
+
+  if (fechaFinParam && !FECHA_REGEX.test(fechaFinParam)) {
+    return NextResponse.json(
+      { error: "Formato de fecha_fin inválido. Usar YYYY-MM-DD" },
+      { status: 400 }
+    );
+  }
+
   try {
     const sql = neon(process.env.DATABASE_URL!);
     
-    // Obtener fecha por defecto (hoy en Lima)
-    let fecha = fechaParam;
-    if (!fecha) {
-      const hoyRows = (await sql`
-        SELECT (NOW() AT TIME ZONE 'America/Lima')::date::text AS hoy
-      `) as Array<{ hoy: string }>;
-      fecha = hoyRows[0]?.hoy || new Date().toISOString().split("T")[0];
+    let fechaInicio = fechaInicioParam;
+    let fechaFin = fechaFinParam;
+
+    if (!fechaInicio || !fechaFin) {
+      if (fechaParam) {
+        fechaInicio = fechaParam;
+        fechaFin = fechaParam;
+      } else {
+        const hoyRows = (await sql`
+          SELECT (NOW() AT TIME ZONE 'America/Lima')::date::text AS hoy
+        `) as Array<{ hoy: string }>;
+        const hoy = hoyRows[0]?.hoy || new Date().toISOString().split("T")[0];
+        fechaInicio = hoy;
+        fechaFin = hoy;
+      }
     }
 
     // 1. Ventas Ejecutivas (Asesoras)
@@ -47,7 +71,7 @@ export async function GET(req: NextRequest) {
       FROM pedidos p
       JOIN pedido_items pi ON pi.pedido_id = p.id
       JOIN productos pr ON pr.id = pi.producto_id
-      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
         AND COALESCE(p.origen, 'asesor') = 'asesor'
         AND p.estado <> 'Fallido'
         AND NOT COALESCE(p.anulada, FALSE)
@@ -62,7 +86,7 @@ export async function GET(req: NextRequest) {
       FROM pedidos p
       JOIN pedido_items pi ON pi.pedido_id = p.id
       JOIN productos pr ON pr.id = pi.producto_id
-      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date = ${fecha}::date
+      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
         AND p.origen = 'pos_planta'
         AND p.estado <> 'Fallido'
         AND NOT COALESCE(p.anulada, FALSE)
@@ -77,7 +101,7 @@ export async function GET(req: NextRequest) {
       FROM ventas_avicola v
       JOIN venta_avicola_items vi ON vi.venta_id = v.id
       JOIN productos pr ON pr.id = vi.producto_id
-      WHERE v.fecha = ${fecha}::date
+      WHERE v.fecha BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
         AND NOT v.anulada
         AND pr.categoria IN ('Pollo', 'Carnes')
     ` as Array<{ total_kg: string | number }>;
@@ -88,7 +112,8 @@ export async function GET(req: NextRequest) {
     const granTotal = kgEjecutivas + kgPlanta + kgCampo;
 
     return NextResponse.json({
-      fecha,
+      fecha_inicio: fechaInicio,
+      fecha_fin: fechaFin,
       ejecutivas: kgEjecutivas,
       planta: kgPlanta,
       campo: kgCampo,

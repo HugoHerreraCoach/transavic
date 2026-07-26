@@ -1,9 +1,8 @@
 // src/app/dashboard/reportes/cartera-asesoras-tab.tsx
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { FiDownload, FiShare2, FiLoader, FiCalendar, FiUsers, FiCopy, FiX, FiEye, FiAlertCircle } from "react-icons/fi";
-import { toJpeg } from "html-to-image";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { FiLoader, FiCalendar, FiUsers, FiCopy, FiX, FiEye, FiAlertCircle, FiFileText } from "react-icons/fi";
 import { SelectorPeriodo, presetRango, type Preset, formatSoles } from "./ui";
 
 interface ClienteBalance {
@@ -64,7 +63,7 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
   const [loading, setLoading] = useState<boolean>(true);
   const [loadingAsesoras, setLoadingAsesoras] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [exportando, setExportando] = useState<boolean>(false);
+  const [exportandoPDF, setExportandoPDF] = useState<boolean>(false);
   const [copiando, setCopiando] = useState<boolean>(false);
 
   // Estados para Auditoría Financiera de Cliente (Doble Clic / Modal)
@@ -141,72 +140,257 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
     loadBalance();
   }, [loadBalance]);
 
-  // Exportar reporte a JPG para compartir por WhatsApp
-  const handleExportar = useCallback(async () => {
-    const el = reportRef.current;
-    if (!el || !data) return;
-
-    setExportando(true);
-    try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.98,
-        pixelRatio: 2.5,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        skipFonts: true,
-      });
-
-      const link = document.createElement("a");
-      link.download = `balance-cartera-${desde}-al-${hasta}.jpg`;
-      link.href = dataUrl;
-      link.click();
-    } catch (err) {
-      console.error("Error al exportar balance:", err);
-      alert("Hubo un error al generar la imagen del reporte. Inténtalo de nuevo.");
-    } finally {
-      setExportando(false);
-    }
-  }, [data, desde, hasta]);
-
-  // Compartir nativamente
-  const handleCompartir = useCallback(async () => {
-    const el = reportRef.current;
-    if (!el || !data) return;
-
-    setExportando(true);
-    try {
-      const dataUrl = await toJpeg(el, {
-        quality: 0.98,
-        pixelRatio: 2.5,
-        backgroundColor: "#ffffff",
-        cacheBust: true,
-        skipFonts: true,
-      });
-
-      const response = await fetch(dataUrl);
-      const blob = await response.blob();
-      const file = new File([blob], `balance-cartera-${desde}-al-${hasta}.jpg`, {
-        type: "image/jpeg",
-      });
-
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Balance Cartera - ${desde} al ${hasta}`,
-          text: `Resumen de cobranzas y deudas Transavic.`,
-        });
-      } else {
-        const link = document.createElement("a");
-        link.download = `balance-cartera-${desde}-al-${hasta}.jpg`;
-        link.href = dataUrl;
-        link.click();
+  // 1. Calcular el Resumen Agrupado por Asesora
+  const resumenAsesoras = useMemo(() => {
+    if (!data) return [];
+    const resumenMap: Record<
+      string,
+      {
+        nombre: string;
+        kg: number;
+        venta: number;
+        saldoAnterior: number;
+        cobrado: number;
+        descuento: number;
+        pendiente: number;
       }
+    > = {};
+
+    data.clientes.forEach((c) => {
+      const name = c.asesor_name || "Sin ejecutiva";
+      if (!resumenMap[name]) {
+        resumenMap[name] = {
+          nombre: name,
+          kg: 0,
+          venta: 0,
+          saldoAnterior: 0,
+          cobrado: 0,
+          descuento: 0,
+          pendiente: 0,
+        };
+      }
+      resumenMap[name].kg += c.kg_vendidos || 0;
+      resumenMap[name].venta += c.monto_venta || 0;
+      resumenMap[name].saldoAnterior += c.saldo_anterior || 0;
+      resumenMap[name].cobrado += c.cobrado || 0;
+      resumenMap[name].descuento += c.descuento || 0;
+      resumenMap[name].pendiente += c.saldo_pendiente || 0;
+    });
+
+    return Object.values(resumenMap).sort((a, b) => b.venta - a.venta);
+  }, [data]);
+
+
+
+  // Formateadores de fecha cortos
+  const formatFechaCorto = (fechaStr: string) => {
+    if (!fechaStr) return "";
+    const [y, m, d] = fechaStr.split("-");
+    return `${d}/${m}/${y}`;
+  };
+
+  // Exportar a PDF vectorial con jsPDF
+  const handleExportarPDF = async () => {
+    if (!data) return;
+    setExportandoPDF(true);
+    try {
+      const { jsPDF } = await import("jspdf");
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      // Cabecera Corporativa
+      doc.setFillColor(220, 38, 38); // Rojo
+      doc.rect(0, 0, 210, 12, "F");
+
+      doc.setTextColor(220, 38, 38);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.text("TRANSAVIC & AVÍCOLA DE TONY", 105, 24, { align: "center" });
+
+      doc.setTextColor(31, 41, 55);
+      doc.setFontSize(16);
+      doc.text("Conciliación de Cartera Financiera", 105, 32, { align: "center" });
+
+      doc.setTextColor(107, 114, 128);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9.5);
+      doc.text(`Ejecutiva: ${getAsesoraNameHeader()}`, 105, 37, { align: "center" });
+      doc.text(`Periodo: Del ${formatFechaCorto(desde)} al ${formatFechaCorto(hasta)}`, 105, 42, { align: "center" });
+
+      // Línea divisoria
+      doc.setDrawColor(229, 231, 235);
+      doc.setLineWidth(0.5);
+      doc.line(15, 46, 195, 46);
+
+      let y = 54;
+
+      // Resumen por Ejecutiva si aplica
+      if (asesorId === "todos" && resumenAsesoras.length > 0) {
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(55, 65, 81);
+        doc.setFontSize(10);
+        doc.text("RESUMEN DE CARTERA POR EJECUTIVA", 15, y);
+        y += 4;
+
+        // Cabecera mini tabla
+        doc.setFillColor(243, 244, 246);
+        doc.rect(15, y, 180, 7, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(107, 114, 128);
+        doc.text("Ejecutiva", 18, y + 5);
+        doc.text("Kilos", 70, y + 5, { align: "right" });
+        doc.text("Venta (S/)", 98, y + 5, { align: "right" });
+        doc.text("A Cuenta (S/)", 132, y + 5, { align: "right" });
+        doc.text("NC (S/)", 160, y + 5, { align: "right" });
+        doc.text("Pendiente (S/)", 192, y + 5, { align: "right" });
+
+        y += 7;
+
+        // Filas mini tabla
+        resumenAsesoras.forEach((a) => {
+          doc.setDrawColor(243, 244, 246);
+          doc.line(15, y + 7, 195, y + 7);
+
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8.5);
+          doc.setTextColor(31, 41, 55);
+          doc.text(a.nombre, 18, y + 5);
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8);
+          doc.text(a.kg > 0 ? `${a.kg.toFixed(2)} kg` : "—", 70, y + 5, { align: "right" });
+          doc.text(a.venta > 0 ? a.venta.toFixed(2) : "—", 98, y + 5, { align: "right" });
+          doc.setTextColor(16, 185, 129); // Emerald
+          doc.text(a.cobrado > 0 ? `-${a.cobrado.toFixed(2)}` : "—", 132, y + 5, { align: "right" });
+          doc.setTextColor(59, 130, 246); // Blue
+          doc.text(a.descuento > 0 ? `-${a.descuento.toFixed(2)}` : "—", 160, y + 5, { align: "right" });
+          doc.setTextColor(220, 38, 38); // Red
+          doc.setFont("helvetica", "bold");
+          doc.text(a.pendiente > 0 ? a.pendiente.toFixed(2) : "0.00", 192, y + 5, { align: "right" });
+
+          y += 7;
+        });
+
+        y += 10;
+      }
+
+      // Detalle de Clientes
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(55, 65, 81);
+      doc.setFontSize(10);
+      doc.text("DETALLE POR CLIENTE", 15, y);
+      y += 4;
+
+      // Cabecera tabla clientes
+      doc.setFillColor(243, 244, 246);
+      doc.rect(15, y, 180, 8, "F");
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(107, 114, 128);
+      doc.text("Cliente", 18, y + 5.5);
+      doc.text("Kilos", 65, y + 5.5, { align: "right" });
+      doc.text("Venta (S/)", 90, y + 5.5, { align: "right" });
+      doc.text("Sald. Ant.", 115, y + 5.5, { align: "right" });
+      doc.text("A Cuenta", 140, y + 5.5, { align: "right" });
+      doc.text("NC Desct.", 165, y + 5.5, { align: "right" });
+      doc.text("Pendiente", 192, y + 5.5, { align: "right" });
+
+      y += 8;
+
+      // Filas clientes
+      data.clientes.forEach((c) => {
+        if (y > 260) {
+          doc.addPage();
+          y = 20;
+          doc.setFillColor(243, 244, 246);
+          doc.rect(15, y, 180, 8, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(107, 114, 128);
+          doc.text("Cliente", 18, y + 5.5);
+          doc.text("Kilos", 65, y + 5.5, { align: "right" });
+          doc.text("Venta (S/)", 90, y + 5.5, { align: "right" });
+          doc.text("Sald. Ant.", 115, y + 5.5, { align: "right" });
+          doc.text("A Cuenta", 140, y + 5.5, { align: "right" });
+          doc.text("NC Desct.", 165, y + 5.5, { align: "right" });
+          doc.text("Pendiente", 192, y + 5.5, { align: "right" });
+          y += 8;
+        }
+
+        doc.setDrawColor(243, 244, 246);
+        doc.line(15, y + 8, 195, y + 8);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(31, 41, 55);
+        const nombreCliente = c.cliente_nombre.length > 25
+          ? c.cliente_nombre.substring(0, 22) + "..."
+          : c.cliente_nombre;
+        doc.text(nombreCliente, 18, y + 4.5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(75, 85, 99);
+        doc.text(c.kg_vendidos > 0 ? c.kg_vendidos.toFixed(2) : "—", 65, y + 4.5, { align: "right" });
+        doc.text(c.monto_venta > 0 ? c.monto_venta.toFixed(2) : "—", 90, y + 4.5, { align: "right" });
+        doc.text(c.saldo_anterior > 0 ? c.saldo_anterior.toFixed(2) : "—", 115, y + 4.5, { align: "right" });
+        doc.setTextColor(16, 185, 129);
+        doc.text(c.cobrado > 0 ? `-${c.cobrado.toFixed(2)}` : "—", 140, y + 4.5, { align: "right" });
+        doc.setTextColor(59, 130, 246);
+        doc.text(c.descuento > 0 ? `-${c.descuento.toFixed(2)}` : "—", 165, y + 4.5, { align: "right" });
+        doc.setTextColor(220, 38, 38);
+        doc.setFont("helvetica", "bold");
+        doc.text(c.saldo_pendiente > 0 ? c.saldo_pendiente.toFixed(2) : "0.00", 192, y + 4.5, { align: "right" });
+
+        y += 8.5;
+      });
+
+      // Fila de Totales
+      if (y > 260) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setFillColor(243, 244, 246);
+      doc.rect(15, y, 180, 10, "F");
+      doc.setDrawColor(209, 213, 219);
+      doc.rect(15, y, 180, 10, "D");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(55, 65, 81);
+      doc.text("TOTAL CONSOLIDADO", 18, y + 6.5);
+      
+      doc.text(totalKg > 0 ? `${totalKg.toFixed(2)} kg` : "—", 65, y + 6.5, { align: "right" });
+      doc.text(totalVenta.toFixed(2), 90, y + 6.5, { align: "right" });
+      doc.text(totalSaldoAnt > 0 ? totalSaldoAnt.toFixed(2) : "—", 115, y + 6.5, { align: "right" });
+      doc.setTextColor(16, 185, 129);
+      doc.text(totalCobrado > 0 ? `-${totalCobrado.toFixed(2)}` : "—", 140, y + 6.5, { align: "right" });
+      doc.setTextColor(59, 130, 246);
+      doc.text(totalDescuento > 0 ? `-${totalDescuento.toFixed(2)}` : "—", 165, y + 6.5, { align: "right" });
+      doc.setTextColor(220, 38, 38);
+      doc.setFontSize(9.5);
+      doc.text(totalPendiente.toFixed(2), 192, y + 6.5, { align: "right" });
+
+      // Footer
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(156, 163, 175);
+      doc.text("TRANSAVIC ERP · CONCILIACIÓN DE COBRANZAS", 105, 276, { align: "center" });
+      
+      const dateStr = `Generado el ${new Date().toLocaleDateString("es-PE")} a las ${new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" })}`;
+      doc.text(dateStr, 105, 281, { align: "center" });
+
+      doc.save(`conciliacion-cartera-${desde}-al-${hasta}.pdf`);
     } catch (err) {
-      console.error("Error al compartir balance:", err);
+      console.error("Error al exportar PDF:", err);
+      alert("Ocurrió un error al generar el PDF.");
     } finally {
-      setExportando(false);
+      setExportandoPDF(false);
     }
-  }, [data, desde, hasta]);
+  };
 
   // Aritmética de Totales Consolidados
   const totalKg = data?.clientes.reduce((acc, c) => acc + c.kg_vendidos, 0) ?? 0;
@@ -297,6 +481,15 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
     let texto = `*CONCILIACIÓN CARTERA FINANCIERA* 💰\n`;
     texto += `👤 *Ejecutiva:* ${getAsesoraNameHeader()}\n`;
     texto += `📅 *Periodo:* ${desde} al ${hasta}\n\n`;
+    
+    if (asesorId === "todos" && resumenAsesoras.length > 0) {
+      texto += `*Resumen por Asesora:*\n`;
+      resumenAsesoras.forEach((a) => {
+        texto += `• *${a.nombre}*: Venta: S/ ${a.venta.toFixed(2)} | Cobro: S/ ${a.cobrado.toFixed(2)} | Pendiente: *S/ ${a.pendiente.toFixed(2)}*\n`;
+      });
+      texto += `\n`;
+    }
+
     texto += `*Resumen de Clientes:*\n`;
     texto += `----------------------\n`;
     
@@ -320,7 +513,7 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
     } finally {
       setCopiando(false);
     }
-  }, [data, desde, hasta, totalKg, totalVenta, totalSaldoAnt, totalCobrado, totalDescuento, totalPendiente, getAsesoraNameHeader]);
+  }, [data, desde, hasta, totalKg, totalVenta, totalSaldoAnt, totalCobrado, totalDescuento, totalPendiente, getAsesoraNameHeader, asesorId, resumenAsesoras]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -370,22 +563,14 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
 
         {/* Botones de Descarga */}
         {data && data.clientes.length > 0 && (
-          <div className="flex gap-2 w-full md:w-auto">
+          <div className="flex flex-wrap gap-2 w-full md:w-auto">
             <button
-              onClick={handleExportar}
-              disabled={exportando}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+              onClick={handleExportarPDF}
+              disabled={exportandoPDF}
+              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-700 hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {exportando ? <FiLoader className="animate-spin" /> : <FiDownload />}
-              <span>Exportar</span>
-            </button>
-            <button
-              onClick={handleCompartir}
-              disabled={exportando}
-              className="flex-1 md:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
-            >
-              {exportando ? <FiLoader className="animate-spin" /> : <FiShare2 />}
-              <span>Compartir por WhatsApp</span>
+              {exportandoPDF ? <FiLoader className="animate-spin" /> : <FiFileText />}
+              <span>Descargar PDF</span>
             </button>
             <button
               onClick={handleCopiarTexto}
@@ -420,152 +605,214 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
               No se registraron ventas ni cobranzas en el periodo seleccionado para la asesora indicada.
             </div>
           ) : (
-            <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-xs bg-white">
-              {/* Contenedor que será fotografiado por html-to-image */}
-              <div
-                ref={reportRef}
-                className="bg-white p-6 flex flex-col gap-6 select-none overflow-x-auto"
-                style={{ width: "100%", minWidth: "800px" }}
-              >
-                {/* Cabecera del Reporte */}
-                <div className="flex justify-between items-end border-b border-gray-100 pb-4">
-                  <div>
-                    <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
-                      TRANSAVIC ERP
-                    </h2>
-                    <h1 className="text-lg font-black text-gray-900 tracking-tight">
-                      Conciliación de Cartera Financiera
-                    </h1>
-                    <p className="text-[11px] font-semibold text-gray-500 mt-1">
-                      Ejecutiva: <span className="text-gray-800 font-bold">{getAsesoraNameHeader()}</span>
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-700 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                      <FiCalendar /> {formatFechaLabel(desde)} – {formatFechaLabel(hasta)}
-                    </span>
+            <div className="flex flex-col gap-6">
+              {/* 2. Cuadro Resumen por Asesora en pantalla (sólo si es Admin o Producción y se consultan "Todos") */}
+              {asesorId === "todos" && resumenAsesoras.length > 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded-2xl p-5 shadow-xs bg-white">
+                  <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wider mb-3 flex items-center gap-1.5 border-b border-gray-100 pb-2">
+                    <FiUsers className="text-red-500 text-sm" />
+                    Resumen Consolidado por Ejecutiva
+                  </h3>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-gray-200 text-gray-400 font-bold">
+                          <th className="py-2 pr-2">Ejecutiva</th>
+                          <th className="py-2 text-right">Kilos</th>
+                          <th className="py-2 text-right">Venta (S/)</th>
+                          <th className="py-2 text-right">Sald. Ant.</th>
+                          <th className="py-2 text-right">A Cuenta</th>
+                          <th className="py-2 text-right">Desct.</th>
+                          <th className="py-2 text-right">Pendiente</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 text-gray-700 font-medium">
+                        {resumenAsesoras.map((a, idx) => (
+                          <tr key={idx} className="hover:bg-gray-100/45 transition-colors">
+                            <td className="py-2.5 pr-2 font-bold text-gray-900">{a.nombre}</td>
+                            <td className="py-2.5 text-right tabular-nums text-gray-600">
+                              {a.kg > 0 ? `${a.kg.toFixed(2)} kg` : "—"}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums font-semibold text-gray-900">
+                              {a.venta > 0 ? formatSoles(a.venta) : "—"}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums text-gray-600">
+                              {a.saldoAnterior > 0 ? formatSoles(a.saldoAnterior) : "—"}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums font-bold text-emerald-600">
+                              {a.cobrado > 0 ? `-${formatSoles(a.cobrado)}` : "—"}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums text-blue-600">
+                              {a.descuento > 0 ? `-${formatSoles(a.descuento)}` : "—"}
+                            </td>
+                            <td className={`py-2.5 text-right tabular-nums font-black ${
+                              a.pendiente > 0 ? "text-red-600" : "text-gray-500"
+                            }`}>
+                              {a.pendiente > 0 ? formatSoles(a.pendiente) : "S/ 0.00"}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              )}
 
-                {/* Tabla de Balances */}
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-gray-200">
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 w-1/4">
-                        Cliente
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        Kilos
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        Guía (Venta)
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        Sald. Ant.
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        A Cuenta (Cobros)
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        Desct.
-                      </th>
-                      <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
-                        Pendiente
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
-                    {data.clientes.map((c, i) => (
-                      <tr
-                        key={i}
-                        onDoubleClick={() => cargarAuditoriaCliente(c.cliente_id)}
-                        className="hover:bg-gray-50/50 transition-colors cursor-pointer select-none"
-                        title="Doble clic para auditar cuenta corriente"
-                      >
-                        <td className="py-3 pr-2">
-                          <div className="flex items-center gap-1.5 group/cell">
-                            <div className="font-bold text-gray-900">{c.cliente_nombre}</div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                cargarAuditoriaCliente(c.cliente_id);
-                              }}
-                              className="opacity-0 group-hover/cell:opacity-100 focus:opacity-100 transition-opacity p-0.5 text-gray-400 hover:text-red-600 rounded bg-gray-100 hover:bg-red-50 cursor-pointer"
-                              title="Ver extracto de cuenta"
-                            >
-                              <FiEye className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                          {c.cliente_razon_social && (
-                            <div className="text-[10px] text-gray-400 mt-0.5 max-w-[200px] truncate">
-                              {c.cliente_razon_social} {c.cliente_ruc_dni ? `(${c.cliente_ruc_dni})` : ""}
+              <div className="border border-gray-200 rounded-2xl overflow-x-auto shadow-xs bg-white w-full">
+                {/* Contenedor que será fotografiado por html-to-image */}
+                <div
+                  ref={reportRef}
+                  className="bg-white p-6 flex flex-col gap-6 select-none"
+                  style={{ width: "960px", minWidth: "960px" }}
+                >
+                  {/* Cabecera del Reporte */}
+                  <div className="flex justify-between items-end border-b border-gray-100 pb-4">
+                    <div>
+                      <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
+                        TRANSAVIC ERP
+                      </h2>
+                      <h1 className="text-lg font-black text-gray-900 tracking-tight">
+                        Conciliación de Cartera Financiera
+                      </h1>
+                      <p className="text-[11px] font-semibold text-gray-500 mt-1">
+                        Ejecutiva: <span className="text-gray-800 font-bold">{getAsesoraNameHeader()}</span>
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-gray-100 text-gray-700 rounded-full text-[10px] font-bold uppercase tracking-wider">
+                        <FiCalendar /> {formatFechaLabel(desde)} – {formatFechaLabel(hasta)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Tabla de Balances */}
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200">
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 w-1/4">
+                          Cliente
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          Kilos
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          Guía (Venta)
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          Sald. Ant.
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          A Cuenta (Cobros)
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          Desct.
+                        </th>
+                        <th className="py-2.5 text-[9px] uppercase font-bold tracking-wider text-gray-400 text-right">
+                          Pendiente
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
+                      {data.clientes.map((c, i) => (
+                        <tr
+                          key={i}
+                          onDoubleClick={() => cargarAuditoriaCliente(c.cliente_id)}
+                          className="hover:bg-gray-50/50 transition-colors cursor-pointer select-none"
+                          title="Doble clic para auditar cuenta corriente"
+                        >
+                          <td className="py-3 pr-2">
+                            <div className="flex items-center gap-1.5 group/cell">
+                              <div className="font-bold text-gray-900">{c.cliente_nombre}</div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  cargarAuditoriaCliente(c.cliente_id);
+                                }}
+                                className="opacity-0 group-hover/cell:opacity-100 focus:opacity-100 transition-opacity p-0.5 text-gray-400 hover:text-red-600 rounded bg-gray-100 hover:bg-red-50 cursor-pointer"
+                                title="Ver extracto de cuenta"
+                              >
+                                <FiEye className="h-3.5 w-3.5" />
+                              </button>
                             </div>
-                          )}
+                            <div className="text-[10px] text-gray-400 mt-0.5 max-w-[200px] truncate flex items-center gap-2">
+                              {c.cliente_razon_social && (
+                                <span>{c.cliente_razon_social}</span>
+                              )}
+                              {c.cliente_ruc_dni && (
+                                <span className="font-mono">({c.cliente_ruc_dni})</span>
+                              )}
+                              {asesorId === "todos" && (
+                                <span className="px-1 py-0.2 bg-gray-100 text-gray-600 text-[8px] rounded uppercase font-bold">
+                                  {c.asesor_name}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 text-right font-medium tabular-nums text-gray-600">
+                            {c.kg_vendidos > 0 ? `${c.kg_vendidos.toFixed(2)} kg` : "—"}
+                          </td>
+                          <td className="py-3 text-right font-bold tabular-nums text-gray-900">
+                            {c.monto_venta > 0 ? formatSoles(c.monto_venta) : "—"}
+                          </td>
+                          <td className="py-3 text-right font-medium tabular-nums text-gray-600">
+                            {c.saldo_anterior > 0 ? formatSoles(c.saldo_anterior) : "—"}
+                          </td>
+                          <td className="py-3 text-right font-bold tabular-nums text-emerald-600 bg-emerald-50/30">
+                            {c.cobrado > 0 ? `-${formatSoles(c.cobrado)}` : "—"}
+                          </td>
+                          <td className="py-3 text-right font-medium tabular-nums text-blue-600">
+                            {c.descuento > 0 ? `-${formatSoles(c.descuento)}` : "—"}
+                          </td>
+                          <td className={`py-3 text-right font-black tabular-nums ${
+                            c.saldo_pendiente > 0 ? "text-red-600 bg-red-50/20" : "text-gray-500"
+                          }`}>
+                            {c.saldo_pendiente > 0 ? formatSoles(c.saldo_pendiente) : "S/ 0.00"}
+                          </td>
+                        </tr>
+                      ))}
+
+                      {/* Fila de Totales */}
+                      <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
+                        <td className="py-3.5 pl-2 text-xs uppercase font-bold text-gray-600">
+                          TOTAL CONSOLIDADO
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-gray-600">
-                          {c.kg_vendidos > 0 ? `${c.kg_vendidos.toFixed(2)} kg` : "—"}
+                        <td className="py-3.5 text-right tabular-nums text-gray-700">
+                          {totalKg > 0 ? `${totalKg.toFixed(2)} kg` : "—"}
                         </td>
-                        <td className="py-3 text-right font-bold tabular-nums text-gray-900">
-                          {c.monto_venta > 0 ? formatSoles(c.monto_venta) : "—"}
+                        <td className="py-3.5 text-right tabular-nums text-gray-900">
+                          {formatSoles(totalVenta)}
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-gray-600">
-                          {c.saldo_anterior > 0 ? formatSoles(c.saldo_anterior) : "—"}
+                        <td className="py-3.5 text-right tabular-nums text-gray-700">
+                          {totalSaldoAnt > 0 ? formatSoles(totalSaldoAnt) : "—"}
                         </td>
-                        <td className="py-3 text-right font-bold tabular-nums text-emerald-600 bg-emerald-50/30">
-                          {c.cobrado > 0 ? `-${formatSoles(c.cobrado)}` : "—"}
+                        <td className="py-3.5 text-right tabular-nums text-emerald-700 bg-emerald-50/60">
+                          {totalCobrado > 0 ? `-${formatSoles(totalCobrado)}` : "—"}
                         </td>
-                        <td className="py-3 text-right font-medium tabular-nums text-blue-600">
-                          {c.descuento > 0 ? `-${formatSoles(c.descuento)}` : "—"}
+                        <td className="py-3.5 text-right tabular-nums text-blue-700">
+                          {totalDescuento > 0 ? `-${formatSoles(totalDescuento)}` : "—"}
                         </td>
-                        <td className={`py-3 text-right font-black tabular-nums ${
-                          c.saldo_pendiente > 0 ? "text-red-600 bg-red-50/20" : "text-gray-500"
+                        <td className={`py-3.5 text-right tabular-nums text-sm font-black ${
+                          totalPendiente > 0 ? "text-red-700 bg-red-50/40" : "text-gray-600"
                         }`}>
-                          {c.saldo_pendiente > 0 ? formatSoles(c.saldo_pendiente) : "S/ 0.00"}
+                          {formatSoles(totalPendiente)}
                         </td>
                       </tr>
-                    ))}
+                    </tbody>
+                  </table>
 
-                    {/* Fila de Totales */}
-                    <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
-                      <td className="py-3.5 pl-2 text-xs uppercase font-bold text-gray-600">
-                        TOTAL CONSOLIDADO
-                      </td>
-                      <td className="py-3.5 text-right tabular-nums text-gray-700">
-                        {totalKg > 0 ? `${totalKg.toFixed(2)} kg` : "—"}
-                      </td>
-                      <td className="py-3.5 text-right tabular-nums text-gray-900">
-                        {formatSoles(totalVenta)}
-                      </td>
-                      <td className="py-3.5 text-right tabular-nums text-gray-700">
-                        {totalSaldoAnt > 0 ? formatSoles(totalSaldoAnt) : "—"}
-                      </td>
-                      <td className="py-3.5 text-right tabular-nums text-emerald-700 bg-emerald-50/60">
-                        {totalCobrado > 0 ? `-${formatSoles(totalCobrado)}` : "—"}
-                      </td>
-                      <td className="py-3.5 text-right tabular-nums text-blue-700">
-                        {totalDescuento > 0 ? `-${formatSoles(totalDescuento)}` : "—"}
-                      </td>
-                      <td className={`py-3.5 text-right tabular-nums text-sm font-black ${
-                        totalPendiente > 0 ? "text-red-700 bg-red-50/40" : "text-gray-600"
-                      }`}>
-                        {formatSoles(totalPendiente)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-
-                {/* Pie de Página */}
-                <div className="flex justify-between items-center pt-3 border-t border-gray-100">
-                  <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                    Transavic & El Tony · Módulo de Control de Cobranzas
-                  </span>
-                  <span className="text-[9px] text-gray-400">
-                    Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}
-                    {new Date().toLocaleTimeString("es-PE", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
+                  {/* Pie de Página */}
+                  <div className="flex justify-between items-center pt-3 border-t border-gray-100">
+                    <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
+                      Transavic & Avícola de Tony · Módulo de Control de Cobranzas
+                    </span>
+                    <span className="text-[9px] text-gray-400">
+                      Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}
+                      {new Date().toLocaleTimeString("es-PE", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
