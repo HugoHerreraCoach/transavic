@@ -107,16 +107,16 @@ export async function GET(req: NextRequest) {
       items = await sql`
         SELECT 
           p.id AS pedido_id,
-          (p.created_at AT TIME ZONE 'America/Lima')::date::text AS fecha,
+          p.fecha_pedido::text AS fecha,
           COALESCE(c.nombre, p.cliente, 'Cliente General') AS cliente_nombre,
-          p.nro_pedido,
+          COALESCE(p.numero_guia::text, substring(p.id::text, 1, 8)) AS nro_pedido,
           pi.id AS item_id,
           COALESCE(pi.cantidad_real, pi.cantidad, 0)::float8 AS kilos,
           pi.precio_unitario::float8 AS precio_unitario
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
         LEFT JOIN clientes c ON c.id = p.cliente_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
+        WHERE p.fecha_pedido BETWEEN ${desde}::date AND ${hasta}::date
           AND pi.producto_id = ${producto_id}
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
@@ -127,16 +127,16 @@ export async function GET(req: NextRequest) {
       items = await sql`
         SELECT 
           p.id AS pedido_id,
-          (p.created_at AT TIME ZONE 'America/Lima')::date::text AS fecha,
+          p.fecha_pedido::text AS fecha,
           COALESCE(c.nombre, p.cliente, 'Venta en Planta') AS cliente_nombre,
-          p.nro_pedido,
+          COALESCE(p.numero_guia::text, substring(p.id::text, 1, 8)) AS nro_pedido,
           pi.id AS item_id,
           pi.cantidad::float8 AS kilos,
           pi.precio_unitario::float8 AS precio_unitario
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
         LEFT JOIN clientes c ON c.id = p.cliente_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
+        WHERE p.fecha_pedido BETWEEN ${desde}::date AND ${hasta}::date
           AND pi.producto_id = ${producto_id}
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
