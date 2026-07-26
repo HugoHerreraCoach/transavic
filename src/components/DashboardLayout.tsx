@@ -335,13 +335,13 @@ export default function DashboardLayout({
             : active
             ? "bg-gradient-to-r from-red-100 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600"
             : item.isPrimary
-            ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs mt-2 mb-2"
+            ? "bg-gray-50/80 border border-gray-200 text-gray-700 hover:bg-gray-100 hover:text-gray-900 shadow-xs mt-2 mb-2 font-semibold"
             : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
         }`}
       >
         <span className={`transition-transform duration-200 ${
           item.isPrimary 
-            ? active ? "text-white" : "text-red-500" 
+            ? active ? "text-white" : "text-gray-500" 
             : active ? "scale-110 text-red-600" : ""
         }`}>{item.icon}</span>
         <span>
@@ -376,7 +376,7 @@ export default function DashboardLayout({
               : active
               ? "bg-gradient-to-r from-red-100 to-red-100/30 text-red-700 shadow-sm border-l-4 border-red-600 font-semibold"
               : isPrimary
-              ? "bg-red-50/40 border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 shadow-xs"
+              ? "bg-gray-50/80 border border-gray-200 text-gray-700 hover:bg-gray-100 hover:text-gray-900 shadow-xs"
               : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
           }
           ${isSidebarCollapsed && isPrimary ? "w-10 h-10 p-0 mx-auto justify-center" : ""}
@@ -384,7 +384,7 @@ export default function DashboardLayout({
       >
         <span className={`relative flex-shrink-0 transition-transform duration-200 ${
           isPrimary 
-            ? active ? "text-white" : "text-red-500" 
+            ? active ? "text-white" : "text-gray-500" 
             : active ? "text-red-600 scale-110" : "text-gray-500"
         }`}>
           {item.icon}
