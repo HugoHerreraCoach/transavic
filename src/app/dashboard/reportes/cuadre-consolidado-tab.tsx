@@ -557,7 +557,7 @@ export default function CuadreConsolidadoTab() {
                 <div className="flex justify-between items-end border-b border-gray-100 pb-4">
                   <div>
                     <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
-                      TRANSAVIC & AVÍCOLA DE TONY
+                      TRANSAVIC & LA AVÍCOLA DE TONY
                     </h2>
                     <h1 className="text-lg font-black text-gray-900 tracking-tight">
                       Cuadre Diario Consolidado (Financiero y de Stock)
@@ -746,7 +746,7 @@ export default function CuadreConsolidadoTab() {
                 {/* Pie de Página */}
                 <div className="flex justify-between items-center pt-3 border-t border-gray-100">
                   <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                    Transavic & Avícola de Tony · Módulo Integrador del Día
+                    Transavic & La Avícola de Tony · Módulo Integrador del Día
                   </span>
                   <span className="text-[9px] text-gray-400 font-semibold">
                     Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}

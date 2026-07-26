@@ -208,7 +208,7 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
       doc.setTextColor(220, 38, 38);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
-      doc.text("TRANSAVIC & AVÍCOLA DE TONY", 105, 24, { align: "center" });
+      doc.text("TRANSAVIC & LA AVÍCOLA DE TONY", 105, 24, { align: "center" });
 
       doc.setTextColor(31, 41, 55);
       doc.setFontSize(16);
@@ -803,7 +803,7 @@ export default function CarteraAsesorasTab({ user }: { user?: UserProp }) {
                   {/* Pie de Página */}
                   <div className="flex justify-between items-center pt-3 border-t border-gray-100">
                     <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                      Transavic & Avícola de Tony · Módulo de Control de Cobranzas
+                      Transavic & La Avícola de Tony · Módulo de Control de Cobranzas
                     </span>
                     <span className="text-[9px] text-gray-400">
                       Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}

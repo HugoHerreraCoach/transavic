@@ -103,7 +103,7 @@ export default function CuadreMermasTab() {
       doc.setTextColor(220, 38, 38);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
-      doc.text("TRANSAVIC & AVÍCOLA DE TONY", 148.5, 24, { align: "center" });
+      doc.text("TRANSAVIC & LA AVÍCOLA DE TONY", 148.5, 24, { align: "center" });
 
       doc.setTextColor(31, 41, 55);
       doc.setFontSize(16);
@@ -219,7 +219,7 @@ export default function CuadreMermasTab() {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
       doc.setTextColor(156, 163, 175);
-      doc.text("Transavic & Avícola de Tony · Módulo de Control de Mermas de Carga", 148.5, 198, { align: "center" });
+      doc.text("Transavic & La Avícola de Tony · Módulo de Control de Mermas de Carga", 148.5, 198, { align: "center" });
 
       doc.save(`cuadre-mermas-${data.fecha}.pdf`);
     } catch (err) {
@@ -324,7 +324,7 @@ export default function CuadreMermasTab() {
                 <div className="flex justify-between items-end border-b border-gray-100 pb-4">
                   <div>
                     <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
-                      TRANSAVIC & AVÍCOLA DE TONY
+                      TRANSAVIC & LA AVÍCOLA DE TONY
                     </h2>
                     <h1 className="text-lg font-black text-gray-900 tracking-tight">
                       Cuadración Física e Inventario Diario
@@ -449,7 +449,7 @@ export default function CuadreMermasTab() {
                 {/* Pie de Página */}
                 <div className="flex justify-between items-center pt-3 border-t border-gray-100">
                   <span className="text-[9px] text-gray-400 font-semibold uppercase tracking-wider">
-                    Transavic & Avícola de Tony · Módulo de Control de Mermas de Carga
+                    Transavic & La Avícola de Tony · Módulo de Control de Mermas de Carga
                   </span>
                   <span className="text-[9px] text-gray-400">
                     Generado el {new Date().toLocaleDateString("es-PE")} a las{" "}
