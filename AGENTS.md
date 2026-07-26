@@ -862,6 +862,6 @@ Para subsanar digitaciones incorrectas de manera flexible, se introdujo el mecan
   - Usar siempre `LEFT JOIN clientes c ON c.id = p.cliente_id` con `COALESCE(c.nombre, p.cliente, 'Cliente General')` para evitar omitir pedidos creados sin cliente de directorio.
   - Todas las consultas de reportes diarios deben filtrar por la fecha operativa `p.fecha_pedido`, no por `p.created_at`.
 * **Regla de Despliegue de Migraciones en Producción (Neon)**:
-  - Al incorporar campos o tablas SQL nuevas, ejecutar siempre la migración en la base de datos de producción (`postgresql://...neon.tech/neondb`) usando las credenciales de `.env.production.local` (`DATABASE_URL_UNPOOLED`) **antes o al mismo tiempo** de subir a `main`, evitando que el servidor devuelva HTTP 500 en producción por columnas no encontradas.
+  - Al incorporar campos o tablas SQL nuevas (como `rendimiento_porcentaje` en `productos`, `jabas_macho` en `compra_items`, o `ajustes_cuadre_fisico`), ejecutar siempre la migración en la base de datos de producción (`postgresql://...neon.tech/neondb`) usando las credenciales de `.env.production.local` (`DATABASE_URL_UNPOOLED`) **antes o al mismo tiempo** de subir a `main`, evitando que el servidor devuelva HTTP 500 en producción por columnas no encontradas.
 
 
