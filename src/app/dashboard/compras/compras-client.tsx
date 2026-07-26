@@ -625,8 +625,8 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
               </div>
             )}
 
-            <div className="overflow-x-auto scrollbar-visible pb-3 min-h-[290px]">
-              <table className="w-full text-left text-sm min-w-[850px]">
+            <div className="overflow-x-scroll scrollbar-visible pb-3 min-h-[290px]">
+              <table className="w-full text-left text-sm min-w-[800px]">
                 <thead>
                   <tr className="border-b border-gray-100 text-gray-500 font-semibold">
                     <th className="pb-3 pr-2 w-[28%]">Producto</th>
