@@ -713,7 +713,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                   {compras.map((c) => (
                     <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                       <td className="p-4 text-gray-900 font-medium">
-                        {new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(c.fecha + 'T00:00:00'))}
+                        {c.fecha ? new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(String(c.fecha).slice(0, 10) + 'T00:00:00')) : '—'}
                       </td>
                       <td className="p-4">
                         <div className="font-semibold text-gray-800">{c.proveedor_nombre}</div>
