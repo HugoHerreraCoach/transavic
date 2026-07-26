@@ -12,7 +12,12 @@ export function usePushNotifications(userId?: string) {
       try {
         const messaging = await getClientMessaging();
         if (!messaging) {
-          console.warn("FCM no está soportado o no está configurado en este navegador.");
+          return;
+        }
+
+        const vapidKey = process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY;
+        if (!vapidKey || vapidKey === "undefined" || vapidKey.includes("YOUR_")) {
+          console.warn("⚠️ FCM VAPID Key no configurada.");
           return;
         }
 
@@ -23,18 +28,23 @@ export function usePushNotifications(userId?: string) {
         if (Notification.permission === "default") {
           const permission = await Notification.requestPermission();
           if (permission !== "granted") {
-            console.log("Permiso de notificaciones denegado.");
             return;
           }
         } else if (Notification.permission !== "granted") {
           return;
         }
 
-        // 3. Obtener el token de FCM
-        const token = await getToken(messaging, {
-          vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
-          serviceWorkerRegistration: registration,
-        });
+        // 3. Obtener el token de FCM con guarda de excepción
+        let token: string | null = null;
+        try {
+          token = await getToken(messaging, {
+            vapidKey,
+            serviceWorkerRegistration: registration,
+          });
+        } catch (tokenErr) {
+          console.warn("⚠️ No se pudo obtener el token de FCM (API key o credenciales inválidas):", tokenErr);
+          return;
+        }
 
         if (token) {
           // 4. Enviar el token al servidor para asociarlo con el usuario actual
@@ -49,11 +59,9 @@ export function usePushNotifications(userId?: string) {
             }),
           });
           console.log("✅ Token FCM registrado con éxito:", token.substring(0, 15) + "...");
-        } else {
-          console.warn("No se pudo obtener el token de FCM.");
         }
       } catch (error) {
-        console.error("Error al registrar notificaciones push:", error);
+        console.warn("⚠️ Error al registrar notificaciones push:", error);
       }
     }
 

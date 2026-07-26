@@ -10,20 +10,27 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase App
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-
-export { app };
-
 // Safe dynamic getter for Messaging (since initialization is async in React/Next)
 export async function getClientMessaging() {
   if (typeof window === "undefined") return null;
-  const supported = await isSupported();
-  if (!supported) return null;
+
+  // Si no hay API Key o Project ID configurados, no intentar registrar FCM
+  if (
+    !process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY === "undefined" ||
+    process.env.NEXT_PUBLIC_FIREBASE_API_KEY.includes("YOUR_")
+  ) {
+    return null;
+  }
+
   try {
+    const supported = await isSupported();
+    if (!supported) return null;
+
+    const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
     return getMessaging(app);
   } catch (err) {
-    console.warn("Error initializing FCM messaging client:", err);
+    console.warn("Error al inicializar cliente FCM:", err);
     return null;
   }
 }
