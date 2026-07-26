@@ -13,6 +13,7 @@ import {
   FiLoader,
   FiRefreshCw,
   FiShare2,
+  FiTrash2,
   FiX,
 } from "react-icons/fi";
 import { construirEstadoCuentaProveedor } from "@/lib/proveedores/estado-cuenta";
@@ -433,6 +434,35 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
     }
   };
 
+  const anularCompra = async (compraId: string, tipoDoc: string, nroDoc: string, montoPagado: number) => {
+    if (montoPagado > 0.009) {
+      setError(`No se puede anular esta compra porque ya registra ${dinero(montoPagado)} pagados. Primero revierte los abonos correspondientes.`);
+      return;
+    }
+    const motivo = window.prompt(`¿Anular compra (Doc: ${tipoDoc} ${nroDoc})? Esta acción descontará automáticamente el stock y borrará la deuda. Motivo (mínimo 5 caracteres):`);
+    if (!motivo) return;
+    if (motivo.trim().length < 5) {
+      setError("El motivo de la anulación debe tener al menos 5 caracteres.");
+      return;
+    }
+
+    try {
+      setError(null);
+      setMensaje(null);
+      const res = await fetch(`/api/compras/${compraId}/anular`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: motivo.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo anular la compra.");
+      setMensaje("Compra anulada, stock descontado de inventario y deuda eliminada.");
+      cargar();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "No se pudo anular la compra.");
+    }
+  };
+
   if (cargando && !ficha) return <div className="flex min-h-80 items-center justify-center gap-3 text-gray-500"><FiLoader className="animate-spin" /> Cargando ficha financiera...</div>;
   if (!ficha) return <div className="mx-auto max-w-xl rounded-2xl border border-red-100 bg-red-50 p-6 text-red-700"><p className="font-bold">{error || "Proveedor no encontrado."}</p><Link href="/dashboard/proveedores" className="mt-3 inline-block underline">Volver a proveedores</Link></div>;
 
@@ -473,10 +503,27 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                 <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-black text-gray-900">{deuda.tipo_doc && deuda.nro_doc ? `${deuda.tipo_doc} ${deuda.nro_doc}` : deuda.concepto || "Deuda manual"}</p><p className="text-xs text-gray-400">{fecha(deuda.fecha)}{deuda.fecha_vencimiento ? ` - vence ${fecha(deuda.fecha_vencimiento)}` : ""}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${deuda.estado === "Pagado" ? "bg-emerald-50 text-emerald-700" : deuda.estado === "Parcial" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>{deuda.estado}</span></div>
                 {deuda.items.length > 0 && <ul className="mt-3 space-y-1 rounded-xl bg-gray-50 p-3 text-xs text-gray-600">{deuda.items.map((item) => <li key={item.id} className="flex justify-between gap-3"><span>{item.producto_nombre} - {item.peso_neto.toLocaleString("es-PE", { maximumFractionDigits: 2 })} kg x {dinero(item.costo_unitario)}</span><b>{dinero(item.subtotal)}</b></li>)}</ul>}
                 <div className="mt-3 grid grid-cols-3 gap-2 text-sm"><div><span className="block text-xs text-gray-400">Deuda</span><b>{dinero(deuda.monto_deuda)}</b></div><div><span className="block text-xs text-gray-400">Pagado</span><b className="text-emerald-700">{dinero(deuda.monto_pagado)}</b></div><div><span className="block text-xs text-gray-400">Restante</span><b className="text-red-700">{dinero(deuda.saldo_restante)}</b></div></div>
-                {(deuda.saldo_restante > 0.009 || deuda.compra_id === null) && (
+                {(deuda.saldo_restante > 0.009 || deuda.compra_id === null || deuda.compra_id !== null) && (
                   <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                    {deuda.saldo_restante > 0.009 && <button onClick={() => { setDeudaInicial(deuda); setModalPago(true); }} className="min-h-10 flex-1 rounded-xl bg-indigo-50 text-sm font-bold text-indigo-700 hover:bg-indigo-100">Pagar este documento primero</button>}
-                    {deuda.compra_id === null && <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha del saldo anterior"><FiEdit2 className="mr-1.5 inline" />Editar</button>}
+                    {deuda.saldo_restante > 0.009 && (
+                      <button onClick={() => { setDeudaInicial(deuda); setModalPago(true); }} className="min-h-10 flex-1 rounded-xl bg-indigo-50 text-sm font-bold text-indigo-700 hover:bg-indigo-100">
+                        Pagar este documento primero
+                      </button>
+                    )}
+                    {deuda.compra_id === null ? (
+                      <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha del saldo anterior">
+                        <FiEdit2 className="mr-1.5 inline" />Editar
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => anularCompra(deuda.compra_id!, deuda.tipo_doc || "Doc", deuda.nro_doc || "001", deuda.monto_pagado)}
+                        disabled={deuda.monto_pagado > 0.009}
+                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer"
+                        title="Anular la compra de mercadería, reversando el stock e inventario"
+                      >
+                        <FiTrash2 className="mr-1.5 inline" />Anular Compra
+                      </button>
+                    )}
                   </div>
                 )}
               </article>

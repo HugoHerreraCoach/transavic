@@ -102,6 +102,11 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
   const [customCategoria, setCustomCategoria] = useState("");
   const [creandoProd, setCreandoProd] = useState(false);
 
+  // Estados para anulación de compras
+  const [compraAnulando, setCompraAnulando] = useState<{ id: string; proveedor: string; total: number; nro_doc: string } | null>(null);
+  const [motivoAnulacion, setMotivoAnulacion] = useState("");
+  const [anulando, setAnulando] = useState(false);
+
   // Categorías existentes (para el select del modal) + "Insumos" garantizada.
   const categoriasExistentes = Array.from(
     new Set(["Insumos", ...productos.map((p) => p.categoria).filter(Boolean)])
@@ -163,6 +168,30 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
       console.error("Error cargando datos:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmarAnulacion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!compraAnulando || motivoAnulacion.trim().length < 5) return;
+    setAnulando(true);
+    try {
+      const res = await fetch(`/api/compras/${compraAnulando.id}/anular`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivo: motivoAnulacion.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo anular la compra.");
+
+      mostrarToast("Compra anulada correctamente y stock revertido.", "exito");
+      setCompraAnulando(null);
+      setMotivoAnulacion("");
+      fetchInitialData(); // Vuelve a cargar el historial y stock
+    } catch (err: unknown) {
+      mostrarToast(err instanceof Error ? err.message : "Error al anular la compra.", "error");
+    } finally {
+      setAnulando(false);
     }
   };
 
@@ -486,7 +515,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-sm min-w-[1000px]">
                 <thead>
                   <tr className="border-b border-gray-100 text-gray-500 font-semibold">
                     <th className="pb-3 pr-4 w-1/3">Producto</th>
@@ -698,7 +727,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="w-full text-left text-sm min-w-[1000px]">
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     <th className="p-4 font-semibold text-gray-600">Fecha</th>
@@ -707,40 +736,75 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                     <th className="p-4 font-semibold text-gray-600 text-right">Productos</th>
                     <th className="p-4 font-semibold text-gray-600 text-right">Total (Con IGV)</th>
                     <th className="p-4 font-semibold text-gray-600">Registrado por</th>
+                    <th className="p-4 font-semibold text-gray-600">Estado</th>
+                    <th className="p-4 font-semibold text-gray-600 text-right">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {compras.map((c) => (
-                    <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="p-4 text-gray-900 font-medium">
-                        {c.fecha ? new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(String(c.fecha).slice(0, 10) + 'T00:00:00')) : '—'}
-                      </td>
-                      <td className="p-4">
-                        <div className="font-semibold text-gray-800">{c.proveedor_nombre}</div>
-                        <div className="text-xs text-gray-400">{c.proveedor_ruc}</div>
-                      </td>
-                      <td className="p-4">
-                        <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-bold mr-2 uppercase">
-                          {c.tipo_doc}
-                        </span>
-                        <span className="font-mono text-gray-600">{c.nro_doc}</span>
-                      </td>
-                      <td className="p-4 text-right font-medium text-gray-700">
-                        {c.items?.length || 0} prod.
-                        {c.items?.some((it) => it.tipo === "devolucion") && (
-                          <span className="block text-[10px] font-bold text-red-600">
-                            incl. devolución
+                  {compras.map((c) => {
+                    const esAnulada = c.estado === "Anulado";
+                    return (
+                      <tr key={c.id} className={`hover:bg-gray-50 transition-colors ${esAnulada ? "opacity-60 bg-gray-50/50" : ""}`}>
+                        <td className="p-4 text-gray-900 font-medium">
+                          {c.fecha ? new Intl.DateTimeFormat('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(String(c.fecha).slice(0, 10) + 'T00:00:00')) : '—'}
+                        </td>
+                        <td className="p-4">
+                          <div className="font-semibold text-gray-800">{c.proveedor_nombre}</div>
+                          <div className="text-xs text-gray-400">{c.proveedor_ruc}</div>
+                        </td>
+                        <td className="p-4">
+                          <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-bold mr-2 uppercase">
+                            {c.tipo_doc}
                           </span>
-                        )}
-                      </td>
-                      <td className="p-4 text-right font-mono font-bold text-indigo-600">
-                        S/ {Number(c.total).toFixed(2)}
-                      </td>
-                      <td className="p-4 text-gray-500">
-                        {c.registrado_por || "Sistema"}
-                      </td>
-                    </tr>
-                  ))}
+                          <span className="font-mono text-gray-600">{c.nro_doc}</span>
+                        </td>
+                        <td className="p-4 text-right font-medium text-gray-700">
+                          {c.items?.length || 0} prod.
+                          {c.items?.some((it) => it.tipo === "devolucion") && (
+                            <span className="block text-[10px] font-bold text-red-600">
+                              incl. devolución
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4 text-right font-mono font-bold text-indigo-600">
+                          S/ {Number(c.total).toFixed(2)}
+                        </td>
+                        <td className="p-4 text-gray-500">
+                          {c.registrado_por || "Sistema"}
+                        </td>
+                        <td className="p-4">
+                          {esAnulada ? (
+                            <span className="bg-red-50 text-red-700 px-2.5 py-1 rounded-full text-xs font-bold inline-block">
+                              Anulada
+                            </span>
+                          ) : (
+                            <span className="bg-emerald-50 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold inline-block">
+                              Completada
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4 text-right">
+                          {!esAnulada && esAdmin && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCompraAnulando({
+                                  id: c.id,
+                                  proveedor: c.proveedor_nombre,
+                                  total: Number(c.total),
+                                  nro_doc: c.nro_doc,
+                                })
+                              }
+                              title="Anular esta compra de mercadería"
+                              className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer inline-flex items-center"
+                            >
+                              <FiTrash2 className="w-4.5 h-4.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -847,6 +911,71 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal "Anular Compra" */}
+      {compraAnulando && (
+        <div
+          className="fixed inset-0 z-50 bg-gray-900/40 backdrop-blur-sm flex justify-center items-center p-4 animate-in fade-in duration-200"
+          onClick={() => !anulando && setCompraAnulando(null)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center bg-gray-50 px-5 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="font-black text-gray-900">Anular Compra de Mercadería</h3>
+                <p className="text-xs text-gray-500 mt-0.5">{compraAnulando.proveedor} — Doc: {compraAnulando.nro_doc}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !anulando && setCompraAnulando(null)}
+                className="text-gray-400 hover:text-gray-600 rounded-lg p-1 hover:bg-gray-100 transition-all cursor-pointer"
+              >
+                <FiX size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmarAnulacion} className="p-6 space-y-4">
+              <p className="text-xs text-red-700 bg-red-50 border border-red-100 p-3 rounded-2xl">
+                ⚠️ <b>Atención:</b> Esta acción descontará automáticamente el stock ingresado del inventario y eliminará la cuenta por pagar asociada. No se puede deshacer.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">
+                  Motivo de la anulación (Mínimo 5 caracteres)
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={motivoAnulacion}
+                  onChange={(e) => setMotivoAnulacion(e.target.value)}
+                  placeholder="Ej: Se registró con el proveedor equivocado o datos incorrectos..."
+                  className="block w-full rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-gray-50"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-gray-100">
+                <button
+                  type="button"
+                  onClick={() => setCompraAnulando(null)}
+                  disabled={anulando}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold text-xs transition-all cursor-pointer active:scale-95"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={anulando || motivoAnulacion.trim().length < 5}
+                  className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer active:scale-95"
+                >
+                  {anulando ? "Anulando…" : "Confirmar Anulación"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
