@@ -14,7 +14,15 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Transavic",
-  description: "Generador de pedidos",
+  description: "Sistema interno de gestión de pedidos",
+  icons: {
+    icon: [
+      { url: "/icon.png", type: "image/png" },
+      { url: "/favicon.ico", sizes: "any" }
+    ],
+    shortcut: "/icon.png",
+    apple: "/icon.png"
+  },
   // ERP interno 100% en español: desactiva el traductor de Chrome para que NO
   // altere nombres ni datos (ej. "Clever"→"Inteligente", "Wilder"→"Salvaje").
   other: { google: "notranslate" },

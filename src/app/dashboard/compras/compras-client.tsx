@@ -599,12 +599,6 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                 <FiFileText className="text-indigo-600" /> Detalle de Carga
-                <span className="text-[10px] text-gray-400 font-normal hidden md:inline-block bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-md ml-1">
-                  ↔️ Desliza para ver totales y acciones
-                </span>
-                <span className="text-[10px] text-gray-400 font-normal md:hidden bg-gray-50 border border-gray-200 px-2 py-0.5 rounded-md ml-1">
-                  ↔️ Desliza
-                </span>
               </h2>
               <div className="flex items-center gap-2">
                 {esAdmin && (
