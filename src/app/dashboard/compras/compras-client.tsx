@@ -625,18 +625,18 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
               </div>
             )}
 
-            <div className="overflow-x-scroll scrollbar-visible pb-3 min-h-[290px]">
-              <table className="w-full text-left text-sm min-w-[1000px]">
+            <div className="overflow-x-auto scrollbar-visible pb-3 min-h-[290px]">
+              <table className="w-full text-left text-sm min-w-[850px]">
                 <thead>
                   <tr className="border-b border-gray-100 text-gray-500 font-semibold">
-                    <th className="pb-3 pr-4 w-1/3">Producto</th>
-                    <th className="pb-3 pr-4">Tipo</th>
-                    <th className="pb-3 pr-4 text-right">Jabas</th>
-                    <th className="pb-3 pr-4 text-right">P. Bruto (Kg)</th>
-                    <th className="pb-3 pr-4 text-right">P. Tara (Kg)</th>
-                    <th className="pb-3 pr-4 text-right">P. Neto (Kg)</th>
-                    <th className="pb-3 pr-4 text-right">Costo / Kg (S/)</th>
-                    <th className="pb-3 pr-4 text-right">Total (S/)</th>
+                    <th className="pb-3 pr-2 w-[28%]">Producto</th>
+                    <th className="pb-3 pr-2">Tipo</th>
+                    <th className="pb-3 pr-2 text-right">Jabas</th>
+                    <th className="pb-3 pr-2 text-right">P. Bruto (Kg)</th>
+                    <th className="pb-3 pr-2 text-right">P. Tara (Kg)</th>
+                    <th className="pb-3 pr-2 text-right">P. Neto (Kg)</th>
+                    <th className="pb-3 pr-2 text-right">Costo / Kg (S/)</th>
+                    <th className="pb-3 pr-2 text-right">Total (S/)</th>
                     <th className="pb-3 text-right">Acción</th>
                   </tr>
                 </thead>
@@ -652,7 +652,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                     return (
                       <tr key={idx} className={`align-middle ${esDevolucion ? "bg-red-50/60" : ""} ${compraTienePagos ? "opacity-75 bg-gray-50/20" : ""}`}>
                         <td
-                          className="py-3 pr-4"
+                          className="py-3 pr-2"
                           ref={(el) => {
                             celdasProductoRefs.current[idx] = el;
                           }}
@@ -676,13 +676,13 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             </p>
                           )}
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-2">
                           <select
                             value={item.tipo}
                             disabled={compraTienePagos}
                             onChange={(e) => handleItemChange(idx, "tipo", e.target.value as TipoFila)}
                             title="Devolución: resta del total de la guía y del inventario"
-                            className={`block w-28 rounded-xl py-2.5 px-2 shadow-sm text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100 ${
+                            className={`block w-24 rounded-xl py-2.5 px-2 shadow-sm text-xs font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100 ${
                               esDevolucion
                                 ? "border-red-300 bg-red-50 text-red-700 focus:border-red-500 focus:ring-red-500"
                                 : "border-gray-300 bg-gray-50 text-gray-700 focus:border-indigo-500 focus:ring-indigo-500"
@@ -692,7 +692,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             <option value="devolucion">Devolución</option>
                           </select>
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-2">
                           <input
                             type="number"
                             min="0"
@@ -700,10 +700,10 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             value={servicio ? "" : item.jabas || ""}
                             onChange={(e) => handleItemChange(idx, "jabas", Number(e.target.value))}
                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                            className="block w-20 ml-auto text-right rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="block w-14 ml-auto text-right rounded-xl border-gray-300 py-2.5 px-2 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
                           />
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-2">
                           <input
                             type="number"
                             step="0.01"
@@ -714,10 +714,10 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             value={item.peso_bruto || ""}
                             onChange={(e) => handleItemChange(idx, "peso_bruto", Number(e.target.value))}
                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="block w-20 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-2 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-2">
                           <input
                             type="number"
                             step="0.01"
@@ -727,22 +727,22 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             value={servicio ? "" : item.peso_tara || ""}
                             onChange={(e) => handleItemChange(idx, "peso_tara", Number(e.target.value))}
                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                            className={`block w-24 ml-auto text-right rounded-xl py-2.5 px-3 text-gray-900 shadow-sm bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed ${
+                            className={`block w-20 ml-auto text-right rounded-xl py-2.5 px-2 text-gray-900 shadow-sm bg-gray-50 text-xs disabled:opacity-40 disabled:cursor-not-allowed ${
                               taraInvalida
                                 ? "border-red-500 ring-1 ring-red-400 focus:border-red-500 focus:ring-red-500"
                                 : "border-gray-300 focus:border-indigo-500 focus:ring-indigo-500"
                             }`}
                           />
                         </td>
-                        <td className="py-3 pr-4 text-right">
+                        <td className="py-3 pr-2 text-right">
                           <span className={`font-mono font-medium ${taraInvalida ? "text-red-600" : "text-gray-600"}`}>
                             {neto.toFixed(2)} {servicio ? "uni" : "kg"}
                           </span>
                           {taraInvalida && (
-                            <p className="text-[10px] text-red-600 font-semibold mt-0.5">tara ≥ bruto</p>
+                            <p className="text-[10px] text-red-600 font-semibold mt-0.5">tara &ge; bruto</p>
                           )}
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-2">
                           <input
                             type="number"
                             step="0.01"
@@ -754,7 +754,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             onChange={(e) => handleItemChange(idx, "costo_unitario", Number(e.target.value))}
                             onKeyDown={handleEnterEnCosto}
                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                            className="block w-24 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="block w-20 ml-auto text-right font-bold rounded-xl border-gray-300 py-2.5 px-2 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                           {ultimoCosto != null && !compraTienePagos && (
                             <button
@@ -767,7 +767,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                             </button>
                           )}
                         </td>
-                        <td className={`py-3 pr-4 text-right font-mono font-bold ${esDevolucion ? "text-red-600" : "text-gray-800"}`}>
+                        <td className={`py-3 pr-2 text-right font-mono font-bold ${esDevolucion ? "text-red-600" : "text-gray-800"}`}>
                           {esDevolucion ? "− " : ""}S/ {subtotal.toFixed(2)}
                         </td>
                         <td className="py-3 text-right">
