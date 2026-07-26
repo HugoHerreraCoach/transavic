@@ -796,7 +796,7 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                                 })
                               }
                               title="Anular esta compra de mercadería"
-                              className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 transition-colors cursor-pointer inline-flex items-center"
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 hover:shadow-sm hover:shadow-red-50/55 active:scale-90 transition-all cursor-pointer inline-flex items-center rounded-lg"
                             >
                               <FiTrash2 className="w-4.5 h-4.5" />
                             </button>

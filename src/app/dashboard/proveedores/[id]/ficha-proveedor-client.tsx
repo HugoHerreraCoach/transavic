@@ -512,7 +512,7 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                       </button>
                     )}
                     {deuda.compra_id === null ? (
-                      <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50" title="Corregir el monto, concepto o fecha del saldo anterior">
+                      <button onClick={() => setDeudaAEditar(deuda)} className="min-h-10 rounded-xl border border-gray-200 px-4 text-sm font-bold text-gray-600 hover:bg-gray-50 sm:ml-auto transition-all cursor-pointer" title="Corregir el monto, concepto o fecha del saldo anterior">
                         <FiEdit2 className="mr-1.5 inline" />Editar
                       </button>
                     ) : (
@@ -526,8 +526,12 @@ export default function FichaProveedorClient({ proveedorId }: { proveedorId: str
                           })
                         }
                         disabled={deuda.monto_pagado > 0.009}
-                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all cursor-pointer inline-flex items-center justify-center"
-                        title="Anular la compra de mercadería, reversando el stock e inventario"
+                        className="min-h-10 rounded-xl border border-red-200 px-4 text-sm font-bold text-red-600 hover:bg-red-50 hover:border-red-300 hover:text-red-700 hover:shadow-sm hover:shadow-red-50 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:border-red-200 disabled:hover:text-red-600 disabled:hover:shadow-none disabled:active:scale-100 transition-all cursor-pointer disabled:cursor-not-allowed inline-flex items-center justify-center sm:ml-auto"
+                        title={
+                          deuda.monto_pagado > 0.009
+                            ? "No se puede anular esta compra porque ya registra abonos. Revierte primero los pagos en 'Pagos separados'."
+                            : "Anular la compra de mercadería, reversando el stock e inventario"
+                        }
                       >
                         <FiTrash2 className="mr-1.5 inline" />Anular Compra
                       </button>
