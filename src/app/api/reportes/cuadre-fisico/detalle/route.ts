@@ -90,11 +90,11 @@ export async function GET(req: NextRequest) {
           v.id AS venta_id,
           v.fecha::text AS fecha,
           c.nombre AS cliente_nombre,
-          v.nro_guia,
+          v.numero_guia AS nro_guia,
           vi.id AS item_id,
-          vi.jabas::int AS jabas,
+          0::int AS jabas,
           vi.peso_kg::float8 AS kilos,
-          vi.precio_unitario::float8 AS precio_unitario
+          vi.precio_kg::float8 AS precio_unitario
         FROM venta_avicola_items vi
         JOIN ventas_avicola v ON v.id = vi.venta_id
         JOIN clientes_avicola c ON c.id = v.cliente_id
