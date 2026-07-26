@@ -388,3 +388,28 @@ automáticamente los anticipos disponibles más antiguos. Esto no crea otro egre
 solo crea aplicaciones `anticipo_posterior` y actualiza el caché
 `cuentas_por_pagar.monto_pagado`. La fuente canónica del dinero y sus aplicaciones
 está en el [doc 26](./26-proveedores-cuentas-por-pagar.md).
+
+---
+
+## 10. Reportes de Operación de Carnes e Inventario (Marianela - Julio 2026)
+
+Implementados en el Hub de Reportes (`/dashboard/reportes` -> pestañas **"Salida de Carnes"** y **"Cuadre de Mermas"**).
+
+### 10.1 Reporte Diario de Salida de Carnes (Kilos por Canal)
+* **API:** `GET /api/reportes/salida-carnes?fecha=YYYY-MM-DD`
+* **Lógica:** Consolida y agrupa los kilogramos reales despachados para:
+  1. **Ejecutivas (Asesoras):** Pedidos del día (según `created_at` Lima), no fallidos ni anulados, de origen `'asesor'`. Suma `cantidad_real` (o `cantidad` como fallback).
+  2. **Planta (POS):** Pedidos del día (según `created_at` Lima), no fallidos ni anulados, de origen `'pos_planta'`. Suma `cantidad`.
+  3. **Campo:** Ventas de campo (`ventas_avicola`) no anuladas del día. Suma `peso_kg`.
+
+### 10.2 Reporte de Cuadración Física y Mermas Diarias
+* **API:** `GET /api/reportes/cuadre-fisico?fecha=YYYY-MM-DD`
+* **Lógica:** Realiza un cruce diario por cada producto activo de categoría `Pollo` o `Carnes`:
+  $$\text{Diferencia (Merma)} = \text{Kilos Comprados (Entradas)} - \text{Kilos Vendidos (Salidas Totales)}$$
+* **Fuentes de Datos:**
+  * **Kilos Comprados:** Sumatoria de `peso_neto` en las compras completadas del día (`c.fecha = :fecha`, `c.estado <> 'Anulado'`, `ci.tipo = 'ingreso'`).
+  * **Kilos Vendidos:** Sumatoria de las salidas en los 3 canales (Ejecutivas, Campo y Planta).
+  * **Significado de la Diferencia:**
+    * **Valor Positivo (> 0):** Merma física de producción (pérdida de humedad, pluma, víscera, etc.).
+    * **Valor Negativo (< 0):** Descuadre de inventario físico (se vendió más peso del registrado en las compras del día).
+

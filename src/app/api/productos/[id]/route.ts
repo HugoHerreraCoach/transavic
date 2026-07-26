@@ -101,6 +101,20 @@ export async function PATCH(
       updates.push(`precio_compra = $${paramIdx++}`);
       values.push(v);
     }
+    if (body.rendimiento_porcentaje !== undefined) {
+      const v =
+        body.rendimiento_porcentaje === null || body.rendimiento_porcentaje === ""
+          ? 100.00
+          : Number(body.rendimiento_porcentaje);
+      if (Number.isNaN(v) || v < 0.01 || v > 100) {
+        return NextResponse.json(
+          { error: "rendimiento_porcentaje inválido (debe ser entre 0.01 y 100)" },
+          { status: 400 }
+        );
+      }
+      updates.push(`rendimiento_porcentaje = $${paramIdx++}`);
+      values.push(v);
+    }
 
     if (updates.length === 0) {
       return NextResponse.json(
@@ -113,7 +127,7 @@ export async function PATCH(
     const query = `
       UPDATE productos SET ${updates.join(", ")}
       WHERE id = $${paramIdx}
-      RETURNING id, nombre, categoria, unidad, activo, codigo, precio_venta, precio_compra
+      RETURNING id, nombre, categoria, unidad, activo, codigo, precio_venta, precio_compra, rendimiento_porcentaje
     `;
 
     const result = await sql.query(query, values);

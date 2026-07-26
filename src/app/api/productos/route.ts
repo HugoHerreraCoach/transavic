@@ -14,6 +14,7 @@ const ProductoSchema = z.object({
   unidad: z.string().min(1, { message: "La unidad es requerida." }),
   precio_venta: z.number().positive().optional().nullable(),
   precio_compra: z.number().nonnegative().optional().nullable(),
+  rendimiento_porcentaje: z.number().min(0.01, { message: "Mínimo 0.01%" }).max(100, { message: "Máximo 100%" }).optional().nullable(),
 });
 
 export async function GET(request: Request) {
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
       esAdmin && new URL(request.url).searchParams.get("incluir_inactivos") === "1";
     const productos = await sql`
       SELECT id, nombre, categoria, unidad, activo,
-        precio_venta, precio_compra, codigo
+        precio_venta, precio_compra, codigo, rendimiento_porcentaje
       FROM productos
       WHERE (${incluirInactivos} OR activo = TRUE)
       ORDER BY
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const { nombre, categoria, unidad, precio_venta, precio_compra } = parsedData.data;
+    const { nombre, categoria, unidad, precio_venta, precio_compra, rendimiento_porcentaje } = parsedData.data;
     const sql = neon(connectionString);
 
     // Código interno estable: prefijo por categoría + siguiente correlativo.
@@ -113,10 +114,10 @@ export async function POST(request: Request) {
     const codigo = `${prefijo}${String(Number(maxRow[0]?.n ?? 0) + 1).padStart(3, "0")}`;
 
     const result = await sql`
-      INSERT INTO productos (nombre, categoria, unidad, codigo, precio_venta, precio_compra)
+      INSERT INTO productos (nombre, categoria, unidad, codigo, precio_venta, precio_compra, rendimiento_porcentaje)
       VALUES (${nombre}, ${categoria}, ${unidad}, ${codigo},
-              ${precio_venta ?? null}, ${precio_compra ?? null})
-      RETURNING id, nombre, categoria, unidad, activo, codigo, precio_venta, precio_compra
+              ${precio_venta ?? null}, ${precio_compra ?? null}, ${rendimiento_porcentaje ?? 100.00})
+      RETURNING id, nombre, categoria, unidad, activo, codigo, precio_venta, precio_compra, rendimiento_porcentaje
     `;
 
     // Si el producto nace con precio_venta, abrimos también el primer registro

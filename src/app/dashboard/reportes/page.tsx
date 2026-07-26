@@ -7,7 +7,7 @@ import BetaPlaceholder from "@/components/BetaPlaceholder";
 export default async function ReportesPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
-  if (session.user.role !== "admin" && session.user.role !== "asesor") redirect("/dashboard");
+  if (session.user.role !== "admin" && session.user.role !== "asesor" && session.user.role !== "produccion") redirect("/dashboard");
   
   if (session.user.role === "asesor") {
     return (
@@ -18,5 +18,5 @@ export default async function ReportesPage() {
     );
   }
 
-  return <ReportesClient />;
+  return <ReportesClient user={session.user} />;
 }

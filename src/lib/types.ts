@@ -88,6 +88,7 @@ export type Producto = {
   codigo?: string | null;
   precio_venta?: number | string | null;
   precio_compra?: number | string | null;
+  rendimiento_porcentaje?: number | null;
 };
 
 export type PedidoItem = {

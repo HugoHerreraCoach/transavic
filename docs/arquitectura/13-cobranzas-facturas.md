@@ -163,17 +163,34 @@ El aging clásico de `/api/cobranzas/aging` pertenece a Ejecutivas. No debe pres
 
 ---
 
-## 7. Impacto de cambios
+## 8. Reporte de Conciliación de Cartera Financiera por Asesora
+Implementado en el Hub de Reportes (`/dashboard/reportes` -> pestaña **"Cartera Asesoras"**) y expuesto en la API `GET /api/reportes/balance-asesoras`.
+
+### 8.1 Lógica Matemática del Balance
+Para una asesora seleccionada (o consolidado global) en un rango de fechas `[desde, hasta]`, el reporte realiza el cálculo exacto de la cuenta corriente de sus clientes:
+$$\text{Saldo Pendiente Final} = \text{Saldo Anterior} + \text{Monto Venta} - \text{Cobrado (A/C)} - \text{Descuentos}$$
+
+Donde:
+1. **Saldo Anterior:** Sumatoria de facturas emitidas antes de la fecha `desde` que no estén anuladas y que en esa fecha estuvieran impagas (`fecha_pago IS NULL OR fecha_pago >= desde`).
+2. **Monto Venta:** Sumatoria de facturas de ejecutivas emitidas en el rango de fechas, no anuladas.
+3. **Kilos Vendidos:** Sumatoria de kilos (`cantidad_real` o `cantidad` como fallback) de ítems en los pedidos asociados a dichas facturas.
+4. **Cobrado (A/C):** Pagos recibidos y confirmados en el periodo (facturas con `fecha_pago` en el rango y `estado = 'Pagada'`).
+5. **Descuentos (NC):** Notas de Crédito de descuento (`tipo = '07'`) emitidas en el periodo que no estén rechazadas (`estado IN ('aceptado', 'observado', 'pendiente')`).
+
+---
+
+## 9. Impacto de cambios
 
 | Si cambias… | Revisa también… |
 |---|---|
 | creación de cobranza al emitir/reintentar | operación del CPE, idempotencia y las tres tablas de cartera |
-| estados de deuda | Consolidado, aging, crons y filtros activos |
-| NC | cartera del CPE base, pagos ya realizados y anulación de venta Campo |
-| aceptación tardía SUNAT | claim de postproceso, CPE hermano y los dos índices únicos de `facturas` |
+| estados de deuda | Consolidado, aging, crons, filtros activos y Reporte de Cartera Asesoras |
+| NC | cartera del CPE base, pagos ya realizados, anulación de venta Campo y Reporte de Cartera Asesoras |
+| aceptación tardía SUNAT | claim de postproceso, CPE hermano, los dos índices únicos de `facturas` |
 | abonos de Campo | saldos, historial, guía, modal, PDF y prueba de tres abonos |
 | abonos de Planta | saldo parcial, estados, POS y devoluciones |
 | tesorería | caja/cuentas; no asumas que una cobranza pagada mueve dinero automáticamente |
+| balance de asesoras | query en `/api/reportes/balance-asesoras`, cálculo de saldo anterior y descuentos |
 
 Pruebas obligatorias: [24 §6–9](./24-pruebas-regresion-despliegue.md).
 

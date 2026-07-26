@@ -111,6 +111,7 @@ interface ModalEdit {
   unidad: string;
   precio_compra: string;
   precio_venta: string;
+  rendimiento_porcentaje: string;
 }
 
 interface ModalNuevo {
@@ -121,6 +122,7 @@ interface ModalNuevo {
   unidades: string[];
   precio_venta: string;
   precio_compra: string;
+  rendimiento_porcentaje: string;
 }
 
 export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
@@ -156,6 +158,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
     unidad: "",
     precio_compra: "",
     precio_venta: "",
+    rendimiento_porcentaje: "",
   });
   const [guardandoModal, setGuardandoModal] = useState(false);
 
@@ -168,6 +171,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
     unidades: [],
     precio_venta: "",
     precio_compra: "",
+    rendimiento_porcentaje: "",
   });
   const customUnitRef = useRef<HTMLInputElement>(null);
 
@@ -375,6 +379,9 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       unidad: p.unidad,
       precio_compra: toNum(p.precio_compra) === null ? "" : String(toNum(p.precio_compra)),
       precio_venta: toNum(p.precio_venta) === null ? "" : String(toNum(p.precio_venta)),
+      rendimiento_porcentaje: p.rendimiento_porcentaje === undefined || p.rendimiento_porcentaje === null
+        ? "100.00"
+        : String(p.rendimiento_porcentaje),
     });
   };
   const cerrarEdit = () => setModalEdit((m) => ({ ...m, abierto: false }));
@@ -399,6 +406,11 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       setMensaje({ tipo: "error", texto: "La compra no puede ser mayor que la venta" });
       return;
     }
+    const rend = modalEdit.rendimiento_porcentaje.trim() === "" ? 100.00 : parseFloat(modalEdit.rendimiento_porcentaje);
+    if (Number.isNaN(rend) || rend < 0.01 || rend > 100) {
+      setMensaje({ tipo: "error", texto: "El rendimiento debe ser un porcentaje entre 0.01 y 100%" });
+      return;
+    }
 
     setGuardandoModal(true);
     try {
@@ -412,6 +424,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
           unidad: modalEdit.unidad,
           precio_compra: compra,
           precio_venta: venta,
+          rendimiento_porcentaje: rend,
         }),
       });
       if (!res.ok) {
@@ -487,6 +500,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       unidades: [],
       precio_venta: "",
       precio_compra: "",
+      rendimiento_porcentaje: "100.00",
     });
   };
   const cerrarNuevo = () => setModalNuevo((m) => ({ ...m, abierto: false }));
@@ -523,6 +537,11 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       setMensaje({ tipo: "error", texto: "La compra no puede ser mayor que la venta" });
       return;
     }
+    const rend = modalNuevo.rendimiento_porcentaje.trim() === "" ? 100.00 : parseFloat(modalNuevo.rendimiento_porcentaje);
+    if (Number.isNaN(rend) || rend < 0.01 || rend > 100) {
+      setMensaje({ tipo: "error", texto: "El rendimiento debe ser un porcentaje entre 0.01 y 100%" });
+      return;
+    }
 
     setGuardandoModal(true);
     try {
@@ -535,6 +554,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
           unidad: unidadFinal,
           precio_venta: venta,
           precio_compra: compra,
+          rendimiento_porcentaje: rend,
         }),
       });
       if (!res.ok) {
@@ -802,9 +822,16 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                           <span className="text-lg flex-shrink-0">{getEmoji(p.categoria)}</span>
                           <div className="min-w-0">
                             <div className="text-sm text-gray-900 font-medium truncate">{p.nombre}</div>
-                            {p.codigo && (
-                              <div className="text-[11px] font-mono text-gray-400">{p.codigo}</div>
-                            )}
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {p.codigo && (
+                                <span className="text-[11px] font-mono text-gray-400">{p.codigo}</span>
+                              )}
+                              {(p.categoria === "Pollo" || p.categoria === "Carnes") && p.rendimiento_porcentaje !== undefined && p.rendimiento_porcentaje !== null && Number(p.rendimiento_porcentaje) < 100 && (
+                                <span className="text-[9px] px-1 py-0.5 bg-blue-50 text-blue-700 rounded font-sans font-bold uppercase tracking-wider">
+                                  Rend: {Number(p.rendimiento_porcentaje)}%
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -1173,6 +1200,25 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                   />
                 </Field>
               </div>
+              {(modalEdit.categoria === "Pollo" || modalEdit.categoria === "Carnes") && (
+                <Field 
+                  label="Rendimiento de Desposte (%)" 
+                  hint="Porcentaje de rendimiento del pollo entero (ej: filete 50%, pechuga 70%)"
+                >
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max="100"
+                    value={modalEdit.rendimiento_porcentaje}
+                    onChange={(e) =>
+                      setModalEdit({ ...modalEdit, rendimiento_porcentaje: e.target.value })
+                    }
+                    className="w-full p-2.5 border border-gray-300 rounded-lg text-gray-900"
+                    placeholder="100.00"
+                  />
+                </Field>
+              )}
             </div>
             <div className="p-5 border-t flex gap-3 justify-end sticky bottom-0 bg-white rounded-b-xl">
               <button
@@ -1334,6 +1380,25 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                   />
                 </Field>
               </div>
+              {(modalNuevo.categoria === "Pollo" || modalNuevo.categoria === "Carnes") && (
+                <Field 
+                  label="Rendimiento de Desposte (%)" 
+                  hint="Porcentaje de rendimiento del pollo entero (ej: filete 50%, pechuga 70%)"
+                >
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max="100"
+                    value={modalNuevo.rendimiento_porcentaje}
+                    onChange={(e) =>
+                      setModalNuevo({ ...modalNuevo, rendimiento_porcentaje: e.target.value })
+                    }
+                    className="w-full p-2.5 border border-gray-300 rounded-lg text-gray-900"
+                    placeholder="100.00"
+                  />
+                </Field>
+              )}
             </div>
             <div className="p-5 border-t flex gap-3 justify-end sticky bottom-0 bg-white rounded-b-xl">
               <button

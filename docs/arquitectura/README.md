@@ -1,8 +1,8 @@
 # Documentación de Arquitectura y Negocio — Transavic
 
-> **Última actualización:** 2026-07-20
-> **Base revisada:** `main`, incluida la reconciliación SUNAT de `4974e92` y su cierre operativo del 20/07
-> **Producción:** `app.transavic.com`; ERP, separación Campo/Planta, facturación de Campo y reconciliación automática SUNAT 01/03 desplegados. La migración de reconciliación ya está aplicada y verificada; siguen pendientes las cuatro credenciales de Consulta Integrada para resolver boletas ambiguas. Del lote del 13 jul, Proveedores y costo POS requieren migración; conciliación de Ejecutivas y reprogramación conservan su estado documentado en sus archivos temáticos.
+> **Última actualización:** 2026-07-26
+> **Base revisada:** `main`, incluyendo los tres reportes de operaciones y finanzas solicitados por Marianela (Salida de Carnes por Canal, Cartera Financiera de Asesoras y Cuadre Físico de Mermas por Producto).
+> **Producción:** `app.transavic.com`; ERP, separación Campo/Planta, facturación de Campo, reconciliación automática SUNAT 01/03, y acceso del rol `produccion` a reportes operativos de mermas/inventario. Del lote del 13 jul, Proveedores y costo POS requieren migración; conciliación de Ejecutivas y reprogramación conservan su estado.
 
 Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos temáticos explican cada módulo; los docs 22–24 conectan los módulos, muestran el impacto de cambios y definen las pruebas de regresión.
 
