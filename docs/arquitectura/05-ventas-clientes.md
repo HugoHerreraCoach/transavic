@@ -32,8 +32,12 @@ Ubicado en `/dashboard/nuevo-pedido`, es el componente React principal que las a
 
 Para acelerar el registro, `ClienteAutocomplete.tsx` permite escribir el nombre o RUC/DNI de un cliente registrado.
 
-- **Consulta en Vivo SUNAT/RENIEC:** Si el cliente es nuevo, la asesora escribe el número de documento y presiona el ícono de consulta. Llama a `/api/consulta-documento` que utiliza el API de **apisperu.com** con el token `APISPERU_TOKEN`.
+- **Consulta en Vivo SUNAT/RENIEC:** Si el cliente es nuevo, la asesora escribe el número de documento y presiona el ícono de consulta. Llama a `/api/consulta-documento` que utiliza un esquema de **Doble Fallback de APIs**:
+  1. **Decolecta API (`DECOLECTA_TOKEN`):** Proveedor principal para RUC y DNI.
+  2. **Apisperu API (`APISPERU_TOKEN`):** Proveedor de respaldo si Decolecta falla o carece de saldo.
+  3. **Ingreso manual:** Si ambas APIs fallan, la UI permite editar o ingresar Razón Social y Dirección sin bloquear la facturación.
 - **Salida:** Autocompleta el nombre (razón social) y la dirección fiscal estructurada de la SUNAT, guardando además el ubigeo y distrito.
+
 
 ---
 
