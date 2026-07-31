@@ -515,6 +515,13 @@ export default function CuadrePolloClient() {
       <ToastContainer toasts={toasts} />
       <GuiaModulo modulo="cuadre-pollo" />
 
+      {/* Sugerencias del campo Proveedor de las entradas cargadas a mano. */}
+      <datalist id="proveedores-conocidos">
+        {(data?.proveedoresConocidos ?? []).map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+
       {/* Barra de fecha y acciones — fuera de la "hoja" */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 flex flex-wrap items-center gap-3">
         <button
@@ -858,12 +865,18 @@ export default function CuadrePolloClient() {
                             </td>
                             <td className="py-1.5 pl-3">
                               <div className="flex items-center gap-1.5">
+                                {/* datalist: sugiere los proveedores que YA existen pero deja
+                                    escribir uno nuevo. Sin esto se repite el desorden de su
+                                    Excel, donde el mismo proveedor es "CAROL" y "KAROL". */}
                                 <input
                                   type="text"
+                                  list="proveedores-conocidos"
+                                  autoComplete="off"
                                   value={l.concepto}
                                   onChange={(e) => setLinea(i, "concepto", e.target.value)}
                                   placeholder="Proveedor"
-                                  className="w-36 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-gray-700 outline-none hover:border-gray-200 focus:border-amber-400 focus:bg-white"
+                                  title="Escribe para buscar; si es uno nuevo, puedes escribirlo igual"
+                                  className="w-36 rounded-md border border-amber-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-700 outline-none focus:border-amber-500"
                                 />
                                 {l.pendienteRegistrar && (
                                   <span

@@ -86,6 +86,12 @@ export interface CuadrePollo {
   guiasCompra: number;
   /** Jabas que vienen SOLO de Compras (`jabas` incluye además las cargadas a mano). */
   jabasCompras: number;
+  /**
+   * Proveedores activos, para sugerirlos al cargar una entrada a mano. En su Excel
+   * el mismo proveedor aparece como "CAROL" (17 días) y "KAROL" (9); sugerir el
+   * nombre que ya existe evita repetir ese desorden dentro del sistema.
+   */
+  proveedoresConocidos: string[];
   /** Entradas que la usuaria cargó a mano porque la compra aún no está registrada. */
   kgEntradaManual: number;
 
@@ -347,6 +353,12 @@ export async function construirCuadrePollo(
     ejecutivas: porCanal("ejecutivas"),
   };
 
+  // Nombres de proveedor a sugerir cuando carga una entrada a mano.
+  const filasProveedores = (await sql`
+    SELECT razon_social FROM proveedores WHERE activo ORDER BY razon_social
+  `) as Array<{ razon_social: string }>;
+  const proveedoresConocidos = filasProveedores.map((f) => f.razon_social);
+
   // --- Captura manual del día ------------------------------------------------
   const filasManual = (await sql`
     SELECT aves_macho, aves_hembra, observaciones,
@@ -429,6 +441,7 @@ export async function construirCuadrePollo(
     kgNetoIngresado,
     guiasCompra,
     jabasCompras,
+    proveedoresConocidos,
     kgEntradaManual,
     avesMacho,
     avesHembra,
