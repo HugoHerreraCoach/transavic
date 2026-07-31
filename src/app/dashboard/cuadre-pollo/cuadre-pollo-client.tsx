@@ -639,9 +639,19 @@ export default function CuadrePolloClient() {
                   )}
                 </span>
                 <span
-                  className={`font-bold tabular-nums ${data.mermaAlta ? "text-red-600" : "text-gray-900"}`}
+                  className={`font-bold tabular-nums ${
+                    data.kgNetoIngresado === 0
+                      ? "text-gray-300"
+                      : data.mermaAlta
+                        ? "text-red-600"
+                        : "text-gray-900"
+                  }`}
                 >
-                  {kg(data.mermaReal)} · {data.mermaPct.toFixed(1)}%
+                  {/* Sin compra registrada, "merma real" sería -(todo lo que salió): un
+                      número grande y sin sentido. Mejor no mostrarlo. */}
+                  {data.kgNetoIngresado === 0
+                    ? "—"
+                    : `${kg(data.mermaReal)} · ${data.mermaPct.toFixed(1)}%`}
                 </span>
               </div>
               <div className="flex items-center justify-between text-sm">
@@ -665,8 +675,9 @@ export default function CuadrePolloClient() {
                         : "text-red-600"
                   }`}
                 >
-                  {data.diferencia >= 0 ? "+" : ""}
-                  {kg(data.diferencia)}
+                  {data.kgNetoIngresado === 0
+                    ? "—"
+                    : `${data.diferencia >= 0 ? "+" : ""}${kg(data.diferencia)}`}
                 </span>
               </div>
               {data.kgNetoIngresado === 0 ? (
