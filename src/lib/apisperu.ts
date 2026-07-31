@@ -5,8 +5,8 @@
 //
 // - Los tokens viven SOLO en el servidor (DECOLECTA_TOKEN / APISPERU_TOKEN).
 // - La UI llama a /api/consulta-documento.
-// - Nunca lanza excepción: devuelve { ok:false, code, mensaje } para que la UI
-//   siempre permita escribir los datos a mano si las APIs fallan.
+// - Nunca lanza excepción: devuelve { ok:false, code, mensaje } con un mensaje
+//   amigable para que las asesoras sepan que pueden ingresar los datos a mano.
 // ════════════════════════════════════════════════════════════════════════════
 
 const APISPERU_BASE = "https://dniruc.apisperu.com/api/v1";
@@ -69,14 +69,14 @@ async function consultarRucDecolecta(limpio: string, token: string): Promise<Con
       cache: "no-store",
     });
 
-    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado." };
-    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Decolecta inválido o sin saldo." };
-    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Decolecta agotada." };
-    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Decolecta (${res.status}).` };
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado. Revisa los dígitos o ingresa los datos a mano." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Puedes ingresar la Razón Social y Dirección a mano." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Límite de consultas diarias alcanzado. Ingresa los datos a mano sin problema." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: "No se pudo autocompletar la consulta. Ingresa los datos a mano." };
 
     const data = await res.json().catch(() => null);
     if (!data || (!data.razon_social && !data.numero_documento)) {
-      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado en Decolecta." };
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado. Escribe los datos a mano." };
     }
 
     return {
@@ -92,7 +92,7 @@ async function consultarRucDecolecta(limpio: string, token: string): Promise<Con
       ubigeo: data.ubigeo ?? null,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Decolecta." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio de consulta. Puedes ingresar los datos a mano." };
   }
 }
 
@@ -108,14 +108,14 @@ async function consultarDniDecolecta(limpio: string, token: string): Promise<Con
       cache: "no-store",
     });
 
-    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
-    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Decolecta inválido o sin saldo." };
-    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Decolecta agotada." };
-    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Decolecta (${res.status}).` };
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado. Revisa los 8 dígitos o ingresa los nombres a mano." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Ingresa el nombre a mano." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Límite de consultas alcanzado. Ingresa los datos a mano sin problema." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: "No se pudo autocompletar la consulta. Ingresa los datos a mano." };
 
     const data = await res.json().catch(() => null);
     if (!data || (!data.first_name && !data.full_name)) {
-      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "DNI no encontrado en Decolecta." };
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "DNI no encontrado. Escribe los datos a mano." };
     }
 
     const nombres: string = data.first_name ?? "";
@@ -133,7 +133,7 @@ async function consultarDniDecolecta(limpio: string, token: string): Promise<Con
       nombreCompleto,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Decolecta." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio. Puedes ingresar los datos a mano." };
   }
 }
 
@@ -144,14 +144,14 @@ async function consultarRucApisperu(limpio: string, token: string): Promise<Cons
       cache: "no-store",
     });
 
-    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado." };
-    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Apisperu inválido." };
-    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Apisperu agotada." };
-    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Apisperu (${res.status}).` };
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado. Revisa los dígitos o ingresa los datos a mano." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Puedes ingresar la Razón Social y Dirección a mano." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota de consultas agotada. Ingresa los datos a mano." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: "Error del servicio de consulta. Escribe los datos a mano." };
 
     const data = await res.json().catch(() => null);
     if (!data || data.success === false || (!data.ruc && !data.razonSocial)) {
-      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado." };
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado. Escribe los datos a mano." };
     }
     return {
       ok: true,
@@ -166,7 +166,7 @@ async function consultarRucApisperu(limpio: string, token: string): Promise<Cons
       ubigeo: data.ubigeo ?? null,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Apisperu." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio. Ingresa los datos a mano." };
   }
 }
 
@@ -177,20 +177,20 @@ async function consultarDniApisperu(limpio: string, token: string): Promise<Cons
       cache: "no-store",
     });
 
-    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
-    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Apisperu inválido." };
-    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Apisperu agotada." };
-    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Apisperu (${res.status}).` };
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado. Revisa los 8 dígitos o ingresa los nombres a mano." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Ingresa el nombre a mano." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota de consultas agotada. Ingresa los datos a mano." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: "Error del servicio. Escribe los datos a mano." };
 
     const data = await res.json().catch(() => null);
     if (!data || data.success === false) {
-      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "DNI no encontrado." };
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "DNI no encontrado. Escribe los datos a mano." };
     }
     const nombres: string = data.nombres ?? "";
     const apellidoPaterno: string = data.apellidoPaterno ?? "";
     const apellidoMaterno: string = data.apellidoMaterno ?? "";
     if (!nombres && !apellidoPaterno) {
-      return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado. Escribe los datos a mano." };
     }
     const nombreCompleto: string =
       data.nombreCompleto ?? `${apellidoPaterno} ${apellidoMaterno} ${nombres}`.replace(/\s+/g, " ").trim();
@@ -204,7 +204,7 @@ async function consultarDniApisperu(limpio: string, token: string): Promise<Cons
       nombreCompleto,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Apisperu." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio. Ingresa los datos a mano." };
   }
 }
 
@@ -223,7 +223,7 @@ export async function consultarRuc(ruc: string): Promise<ConsultaRucResponse> {
   const apisperuToken = getApisperuToken();
 
   if (!decolectaToken && !apisperuToken) {
-    return { ok: false, code: "TOKEN", mensaje: "No hay token de consulta configurado (DECOLECTA_TOKEN o APISPERU_TOKEN)." };
+    return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Puedes ingresar la Razón Social y Dirección a mano." };
   }
 
   // Intenta Decolecta primero si tiene token
@@ -231,7 +231,7 @@ export async function consultarRuc(ruc: string): Promise<ConsultaRucResponse> {
     const resDecolecta = await consultarRucDecolecta(limpio, decolectaToken);
     if (resDecolecta.ok) return resDecolecta;
 
-    // Si falla por token/cuota/red y tenemos apisperu, probamos apisperu como respaldo
+    // Si falla y tenemos apisperu, probamos apisperu como respaldo
     if (apisperuToken) {
       const resApisperu = await consultarRucApisperu(limpio, apisperuToken);
       if (resApisperu.ok) return resApisperu;
@@ -258,7 +258,7 @@ export async function consultarDni(dni: string): Promise<ConsultaDniResponse> {
   const apisperuToken = getApisperuToken();
 
   if (!decolectaToken && !apisperuToken) {
-    return { ok: false, code: "TOKEN", mensaje: "No hay token de consulta configurado (DECOLECTA_TOKEN o APISPERU_TOKEN)." };
+    return { ok: false, code: "TOKEN", mensaje: "Consulta automática no disponible por el momento. Ingresa el nombre a mano." };
   }
 
   // Intenta Decolecta primero si tiene token
