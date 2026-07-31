@@ -497,14 +497,18 @@ export default function CuadrePolloClient() {
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex gap-3">
               <FiAlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
               <div className="text-sm text-amber-900">
+                {/* Antes decía "guías de compra" y confundía: en producción TODAS las
+                    compras se registran como Boleta, ninguna como Guía. Lo que falta es
+                    el registro de la compra, sea cual sea su tipo de documento. */}
                 <p className="font-bold">
-                  No hay guías de compra registradas para {formatFechaLarga(data.fecha)}.
+                  Todavía no se registró la compra de pollo de{" "}
+                  {formatFechaLarga(data.fecha)}.
                 </p>
                 <p className="mt-0.5 text-amber-800">
-                  Sin la compra del día no se puede calcular la merma: no sabemos cuántos kilos
-                  entraron.{" "}
+                  Sin ella no se puede calcular la merma: no sabemos cuántos kilos entraron.
+                  Se registra en{" "}
                   <Link href="/dashboard/compras" className="font-bold underline">
-                    Registrar la compra
+                    Compras → Nueva Compra
                   </Link>
                   .
                 </p>

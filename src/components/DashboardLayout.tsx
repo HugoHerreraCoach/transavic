@@ -94,12 +94,16 @@ const navItems: NavItem[] = [
   { href: "/dashboard/cobranzas-planta", label: "Cobranzas Planta", icon: <FiCreditCard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
   // ── PRODUCCIÓN & COMPRAS ──
+  // Ordenado por el FLUJO REAL del día, no por antigüedad del módulo: primero entra
+  // la mercadería (Compras), después se prepara y se pesa, y al cierre se cuadra.
+  // Compras iba sexto, debajo de todo lo que depende de ella — y el Cuadre de Pollo
+  // no puede calcular nada si esa compra no se registró.
+  { href: "/dashboard/compras", label: "Compras", icon: <FiInbox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
+  { href: "/dashboard/proveedores", label: "Proveedores", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/resumen", label: "Resumen a Preparar", icon: <FiBox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"] },
   { href: "/dashboard/produccion", label: "Producción", icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"] },
   { href: "/dashboard/cuadre-pollo", label: "Cuadre de Pollo", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/inventario", label: "Inventario", icon: <FiBox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
-  { href: "/dashboard/compras", label: "Compras", icon: <FiInbox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
-  { href: "/dashboard/proveedores", label: "Proveedores", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/prestamos", label: "Préstamos", icon: <FiTarget className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
 
   // ── FINANZAS ── (Cobranzas de ejecutivas vive en su bloque 🛵)
