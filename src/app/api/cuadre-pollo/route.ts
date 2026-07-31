@@ -9,10 +9,14 @@ import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { construirCuadrePollo } from "@/lib/cuadre-pollo";
+import { evaluarExpresion } from "@/lib/expresion-numerica";
 
 export const dynamic = "force-dynamic";
 
 const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** El desglose de pesadas tal como se tecleó ("62+62.2+62.5…"). */
+const expresion = z.string().max(500).nullable().optional();
 
 const GuardarSchema = z.object({
   fecha: z.string().regex(FECHA_REGEX, { message: "Fecha inválida" }),
@@ -22,7 +26,30 @@ const GuardarSchema = z.object({
   kg_corte_especial: z.number().min(0).max(100000),
   kg_pollo_entero: z.number().min(0).max(100000),
   observaciones: z.string().max(1000).nullable().optional(),
+  expr_corte: expresion,
+  expr_corte_especial: expresion,
+  expr_pollo_entero: expresion,
+  expr_aves_macho: expresion,
+  expr_aves_hembra: expresion,
 });
+
+/**
+ * El número guardado es la fuente de verdad del cálculo, así que no puede
+ * contradecir al desglose que lo acompaña. Si vino expresión, se reevalúa aquí:
+ * el servidor no confía en el total que mandó el navegador.
+ */
+function expresionIncoherente(
+  expr: string | null | undefined,
+  numero: number
+): string | null {
+  if (!expr || expr.trim() === "") return null;
+  const { valor, valida } = evaluarExpresion(expr);
+  if (!valida) return `"${expr}" no es una operación válida`;
+  if (Math.abs(valor - numero) > 0.01) {
+    return `"${expr}" da ${valor}, no ${numero}`;
+  }
+  return null;
+}
 
 /** admin y produccion, igual que el resto del cuadre físico. */
 function sinPermiso(role?: string): boolean {
@@ -77,7 +104,27 @@ export async function POST(req: NextRequest) {
       );
     }
     const d = validacion.data;
+
+    const incoherencias = [
+      expresionIncoherente(d.expr_corte, d.kg_corte),
+      expresionIncoherente(d.expr_corte_especial, d.kg_corte_especial),
+      expresionIncoherente(d.expr_pollo_entero, d.kg_pollo_entero),
+      expresionIncoherente(d.expr_aves_macho, d.aves_macho),
+      expresionIncoherente(d.expr_aves_hembra, d.aves_hembra),
+    ].filter(Boolean);
+
+    if (incoherencias.length > 0) {
+      return NextResponse.json(
+        { error: `El desglose no cuadra con el total: ${incoherencias.join("; ")}` },
+        { status: 400 }
+      );
+    }
+
     const sql = neon(process.env.DATABASE_URL!);
+    const limpiar = (v: string | null | undefined): string | null => {
+      const t = (v ?? "").trim();
+      return t === "" ? null : t;
+    };
 
     // Un cuadre por día: la PK es la fecha, así que guardar dos veces corrige la
     // misma fila en vez de duplicarla.
@@ -85,10 +132,14 @@ export async function POST(req: NextRequest) {
       INSERT INTO public.cuadre_pollo_dia (
         fecha, aves_macho, aves_hembra,
         kg_corte, kg_corte_especial, kg_pollo_entero,
+        expr_corte, expr_corte_especial, expr_pollo_entero,
+        expr_aves_macho, expr_aves_hembra,
         observaciones, usuario_id
       ) VALUES (
         ${d.fecha}::date, ${d.aves_macho}, ${d.aves_hembra},
         ${d.kg_corte}, ${d.kg_corte_especial}, ${d.kg_pollo_entero},
+        ${limpiar(d.expr_corte)}, ${limpiar(d.expr_corte_especial)}, ${limpiar(d.expr_pollo_entero)},
+        ${limpiar(d.expr_aves_macho)}, ${limpiar(d.expr_aves_hembra)},
         ${d.observaciones ?? null}, ${session.user.id}
       )
       ON CONFLICT (fecha) DO UPDATE SET
@@ -97,6 +148,11 @@ export async function POST(req: NextRequest) {
         kg_corte = EXCLUDED.kg_corte,
         kg_corte_especial = EXCLUDED.kg_corte_especial,
         kg_pollo_entero = EXCLUDED.kg_pollo_entero,
+        expr_corte = EXCLUDED.expr_corte,
+        expr_corte_especial = EXCLUDED.expr_corte_especial,
+        expr_pollo_entero = EXCLUDED.expr_pollo_entero,
+        expr_aves_macho = EXCLUDED.expr_aves_macho,
+        expr_aves_hembra = EXCLUDED.expr_aves_hembra,
         observaciones = EXCLUDED.observaciones,
         usuario_id = EXCLUDED.usuario_id,
         updated_at = (NOW() AT TIME ZONE 'America/Lima')

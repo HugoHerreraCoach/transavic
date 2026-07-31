@@ -21,6 +21,22 @@ export function toLocalDateString(date: Date): string {
 }
 
 /**
+ * "YYYY-MM-DD" → "jueves, 5 de marzo de 2026" (encabezado de reportes).
+ * Parte el string a mano en vez de `new Date(iso)`, que lo interpretaría como UTC
+ * y en Perú mostraría el día anterior.
+ */
+export function formatFechaLarga(iso: string): string {
+  const [a, m, d] = iso.split("-").map(Number);
+  if (!a || !m || !d) return iso;
+  return new Date(a, m - 1, d).toLocaleDateString("es-PE", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+/**
  * Obtiene la fecha de hoy (o con offset de días) como YYYY-MM-DD en timezone local.
  * Ejemplos: getLocalDateString(0) = hoy, getLocalDateString(-1) = ayer, getLocalDateString(1) = mañana
  */

@@ -317,14 +317,30 @@ El cuadre por producto (§10.2) **no puede cuadrar el pollo**: se compra pollo v
 
 ### 7bis.2 La fórmula (verificada contra sus 32 hojas de marzo 2026)
 
+La pantalla la presenta con **la narrativa de su Excel** (fórmulas reales de la hoja:
+`E50 = N53*0.32`, `J65 = G51-G66`): ella no calcula una "pérdida", calcula **cuánto pollo debió
+haber entrado** y lo compara con lo que compró.
+
 ```
-Neto ingresado = Σ compras del día (peso_neto) de productos 'vivo' y 'desposte',
-                 con las devoluciones en negativo
 Total salida   = Venta Campo + Venta Planta + lo que SALIÓ a picar para delivery
-Merma real     = Neto ingresado − Total salida
-Merma esperada = total de aves × merma_estandar_ave_kg   (0.32 kg, configurable)
-DIFERENCIA     = Merma esperada − Merma real
+Merma pollo    = total de aves × merma_estandar_ave_kg   (0.32 kg, configurable)
+DEBIÓ ENTRAR   = Total salida + Merma pollo
+ENTRÓ (neto)   = Σ compras del día (peso_neto) de productos 'vivo' y 'desposte',
+                 con las devoluciones en negativo
+DIFERENCIA     = DEBIÓ ENTRAR − ENTRÓ
 ```
+
+Internamente `src/lib/cuadre-pollo.ts` sigue calculando `mermaReal = neto − salida` y
+`diferencia = esperada − mermaReal`, que es **algebraicamente idéntico**. La narrativa es de
+presentación; la fórmula no cambió.
+
+**Tolerancia:** cuadra si `|diferencia| ≤ 1 % del neto ingresado`. Pesar ~2 000 kg en balanza de
+planta tiene ruido de varios kilos; sin esa banda, un −3.50 kg (que su Excel daba por bueno) salía
+como alerta roja.
+
+**Ojo con su vocabulario:** en su hoja, "MERMA REAL" son los kg **comprados**, no una pérdida. La
+pantalla muestra `ENTRÓ (neto)` como etiqueta principal y `merma real` en gris pequeño al lado, para
+que ella lo reconozca sin que el PDF confunda a Antonio.
 
 `0.32 kg/ave` está verificado: en las 32 hojas el cociente `merma esperada / aves` da 0.32 exacto. Los "macho 0.35 / hembra 0.30" que ella anota al costado son referencia, **no entran en su cálculo** — no reproducirlos como fórmula.
 
@@ -355,6 +371,28 @@ Se leen del desglose `jabas_macho`/`jabas_hembra`/`sueltos_*` de `compra_items` 
 ### 7bis.6 Persistencia
 
 `cuadre_pollo_dia` con **PK `fecha`** (un cuadre por día; guardar dos veces corrige la misma fila, no duplica). Al guardar se escribe además el espejo en `mermas_diarias` para que Rentabilidad tenga rendimiento real. Si ese espejo falla, se loguea y el cuadre igual queda guardado.
+
+### 7bis.7 Captura de pesadas — `src/lib/expresion-numerica.ts` (30 jul 2026)
+
+Los campos que la usuaria teclea aceptan el desglose tal como le llega el parte de pesos, igual que
+en Excel: **`62+62.2+62.5+61.75+…`**, y para las aves **`70+15+55*7+15`** (jabas × aves por jaba).
+
+Por qué: en su Excel el **23 % de las celdas de peso son sumas** (218 de 942). En "CORTE" pasa **29
+de 32 días con 6.8 pesadas promedio, hasta 11**. Guardando solo el total, corregir una pesada
+obligaría a re-teclear las otras diez.
+
+- `evaluarExpresion(texto)` → `{ valor, valida }`. Acepta dígitos, punto o coma decimal, espacios y
+  `+ − * /`. Sin paréntesis.
+- **NUNCA `eval` ni `new Function`** — es entrada de usuario. Tokenizador propio.
+- ⚠️ **La precedencia importa**: `70+15+55*7+15` = **485** (los machos reales de la hoja 05-03);
+  de izquierda a derecha daría 3 010. Primero `*` y `/`, después `+` y `−`.
+- Verificado contra **las 667 fórmulas aritméticas reales** de sus 32 hojas: 667/667 coinciden con
+  lo que calculó Excel.
+
+**Contrato de persistencia:** las columnas numéricas (`kg_corte`, `aves_macho`, …) son la **fuente de
+verdad del cálculo**; las `expr_*` (migración `migrate-cuadre-pollo-expresiones-2026-07-30.sql`) solo
+guardan el texto para poder reeditarlo. El `POST` **revalida en servidor**: si la expresión no evalúa
+al número enviado (tolerancia 0.01), responde **400**. NULL = se digitó un número suelto.
 
 ---
 

@@ -84,6 +84,19 @@ export interface CuadrePollo {
   diferenciaDelivery: number;
   usoFacturadoComoSalida: boolean;
 
+  /**
+   * El texto TAL COMO lo tecleó la usuaria ("62+62.2+62.5…", "70+15+55*7+15").
+   * Solo sirve para poder reeditar el desglose al día siguiente: el número de
+   * arriba es la fuente de verdad del cálculo. NULL = se digitó un número suelto.
+   */
+  expresiones: {
+    corte: string | null;
+    corteEspecial: string | null;
+    polloEntero: string | null;
+    avesMacho: string | null;
+    avesHembra: string | null;
+  };
+
   observaciones: string | null;
   parametros: ParametrosNegocio;
 }
@@ -222,7 +235,8 @@ export async function construirCuadrePollo(
 
   // --- Captura manual del día ------------------------------------------------
   const filasManual = (await sql`
-    SELECT aves_macho, aves_hembra, kg_corte, kg_corte_especial, kg_pollo_entero, observaciones
+    SELECT aves_macho, aves_hembra, kg_corte, kg_corte_especial, kg_pollo_entero, observaciones,
+           expr_corte, expr_corte_especial, expr_pollo_entero, expr_aves_macho, expr_aves_hembra
     FROM public.cuadre_pollo_dia
     WHERE fecha = ${fechaIso}::date
   `) as Array<Record<string, unknown>>;
@@ -288,6 +302,13 @@ export async function construirCuadrePollo(
     kgFacturadoAsesoras,
     diferenciaDelivery: r2(kgFacturadoAsesoras - kgSalidaCorte),
     usoFacturadoComoSalida,
+    expresiones: {
+      corte: (manual?.expr_corte as string | null) ?? null,
+      corteEspecial: (manual?.expr_corte_especial as string | null) ?? null,
+      polloEntero: (manual?.expr_pollo_entero as string | null) ?? null,
+      avesMacho: (manual?.expr_aves_macho as string | null) ?? null,
+      avesHembra: (manual?.expr_aves_hembra as string | null) ?? null,
+    },
     observaciones: (manual?.observaciones as string | null) ?? null,
     parametros,
   };

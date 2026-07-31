@@ -108,6 +108,69 @@ día); PDF generado sin errores; `/dashboard/produccion/mermas` → 404; Rentabi
 **Migración:** `scripts/migrate-cuadre-pollo-2026-07-30.sql` (+ rollback), aditiva e idempotente.
 Detalle técnico: [doc 09 §7bis](./arquitectura/09-compras-inventario-mermas.md).
 
+### Segunda vuelta el mismo día: que se VEA y se USE como su Excel
+
+Hugo revisó la pantalla y señaló algo correcto: se había construido con tarjetas modernas y **rompía
+el lenguaje visual de "hoja de cálculo"** que él ya había establecido en `cuadre-mermas-tab.tsx` y
+`cartera-asesoras-tab.tsx` — que es justamente el que Marianela reconoce. *"Creo que ella quería algo
+como su Excel, y si le damos una interfaz similar? por eso hice el cuadre de mermas."*
+
+Al volver sobre el Excel con más detalle aparecieron **dos cosas de fondo**, no cosméticas:
+
+**1. Su narrativa es mejor que la implementada.** Las fórmulas reales de la hoja (`E50 = N53*0.32`,
+`J65 = G51-G66`) muestran que ella no calcula una pérdida: calcula **cuánto debió entrar**.
+
+```
+VENTA (lo que salió)      1,752.85
+MERMA POLLO (620 × 0.32)    198.40
+                        ──────────
+DEBIÓ ENTRAR              1,951.25
+ENTRÓ (proveedores)       1,954.75
+                        ──────────
+DIFERENCIA                   −3.50
+```
+
+Es algebraicamente idéntico a lo que ya había, pero se lee mucho mejor. Se adoptó como presentación;
+la fórmula de `src/lib/cuadre-pollo.ts` no se tocó.
+
+**2. Ella no teclea totales: teclea las pesadas una por una.** El **23 % de las celdas de peso de su
+Excel son sumas** (218 de 942). En "CORTE" pasa **29 de 32 días, con 6.8 pesadas promedio y hasta
+11**: escribe `62+62.2+62.5+61.75+62.3+62.9+58.5+61.7`. Y las aves las cuenta con `70+15+55*7+15`.
+Con un input que solo aceptaba un número, **habría tenido que sumar ~7 pesadas en calculadora todos
+los días** — más trabajo que su Excel. Eso ningún rediseño visual lo arregla.
+
+**Lo construido:**
+
+- **`src/lib/expresion-numerica.ts`** — `evaluarExpresion(texto)`, tokenizador propio (nunca `eval`,
+  es entrada de usuario), con **precedencia correcta**: `70+15+55*7+15` = **485**, que son exactamente
+  los machos de esa hoja; de izquierda a derecha daría 3 010. **Verificado contra las 667 fórmulas
+  aritméticas reales de sus 32 hojas: 667/667 coinciden con lo que calculó Excel.**
+- **5 columnas `expr_*`** en `cuadre_pollo_dia` (`migrate-cuadre-pollo-expresiones-2026-07-30.sql`)
+  para guardar el texto y poder **reeditar una pesada suelta al día siguiente**. El número sigue
+  siendo la fuente de verdad; el `POST` revalida en servidor y devuelve **400** si el desglose no
+  cuadra con el total (probado: `"10+10" da 20, no 493.85`).
+- **La pantalla es ahora una hoja**: membrete TRANSAVIC, tablas `border-collapse` con `tabular-nums`,
+  filas de totales con `border-t-2`, pie "Generado el…" — el mismo lenguaje de los otros reportes.
+  El orden es el de su Excel: SALIDA → VENTA + MERMA POLLO → DEBIÓ ENTRAR → PROVEEDORES (N° JABAS |
+  PROVEEDOR | BRUTO | TARA | P. NETO) con las aves al costado → DIFERENCIA → CONTROL DE DELIVERY.
+- El **PDF** sigue la misma narrativa e imprime el desglose de pesadas bajo cada concepto.
+
+**Detalle de layout que costó:** el `minWidth` y el `overflow-x-auto` iban en el MISMO div (copiado
+de `cuadre-mermas-tab`), y eso empujaba el layout de toda la página. El scroll va en el
+**contenedor** y el ancho mínimo en el **hijo**; así la hoja scrollea sola y la página no se rompe
+(verificado a 390 px).
+
+**Verificado E2E:** la hoja 05-03-2026 sigue dando 1,954.75 / 1,752.85 / 198.40 / **−3.50**; las 8
+pesadas reales dan 493.85; guardar y recargar devuelve la expresión completa, no el total; expresión
+rota → botón bloqueado y celda en rojo; POST incoherente → 400.
+
+**Fuera de alcance (anotado):** la **cartera diaria de campo** (la zona izquierda de su hoja: ~43
+destinos con SALDO ANTERIOR / A CUENTA / saldo final). Existe a medias en
+`/dashboard/clientes-avicola/liquidacion`, sin saldo anterior anclado a la fecha, sin kg ni precio
+por cliente y sin exportar. El molde para copiarlo es `cartera-asesoras-tab.tsx` +
+`api/reportes/balance-asesoras`; además hay que decidir qué es "DESCT.", que **no existe en el modelo
+de campo**.
+
 ---
 
 ## 20 jul 2026 (tarde) — Segunda marca en WhatsApp: el código listo para el RUC 10
