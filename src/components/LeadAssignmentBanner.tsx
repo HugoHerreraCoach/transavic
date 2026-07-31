@@ -68,7 +68,7 @@ export default function LeadAssignmentBanner() {
     }
   };
 
-  // 2. Consultar leads en cola cada 4 segundos
+  // 2. Consultar leads en cola. El intervalo es ADAPTATIVO (ver más abajo).
   const fetchCola = async () => {
     if (!currentUserId || (userRole !== "asesor" && userRole !== "admin")) return;
     try {
@@ -97,7 +97,19 @@ export default function LeadAssignmentBanner() {
     }
   };
 
-  usePollingVisible(fetchCola, 4000, { enabled: !!currentUserId });
+  // Intervalo adaptativo: 4 s solo mientras hay un lead en juego (el turno de
+  // rotación dura 30 s, así que ahí la respuesta tiene que ser rápida), y 15 s
+  // cuando la cola está vacía.
+  //
+  // Por qué: este banner se monta para el admin y las 4 asesoras, o sea ~5 pestañas
+  // sondeando todo el día. A 4 s fijos eran 900 requests/hora CADA UNA (2 consultas
+  // por request) para una cola que hoy recibe ~1 lead por semana. Con la cola vacía
+  // no hay nada que perder: el peor caso es que un lead nuevo aparezca 15 s más
+  // tarde, y como el vencimiento del turno lo evalúa el orquestador cuando llega el
+  // siguiente mensaje (bot-orchestrator.ts) y no un reloj de pared, no se pierde el
+  // turno por eso. Apenas aparece el primer lead, el hook vuelve a 4 s.
+  const intervaloCola = activeLeads.length > 0 ? 4_000 : 15_000;
+  usePollingVisible(fetchCola, intervaloCola, { enabled: !!currentUserId });
 
   // 3. Temporizador de cuenta regresiva
   useEffect(() => {

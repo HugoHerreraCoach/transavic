@@ -186,9 +186,15 @@ export default function CajaDiariaClient() {
     fetchCuentas();
   }, []);
 
-  // Refresco automático de ingresos/egresos cada 30 s (pausa solo cuando la
-  // pestaña está oculta; la llamada inicial también la hace este hook)
-  usePollingVisible(fetchCajaData, 30_000);
+  // Refresco automático de ingresos/egresos (pausa cuando la pestaña está oculta;
+  // la llamada inicial también la hace este hook).
+  //
+  // 60 s y no 30: /api/caja-diaria resuelve 18 consultas por request, así que a 30 s
+  // eran ~2.160 consultas/hora por pestaña abierta — el endpoint más caro del
+  // sistema. La caja la mueve quien está sentado en esta pantalla y toda acción
+  // propia ya refresca al terminar, así que el poller solo cubre el caso de otra
+  // persona cobrando en paralelo; ahí medio minuto de más no cambia nada.
+  usePollingVisible(fetchCajaData, 60_000);
 
   const handleApertura = async (e: React.FormEvent) => {
     e.preventDefault();

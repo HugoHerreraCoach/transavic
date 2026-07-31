@@ -9,6 +9,12 @@ export const dynamic = "force-dynamic";
 
 // Un motorizado CON pedidos activos cuya última ubicación tenga más de esto sin
 // actualizarse se considera "sin señal" (oscuro ambiguo) en el mapa.
+//
+// OJO: NO es el mismo umbral que OSCURO_STALE_MIN del cron repartidores-oscuros
+// (hoy 15 min) y no hay que igualarlos. Este pinta el mapa y se mide contra el
+// heartbeat del rider (90 s ⇒ 10 min son ~7 latidos perdidos); aquel decide cuándo
+// NOTIFICAR al admin y va atado a cada cuánto corre el cron. Que el mapa avise
+// antes que la notificación es deliberado.
 const OSCURO_STALE_MS = 10 * 60 * 1000;
 
 export async function GET() {

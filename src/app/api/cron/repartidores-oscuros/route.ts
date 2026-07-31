@@ -9,8 +9,10 @@
 // y avisa al admin con debounce por rider (ver lib/repartidor-oscuro.ts).
 //
 // Fuera del horario operativo NO corre (privacidad: no perseguir de noche por un
-// pedido que quedó sin cerrar). Programado cada 10 min en vercel.json (alineado
-// con OSCURO_STALE_MIN; el apagado deliberado igual avisa al instante por beacon).
+// pedido que quedó sin cerrar). Programado cada 15 min en vercel.json y OSCURO_STALE_MIN
+// va alineado a ese mismo número: si los separas, o alertas por una demora normal entre
+// corridas, o tardas dos corridas en detectar. El apagado deliberado igual avisa al
+// instante por beacon, así que este cron solo cubre el caso ambiguo ("sin señal").
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { ridersConPedidosActivosHoy } from "@/lib/repartidor-jornada";
@@ -19,7 +21,7 @@ import { notificarRepartidorOscuro } from "@/lib/repartidor-oscuro";
 
 export const dynamic = "force-dynamic";
 
-const OSCURO_STALE_MIN = 10; // minutos sin reportar ⇒ "sin señal" (ambiguo)
+const OSCURO_STALE_MIN = 15; // minutos sin reportar ⇒ "sin señal" (ambiguo). Va atado al schedule del cron.
 
 export async function GET(request: Request) {
   if (!process.env.CRON_SECRET) {

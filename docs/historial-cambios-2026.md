@@ -8,6 +8,149 @@
 
 ---
 
+## 31 jul 2026 — La factura de Neon: $23 casi enteros por estar prendida sin trabajo
+
+**Contexto.** Hugo vio que Neon le iba a cobrar **$22.94** y preguntó si convenía mudarse a Supabase
+o si había otra salida. La respuesta resultó ser ninguna de las dos: no era el proveedor ni el
+volumen de trabajo, era **un cron propio corriendo cada 5 minutos**.
+
+### El diagnóstico
+
+El plan Launch de Neon es **puro consumo, sin cuota fija**: $0.106 por CU-hora y $0.35 por GB-mes
+(verificado en neon.com/pricing — el mínimo mensual de $5 fue eliminado).
+
+| | |
+|---|---|
+| Base de datos | **118 MB** → $0.04/mes de almacenamiento (irrelevante) |
+| Cómputo | $22.90 ÷ $0.106 = **~216 CU-horas** |
+| Horas que tiene un mes | 730 |
+| 730 h × 0.25 CU (mínimo de autoscale) | **182 CU-h = $19.35** |
+
+O sea: **~85% de la factura era la base prendida sin hacer nada.** Los ~$3.60 restantes son el
+escalado real de cuando el equipo trabaja.
+
+**La evidencia que lo cerró**, medida el 31 de julio a las 18:33 UTC contra las dos branches:
+
+```
+PROD (ep-cool-sound)   pg_postmaster_start_time → despierta hace 12 h 32 min
+DEV  (dev-hugo)        pg_postmaster_start_time → despierta hace 0.6 s
+```
+
+La branch de desarrollo dormía perfecto y despertó con la consulta del diagnóstico. Producción
+llevaba despierta de corrido desde la 1:01 a.m. de Lima. **La diferencia eran los crons.**
+
+**Por qué no dormía.** Neon auto-suspende a los **5 minutos** de silencio.
+`reconciliar-cpe-sunat` corría **cada 5 minutos, 24/7** (288 veces al día) y siempre pegaba a la DB.
+Reseteaba el contador de inactividad justo antes de que expirara: ni a las 3 a.m., ni un domingo,
+ni en feriado llegaba a suspenderse. `repartidores-oscuros` (cada 10 min) sí tenía apagado nocturno
+bien hecho, pero no servía de nada mientras el otro la mantuviera despierta igual.
+
+El resto del sistema estaba sano: los 15 pollers del cliente ya pasaban por `usePollingVisible`
+(migración de jun 2026) y se cortan solos al ocultar la pestaña.
+
+### Por qué NO se migró a Supabase
+
+| Opción | Costo/mes | Problema |
+|---|---|---|
+| Supabase Pro | **$25** | Más caro que la factura de entonces, y casi el doble del Neon optimizado |
+| Supabase Free | $0 | **Sin backups.** 500 MB. Con ~35 comprobantes SUNAT diarios y la cobranza encima, no es opción |
+| Neon Free | $0 | 100 CU-h y 0.5 GB por proyecto, y **suspende el proyecto** al pasarse. Aun optimizado hacen falta ~130 CU-h |
+| **Neon Launch optimizado** | **~$13** | ✅ lo que se hizo |
+
+Y migrar no era barato: **243 archivos** importan el driver de Neon, **18 `sql.transaction`** en
+caminos de dinero y stock (POS, compras, caja, anulaciones), 771 puntos de consulta — 5 a 10 días
+con ventana de corte. Lo decisivo: **no se usa nada de lo que hace distinto a Supabase** (0 RLS, 0
+Supabase Auth, 0 Realtime, 0 Storage). Sería pagar la migración para terminar con lo mismo, más
+caro. Render/Railway ($6–19 fijo) exigen la misma migración y se pierden las branches; un VPS
+propio (~$5) convierte a Hugo en el DBA (backups, parches, seguridad) por $8/mes de ahorro.
+
+### Qué se cambió
+
+**1. Ventana de emisión, en `src/lib/ventana-operativa.ts`.** El módulo ya tenía la ventana de GPS;
+se le sumó una **segunda ventana independiente** para la emisión (`dentroDeVentanaEmision`,
+05:00–23:00 Lima, env `SUNAT_VENTANA_INICIO`/`_FIN`) y se extrajo el comparador `dentroDe()`. Están
+deliberadamente separadas: responden a motivos distintos (privacidad vs costo) y mover una no debe
+mover la otra.
+
+El 05:00–23:00 no es al ojo. Distribución real de las horas de emisión en producción, últimos 60
+días (1.855 comprobantes):
+
+| Hora Lima | 0 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 23 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| CPE | 5 | 1 | 36 | 198 | 391 | 481 | 203 | 67 | 119 | 101 | 111 | 70 | 57 | 2 | 9 | 3 | 1 |
+
+El **99.7% cae entre las 07:00 y las 21:00**. La ventana 05:00–23:00 va con dos horas de margen a
+cada lado.
+
+**2. Gate en `api/cron/reconciliar-cpe-sunat/route.ts`.** Early-return **antes de instanciar el
+cliente de Neon**, con el mismo patrón que ya usaba `repartidores-oscuros`. Y schedule de `*/5` a
+`*/15` en `vercel.json`.
+
+Resultado: de **288 corridas/día que tocaban la DB a 72**, con **6 horas de silencio garantizado**
+todas las noches. Lo que quede pendiente fuera de la ventana no se pierde — lo levanta la corrida
+de las 05:00 o el **saneo lazy de `GET /api/comprobantes`** en cuanto alguien abre la pantalla.
+
+**3. `repartidores-oscuros` de `*/10` a `*/15`**, moviendo con él `OSCURO_STALE_MIN` (10 → 15), que
+va atado al schedule. **No** se tocó el `OSCURO_STALE_MS` de `api/despacho/route.ts` (sigue en 10
+min): es otro knob — pinta el mapa y se mide contra el heartbeat del rider (90 s), no contra el
+cron. Se documentó la distinción en el propio archivo para que nadie los "sincronice" por error.
+
+**4. Pollers.** `/api/caja-diaria` resuelve **18 consultas por request** y se llamaba cada 30 s
+(~2.160 consultas/hora por pestaña abierta, el endpoint más caro del sistema) → 60 s. Y
+`LeadAssignmentBanner` sondeaba cada 4 s, montado para admin + las 4 asesoras — 5 pestañas a 900
+requests/hora cada una, todo el día, **para una cola que hoy recibe 1 lead por semana** (4 leads en
+total, 0 en rotación al momento de medir). No se bajó a secas porque el turno de rotación dura 30 s
+y ahí los 4 s son load-bearing: se hizo **adaptativo** (4 s con lead en juego, 15 s con la cola
+vacía). El vencimiento del turno lo evalúa el orquestador cuando llega el siguiente mensaje
+(`bot-orchestrator.ts:435`), no un reloj de pared, así que aparecer 15 s tarde no hace perder el
+turno.
+
+**5. Auto-suspend a 60 s** — cambio de consola, sin código (Neon Console → branch `production` →
+Compute → "Scale to zero after"). Es lo que multiplica todo lo anterior: con suspend de 5 min y
+cron cada 15, duerme 10 de cada 15 minutos; con 60 s, duerme 14 de cada 15. Cuesta ~500 ms de
+arranque en frío en la primera consulta tras un silencio.
+
+### Lo que se decidió NO hacer
+
+El plan original incluía **sacar el `UPDATE` incondicional** de
+`reconciliacion-cpe.ts:525` (el saneo de filas `emitiendo` >15 min, que corría siempre aunque no
+hubiera nada). Se descartó al revisarlo:
+
+1. **Neon se despierta con cualquier consulta**, no solo con escrituras — el `UPDATE` no era peor
+   que el `SELECT` que lo acompaña. La premisa de "una escritura es la peor forma de despertar
+   Postgres" no aplica al modelo de facturación de Neon.
+2. Su costo real era correr **288×/día 24/7**. Con el cron ya en `*/15` y con gate, baja a ≤72×/día
+   dentro de horas en que la DB está despierta igual por trabajo real. **Ahorro medible: cero.**
+3. Fusionarlo con el `SELECT` en un CTE **rompería la corrección**: un CTE que modifica datos no
+   expone sus cambios al `SELECT` hermano (comparten snapshot), y el comentario en
+   `reconciliacion-cpe.ts:522-524` exige justamente que el saneo ocurra ANTES para que las filas
+   recién marcadas `por_confirmar` se seleccionen.
+
+Tocar el camino crítico de emisión SUNAT por $0 de ahorro es mal negocio (gotcha #58).
+
+### El número
+
+| | CU-horas/mes | Factura |
+|---|---|---|
+| Antes | 216 | **$22.94** |
+| Después (crons + gate + auto-suspend) | ~125–140 | **$13–15** |
+| Con los pollers aflojados | ~115–125 | **$12–13** |
+
+**~$8–10/mes ≈ $100–120/año**, sin migrar, sin ventana de corte y sin tocar un solo dato.
+
+### Cómo verificar que funcionó
+
+A la mañana siguiente del deploy, contra producción:
+
+```sql
+SELECT pg_postmaster_start_time(), NOW() - pg_postmaster_start_time() AS despierta_hace;
+```
+
+Si la marca es de esa misma mañana y no de la madrugada anterior, **durmió**. A los 3 días,
+comparar CU-hours/día en Neon Console → Billing → Usage.
+
+---
+
 ## 30 jul 2026 — Cuadre de Pollo: reemplazar el Excel de Marianela
 
 **Contexto.** Marianela (equipo de Antonio, lleva compras y proveedores) cuadra a mano en Excel, todos

@@ -1,10 +1,18 @@
 // Red de seguridad para resolver respuestas temporales de facturas/boletas.
 // Solo consulta getStatus/getStatusCdr en lotes pequenos; JAMAS reenvia un CPE.
+//
+// Corre cada 15 min y SOLO dentro de la ventana de emision (ver
+// lib/ventana-operativa.ts). Antes corria cada 5 min las 24 h: como Neon
+// auto-suspende recien a los 5 min de silencio, el cron reseteaba el contador justo
+// antes de que expirara y la base NUNCA se dormia — el 85% de la factura era estar
+// prendida sin trabajo. Lo que quede pendiente fuera de la ventana no se pierde: lo
+// levanta la corrida siguiente o el saneo lazy de GET /api/comprobantes.
 
 import {
   comprobantesPendientesDeConciliar,
   conciliarComprobanteSunat,
 } from "@/lib/sunat/reconciliacion-cpe";
+import { dentroDeVentanaEmision } from "@/lib/ventana-operativa";
 import { NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +27,12 @@ export async function GET(request: Request) {
   }
   if (request.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+  }
+
+  // Fuera del horario de emision: salimos SIN tocar la base, para que el computo
+  // de Neon pueda auto-suspenderse de madrugada. Chequeo puro, sin consultas.
+  if (!dentroDeVentanaEmision()) {
+    return NextResponse.json({ ok: true, skipped: "fuera de ventana de emision" });
   }
 
   try {
