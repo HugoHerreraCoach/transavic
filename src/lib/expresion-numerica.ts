@@ -25,6 +25,32 @@ const INVALIDA: ResultadoExpresion = { valor: 0, valida: false };
 type Token = number | "+" | "-" | "*" | "/";
 
 /**
+ * Resuelve la coma ANTES de tokenizar: en es-PE es separador de MILES, pero en el
+ * teclado también se usa como decimal.
+ *
+ * ⚠️ Esto arregla un error de 1000× que la propia pantalla inducía: la hoja muestra
+ * 2450 kg como "2,450.00", y al teclear "2,450" la coma se leía como decimal y se
+ * guardaban 2.45 kg — sin error, con la celda en ámbar como si estuviera bien.
+ *
+ * Regla, por forma:
+ *   coma + exactamente 3 dígitos que no siguen con otro dígito → MILES, se descarta
+ *   cualquier otra coma                                        → decimal
+ *
+ *   "2,450"      → 2450        "1,234.50" → 1234.50
+ *   "1,234,567"  → 1234567     "2,5"      → 2.5
+ */
+function normalizarSeparadores(texto: string): string {
+  let t = texto;
+  let antes: string;
+  // Repetido hasta punto fijo: con una sola pasada, "1,234,567" quedaría a medias.
+  do {
+    antes = t;
+    t = t.replace(/(\d),(\d{3})(?!\d)/g, "$1$2");
+  } while (t !== antes);
+  return t.replace(/,/g, ".");
+}
+
+/**
  * Parte el texto en números y operadores. Devuelve null si aparece cualquier
  * carácter que no sea dígito, punto, espacio o un operador.
  */
@@ -48,7 +74,8 @@ function tokenizar(texto: string): Token[] | null {
 
   for (const ch of texto) {
     const esDigito = ch >= "0" && ch <= "9";
-    const esPunto = ch === "." || ch === ",";
+    // La coma ya fue resuelta por normalizarSeparadores(); aquí solo llega el punto.
+    const esPunto = ch === ".";
 
     if (esDigito || esPunto) {
       // Dos números sin operador en medio ("62 2") es un descuido, no una suma.
@@ -83,9 +110,13 @@ function tokenizar(texto: string): Token[] | null {
  * Acepta: dígitos, punto o coma decimal, espacios y los operadores + − * /.
  * No acepta paréntesis ni signo negativo inicial (no hacen falta aquí, y dejarlos
  * fuera mantiene el parser trivial de auditar).
+ *
+ * Un resultado NEGATIVO se devuelve como inválido: todo lo que se teclea aquí son
+ * kilos y aves, y el servidor los rechaza con `min(0)`. Marcarlo en la celda evita
+ * un 400 mudo al guardar.
  */
 export function evaluarExpresion(texto: string | null | undefined): ResultadoExpresion {
-  const limpio = (texto ?? "").trim();
+  const limpio = normalizarSeparadores((texto ?? "").trim());
   if (limpio === "") return VACIO;
 
   const tokens = tokenizar(limpio);
@@ -131,6 +162,9 @@ export function evaluarExpresion(texto: string | null | undefined): ResultadoExp
   }
 
   if (!Number.isFinite(total)) return INVALIDA;
+  // Kilos y aves no pueden ser negativos; el servidor los rechaza con min(0), así
+  // que se marca acá para que la celda avise antes de intentar guardar.
+  if (total < 0) return INVALIDA;
 
   // 2 decimales: son kilos y aves, no hace falta más, y evita colas de coma flotante.
   return { valor: Math.round((total + Number.EPSILON) * 100) / 100, valida: true };

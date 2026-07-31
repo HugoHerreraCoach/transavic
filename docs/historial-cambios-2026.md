@@ -207,6 +207,63 @@ el CASCADE borra las líneas junto con el día.
 estaba clickeando el acordeón **del sidebar**, que también se llama "Venta en Campo". El componente
 funcionaba desde el principio.
 
+### Cuarta vuelta: auditoría antes de que lo use nadie
+
+Hugo preguntó si faltaba algo y reportó que "hay campos donde solo deben aceptarse números pero se
+pueden escribir letras". Tenía razón, y la auditoría destapó bastante más — **incluyendo bugs que se
+habían introducido en las dos vueltas anteriores**. `cuadre_pollo_dia` tenía **0 filas en
+producción**, así que se cerraron antes de que ella cargara el primer día.
+
+**El peor: un error de 1000× que la propia pantalla inducía.** La hoja muestra 2 450 kg como
+`2,450.00`; al teclear `2,450` copiando ese formato, el parser leía la coma como decimal y guardaba
+**2.45 kg**, sin error y con la celda en ámbar. Ahora la coma se resuelve por forma:
+coma + 3 dígitos que no siguen con otro = miles (`2,450`=2450, `1,234,567`=1234567); coma + 1-2
+dígitos al final = decimal (`2,5`=2.5). **Las 667 fórmulas del Excel siguen dando 667/667.**
+
+**Perdía el trabajo del día con una flecha del teclado.** Cambiar la fecha recargaba y pisaba todo lo
+tecleado sin aviso — y en un `<input type="date">` cada pulsación ↑/↓ emite un `change` válido. Ahora
+hay confirmación (detectando cambios por comparación contra una foto de lo cargado, no marcando
+"sucio" en diez setters) y `beforeunload` al recargar.
+
+**Podía guardar en el día equivocado.** `cargar()` no cancelaba la petición anterior: al saltar
+30 → 29, si la respuesta del 30 llegaba después, guardar escribía las líneas del 30 sobre el día 29.
+Se agregó `AbortController` y, como última defensa, **Guardar se bloquea si `data.fecha !== fecha`**.
+
+**El espejo a `mermas_diarias` podía dejar Rentabilidad en blanco.** Escribía `mermaPct` sin tope; un
+cuadre guardado con la compra cargada y sin ventas da 100 % → rendimiento 0 → `costoRealPorKg` =
+`Infinity` → JSON lo serializa `null` → `.toFixed()` revienta. Además `porcentaje_merma` es
+`DECIMAL(5,2)` y el DELETE+INSERT no era transaccional con el catch silenciado: un overflow borraba
+la fila y el usuario veía "Cuadre guardado" en verde. Ahora: clamp, solo se escribe con el día
+completo, todo en una `sql.transaction`, el DELETE corre siempre, y `rentabilidad` acota el
+rendimiento a un piso del 1 %.
+
+**Doble conteo de la entrada manual.** El **83 % de las compras se registran con retraso** (3.9 días
+de promedio, hasta 18) y **Marianela es la única que las registra** (102 de 102): cargaba la entrada a
+mano hoy y, al digitar esa compra días después, el día pasaba a contar ambas. Ahora se detecta por
+nombre de proveedor y sale un aviso rojo con nombre y kilos —
+*"AVICOLA EL RICO ya está en Compras con 1,171.20 kg. Estás contando esos kilos dos veces"*— sin
+borrar nada solo, porque podría ser legítimamente otra compra.
+
+**Se quitó el fallback "usar lo facturado".** Era una idea de la v1 y causaba tres problemas: se
+apagaba con cualquier línea que no fuera corte (bastaba una de "Muestras 5 kg" para inflar la merma
+~845 kg y disparar una alarma falsa), el cliente no lo replicaba —así que el PDF que ella mandaba por
+WhatsApp no coincidía con lo guardado— y sobre todo inventaba un número en vez de decir que falta uno.
+Ahora, si falta la salida a picar, el cuadre lo dice.
+
+**Además:** los campos filtran la entrada (jabas solo dígitos — antes `"5o"` se guardaba como 0 en
+silencio; las pesadas solo dígitos y operadores), los resultados negativos se marcan en rojo antes de
+enviar en vez de morir en un 400 mudo, y el chip de Macho/Hembra de Compras (que llevaba **0 filas**
+cargadas, dejando la merma esperada en 0) pasa a botón ámbar con "⚠️ Falta clasificar M/H".
+
+**Sobre la rueda del mouse:** Hugo pidió verificar que no se puedan cambiar números scrolleando. El
+guard global **ya existía** en `DashboardLayout` y cubre los ~62 inputs del sistema; solo estaba
+declarado `{ passive: false }` sin llamar nunca a `preventDefault()`, penalizando el scroll de toda
+la app. Se corrigió a `passive: true`.
+
+**Lo que se descartó al verificar:** acotar el menú de Marianela con `vistas_permitidas`. La lista
+propuesta le habría bloqueado el trabajo — aparece como autora en `ventas_avicola` (161),
+`transacciones` (110) y `pagos_proveedores` (109), no solo en compras.
+
 **Fuera de alcance (anotado):** la **cartera diaria de campo** (la zona izquierda de su hoja: ~43
 destinos con SALDO ANTERIOR / A CUENTA / saldo final). Existe a medias en
 `/dashboard/clientes-avicola/liquidacion`, sin saldo anterior anclado a la fecha, sin kg ni precio

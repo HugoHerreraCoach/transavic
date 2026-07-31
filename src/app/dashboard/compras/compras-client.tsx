@@ -692,22 +692,34 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
                               Servicio: cantidad × precio, no entra al inventario
                             </p>
                           )}
-                          {!servicio && item.producto_id && productos.find(p => p.id === item.producto_id)?.categoria === "Pollo" && (
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setFilaSexoEdicion(idx)}
-                                className="inline-flex items-center gap-1 text-[9px] font-black text-indigo-600 hover:text-indigo-800 cursor-pointer bg-indigo-50 hover:bg-indigo-100/70 px-2 py-0.5 rounded-md transition-colors uppercase tracking-wider"
-                              >
-                                ⚖️ Macho / Hembra
-                              </button>
-                              {((item.jabas_macho || 0) > 0 || (item.jabas_hembra || 0) > 0 || (item.sueltos_macho || 0) > 0 || (item.sueltos_hembra || 0) > 0) && (
-                                <span className="text-[10px] text-gray-500 font-medium">
-                                  Cant: <strong className="text-gray-800">{((item.jabas_macho || 0) * 7) + (item.sueltos_macho || 0) + ((item.jabas_hembra || 0) * 9) + (item.sueltos_hembra || 0)}</strong> aves
-                                </span>
-                              )}
-                            </div>
-                          )}
+                          {/* El desglose M/H alimenta la merma esperada del Cuadre de Pollo.
+                              Como chip discreto llevaba 0 filas cargadas y el cuadre daba
+                              siempre merma esperada 0, así que sin clasificar avisa en ámbar. */}
+                          {!servicio && item.producto_id && productos.find(p => p.id === item.producto_id)?.categoria === "Pollo" && (() => {
+                            const aves = ((item.jabas_macho || 0) * 7) + (item.sueltos_macho || 0) + ((item.jabas_hembra || 0) * 9) + (item.sueltos_hembra || 0);
+                            const sinClasificar = aves === 0;
+                            return (
+                              <div className="mt-1.5 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setFilaSexoEdicion(idx)}
+                                  title={sinClasificar ? "Sin este dato, el Cuadre de Pollo no puede calcular cuánta merma era normal" : "Editar el desglose de aves"}
+                                  className={`inline-flex items-center gap-1 text-[10px] font-black cursor-pointer px-2 py-1 rounded-md transition-colors uppercase tracking-wider ${
+                                    sinClasificar
+                                      ? "text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300"
+                                      : "text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100/70"
+                                  }`}
+                                >
+                                  {sinClasificar ? "⚠️ Falta clasificar M/H" : "⚖️ Macho / Hembra"}
+                                </button>
+                                {!sinClasificar && (
+                                  <span className="text-[10px] text-gray-500 font-medium">
+                                    Cant: <strong className="text-gray-800">{aves}</strong> aves
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3 pr-2">
                           <select

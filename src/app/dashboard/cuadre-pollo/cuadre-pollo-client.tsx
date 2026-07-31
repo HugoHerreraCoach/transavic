@@ -14,7 +14,7 @@
 //   · agregar sus propias líneas, de salida o de entrada.
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
   FiLoader,
@@ -93,7 +93,8 @@ function CeldaExpresion({
         spellCheck={false}
         disabled={disabled}
         value={valor}
-        onChange={(e) => onChange(e.target.value)}
+        // Solo dígitos, operadores y separadores: prevenir en vez de avisar.
+        onChange={(e) => onChange(e.target.value.replace(/[^0-9+\-*/., ]/g, ""))}
         placeholder={placeholder}
         title="Puedes escribir las pesadas una por una: 62+62.2+62.5"
         className={`${ancho} rounded-md border px-2 py-1 text-xs text-right tabular-nums outline-none transition-colors disabled:bg-gray-100 disabled:text-gray-400 ${
@@ -133,6 +134,13 @@ export default function CuadrePolloClient() {
   const [ajustePlanta, setAjustePlanta] = useState("");
   const [motivoPlanta, setMotivoPlanta] = useState("");
   const [expandido, setExpandido] = useState<Set<Canal>>(new Set());
+  /** Petición en curso, para descartar respuestas de una fecha que ya cambió. */
+  const peticion = useRef<AbortController | null>(null);
+  /**
+   * Foto de lo último cargado/guardado. Comparar contra ella es más fiable que
+   * marcar "sucio" en cada uno de los diez setters — uno nuevo se olvidaría.
+   */
+  const [guardado, setGuardado] = useState("");
 
   const toggle = (canal: Canal) =>
     setExpandido((prev) => {
@@ -148,8 +156,58 @@ export default function CuadrePolloClient() {
   );
   const evLineas = useMemo(() => lineas.map((l) => evaluarExpresion(l.expresion)), [lineas]);
 
+  /** Todo lo que el usuario puede tocar, serializado, para detectar cambios. */
+  const estadoActual = useMemo(
+    () =>
+      JSON.stringify({
+        lineas,
+        avesMacho,
+        avesHembra,
+        observaciones,
+        ajusteCampo,
+        motivoCampo,
+        ajustePlanta,
+        motivoPlanta,
+      }),
+    [lineas, avesMacho, avesHembra, observaciones, ajusteCampo, motivoCampo, ajustePlanta, motivoPlanta]
+  );
+  const sucio = guardado !== "" && estadoActual !== guardado;
+
+  /** Cambia de día, avisando si hay trabajo sin guardar. */
+  const irAFecha = (nueva: string) => {
+    if (!nueva || nueva === fecha) return;
+    if (sucio && !confirm("Tienes cambios sin guardar en este día. ¿Los descartas?")) return;
+    setFecha(nueva);
+  };
+
   const hayExpresionRota =
     !evAves.macho.valida || !evAves.hembra.valida || evLineas.some((r) => !r.valida);
+
+  /**
+   * Última línea de defensa contra escribir en el día equivocado: si lo que está en
+   * pantalla no es del día seleccionado, no se guarda. Aunque algo más falle.
+   */
+  const fechaDesincronizada = !!data && data.fecha !== fecha;
+
+  /**
+   * Kilos que ese proveedor YA tiene registrados en Compras ese día, si los tiene.
+   * El 83% de las compras se digitan con retraso, así que una entrada cargada a mano
+   * termina duplicando la compra real en cuanto esta se registra.
+   */
+  const normalizar = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  const conflicto = (concepto: string): number | null => {
+    if (!data || !concepto.trim()) return null;
+    const k = normalizar(concepto);
+    if (!k) return null;
+    const p = data.proveedores.find((x) => !x.esDevolucion && normalizar(x.proveedor) === k);
+    return p && p.neto > 0 ? p.neto : null;
+  };
+  const hayConflicto = lineas.some((l) => l.seccion === "entrada" && conflicto(l.concepto) !== null);
 
   // Un ajuste existe si el número tecleado difiere del que calculó el sistema.
   const ajuste = (texto: string, sistema: number) => {
@@ -167,12 +225,19 @@ export default function CuadrePolloClient() {
 
   const cargar = useCallback(async () => {
     setCargando(true);
+    // Cancela la petición anterior: si se salta 30 → 29 y la respuesta del 30 llega
+    // después, la pantalla quedaría con los datos del 30 y `fecha` en 29 — y guardar
+    // escribiría las líneas del 30 sobre el día 29.
+    peticion.current?.abort();
+    const ctrl = new AbortController();
+    peticion.current = ctrl;
     try {
-      const res = await fetch(`/api/cuadre-pollo?fecha=${fecha}`);
+      const res = await fetch(`/api/cuadre-pollo?fecha=${fecha}`, { signal: ctrl.signal });
       if (!res.ok) throw new Error("No se pudo cargar el cuadre.");
       const d: Cuadre = await res.json();
+      if (ctrl.signal.aborted) return;
       setData(d);
-      setLineas(
+      const nuevasLineas: LineaUI[] =
         d.lineas.length > 0
           ? d.lineas.map((l) => ({
               seccion: l.seccion,
@@ -181,21 +246,36 @@ export default function CuadrePolloClient() {
               jabas: l.jabas ? String(l.jabas) : "",
               pendienteRegistrar: l.pendienteRegistrar,
             }))
-          : LINEAS_POR_DEFECTO.map((l) => ({ ...l }))
-      );
+          : LINEAS_POR_DEFECTO.map((l) => ({ ...l }));
       const t = (expr: string | null, num: number) => expr ?? (num ? String(num) : "");
-      setAvesMacho(d.avesManuales ? t(d.expresiones.avesMacho, d.avesMacho) : "");
-      setAvesHembra(d.avesManuales ? t(d.expresiones.avesHembra, d.avesHembra) : "");
-      setObservaciones(d.observaciones ?? "");
-      setAjusteCampo(d.campoAjustado ? String(d.kgCampo) : "");
-      setMotivoCampo(d.campoMotivo ?? "");
-      setAjustePlanta(d.plantaAjustado ? String(d.kgPlanta) : "");
-      setMotivoPlanta(d.plantaMotivo ?? "");
+      const nuevo = {
+        lineas: nuevasLineas,
+        avesMacho: d.avesManuales ? t(d.expresiones.avesMacho, d.avesMacho) : "",
+        avesHembra: d.avesManuales ? t(d.expresiones.avesHembra, d.avesHembra) : "",
+        observaciones: d.observaciones ?? "",
+        ajusteCampo: d.campoAjustado ? String(d.kgCampo) : "",
+        motivoCampo: d.campoMotivo ?? "",
+        ajustePlanta: d.plantaAjustado ? String(d.kgPlanta) : "",
+        motivoPlanta: d.plantaMotivo ?? "",
+      };
+      setLineas(nuevo.lineas);
+      setAvesMacho(nuevo.avesMacho);
+      setAvesHembra(nuevo.avesHembra);
+      setObservaciones(nuevo.observaciones);
+      setAjusteCampo(nuevo.ajusteCampo);
+      setMotivoCampo(nuevo.motivoCampo);
+      setAjustePlanta(nuevo.ajustePlanta);
+      setMotivoPlanta(nuevo.motivoPlanta);
+      // La foto se arma con los MISMOS valores que se acaban de setear: lo recién
+      // cargado es, por definición, lo guardado.
+      setGuardado(JSON.stringify(nuevo));
     } catch (error) {
+      // Un abort no es un error: es una carga que quedó obsoleta a propósito.
+      if (error instanceof DOMException && error.name === "AbortError") return;
       mostrarToast(error instanceof Error ? error.message : "Error al cargar.", "error");
       setData(null);
     } finally {
-      setCargando(false);
+      if (!ctrl.signal.aborted) setCargando(false);
     }
     // mostrarToast es estable; no se incluye para no re-disparar la carga.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,6 +284,14 @@ export default function CuadrePolloClient() {
   useEffect(() => {
     cargar();
   }, [cargar]);
+
+  // Recargar o cerrar la pestaña con trabajo sin guardar pide confirmación.
+  useEffect(() => {
+    if (!sucio) return;
+    const avisar = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [sucio]);
 
   // --- totales en vivo: lo tecleado manda sobre lo último guardado ---
   const kgCampoVivo = ajCampo ?? data?.kgCampoSistema ?? 0;
@@ -240,6 +328,10 @@ export default function CuadrePolloClient() {
   const quitarLinea = (i: number) => setLineas((prev) => prev.filter((_, k) => k !== i));
 
   const guardar = async () => {
+    if (fechaDesincronizada) {
+      mostrarToast("Espera a que termine de cargar el día seleccionado.", "error");
+      return;
+    }
     if (hayExpresionRota) {
       mostrarToast("Hay una operación mal escrita. Revisa las celdas en rojo.", "error");
       return;
@@ -288,6 +380,7 @@ export default function CuadrePolloClient() {
       }
       const d: Cuadre = await res.json();
       setData(d);
+      setGuardado(estadoActual); // lo que acaba de irse al servidor pasa a ser la foto
       mostrarToast("Cuadre guardado.", "exito");
     } catch (error) {
       mostrarToast(error instanceof Error ? error.message : "No se pudo guardar.", "error");
@@ -526,7 +619,7 @@ export default function CuadrePolloClient() {
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          onClick={() => setFecha(hoy)}
+          onClick={() => irAFecha(hoy)}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
             fecha === hoy ? "bg-red-600 text-white shadow" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
@@ -537,7 +630,7 @@ export default function CuadrePolloClient() {
           type="date"
           value={fecha}
           max={hoy}
-          onChange={(e) => e.target.value && setFecha(e.target.value)}
+          onChange={(e) => irAFecha(e.target.value)}
           className="rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-red-500 cursor-pointer"
         />
         <div className="ml-auto flex items-center gap-2">
@@ -852,13 +945,19 @@ export default function CuadrePolloClient() {
                       {/* Entradas cargadas a mano */}
                       {lineas.map((l, i) =>
                         l.seccion !== "entrada" ? null : (
-                          <tr key={`entrada-${i}`} className="bg-amber-50/30 group">
+                          <tr
+                            key={`entrada-${i}`}
+                            className={`group ${
+                              conflicto(l.concepto) !== null ? "bg-red-50/60" : "bg-amber-50/30"
+                            }`}
+                          >
                             <td className="py-1.5 pr-1">
                               <input
                                 type="text"
                                 inputMode="numeric"
                                 value={l.jabas}
-                                onChange={(e) => setLinea(i, "jabas", e.target.value)}
+                                // Solo dígitos: antes "5o" se guardaba como 0 en silencio.
+                                onChange={(e) => setLinea(i, "jabas", e.target.value.replace(/\D/g, ""))}
                                 placeholder="—"
                                 className="w-14 rounded-md border border-amber-300 bg-white px-1 py-0.5 text-xs text-right tabular-nums outline-none focus:border-amber-500"
                               />
@@ -878,15 +977,28 @@ export default function CuadrePolloClient() {
                                   title="Escribe para buscar; si es uno nuevo, puedes escribirlo igual"
                                   className="w-36 rounded-md border border-amber-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-gray-700 outline-none focus:border-amber-500"
                                 />
-                                {l.pendienteRegistrar && (
-                                  <span
-                                    className="text-[9px] font-bold uppercase text-amber-700"
-                                    title="Esta compra todavía no está registrada en Compras"
-                                  >
-                                    pendiente
+                                {conflicto(l.concepto) !== null ? (
+                                  <span className="text-[9px] font-bold uppercase text-red-700">
+                                    ya registrada
                                   </span>
+                                ) : (
+                                  l.pendienteRegistrar && (
+                                    <span
+                                      className="text-[9px] font-bold uppercase text-amber-700"
+                                      title="Esta compra todavía no está registrada en Compras"
+                                    >
+                                      pendiente
+                                    </span>
+                                  )
                                 )}
                               </div>
+                              {conflicto(l.concepto) !== null && (
+                                <p className="mt-0.5 text-[10px] font-semibold text-red-700">
+                                  ⚠️ {l.concepto.trim()} ya está en Compras con{" "}
+                                  {nf(conflicto(l.concepto) as number)} kg. Estás contando esos kilos
+                                  dos veces — borra esta línea.
+                                </p>
+                              )}
                             </td>
                             <td colSpan={2} className="py-1.5">
                               <CeldaExpresion
@@ -1068,9 +1180,9 @@ export default function CuadrePolloClient() {
                           </p>
                         )}
                         {salidaLineas === 0 && data.kgFacturadoAsesoras > 0 && (
-                          <p className="text-[10px] text-amber-700 mt-1">
-                            Aún no cargas los kilos que salieron a picar; las asesoras facturaron{" "}
-                            {nf(data.kgFacturadoAsesoras)} kg ese día.
+                          <p className="text-[10px] font-semibold text-amber-700 mt-1">
+                            Falta cargar los kilos que salieron a picar — el cuadre está incompleto.
+                            Las asesoras facturaron {nf(data.kgFacturadoAsesoras)} kg ese día.
                           </p>
                         )}
                       </div>
@@ -1169,7 +1281,7 @@ export default function CuadrePolloClient() {
               <button
                 type="button"
                 onClick={guardar}
-                disabled={guardando || hayExpresionRota || faltaMotivo}
+                disabled={guardando || hayExpresionRota || faltaMotivo || fechaDesincronizada}
                 className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-2"
               >
                 {guardando ? <FiLoader className="animate-spin" size={16} /> : <FiSave size={16} />}

@@ -211,29 +211,46 @@ export async function POST(req: NextRequest) {
     // Espejo en mermas_diarias: es lo que lee /api/rentabilidad para conocer el
     // rendimiento real del período. Sin esto caería siempre al
     // rendimiento_fallback_pct. Es informativo — NO mueve inventario (doc 09 §7.3).
-    // Si falla, el cuadre igual quedó guardado: no se arrastra el error.
-    if (cuadre.kgNetoIngresado > 0) {
-      try {
-        await sql`
+    //
+    // ⚠️ Tres cuidados, todos aprendidos a la mala:
+    //  · Solo se escribe con el día COMPLETO (entrada y salida). Un cuadre guardado a
+    //    media mañana, con la compra cargada pero sin ventas, daría merma 100% →
+    //    rendimiento 0 → costoRealPorKg = Infinity → Rentabilidad revienta al hacer
+    //    .toFixed() sobre el null que produce la serialización JSON.
+    //  · `porcentaje_merma` es DECIMAL(5,2): más de 999.99 lanza numeric overflow.
+    //  · DELETE + INSERT van en la MISMA transacción: separados, un INSERT fallido
+    //    dejaba el día sin fila y el usuario veía "Cuadre guardado" en verde.
+    // El DELETE corre siempre, para que un día que se quedó sin compras no arrastre
+    // una merma vieja alimentando Rentabilidad.
+    try {
+      const escribirEspejo = cuadre.kgNetoIngresado > 0 && cuadre.kgTotalSalida > 0;
+      const pctAcotado = Math.max(-999, Math.min(999, cuadre.mermaPct));
+      await sql.transaction([
+        sql`
           DELETE FROM public.mermas_diarias
           WHERE fecha = ${d.fecha}::date AND compra_id IS NULL
-        `;
-        await sql`
-          INSERT INTO public.mermas_diarias (
-            fecha, peso_bruto, peso_limpio, peso_menudencia, merma, porcentaje_merma, usuario_id
-          ) VALUES (
-            ${d.fecha}::date,
-            ${cuadre.kgNetoIngresado},
-            ${cuadre.kgTotalSalida},
-            0,
-            ${cuadre.mermaReal},
-            ${cuadre.mermaPct},
-            ${session.user.id}
-          )
-        `;
-      } catch (error) {
-        console.error("Cuadre guardado, pero falló el espejo en mermas_diarias:", error);
-      }
+        `,
+        ...(escribirEspejo
+          ? [
+              sql`
+                INSERT INTO public.mermas_diarias (
+                  fecha, peso_bruto, peso_limpio, peso_menudencia, merma, porcentaje_merma, usuario_id
+                ) VALUES (
+                  ${d.fecha}::date,
+                  ${cuadre.kgNetoIngresado},
+                  ${cuadre.kgTotalSalida},
+                  0,
+                  ${cuadre.mermaReal},
+                  ${pctAcotado},
+                  ${session.user.id}
+                )
+              `,
+            ]
+          : []),
+      ]);
+    } catch (error) {
+      // El cuadre ya quedó guardado: no se arrastra el error al usuario.
+      console.error("Cuadre guardado, pero falló el espejo en mermas_diarias:", error);
     }
 
     return NextResponse.json(cuadre);

@@ -239,9 +239,13 @@ export default function DashboardLayout({
     return () => window.removeEventListener("toggle-mobile-sidebar", handleToggleMobile);
   }, []);
 
-  // Prevenir que la rueda del ratón/trackpad cambie valores en cualquier <input type="number"> del ERP
+  // Prevenir que la rueda del ratón/trackpad cambie valores en cualquier
+  // <input type="number"> del ERP. Este guard GLOBAL cubre los ~62 inputs numéricos
+  // del sistema y los que vengan, sin que nadie tenga que acordarse del onWheel.
+  // passive: true — solo hace blur(), nunca preventDefault(); declararlo no-passive
+  // le impedía al navegador optimizar el scroll de toda la app sin ninguna razón.
   useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
+    const handleWheel = () => {
       if (
         document.activeElement instanceof HTMLInputElement &&
         document.activeElement.type === "number"
@@ -249,7 +253,7 @@ export default function DashboardLayout({
         document.activeElement.blur();
       }
     };
-    window.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("wheel", handleWheel, { passive: true });
     return () => window.removeEventListener("wheel", handleWheel);
   }, []);
   

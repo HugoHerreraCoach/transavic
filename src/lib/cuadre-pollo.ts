@@ -70,6 +70,12 @@ export interface LineaLibre {
   /** Entrada que todavía no está cargada en Compras. Suma, pero se marca. */
   pendienteRegistrar: boolean;
   orden: number;
+  /**
+   * Kilos que ESE MISMO proveedor ya tiene registrados en Compras ese día. Si viene
+   * con valor, la línea manual está contando esos kilos dos veces.
+   * null = no hay conflicto.
+   */
+  yaRegistradoKg: number | null;
 }
 
 export interface CuadrePollo {
@@ -141,7 +147,8 @@ export interface CuadrePollo {
   // --- CONTROL DE DELIVERY ---
   kgFacturadoAsesoras: number;
   diferenciaDelivery: number;
-  usoFacturadoComoSalida: boolean;
+  /** No se cargó ninguna salida a picar, pero las asesoras sí facturaron ese día. */
+  faltaSalidaCorte: boolean;
 
   /**
    * El texto TAL COMO lo tecleó la usuaria ("70+15+55*7+15").
@@ -385,16 +392,39 @@ export async function construirCuadrePollo(
     ORDER BY seccion, orden, concepto
   `) as Array<Record<string, unknown>>;
 
-  const lineas: LineaLibre[] = filasLineas.map((f) => ({
-    id: String(f.id),
-    seccion: f.seccion === "entrada" ? "entrada" : "salida",
-    concepto: String(f.concepto),
-    expresion: (f.expresion as string | null) ?? null,
-    kilos: r2(num(f.kilos)),
-    jabas: num(f.jabas),
-    pendienteRegistrar: Boolean(f.pendiente_registrar),
-    orden: num(f.orden),
-  }));
+  // El 83% de las compras se registran con retraso (3.9 días de promedio), así que
+  // una entrada cargada a mano hoy puede terminar duplicando la compra real cuando
+  // esta se digite. Se detecta por nombre de proveedor para poder avisarlo.
+  const normalizar = (s: string) =>
+    s
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  const netoPorProveedor = new Map<string, number>();
+  for (const p of proveedores) {
+    if (p.esDevolucion) continue;
+    const k = normalizar(p.proveedor);
+    netoPorProveedor.set(k, (netoPorProveedor.get(k) ?? 0) + p.neto);
+  }
+
+  const lineas: LineaLibre[] = filasLineas.map((f) => {
+    const seccion = f.seccion === "entrada" ? "entrada" : "salida";
+    const concepto = String(f.concepto);
+    const yaRegistrado =
+      seccion === "entrada" ? netoPorProveedor.get(normalizar(concepto)) : undefined;
+    return {
+      id: String(f.id),
+      seccion: seccion as "entrada" | "salida",
+      concepto,
+      expresion: (f.expresion as string | null) ?? null,
+      kilos: r2(num(f.kilos)),
+      jabas: num(f.jabas),
+      pendienteRegistrar: Boolean(f.pendiente_registrar),
+      orden: num(f.orden),
+      yaRegistradoKg: yaRegistrado != null && yaRegistrado > 0 ? r2(yaRegistrado) : null,
+    };
+  });
 
   const kgSalidaCorte = r2(
     lineas.filter((l) => l.seccion === "salida").reduce((a, l) => a + l.kilos, 0)
@@ -414,11 +444,18 @@ export async function construirCuadrePollo(
   const avesTotal = avesMacho + avesHembra;
 
   // --- CUADRE ----------------------------------------------------------------
-  // Si no se digitó la salida a corte, se usa lo facturado por asesoras como
-  // aproximación (y la pantalla lo advierte). Nunca se suman las dos.
-  const usoFacturadoComoSalida = kgSalidaCorte === 0 && kgFacturadoAsesoras > 0;
-  const salidaDelivery = usoFacturadoComoSalida ? kgFacturadoAsesoras : kgSalidaCorte;
-  const kgTotalSalida = r2(kgCampo + kgPlanta + salidaDelivery);
+  // Sale lo que REALMENTE salió: campo + planta + las líneas propias.
+  //
+  // Antes existía un fallback: si no había líneas de salida, se usaba lo facturado
+  // por asesoras "como aproximación". Se quitó el 30 jul 2026 porque causaba tres
+  // problemas: (a) se apagaba con cualquier línea que no fuera corte — bastaba una
+  // de "Muestras 5 kg" para que faltaran ~845 kg y saltara una alarma falsa;
+  // (b) el cliente no lo replicaba, así que el PDF que ella mandaba por WhatsApp no
+  // coincidía con lo guardado; (c) inventaba un número en vez de decir que falta uno.
+  // Si falta la salida a picar, el cuadre lo dice — no la sustituye.
+  const kgTotalSalida = r2(kgCampo + kgPlanta + kgSalidaCorte);
+  /** true si no se cargó ninguna salida a picar y las asesoras sí facturaron ese día. */
+  const faltaSalidaCorte = kgSalidaCorte === 0 && kgFacturadoAsesoras > 0;
 
   const mermaReal = r2(kgNetoIngresado - kgTotalSalida);
   const esperada = mermaEsperada(avesTotal, parametros);
@@ -469,7 +506,7 @@ export async function construirCuadrePollo(
     cuadra,
     kgFacturadoAsesoras,
     diferenciaDelivery: r2(kgFacturadoAsesoras - kgSalidaCorte),
-    usoFacturadoComoSalida,
+    faltaSalidaCorte,
     expresiones: {
       avesMacho: (manual?.expr_aves_macho as string | null) ?? null,
       avesHembra: (manual?.expr_aves_hembra as string | null) ?? null,

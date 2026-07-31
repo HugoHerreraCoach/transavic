@@ -93,7 +93,10 @@ export async function GET(req: NextRequest) {
     const parametros = await leerParametrosNegocio(sql);
     const mermaFallback = 100 - parametros.rendimiento_fallback_pct;
     const mermaPorcentaje = totalBruto > 0 ? (totalMerma / totalBruto) * 100 : mermaFallback;
-    const rendimientoPorcentaje = 100 - mermaPorcentaje;
+    // Piso del 1%: con rendimiento 0 la división daba Infinity, que JSON serializa
+    // como null y hace reventar el .toFixed() de la página. Un dato raro no debe
+    // dejar el dashboard en blanco.
+    const rendimientoPorcentaje = Math.max(1, 100 - mermaPorcentaje);
 
     const costoRealPorKg = costoCompraPorKg / (rendimientoPorcentaje / 100);
 
