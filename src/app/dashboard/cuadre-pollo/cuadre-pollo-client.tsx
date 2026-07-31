@@ -667,7 +667,13 @@ export default function CuadrePolloClient() {
                           </td>
                         </tr>
                       ))}
-                      <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
+                      {/* Sin compras del día, una fila "TOTALES 0.00" solo agrega ruido
+                          debajo del mensaje que ya explica que no hay nada. */}
+                      <tr
+                        className={`bg-gray-50/70 font-bold border-t-2 border-gray-200 ${
+                          data.proveedores.length === 0 ? "hidden" : ""
+                        }`}
+                      >
                         <td className={`${tdNum} py-2.5 text-gray-700`}>{data.jabas || "—"}</td>
                         <td className="py-2.5 pl-3 text-xs uppercase text-gray-600">TOTALES</td>
                         <td className={`${tdNum} py-2.5 text-gray-700`}>{nf(data.kgBruto)}</td>
