@@ -91,7 +91,8 @@ Definidas en `.env` (no comiteado). Las críticas:
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | SMTP para enviar comprobantes por correo (Gmail con app password, SendGrid, Mailgun, etc.) |
 | `SMTP_FROM_NAME`, `SMTP_FROM_EMAIL` | Override de remitente del correo (default name="Transavic", email=SMTP_USER) |
 | `APISPERU_TOKEN` | Token de apisperu.com (cuenta `transavicdev@gmail.com`) para consultar RUC/DNI. Respaldo secundario en la cadena de consulta de documentos. Solo server-side vía `/api/consulta-documento`. |
-| `DECOLECTA_TOKEN` | Token de Decolecta API (`api.decolecta.com`) para consulta principal de RUC y DNI. `src/lib/apisperu.ts` ejecuta primero Decolecta y, si falla/expira, realiza fallback a `APISPERU_TOKEN`. **Configurado en Vercel.** |
+| `DECOLECTA_TOKEN` | Token de Decolecta API (cuenta `transavicdev@gmail.com`, `api.decolecta.com`) para consulta principal de RUC y DNI. `src/lib/apisperu.ts` ejecuta primero Decolecta y, si falla/expira, realiza fallback a `APISPERU_TOKEN`. **Configurado en Vercel.** |
+
 | `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` | Brevo (correos transaccionales, free 300/día). Si `BREVO_API_KEY` está, `lib/email.ts` usa la API de Brevo (preferida); si no, cae a SMTP/nodemailer. El sender debe estar verificado en Brevo (hoy `transavicdev@gmail.com`, activo). **Configurar también en Vercel.** |
 
 | `CRON_SECRET` | Secreto que protege los **6 cron jobs** de Vercel (`facturas-vencidas`, `recordatorios-asesoras`, `resumen-diario-sunat`, `daily-digest-admin`, `repartidores-oscuros`, `reconciliar-cpe-sunat`). Sin él devuelven **503**. Vercel lo manda como `Authorization: Bear <CRON_SECRET>`. **Obligatorio en Vercel.** Repartidores oscuros corre cada 10 min y reconciliación CPE cada 5 min. Vercel Pro permite hasta 40 crons. |
