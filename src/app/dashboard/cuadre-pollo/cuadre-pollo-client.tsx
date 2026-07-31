@@ -1,13 +1,17 @@
 // src/app/dashboard/cuadre-pollo/cuadre-pollo-client.tsx
 //
 // La pantalla imita la HOJA de Excel que Marianela cuadraba a mano: mismo orden,
-// mismas etiquetas y misma densidad. Usa el lenguaje visual ya establecido en
-// cuadre-mermas-tab.tsx / cartera-asesoras-tab.tsx (membrete, tabla border-collapse,
-// tabular-nums, fila de totales, pie "Generado el…").
+// mismas etiquetas y misma densidad, con el lenguaje visual de cuadre-mermas-tab.
 //
 // Su narrativa, respetada al pie de la letra:
 //     VENTA + MERMA POLLO = lo que DEBIÓ ENTRAR
 //     vs ENTRÓ (proveedores)  →  DIFERENCIA
+//
+// FLEXIBILIDAD: en su Excel ella controla el 100% del input. Acá el sistema aporta
+// la mayor parte, así que la hoja le deja intervenir sin salirse:
+//   · desplegar cada total automático para ver quién lo compone;
+//   · corregir el total de Campo o Planta (con motivo obligatorio);
+//   · agregar sus propias líneas, de salida o de entrada.
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -21,86 +25,42 @@ import {
   FiCheckCircle,
   FiInfo,
   FiBox,
+  FiPlus,
+  FiTrash2,
+  FiChevronRight,
+  FiChevronDown,
 } from "react-icons/fi";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
 import { toLocalDateString, formatFechaLarga } from "@/lib/utils";
 import { evaluarExpresion } from "@/lib/expresion-numerica";
+// El tipo se importa del módulo que lo produce: si el backend cambia el contrato,
+// esta pantalla deja de compilar en vez de fallar en silencio.
+import type { CuadrePollo, LineaDesglose } from "@/lib/cuadre-pollo";
 
-interface LineaProveedor {
-  proveedor: string;
-  jabas: number;
-  bruto: number;
-  tara: number;
-  neto: number;
-  esVivo: boolean;
-  esDevolucion: boolean;
-}
-
-interface Cuadre {
-  fecha: string;
-  proveedores: LineaProveedor[];
-  jabas: number;
-  kgBruto: number;
-  kgTara: number;
-  kgNetoIngresado: number;
-  guiasCompra: number;
-  avesMacho: number;
-  avesHembra: number;
-  avesTotal: number;
-  avesManuales: boolean;
-  kgCampo: number;
-  kgPlanta: number;
-  kgCorte: number;
-  kgCorteEspecial: number;
-  kgPolloEntero: number;
-  kgSalidaCorte: number;
-  kgTotalSalida: number;
-  mermaReal: number;
-  mermaEsperada: number;
-  diferencia: number;
-  mermaPorAve: number | null;
-  mermaPct: number;
-  mermaAlta: boolean;
-  tolerancia: number;
-  cuadra: boolean;
-  kgFacturadoAsesoras: number;
-  diferenciaDelivery: number;
-  usoFacturadoComoSalida: boolean;
-  expresiones: {
-    corte: string | null;
-    corteEspecial: string | null;
-    polloEntero: string | null;
-    avesMacho: string | null;
-    avesHembra: string | null;
-  };
-  observaciones: string | null;
-  parametros: { merma_estandar_ave_kg: number; merma_alta_pct: number };
-}
+type Cuadre = CuadrePollo;
+type Canal = "campo" | "planta" | "ejecutivas";
 
 const nf = (n: number, dec = 2): string =>
   n.toLocaleString("es-PE", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
 const kg = (n: number): string => `${nf(n)} kg`;
 
-/** Los campos que la usuaria teclea, como TEXTO (puede ser "62+62.2+62.5"). */
-type Manual = {
-  corte: string;
-  corteEspecial: string;
-  polloEntero: string;
-  avesMacho: string;
-  avesHembra: string;
-  observaciones: string;
-};
+/** Fila editable en la UI. Los kilos se derivan de la expresión en cada render. */
+interface LineaUI {
+  seccion: "entrada" | "salida";
+  concepto: string;
+  expresion: string;
+  jabas: string;
+  pendienteRegistrar: boolean;
+}
 
-const MANUAL_VACIO: Manual = {
-  corte: "",
-  corteEspecial: "",
-  polloEntero: "",
-  avesMacho: "",
-  avesHembra: "",
-  observaciones: "",
-};
+/** Las tres que ella ya tiene en su Excel; se siembran en un día nuevo. */
+const LINEAS_POR_DEFECTO: LineaUI[] = [
+  { seccion: "salida", concepto: "Corte", expresion: "", jabas: "", pendienteRegistrar: false },
+  { seccion: "salida", concepto: "Corte especial", expresion: "", jabas: "", pendienteRegistrar: false },
+  { seccion: "salida", concepto: "Pollo entero", expresion: "", jabas: "", pendienteRegistrar: false },
+];
 
 /**
  * Celda de captura: acepta el desglose tal como llega el parte de pesos
@@ -110,7 +70,7 @@ function CeldaExpresion({
   valor,
   onChange,
   placeholder,
-  ancho = "w-56",
+  ancho = "w-52",
   decimales = 2,
   disabled,
 }: {
@@ -143,12 +103,8 @@ function CeldaExpresion({
         }`}
       />
       <span
-        className={`w-24 text-right text-xs tabular-nums ${
-          !valida
-            ? "text-red-500 font-semibold"
-            : hayDesglose
-              ? "text-gray-900 font-bold"
-              : "text-gray-300"
+        className={`w-20 text-right text-xs tabular-nums ${
+          !valida ? "text-red-500 font-semibold" : hayDesglose ? "text-gray-900 font-bold" : "text-gray-300"
         }`}
       >
         {valida ? (hayDesglose ? nf(total, decimales) : "") : "revisar"}
@@ -164,22 +120,50 @@ export default function CuadrePolloClient() {
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [exportando, setExportando] = useState(false);
-  const [manual, setManual] = useState<Manual>(MANUAL_VACIO);
   const { mostrarToast, toasts } = useToast();
 
-  /** Lo tecleado, ya evaluado. Se recalcula en cada render: es barato. */
-  const evaluado = useMemo(() => {
-    const e = (t: string) => evaluarExpresion(t);
-    return {
-      corte: e(manual.corte),
-      corteEspecial: e(manual.corteEspecial),
-      polloEntero: e(manual.polloEntero),
-      avesMacho: e(manual.avesMacho),
-      avesHembra: e(manual.avesHembra),
-    };
-  }, [manual]);
+  // --- lo que la usuaria teclea ---
+  const [lineas, setLineas] = useState<LineaUI[]>(LINEAS_POR_DEFECTO);
+  const [avesMacho, setAvesMacho] = useState("");
+  const [avesHembra, setAvesHembra] = useState("");
+  const [observaciones, setObservaciones] = useState("");
+  // Correcciones sobre los totales del sistema: texto vacío = sin corrección.
+  const [ajusteCampo, setAjusteCampo] = useState("");
+  const [motivoCampo, setMotivoCampo] = useState("");
+  const [ajustePlanta, setAjustePlanta] = useState("");
+  const [motivoPlanta, setMotivoPlanta] = useState("");
+  const [expandido, setExpandido] = useState<Set<Canal>>(new Set());
 
-  const hayErrores = Object.values(evaluado).some((r) => !r.valida);
+  const toggle = (canal: Canal) =>
+    setExpandido((prev) => {
+      const s = new Set(prev);
+      if (s.has(canal)) s.delete(canal);
+      else s.add(canal);
+      return s;
+    });
+
+  const evAves = useMemo(
+    () => ({ macho: evaluarExpresion(avesMacho), hembra: evaluarExpresion(avesHembra) }),
+    [avesMacho, avesHembra]
+  );
+  const evLineas = useMemo(() => lineas.map((l) => evaluarExpresion(l.expresion)), [lineas]);
+
+  const hayExpresionRota =
+    !evAves.macho.valida || !evAves.hembra.valida || evLineas.some((r) => !r.valida);
+
+  // Un ajuste existe si el número tecleado difiere del que calculó el sistema.
+  const ajuste = (texto: string, sistema: number) => {
+    const t = texto.trim();
+    if (t === "") return null;
+    const { valor, valida } = evaluarExpresion(t);
+    if (!valida) return null;
+    return Math.abs(valor - sistema) < 0.005 ? null : valor;
+  };
+  const ajCampo = data ? ajuste(ajusteCampo, data.kgCampoSistema) : null;
+  const ajPlanta = data ? ajuste(ajustePlanta, data.kgPlantaSistema) : null;
+  const faltaMotivo =
+    (ajCampo !== null && motivoCampo.trim().length < 3) ||
+    (ajPlanta !== null && motivoPlanta.trim().length < 3);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -188,16 +172,25 @@ export default function CuadrePolloClient() {
       if (!res.ok) throw new Error("No se pudo cargar el cuadre.");
       const d: Cuadre = await res.json();
       setData(d);
-      // Se precarga el desglose si existe; si no, el número suelto. 0 queda vacío.
+      setLineas(
+        d.lineas.length > 0
+          ? d.lineas.map((l) => ({
+              seccion: l.seccion,
+              concepto: l.concepto,
+              expresion: l.expresion ?? (l.kilos ? String(l.kilos) : ""),
+              jabas: l.jabas ? String(l.jabas) : "",
+              pendienteRegistrar: l.pendienteRegistrar,
+            }))
+          : LINEAS_POR_DEFECTO.map((l) => ({ ...l }))
+      );
       const t = (expr: string | null, num: number) => expr ?? (num ? String(num) : "");
-      setManual({
-        corte: t(d.expresiones.corte, d.kgCorte),
-        corteEspecial: t(d.expresiones.corteEspecial, d.kgCorteEspecial),
-        polloEntero: t(d.expresiones.polloEntero, d.kgPolloEntero),
-        avesMacho: d.avesManuales ? t(d.expresiones.avesMacho, d.avesMacho) : "",
-        avesHembra: d.avesManuales ? t(d.expresiones.avesHembra, d.avesHembra) : "",
-        observaciones: d.observaciones ?? "",
-      });
+      setAvesMacho(d.avesManuales ? t(d.expresiones.avesMacho, d.avesMacho) : "");
+      setAvesHembra(d.avesManuales ? t(d.expresiones.avesHembra, d.avesHembra) : "");
+      setObservaciones(d.observaciones ?? "");
+      setAjusteCampo(d.campoAjustado ? String(d.kgCampo) : "");
+      setMotivoCampo(d.campoMotivo ?? "");
+      setAjustePlanta(d.plantaAjustado ? String(d.kgPlanta) : "");
+      setMotivoPlanta(d.plantaMotivo ?? "");
     } catch (error) {
       mostrarToast(error instanceof Error ? error.message : "Error al cargar.", "error");
       setData(null);
@@ -212,9 +205,52 @@ export default function CuadrePolloClient() {
     cargar();
   }, [cargar]);
 
+  // --- totales en vivo: lo tecleado manda sobre lo último guardado ---
+  const kgCampoVivo = ajCampo ?? data?.kgCampoSistema ?? 0;
+  const kgPlantaVivo = ajPlanta ?? data?.kgPlantaSistema ?? 0;
+  const kilosDe = (i: number) => (evLineas[i]?.valida ? evLineas[i].valor : 0);
+  const salidaLineas = lineas.reduce(
+    (a, l, i) => a + (l.seccion === "salida" ? kilosDe(i) : 0),
+    0
+  );
+  const entradaLineas = lineas.reduce(
+    (a, l, i) => a + (l.seccion === "entrada" ? kilosDe(i) : 0),
+    0
+  );
+  const jabasLineas = lineas.reduce(
+    (a, l) => a + (l.seccion === "entrada" ? Number(l.jabas) || 0 : 0),
+    0
+  );
+  const avesVivas = Math.trunc(evAves.macho.valor) + Math.trunc(evAves.hembra.valor);
+  const avesEfectivas = data && !data.avesManuales && data.avesTotal > 0 ? data.avesTotal : avesVivas;
+  const mermaPolloViva = avesEfectivas * (data?.parametros.merma_estandar_ave_kg ?? 0.32);
+  const ventaViva = kgCampoVivo + kgPlantaVivo + salidaLineas;
+  const debioEntrar = ventaViva + mermaPolloViva;
+  const entroVivo = (data ? data.kgNetoIngresado - data.kgEntradaManual : 0) + entradaLineas;
+
+  const setLinea = (i: number, campo: keyof LineaUI, v: string | boolean) =>
+    setLineas((prev) => prev.map((l, k) => (k === i ? { ...l, [campo]: v } : l)));
+
+  const agregarLinea = (seccion: "entrada" | "salida") =>
+    setLineas((prev) => [
+      ...prev,
+      { seccion, concepto: "", expresion: "", jabas: "", pendienteRegistrar: seccion === "entrada" },
+    ]);
+
+  const quitarLinea = (i: number) => setLineas((prev) => prev.filter((_, k) => k !== i));
+
   const guardar = async () => {
-    if (hayErrores) {
+    if (hayExpresionRota) {
       mostrarToast("Hay una operación mal escrita. Revisa las celdas en rojo.", "error");
+      return;
+    }
+    if (faltaMotivo) {
+      mostrarToast("Escribe por qué corriges el total (mínimo 3 letras).", "error");
+      return;
+    }
+    const sinNombre = lineas.some((l, i) => l.concepto.trim() === "" && kilosDe(i) > 0);
+    if (sinNombre) {
+      mostrarToast("Hay una línea con kilos pero sin nombre.", "error");
       return;
     }
     setGuardando(true);
@@ -225,24 +261,33 @@ export default function CuadrePolloClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fecha,
-          aves_macho: Math.trunc(evaluado.avesMacho.valor),
-          aves_hembra: Math.trunc(evaluado.avesHembra.valor),
-          kg_corte: evaluado.corte.valor,
-          kg_corte_especial: evaluado.corteEspecial.valor,
-          kg_pollo_entero: evaluado.polloEntero.valor,
-          expr_corte: limpio(manual.corte),
-          expr_corte_especial: limpio(manual.corteEspecial),
-          expr_pollo_entero: limpio(manual.polloEntero),
-          expr_aves_macho: limpio(manual.avesMacho),
-          expr_aves_hembra: limpio(manual.avesHembra),
-          observaciones: manual.observaciones.trim() || null,
+          aves_macho: Math.trunc(evAves.macho.valor),
+          aves_hembra: Math.trunc(evAves.hembra.valor),
+          expr_aves_macho: limpio(avesMacho),
+          expr_aves_hembra: limpio(avesHembra),
+          observaciones: observaciones.trim() || null,
+          // Se resuelven los kilos con el índice ORIGINAL antes de filtrar: después
+          // del filter, el índice ya no corresponde a `evLineas`.
+          lineas: lineas
+            .map((l, i) => ({
+              seccion: l.seccion,
+              concepto: l.concepto.trim(),
+              expresion: limpio(l.expresion),
+              kilos: kilosDe(i),
+              jabas: Math.trunc(Number(l.jabas) || 0),
+              pendiente_registrar: l.pendienteRegistrar,
+            }))
+            .filter((l) => l.concepto !== "" || l.kilos > 0),
+          ajuste_campo: ajCampo !== null ? { kilos: ajCampo, motivo: motivoCampo.trim() } : null,
+          ajuste_planta: ajPlanta !== null ? { kilos: ajPlanta, motivo: motivoPlanta.trim() } : null,
         }),
       });
       if (!res.ok) {
         const e = await res.json().catch(() => null);
         throw new Error(typeof e?.error === "string" ? e.error : "No se pudo guardar.");
       }
-      setData(await res.json());
+      const d: Cuadre = await res.json();
+      setData(d);
       mostrarToast("Cuadre guardado.", "exito");
     } catch (error) {
       mostrarToast(error instanceof Error ? error.message : "No se pudo guardar.", "error");
@@ -254,17 +299,18 @@ export default function CuadrePolloClient() {
   const copiarResumen = async () => {
     if (!data) return;
     const signo = (n: number) => (n >= 0 ? "+" : "");
+    const dif = mermaPolloViva - (entroVivo - ventaViva);
     const texto = [
       `*CUADRE DE POLLO* — ${formatFechaLarga(data.fecha)}`,
       "",
-      `Venta (salida):   ${kg(data.kgTotalSalida)}`,
-      `Merma pollo:      ${kg(data.mermaEsperada)}  (${data.avesTotal} aves × ${data.parametros.merma_estandar_ave_kg})`,
-      `*Debió entrar:*   ${kg(data.kgTotalSalida + data.mermaEsperada)}`,
+      `Venta (salida):   ${kg(ventaViva)}`,
+      `Merma pollo:      ${kg(mermaPolloViva)}  (${avesEfectivas} aves × ${data.parametros.merma_estandar_ave_kg})`,
+      `*Debió entrar:*   ${kg(debioEntrar)}`,
       "",
-      `Entró (compras):  ${kg(data.kgNetoIngresado)}  (${data.jabas} jabas)`,
-      `*DIFERENCIA:*     ${signo(data.diferencia)}${kg(data.diferencia)}`,
+      `Entró (compras):  ${kg(entroVivo)}`,
+      `*DIFERENCIA:*     ${signo(dif)}${kg(dif)}`,
       "",
-      data.cuadra
+      dif >= -data.tolerancia
         ? "✅ La merma estuvo dentro de lo normal."
         : "⚠️ Se perdió más peso del esperado.",
     ].join("\n");
@@ -284,7 +330,6 @@ export default function CuadrePolloClient() {
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const W = 210;
       const centro = W / 2;
-      const debioEntrar = data.kgTotalSalida + data.mermaEsperada;
 
       doc.setFillColor(220, 38, 38);
       doc.rect(0, 0, W, 12, "F");
@@ -304,27 +349,33 @@ export default function CuadrePolloClient() {
 
       let y = 51;
       const fila = (etiqueta: string, valor: string, negrita = false, detalle?: string) => {
+        if (y > 265) {
+          doc.addPage();
+          y = 20;
+        }
         doc.setFont("helvetica", negrita ? "bold" : "normal");
         doc.setFontSize(negrita ? 10.5 : 10);
         doc.setTextColor(negrita ? 31 : 75, negrita ? 41 : 85, negrita ? 55 : 99);
         doc.text(etiqueta, 18, y);
         doc.text(valor, W - 18, y, { align: "right" });
-
         if (detalle) {
-          // El desglose va PEGADO a su etiqueta y con aire antes de la siguiente
-          // fila; al revés se lee como si perteneciera a la línea de abajo.
+          // El desglose va pegado a SU etiqueta y con aire antes de la siguiente fila.
           y += 3.4;
           doc.setFont("helvetica", "normal");
           doc.setFontSize(7);
           doc.setTextColor(156, 163, 175);
-          const lineas = doc.splitTextToSize(detalle, W - 70) as string[];
-          doc.text(lineas, 22, y);
-          y += 3.4 * lineas.length + 2.5;
+          const lineasTxt = doc.splitTextToSize(detalle, W - 70) as string[];
+          doc.text(lineasTxt, 22, y);
+          y += 3.4 * lineasTxt.length + 2.5;
         } else {
           y += 6;
         }
       };
       const titulo = (t: string) => {
+        if (y > 258) {
+          doc.addPage();
+          y = 20;
+        }
         y += 3;
         doc.setFillColor(243, 244, 246);
         doc.rect(15, y - 5, W - 30, 8, "F");
@@ -341,60 +392,76 @@ export default function CuadrePolloClient() {
       };
 
       titulo("Salida del día");
-      fila("Venta en Campo", kg(data.kgCampo));
-      fila("Venta en Planta", kg(data.kgPlanta));
-      if (data.usoFacturadoComoSalida) {
-        fila("Delivery (facturado por asesoras)", kg(data.kgFacturadoAsesoras));
-      } else {
-        fila("Corte", kg(data.kgCorte), false, data.expresiones.corte ?? undefined);
+      fila(
+        "Venta en Campo",
+        kg(kgCampoVivo),
+        false,
+        ajCampo !== null
+          ? `corregido a mano · el sistema calculó ${kg(data.kgCampoSistema)} · ${motivoCampo.trim()}`
+          : undefined
+      );
+      fila(
+        "Venta en Planta",
+        kg(kgPlantaVivo),
+        false,
+        ajPlanta !== null
+          ? `corregido a mano · el sistema calculó ${kg(data.kgPlantaSistema)} · ${motivoPlanta.trim()}`
+          : undefined
+      );
+      lineas.forEach((l, i) => {
+        if (l.seccion !== "salida" || (l.concepto.trim() === "" && kilosDe(i) === 0)) return;
         fila(
-          "Corte especial",
-          kg(data.kgCorteEspecial),
+          l.concepto.trim() || "(sin nombre)",
+          kg(kilosDe(i)),
           false,
-          data.expresiones.corteEspecial ?? undefined
+          /[+\-*/]/.test(l.expresion) ? l.expresion : undefined
         );
-        fila("Pollo entero", kg(data.kgPolloEntero), false, data.expresiones.polloEntero ?? undefined);
-      }
+      });
       raya();
-      fila("VENTA", kg(data.kgTotalSalida), true);
+      fila("VENTA", kg(ventaViva), true);
       fila(
         "MERMA POLLO",
-        kg(data.mermaEsperada),
+        kg(mermaPolloViva),
         false,
-        `${data.avesTotal} aves × ${data.parametros.merma_estandar_ave_kg} kg`
+        `${avesEfectivas} aves × ${data.parametros.merma_estandar_ave_kg} kg`
       );
       raya();
       fila("DEBIÓ ENTRAR", kg(debioEntrar), true);
 
       titulo("Proveedores");
       data.proveedores.forEach((p) => {
-        const etiqueta = p.esDevolucion
-          ? " · devolución"
-          : p.esVivo
-            ? ""
-            : " · corte comprado";
+        const etiqueta = p.esDevolucion ? " · devolución" : p.esVivo ? "" : " · corte comprado";
         fila(`${p.proveedor}${p.jabas ? ` (${p.jabas} jabas)` : ""}${etiqueta}`, kg(p.neto));
       });
+      lineas.forEach((l, i) => {
+        if (l.seccion !== "entrada" || (l.concepto.trim() === "" && kilosDe(i) === 0)) return;
+        fila(
+          `${l.concepto.trim() || "(sin nombre)"}${l.jabas ? ` (${l.jabas} jabas)` : ""}`,
+          kg(kilosDe(i)),
+          false,
+          l.pendienteRegistrar ? "PENDIENTE: esta compra todavía no está registrada en Compras" : undefined
+        );
+      });
       raya();
-      fila("ENTRÓ (neto)", kg(data.kgNetoIngresado), true);
+      fila("ENTRÓ (neto)", kg(entroVivo), true);
 
       titulo("Cuadre");
+      const difPdf = mermaPolloViva - (entroVivo - ventaViva);
+      const cuadraPdf = difPdf >= -data.tolerancia;
       fila("Debió entrar", kg(debioEntrar));
-      fila("Entró", kg(data.kgNetoIngresado));
-      if (data.cuadra) doc.setTextColor(21, 128, 61);
+      fila("Entró", kg(entroVivo));
+      if (cuadraPdf) doc.setTextColor(21, 128, 61);
       else doc.setTextColor(185, 28, 28);
       doc.setFont("helvetica", "bold");
       doc.setFontSize(12);
       doc.text("DIFERENCIA", 18, y);
-      doc.text(`${data.diferencia >= 0 ? "+" : ""}${kg(data.diferencia)}`, W - 18, y, {
-        align: "right",
-      });
+      doc.text(`${difPdf >= 0 ? "+" : ""}${kg(difPdf)}`, W - 18, y, { align: "right" });
       y += 7;
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9.5);
       doc.setTextColor(107, 114, 128);
       doc.text(
-        data.cuadra
+        cuadraPdf
           ? `La merma estuvo dentro de lo normal (margen de ±${kg(data.tolerancia)}).`
           : "Se perdió más peso del esperado. Conviene revisar.",
         18,
@@ -403,20 +470,20 @@ export default function CuadrePolloClient() {
       y += 5;
 
       titulo("Control de delivery");
-      fila("Salió a picar (planta)", kg(data.kgSalidaCorte));
+      fila("Salió a picar (planta)", kg(salidaLineas));
       fila("Facturado por las asesoras", kg(data.kgFacturadoAsesoras));
       fila(
         "Diferencia",
-        `${data.diferenciaDelivery >= 0 ? "+" : ""}${kg(data.diferenciaDelivery)}`,
+        `${data.kgFacturadoAsesoras - salidaLineas >= 0 ? "+" : ""}${kg(data.kgFacturadoAsesoras - salidaLineas)}`,
         true
       );
 
-      if (data.observaciones) {
+      if (observaciones.trim()) {
         titulo("Observaciones");
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9.5);
         doc.setTextColor(75, 85, 99);
-        doc.text(doc.splitTextToSize(data.observaciones, W - 36), 18, y);
+        doc.text(doc.splitTextToSize(observaciones.trim(), W - 36), 18, y);
       }
 
       doc.save(`cuadre-pollo-${data.fecha}.pdf`);
@@ -428,17 +495,20 @@ export default function CuadrePolloClient() {
     }
   };
 
-  const set = (k: keyof Manual) => (v: string) => setManual((m) => ({ ...m, [k]: v }));
-
-  // Totales en vivo: lo que la usuaria teclea manda sobre lo último guardado.
-  const salidaCorteViva =
-    evaluado.corte.valor + evaluado.corteEspecial.valor + evaluado.polloEntero.valor;
-  const avesVivas = Math.trunc(evaluado.avesMacho.valor) + Math.trunc(evaluado.avesHembra.valor);
-
-  // Clases del lenguaje visual de los otros reportes (cuadre-mermas-tab / cartera).
-  const thBase =
-    "py-2 text-[9px] uppercase font-bold tracking-wider text-gray-400";
+  const thBase = "py-2 text-[9px] uppercase font-bold tracking-wider text-gray-400";
   const tdNum = "py-2 text-right tabular-nums";
+
+  /** Filas del desglose de un canal, cuando está expandido. */
+  const filasDesglose = (canal: Canal, items: LineaDesglose[]) =>
+    expandido.has(canal) && items.length > 0
+      ? items.map((it, i) => (
+          <tr key={`${canal}-${i}`} className="bg-gray-50/40">
+            <td className="py-1 pl-8 text-[11px] text-gray-500">{it.concepto}</td>
+            <td />
+            <td className={`${tdNum} py-1 text-[11px] text-gray-500`}>{nf(it.kilos)}</td>
+          </tr>
+        ))
+      : null;
 
   return (
     <div className="space-y-4 pb-16">
@@ -493,32 +563,26 @@ export default function CuadrePolloClient() {
 
       {!cargando && data && (
         <>
-          {data.guiasCompra === 0 && (
+          {data.guiasCompra === 0 && entradaLineas === 0 && (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex gap-3">
               <FiAlertTriangle className="text-amber-600 shrink-0 mt-0.5" size={18} />
               <div className="text-sm text-amber-900">
-                {/* Antes decía "guías de compra" y confundía: en producción TODAS las
-                    compras se registran como Boleta, ninguna como Guía. Lo que falta es
-                    el registro de la compra, sea cual sea su tipo de documento. */}
                 <p className="font-bold">
-                  Todavía no se registró la compra de pollo de{" "}
-                  {formatFechaLarga(data.fecha)}.
+                  Todavía no se registró la compra de pollo de {formatFechaLarga(data.fecha)}.
                 </p>
                 <p className="mt-0.5 text-amber-800">
-                  Sin ella no se puede calcular la merma: no sabemos cuántos kilos entraron.
-                  Se registra en{" "}
+                  Sin ella no se puede calcular la merma: no sabemos cuántos kilos entraron. Se
+                  registra en{" "}
                   <Link href="/dashboard/compras" className="font-bold underline">
                     Compras → Nueva Compra
                   </Link>
-                  .
+                  , o puedes cargarla abajo a mano mientras tanto.
                 </p>
               </div>
             </div>
           )}
 
           {/* ───────── LA HOJA ───────── */}
-          {/* El scroll horizontal vive en el CONTENEDOR y el ancho mínimo en el
-              hijo: al revés, la hoja empuja el layout de toda la página. */}
           <div className="border border-gray-200 rounded-2xl shadow-xs bg-white overflow-x-auto">
             <div className="bg-white p-6 flex flex-col gap-6" style={{ minWidth: "780px" }}>
               {/* Membrete */}
@@ -527,9 +591,7 @@ export default function CuadrePolloClient() {
                   <h2 className="text-xs font-bold text-red-600 tracking-widest uppercase mb-1">
                     TRANSAVIC &amp; LA AVÍCOLA DE TONY
                   </h2>
-                  <h1 className="text-lg font-black text-gray-900 tracking-tight">
-                    Cuadre de Pollo
-                  </h1>
+                  <h1 className="text-lg font-black text-gray-900 tracking-tight">Cuadre de Pollo</h1>
                   <p className="text-[11px] font-semibold text-gray-500 mt-1 capitalize">
                     {formatFechaLarga(data.fecha)}
                   </p>
@@ -545,77 +607,185 @@ export default function CuadrePolloClient() {
                   <tr className="border-b border-gray-200">
                     <th className={`${thBase} w-1/3`}>Salida del día</th>
                     <th className={`${thBase} text-right`}>Desglose de pesadas</th>
-                    <th className={`${thBase} text-right w-32`}>Kilos</th>
+                    <th className={`${thBase} text-right w-28`}>Kilos</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
+                  {/* Campo — automático, expandible y corregible */}
                   <tr>
-                    <td className="py-2 font-semibold text-gray-700">🏪 Venta en Campo</td>
-                    <td className="py-2 text-right text-[10px] text-gray-400">del sistema</td>
-                    <td className={`${tdNum} font-semibold`}>{nf(data.kgCampo)}</td>
-                  </tr>
-                  <tr>
-                    <td className="py-2 font-semibold text-gray-700">🏭 Venta en Planta</td>
-                    <td className="py-2 text-right text-[10px] text-gray-400">del sistema</td>
-                    <td className={`${tdNum} font-semibold`}>{nf(data.kgPlanta)}</td>
-                  </tr>
-                  {(
-                    [
-                      ["corte", "Corte", "62+62.2+62.5…"],
-                      ["corteEspecial", "Corte especial", "16+38.5"],
-                      ["polloEntero", "Pollo entero", ""],
-                    ] as const
-                  ).map(([campo, etiqueta, ph]) => (
-                    <tr key={campo} className="bg-amber-50/20">
-                      <td className="py-2 font-semibold text-gray-700">
-                        🛵 {etiqueta}
-                        <span className="ml-1.5 text-[9px] font-normal text-gray-400 uppercase">
-                          a picar
+                    <td className="py-2 font-semibold text-gray-700">
+                      <button
+                        type="button"
+                        onClick={() => toggle("campo")}
+                        className="inline-flex items-center gap-1 hover:text-red-600 cursor-pointer"
+                        title="Ver qué clientes lo componen"
+                      >
+                        {expandido.has("campo") ? <FiChevronDown size={12} /> : <FiChevronRight size={12} />}
+                        🏪 Venta en Campo
+                        <span className="text-[9px] font-normal text-gray-400">
+                          ({data.desglose.campo.length})
                         </span>
-                      </td>
-                      <td className="py-1.5">
-                        <CeldaExpresion
-                          valor={manual[campo]}
-                          onChange={set(campo)}
-                          placeholder={ph}
-                        />
-                      </td>
-                      <td className={`${tdNum} font-semibold`}>
-                        {nf(evaluado[campo].valida ? evaluado[campo].valor : 0)}
+                      </button>
+                    </td>
+                    <td className="py-1.5">
+                      <CeldaExpresion
+                        valor={ajusteCampo}
+                        onChange={setAjusteCampo}
+                        placeholder={nf(data.kgCampoSistema)}
+                        ancho="w-32"
+                      />
+                    </td>
+                    <td className={`${tdNum} font-semibold ${ajCampo !== null ? "text-amber-700" : ""}`}>
+                      {nf(kgCampoVivo)}
+                    </td>
+                  </tr>
+                  {ajCampo !== null && (
+                    <tr className="bg-amber-50/40">
+                      <td colSpan={3} className="py-1.5 pl-8 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-amber-800 shrink-0">
+                            el sistema calculó {nf(data.kgCampoSistema)} ·{" "}
+                            {ajCampo - data.kgCampoSistema >= 0 ? "+" : ""}
+                            {nf(ajCampo - data.kgCampoSistema)} ·
+                          </span>
+                          <input
+                            type="text"
+                            value={motivoCampo}
+                            onChange={(e) => setMotivoCampo(e.target.value)}
+                            placeholder="¿Por qué lo corriges? (obligatorio)"
+                            className={`flex-1 rounded-md border px-2 py-1 text-[11px] outline-none ${
+                              motivoCampo.trim().length < 3
+                                ? "border-red-400 bg-red-50"
+                                : "border-amber-300 bg-white"
+                            }`}
+                          />
+                        </div>
                       </td>
                     </tr>
-                  ))}
+                  )}
+                  {filasDesglose("campo", data.desglose.campo)}
+
+                  {/* Planta */}
+                  <tr>
+                    <td className="py-2 font-semibold text-gray-700">
+                      <button
+                        type="button"
+                        onClick={() => toggle("planta")}
+                        className="inline-flex items-center gap-1 hover:text-red-600 cursor-pointer"
+                        title="Ver qué ventas lo componen"
+                      >
+                        {expandido.has("planta") ? <FiChevronDown size={12} /> : <FiChevronRight size={12} />}
+                        🏭 Venta en Planta
+                        <span className="text-[9px] font-normal text-gray-400">
+                          ({data.desglose.planta.length})
+                        </span>
+                      </button>
+                    </td>
+                    <td className="py-1.5">
+                      <CeldaExpresion
+                        valor={ajustePlanta}
+                        onChange={setAjustePlanta}
+                        placeholder={nf(data.kgPlantaSistema)}
+                        ancho="w-32"
+                      />
+                    </td>
+                    <td className={`${tdNum} font-semibold ${ajPlanta !== null ? "text-amber-700" : ""}`}>
+                      {nf(kgPlantaVivo)}
+                    </td>
+                  </tr>
+                  {ajPlanta !== null && (
+                    <tr className="bg-amber-50/40">
+                      <td colSpan={3} className="py-1.5 pl-8 pr-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-amber-800 shrink-0">
+                            el sistema calculó {nf(data.kgPlantaSistema)} ·{" "}
+                            {ajPlanta - data.kgPlantaSistema >= 0 ? "+" : ""}
+                            {nf(ajPlanta - data.kgPlantaSistema)} ·
+                          </span>
+                          <input
+                            type="text"
+                            value={motivoPlanta}
+                            onChange={(e) => setMotivoPlanta(e.target.value)}
+                            placeholder="¿Por qué lo corriges? (obligatorio)"
+                            className={`flex-1 rounded-md border px-2 py-1 text-[11px] outline-none ${
+                              motivoPlanta.trim().length < 3
+                                ? "border-red-400 bg-red-50"
+                                : "border-amber-300 bg-white"
+                            }`}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {filasDesglose("planta", data.desglose.planta)}
+
+                  {/* Líneas propias de salida */}
+                  {lineas.map((l, i) =>
+                    l.seccion !== "salida" ? null : (
+                      <tr key={`salida-${i}`} className="bg-amber-50/20 group">
+                        <td className="py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-gray-400">🛵</span>
+                            <input
+                              type="text"
+                              value={l.concepto}
+                              onChange={(e) => setLinea(i, "concepto", e.target.value)}
+                              placeholder="Concepto"
+                              className="w-40 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-gray-700 outline-none hover:border-gray-200 focus:border-amber-400 focus:bg-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => quitarLinea(i)}
+                              title="Quitar esta línea"
+                              className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-600 transition-opacity cursor-pointer"
+                            >
+                              <FiTrash2 size={12} />
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-1.5">
+                          <CeldaExpresion
+                            valor={l.expresion}
+                            onChange={(v) => setLinea(i, "expresion", v)}
+                            placeholder="62+62.2+62.5…"
+                          />
+                        </td>
+                        <td className={`${tdNum} font-semibold`}>{nf(kilosDe(i))}</td>
+                      </tr>
+                    )
+                  )}
+                  <tr>
+                    <td colSpan={3} className="py-1.5">
+                      <button
+                        type="button"
+                        onClick={() => agregarLinea("salida")}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 cursor-pointer"
+                      >
+                        <FiPlus size={12} /> Agregar línea de salida
+                      </button>
+                    </td>
+                  </tr>
+
                   <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
                     <td className="py-2.5 text-xs uppercase text-gray-600">VENTA</td>
                     <td className="py-2.5 text-right text-[10px] font-normal text-gray-400">
                       todo lo que salió
                     </td>
-                    <td className={`${tdNum} text-sm text-gray-900`}>
-                      {nf(data.kgCampo + data.kgPlanta + salidaCorteViva)}
-                    </td>
+                    <td className={`${tdNum} text-sm text-gray-900`}>{nf(ventaViva)}</td>
                   </tr>
                   <tr className="bg-gray-50/70 font-bold">
                     <td className="py-2.5 text-xs uppercase text-gray-600">MERMA POLLO</td>
                     <td className="py-2.5 text-right text-[10px] font-normal text-gray-400">
-                      {avesVivas} aves × {data.parametros.merma_estandar_ave_kg} kg
+                      {avesEfectivas} aves × {data.parametros.merma_estandar_ave_kg} kg
                     </td>
-                    <td className={`${tdNum} text-sm text-gray-900`}>
-                      {nf(avesVivas * data.parametros.merma_estandar_ave_kg)}
-                    </td>
+                    <td className={`${tdNum} text-sm text-gray-900`}>{nf(mermaPolloViva)}</td>
                   </tr>
                   <tr className="bg-blue-50/40 font-bold border-t-2 border-gray-300">
                     <td className="py-2.5 text-xs uppercase text-blue-900">DEBIÓ ENTRAR</td>
                     <td className="py-2.5 text-right text-[10px] font-normal text-blue-400">
                       venta + merma
                     </td>
-                    <td className={`${tdNum} text-sm text-blue-900`}>
-                      {nf(
-                        data.kgCampo +
-                          data.kgPlanta +
-                          salidaCorteViva +
-                          avesVivas * data.parametros.merma_estandar_ave_kg
-                      )}
-                    </td>
+                    <td className={`${tdNum} text-sm text-blue-900`}>{nf(debioEntrar)}</td>
                   </tr>
                 </tbody>
               </table>
@@ -626,17 +796,18 @@ export default function CuadrePolloClient() {
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
-                        <th className={`${thBase} text-right w-20`}>N° Jabas</th>
+                        <th className={`${thBase} text-right w-16`}>Jabas</th>
                         <th className={`${thBase} pl-3`}>Proveedor</th>
                         <th className={`${thBase} text-right`}>Bruto</th>
                         <th className={`${thBase} text-right`}>Tara</th>
                         <th className={`${thBase} text-right bg-amber-50/20 pr-2`}>P. Neto</th>
+                        <th className="w-6" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
-                      {data.proveedores.length === 0 && (
+                      {data.proveedores.length === 0 && entradaLineas === 0 && (
                         <tr>
-                          <td colSpan={5} className="py-6 text-center text-gray-400">
+                          <td colSpan={6} className="py-5 text-center text-gray-400">
                             Sin compras de pollo registradas este día.
                           </td>
                         </tr>
@@ -650,9 +821,7 @@ export default function CuadrePolloClient() {
                           <td className="py-2 pl-3 font-semibold text-gray-800">
                             {p.proveedor}
                             {p.esDevolucion && (
-                              <span className="ml-1.5 text-[9px] font-bold uppercase text-amber-700">
-                                dev.
-                              </span>
+                              <span className="ml-1.5 text-[9px] font-bold uppercase text-amber-700">dev.</span>
                             )}
                             {!p.esVivo && !p.esDevolucion && (
                               <span className="ml-1.5 text-[9px] font-bold uppercase text-violet-600">
@@ -669,53 +838,122 @@ export default function CuadrePolloClient() {
                           >
                             {nf(p.neto)}
                           </td>
+                          <td />
                         </tr>
                       ))}
-                      {/* Sin compras del día, una fila "TOTALES 0.00" solo agrega ruido
-                          debajo del mensaje que ya explica que no hay nada. */}
-                      <tr
-                        className={`bg-gray-50/70 font-bold border-t-2 border-gray-200 ${
-                          data.proveedores.length === 0 ? "hidden" : ""
-                        }`}
-                      >
-                        <td className={`${tdNum} py-2.5 text-gray-700`}>{data.jabas || "—"}</td>
+
+                      {/* Entradas cargadas a mano */}
+                      {lineas.map((l, i) =>
+                        l.seccion !== "entrada" ? null : (
+                          <tr key={`entrada-${i}`} className="bg-amber-50/30 group">
+                            <td className="py-1.5 pr-1">
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={l.jabas}
+                                onChange={(e) => setLinea(i, "jabas", e.target.value)}
+                                placeholder="—"
+                                className="w-14 rounded-md border border-amber-300 bg-white px-1 py-0.5 text-xs text-right tabular-nums outline-none focus:border-amber-500"
+                              />
+                            </td>
+                            <td className="py-1.5 pl-3">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  value={l.concepto}
+                                  onChange={(e) => setLinea(i, "concepto", e.target.value)}
+                                  placeholder="Proveedor"
+                                  className="w-36 rounded-md border border-transparent bg-transparent px-1 py-0.5 text-xs font-semibold text-gray-700 outline-none hover:border-gray-200 focus:border-amber-400 focus:bg-white"
+                                />
+                                {l.pendienteRegistrar && (
+                                  <span
+                                    className="text-[9px] font-bold uppercase text-amber-700"
+                                    title="Esta compra todavía no está registrada en Compras"
+                                  >
+                                    pendiente
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td colSpan={2} className="py-1.5">
+                              <CeldaExpresion
+                                valor={l.expresion}
+                                onChange={(v) => setLinea(i, "expresion", v)}
+                                placeholder="peso neto"
+                                ancho="w-28"
+                              />
+                            </td>
+                            <td className={`${tdNum} pr-2 font-bold bg-amber-50/20 text-amber-800`}>
+                              {nf(kilosDe(i))}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                onClick={() => quitarLinea(i)}
+                                title="Quitar esta entrada"
+                                className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-600 transition-opacity cursor-pointer"
+                              >
+                                <FiTrash2 size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      )}
+                      <tr>
+                        <td colSpan={6} className="py-1.5 pl-3">
+                          <button
+                            type="button"
+                            onClick={() => agregarLinea("entrada")}
+                            className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:text-amber-900 cursor-pointer"
+                            title="Para cuando la compra todavía no está digitada en Compras"
+                          >
+                            <FiPlus size={12} /> Agregar entrada a mano
+                          </button>
+                        </td>
+                      </tr>
+
+                      <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
+                        <td className={`${tdNum} py-2.5 text-gray-700`}>
+                          {data.jabasCompras + jabasLineas || "—"}
+                        </td>
                         <td className="py-2.5 pl-3 text-xs uppercase text-gray-600">TOTALES</td>
                         <td className={`${tdNum} py-2.5 text-gray-700`}>{nf(data.kgBruto)}</td>
                         <td className={`${tdNum} py-2.5 text-gray-700`}>{nf(data.kgTara)}</td>
                         <td className={`${tdNum} py-2.5 pr-2 text-sm text-gray-900 bg-amber-50/40`}>
-                          {nf(data.kgNetoIngresado)}
+                          {nf(entroVivo)}
                         </td>
+                        <td />
                       </tr>
                     </tbody>
                   </table>
                 </div>
 
                 {/* Aves del día */}
-                <div className="lg:w-80 shrink-0">
+                <div className="lg:w-72 shrink-0">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="border-b border-gray-200">
-                        <th className={`${thBase} w-20`}>Aves</th>
+                        <th className={`${thBase} w-16`}>Aves</th>
                         <th className={`${thBase} text-right`}>Cuenta</th>
-                        <th className={`${thBase} text-right w-16`}>Total</th>
+                        <th className={`${thBase} text-right w-14`}>Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
                       {(
                         [
-                          ["avesMacho", "Macho", "70+15+55*7"],
-                          ["avesHembra", "Hembra", "15*9"],
+                          ["macho", "Macho", "70+15+55*7", avesMacho, setAvesMacho, evAves.macho, data.avesMacho],
+                          ["hembra", "Hembra", "15*9", avesHembra, setAvesHembra, evAves.hembra, data.avesHembra],
                         ] as const
-                      ).map(([campo, etiqueta, ph]) => (
-                        <tr key={campo} className={data.avesManuales ? "bg-amber-50/20" : ""}>
+                      ).map(([k, etiqueta, ph, val, set, ev, delSistema]) => (
+                        <tr key={k} className={data.avesManuales ? "bg-amber-50/20" : ""}>
                           <td className="py-2 font-semibold text-gray-700">{etiqueta}</td>
                           <td className="py-1.5">
-                            {data.avesManuales ? (
+                            {data.avesManuales || data.avesTotal === 0 ? (
                               <CeldaExpresion
-                                valor={manual[campo]}
-                                onChange={set(campo)}
+                                valor={val}
+                                onChange={set}
                                 placeholder={ph}
-                                ancho="w-32"
+                                ancho="w-28"
                                 decimales={0}
                               />
                             ) : (
@@ -725,11 +963,9 @@ export default function CuadrePolloClient() {
                             )}
                           </td>
                           <td className={`${tdNum} font-semibold`}>
-                            {data.avesManuales
-                              ? Math.trunc(evaluado[campo].valida ? evaluado[campo].valor : 0)
-                              : campo === "avesMacho"
-                                ? data.avesMacho
-                                : data.avesHembra}
+                            {data.avesManuales || data.avesTotal === 0
+                              ? Math.trunc(ev.valida ? ev.valor : 0)
+                              : delSistema}
                           </td>
                         </tr>
                       ))}
@@ -737,15 +973,13 @@ export default function CuadrePolloClient() {
                         <td className="py-2.5 text-xs uppercase text-gray-600" colSpan={2}>
                           Total de aves
                         </td>
-                        <td className={`${tdNum} py-2.5 text-sm text-gray-900`}>
-                          {data.avesManuales ? avesVivas : data.avesTotal}
-                        </td>
+                        <td className={`${tdNum} py-2.5 text-sm text-gray-900`}>{avesEfectivas}</td>
                       </tr>
                     </tbody>
                   </table>
                   <p className="text-[10px] text-gray-400 mt-2 flex items-start gap-1">
                     <FiInfo className="shrink-0 mt-0.5" size={11} />
-                    {data.avesManuales
+                    {data.avesManuales || data.avesTotal === 0
                       ? "Puedes contarlas como en tu cuadro: 70+15+55*7 (jabas × aves por jaba)."
                       : "Vienen del desglose macho/hembra de la guía de compra."}
                   </p>
@@ -753,128 +987,130 @@ export default function CuadrePolloClient() {
               </div>
 
               {/* ── EL CUADRE ── */}
-              <div className="flex justify-end">
-                <table className="border-collapse w-full lg:w-[26rem]">
-                  <tbody className="text-xs text-gray-800">
-                    <tr>
-                      <td className="py-2 font-semibold text-gray-600">Debió entrar</td>
-                      <td className={`${tdNum} font-bold`}>
-                        {nf(
-                          data.kgCampo +
-                            data.kgPlanta +
-                            salidaCorteViva +
-                            avesVivas * data.parametros.merma_estandar_ave_kg
-                        )}
-                      </td>
-                    </tr>
-                    <tr>
-                      <td className="py-2 font-semibold text-gray-600">
-                        Entró (neto)
-                        <span className="ml-1.5 text-[9px] uppercase text-gray-400">
-                          merma real
-                        </span>
-                      </td>
-                      <td className={`${tdNum} font-bold`}>{nf(data.kgNetoIngresado)}</td>
-                    </tr>
-                    <tr
-                      className={`border-t-2 border-gray-300 ${
-                        data.kgNetoIngresado === 0
-                          ? ""
-                          : data.cuadra
-                            ? "bg-green-50/60"
-                            : "bg-red-50/60"
-                      }`}
-                    >
-                      <td className="py-3 text-sm font-black uppercase text-gray-900">
-                        Diferencia
-                      </td>
-                      <td
-                        className={`${tdNum} py-3 text-xl font-black ${
-                          data.kgNetoIngresado === 0
-                            ? "text-gray-300"
-                            : data.cuadra
-                              ? "text-green-700"
-                              : "text-red-600"
-                        }`}
-                      >
-                        {data.kgNetoIngresado === 0
-                          ? "—"
-                          : `${data.diferencia >= 0 ? "+" : ""}${nf(data.diferencia)}`}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              {(() => {
+                const dif = mermaPolloViva - (entroVivo - ventaViva);
+                const cuadraAhora = dif >= -(entroVivo * 0.01);
+                const sinEntrada = entroVivo === 0;
+                return (
+                  <>
+                    <div className="flex justify-end">
+                      <table className="border-collapse w-full lg:w-[26rem]">
+                        <tbody className="text-xs text-gray-800">
+                          <tr>
+                            <td className="py-2 font-semibold text-gray-600">Debió entrar</td>
+                            <td className={`${tdNum} font-bold`}>{nf(debioEntrar)}</td>
+                          </tr>
+                          <tr>
+                            <td className="py-2 font-semibold text-gray-600">
+                              Entró (neto)
+                              <span className="ml-1.5 text-[9px] uppercase text-gray-400">merma real</span>
+                            </td>
+                            <td className={`${tdNum} font-bold`}>{nf(entroVivo)}</td>
+                          </tr>
+                          <tr
+                            className={`border-t-2 border-gray-300 ${
+                              sinEntrada ? "" : cuadraAhora ? "bg-green-50/60" : "bg-red-50/60"
+                            }`}
+                          >
+                            <td className="py-3 text-sm font-black uppercase text-gray-900">Diferencia</td>
+                            <td
+                              className={`${tdNum} py-3 text-xl font-black ${
+                                sinEntrada ? "text-gray-300" : cuadraAhora ? "text-green-700" : "text-red-600"
+                              }`}
+                            >
+                              {sinEntrada ? "—" : `${dif >= 0 ? "+" : ""}${nf(dif)}`}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
 
-              <div className="flex justify-end -mt-4">
-                <div className="lg:w-[26rem] text-right">
-                  {data.kgNetoIngresado === 0 ? (
-                    <p className="text-[11px] font-semibold text-gray-400">
-                      Falta registrar la compra del día para poder cuadrar.
-                    </p>
-                  ) : avesVivas === 0 && data.avesTotal === 0 ? (
-                    <p className="text-[11px] font-semibold text-amber-700 flex items-center justify-end gap-1.5">
-                      <FiAlertTriangle size={12} /> Falta ingresar cuántas aves entraron.
-                    </p>
-                  ) : (
-                    <p
-                      className={`text-[11px] font-semibold flex items-center justify-end gap-1.5 ${
-                        data.cuadra ? "text-green-700" : "text-red-600"
-                      }`}
-                    >
-                      {data.cuadra ? (
-                        <>
-                          <FiCheckCircle size={12} /> Dentro de lo normal (margen ±
-                          {nf(data.tolerancia)} kg).
-                        </>
-                      ) : (
-                        <>
-                          <FiAlertTriangle size={12} /> Se perdió más peso del esperado. Conviene
-                          revisar.
-                        </>
-                      )}
-                    </p>
-                  )}
-                  {data.usoFacturadoComoSalida && (
-                    <p className="text-[10px] text-amber-700 mt-1">
-                      Aún no cargas los kilos que salieron a picar; se está usando lo facturado por
-                      las asesoras ({nf(data.kgFacturadoAsesoras)} kg).
-                    </p>
-                  )}
-                </div>
-              </div>
+                    <div className="flex justify-end -mt-4">
+                      <div className="lg:w-[26rem] text-right">
+                        {sinEntrada ? (
+                          <p className="text-[11px] font-semibold text-gray-400">
+                            Falta registrar la compra del día para poder cuadrar.
+                          </p>
+                        ) : avesEfectivas === 0 ? (
+                          <p className="text-[11px] font-semibold text-amber-700 flex items-center justify-end gap-1.5">
+                            <FiAlertTriangle size={12} /> Falta ingresar cuántas aves entraron.
+                          </p>
+                        ) : (
+                          <p
+                            className={`text-[11px] font-semibold flex items-center justify-end gap-1.5 ${
+                              cuadraAhora ? "text-green-700" : "text-red-600"
+                            }`}
+                          >
+                            {cuadraAhora ? (
+                              <>
+                                <FiCheckCircle size={12} /> Dentro de lo normal (margen ±
+                                {nf(entroVivo * 0.01)} kg).
+                              </>
+                            ) : (
+                              <>
+                                <FiAlertTriangle size={12} /> Se perdió más peso del esperado. Conviene
+                                revisar.
+                              </>
+                            )}
+                          </p>
+                        )}
+                        {salidaLineas === 0 && data.kgFacturadoAsesoras > 0 && (
+                          <p className="text-[10px] text-amber-700 mt-1">
+                            Aún no cargas los kilos que salieron a picar; las asesoras facturaron{" "}
+                            {nf(data.kgFacturadoAsesoras)} kg ese día.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
 
               {/* ── CONTROL DE DELIVERY ── */}
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-gray-200">
                     <th className={`${thBase} w-1/3`}>Control de delivery</th>
-                    <th className={`${thBase} text-right`}>
-                      no entra en el cálculo de la merma
-                    </th>
-                    <th className={`${thBase} text-right w-32`}>Kilos</th>
+                    <th className={`${thBase} text-right`}>no entra en el cálculo de la merma</th>
+                    <th className={`${thBase} text-right w-28`}>Kilos</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 text-xs text-gray-800">
                   <tr>
                     <td className="py-2 font-semibold text-gray-700">Salió a picar (planta)</td>
                     <td />
-                    <td className={`${tdNum} font-semibold`}>{nf(salidaCorteViva)}</td>
+                    <td className={`${tdNum} font-semibold`}>{nf(salidaLineas)}</td>
                   </tr>
                   <tr>
                     <td className="py-2 font-semibold text-gray-700">
-                      Facturado por las asesoras
+                      <button
+                        type="button"
+                        onClick={() => toggle("ejecutivas")}
+                        className="inline-flex items-center gap-1 hover:text-red-600 cursor-pointer"
+                        title="Ver qué clientes lo componen"
+                      >
+                        {expandido.has("ejecutivas") ? (
+                          <FiChevronDown size={12} />
+                        ) : (
+                          <FiChevronRight size={12} />
+                        )}
+                        Facturado por las asesoras
+                        <span className="text-[9px] font-normal text-gray-400">
+                          ({data.desglose.ejecutivas.length})
+                        </span>
+                      </button>
                     </td>
                     <td />
                     <td className={`${tdNum} font-semibold`}>{nf(data.kgFacturadoAsesoras)}</td>
                   </tr>
+                  {filasDesglose("ejecutivas", data.desglose.ejecutivas)}
                   <tr className="bg-gray-50/70 font-bold border-t-2 border-gray-200">
                     <td className="py-2.5 text-xs uppercase text-gray-600" colSpan={2}>
                       Diferencia
                     </td>
                     <td className={`${tdNum} py-2.5 text-sm text-gray-900`}>
-                      {data.kgFacturadoAsesoras - salidaCorteViva >= 0 ? "+" : ""}
-                      {nf(data.kgFacturadoAsesoras - salidaCorteViva)}
+                      {data.kgFacturadoAsesoras - salidaLineas >= 0 ? "+" : ""}
+                      {nf(data.kgFacturadoAsesoras - salidaLineas)}
                     </td>
                   </tr>
                 </tbody>
@@ -898,8 +1134,8 @@ export default function CuadrePolloClient() {
                 Observaciones del día (opcional)
               </label>
               <textarea
-                value={manual.observaciones}
-                onChange={(e) => setManual((m) => ({ ...m, observaciones: e.target.value }))}
+                value={observaciones}
+                onChange={(e) => setObservaciones(e.target.value)}
                 rows={2}
                 maxLength={1000}
                 placeholder="Ej. Llegó una jaba con pollo muerto de Renato."
@@ -907,15 +1143,20 @@ export default function CuadrePolloClient() {
               />
             </div>
             <div className="flex items-center justify-end gap-3">
-              {hayErrores && (
+              {hayExpresionRota && (
                 <span className="text-xs font-semibold text-red-600 flex items-center gap-1.5">
                   <FiAlertTriangle size={13} /> Hay una operación mal escrita
+                </span>
+              )}
+              {!hayExpresionRota && faltaMotivo && (
+                <span className="text-xs font-semibold text-red-600 flex items-center gap-1.5">
+                  <FiAlertTriangle size={13} /> Falta explicar la corrección
                 </span>
               )}
               <button
                 type="button"
                 onClick={guardar}
-                disabled={guardando || hayErrores}
+                disabled={guardando || hayExpresionRota || faltaMotivo}
                 className="bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-3 rounded-xl font-bold text-sm shadow-md transition-all cursor-pointer active:scale-95 flex items-center gap-2"
               >
                 {guardando ? <FiLoader className="animate-spin" size={16} /> : <FiSave size={16} />}

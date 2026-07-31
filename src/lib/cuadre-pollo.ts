@@ -5,8 +5,8 @@
 // producto: se compra pollo vivo (1 producto) y se vende en ~20 cortes, así que
 // comparar fila por fila es imposible. El cuadre es GLOBAL del día:
 //
-//   Neto ingresado  = Σ (peso_neto de compras de productos 'vivo' y 'desposte')
-//                     − devoluciones
+//   Neto ingresado  = Σ (peso_neto de compras 'vivo' y 'desposte') − devoluciones
+//                     + entradas cargadas a mano
 //   Total salida    = Venta Campo + Venta Planta + lo que SALIÓ a corte/delivery
 //   Merma real      = Neto ingresado − Total salida
 //   Merma esperada  = total de aves × merma estándar por ave (0.32 kg, configurable)
@@ -22,6 +22,18 @@
 // Fechas: todos los flujos se anclan al día en que la mercadería SALE físicamente
 // (`pedidos.fecha_pedido` es la fecha de ENTREGA — gotcha #8), no al día en que se
 // registró la venta.
+//
+// FLEXIBILIDAD (30 jul 2026) — en su Excel ella controla el 100% del input; acá el
+// sistema aporta la mayor parte, así que necesita poder intervenir:
+//  · `cuadre_pollo_lineas`: sus propias filas. El campo `seccion` decide de qué lado
+//    suman — es lo que protege la REGLA CRÍTICA de arriba.
+//  · `cuadre_pollo_dia.kg_campo_ajustado` / `kg_planta_ajustado` + su motivo
+//    obligatorio: corregir el total del sistema cuando sabe que está incompleto.
+//    NULL = manda el sistema. Quien consume este módulo recibe el valor EFECTIVO y
+//    un flag; no tiene que resolver el override (igual que las aves y lib/metas.ts).
+//  · `desglose`: quién compone cada total automático, para auditarlo sin salir de la
+//    hoja. Sus queries deben usar EXACTAMENTE el mismo WHERE que los totales; si un
+//    filtro se desalinea, el desglose no suma el total y la pantalla pierde crédito.
 import type { NeonQueryFunction } from "@neondatabase/serverless";
 import { leerParametrosNegocio, type ParametrosNegocio } from "@/lib/parametros-negocio";
 
@@ -37,6 +49,29 @@ export interface LineaProveedor {
   esDevolucion: boolean;
 }
 
+/** Una fila del desglose de un canal automático: quién y cuántos kilos. */
+export interface LineaDesglose {
+  concepto: string;
+  kilos: number;
+}
+
+/**
+ * Línea que la usuaria agrega a mano (tabla `cuadre_pollo_lineas`).
+ * `seccion` decide de qué lado del cuadre suma — es lo que impide sumar dos veces
+ * el mismo flujo (ver la REGLA CRÍTICA del encabezado de este archivo).
+ */
+export interface LineaLibre {
+  id: string;
+  seccion: "entrada" | "salida";
+  concepto: string;
+  expresion: string | null;
+  kilos: number;
+  jabas: number;
+  /** Entrada que todavía no está cargada en Compras. Suma, pero se marca. */
+  pendienteRegistrar: boolean;
+  orden: number;
+}
+
 export interface CuadrePollo {
   fecha: string;
 
@@ -49,6 +84,10 @@ export interface CuadrePollo {
   kgNetoIngresado: number;
   /** Cuántas guías de compra tiene el día (0 ⇒ el cuadre no se puede calcular). */
   guiasCompra: number;
+  /** Jabas que vienen SOLO de Compras (`jabas` incluye además las cargadas a mano). */
+  jabasCompras: number;
+  /** Entradas que la usuaria cargó a mano porque la compra aún no está registrada. */
+  kgEntradaManual: number;
 
   // --- AVES ---
   avesMacho: number;
@@ -58,12 +97,26 @@ export interface CuadrePollo {
   avesManuales: boolean;
 
   // --- SALIDA ---
+  /** Valor EFECTIVO: el ajustado a mano si existe, si no el del sistema. */
   kgCampo: number;
   kgPlanta: number;
-  kgCorte: number;
-  kgCorteEspecial: number;
-  kgPolloEntero: number;
-  /** Suma de los tres manuales: lo que salió de planta hacia el acopio de delivery. */
+  /** Lo que calculó el sistema, antes de cualquier corrección manual. */
+  kgCampoSistema: number;
+  kgPlantaSistema: number;
+  /** Motivo de la corrección. null ⇒ no hay corrección y manda el sistema. */
+  campoMotivo: string | null;
+  plantaMotivo: string | null;
+  campoAjustado: boolean;
+  plantaAjustado: boolean;
+  /** Quién compone cada total automático, para poder auditarlo sin salir de la hoja. */
+  desglose: {
+    campo: LineaDesglose[];
+    planta: LineaDesglose[];
+    ejecutivas: LineaDesglose[];
+  };
+  /** Las líneas propias de la usuaria, de entrada y de salida. */
+  lineas: LineaLibre[];
+  /** Suma de las líneas de salida: lo que salió de planta hacia el acopio de delivery. */
   kgSalidaCorte: number;
   kgTotalSalida: number;
 
@@ -85,14 +138,12 @@ export interface CuadrePollo {
   usoFacturadoComoSalida: boolean;
 
   /**
-   * El texto TAL COMO lo tecleó la usuaria ("62+62.2+62.5…", "70+15+55*7+15").
-   * Solo sirve para poder reeditar el desglose al día siguiente: el número de
-   * arriba es la fuente de verdad del cálculo. NULL = se digitó un número suelto.
+   * El texto TAL COMO lo tecleó la usuaria ("70+15+55*7+15").
+   * Solo sirve para poder reeditarlo al día siguiente: el número es la fuente de
+   * verdad del cálculo. NULL = se digitó un número suelto.
+   * (Las expresiones de las líneas viajan dentro de cada `LineaLibre`.)
    */
   expresiones: {
-    corte: string | null;
-    corteEspecial: string | null;
-    polloEntero: string | null;
     avesMacho: string | null;
     avesHembra: string | null;
   };
@@ -178,10 +229,12 @@ export async function construirCuadrePollo(
     };
   });
 
-  const jabas = proveedores.reduce((a, p) => a + p.jabas, 0);
+  // Totales de lo que SÍ está registrado en Compras. Las entradas cargadas a mano
+  // (compra todavía no digitada) se suman más abajo, cuando ya se leyeron las líneas.
+  const jabasCompras = proveedores.reduce((a, p) => a + p.jabas, 0);
   const kgBruto = r2(proveedores.reduce((a, p) => a + p.bruto, 0));
   const kgTara = r2(proveedores.reduce((a, p) => a + p.tara, 0));
-  const kgNetoIngresado = r2(proveedores.reduce((a, p) => a + p.neto, 0));
+  const kgNetoCompras = r2(proveedores.reduce((a, p) => a + p.neto, 0));
   const guiasCompra = filasCompra.reduce((a, f) => a + num(f.guias), 0);
   // Las aves se cuentan solo de los ingresos: una devolución de pollo beneficiado no
   // resta aves del beneficio del día.
@@ -229,23 +282,118 @@ export async function construirCuadrePollo(
       ), 0)::float8 AS kg_asesoras
   `) as Array<Record<string, unknown>>;
 
-  const kgCampo = r2(num(filasSalida[0]?.kg_campo));
-  const kgPlanta = r2(num(filasSalida[0]?.kg_planta));
+  const kgCampoSistema = r2(num(filasSalida[0]?.kg_campo));
+  const kgPlantaSistema = r2(num(filasSalida[0]?.kg_planta));
   const kgFacturadoAsesoras = r2(num(filasSalida[0]?.kg_asesoras));
+
+  // --- DESGLOSE: quién compone cada total automático --------------------------
+  // Mismos WHERE que los totales de arriba, agrupados por cliente. Si un filtro se
+  // desalinea, el desglose deja de sumar el total y la pantalla pierde credibilidad.
+  const filasDesglose = (await sql`
+    SELECT 'campo' AS canal, COALESCE(c.nombre, 'Cliente de campo') AS concepto,
+           SUM(vi.peso_kg)::float8 AS kilos
+    FROM venta_avicola_items vi
+    JOIN ventas_avicola v ON v.id = vi.venta_id
+    JOIN productos pr ON pr.id = vi.producto_id
+    LEFT JOIN clientes_avicola c ON c.id = v.cliente_id
+    WHERE v.fecha = ${fechaIso}::date
+      AND NOT v.anulada
+      AND pr.origen_fisico IN ('vivo', 'desposte')
+    GROUP BY 1, 2
+
+    UNION ALL
+
+    SELECT 'planta', COALESCE(c.nombre, p.cliente, 'Venta en planta'),
+           SUM(pi.cantidad)::float8
+    FROM pedido_items pi
+    JOIN pedidos p ON p.id = pi.pedido_id
+    JOIN productos pr ON pr.id = pi.producto_id
+    LEFT JOIN clientes c ON c.id = p.cliente_id
+    WHERE p.fecha_pedido = ${fechaIso}::date
+      AND p.origen = 'pos_planta'
+      AND p.estado <> 'Fallido'
+      AND NOT COALESCE(p.anulada, FALSE)
+      AND pi.unidad IN ('kg', 'KGM')
+      AND pr.origen_fisico IN ('vivo', 'desposte')
+    GROUP BY 1, 2
+
+    UNION ALL
+
+    SELECT 'ejecutivas', COALESCE(c.nombre, p.cliente, 'Cliente'),
+           SUM(COALESCE(pi.cantidad_real, pi.cantidad, 0))::float8
+    FROM pedido_items pi
+    JOIN pedidos p ON p.id = pi.pedido_id
+    JOIN productos pr ON pr.id = pi.producto_id
+    LEFT JOIN clientes c ON c.id = p.cliente_id
+    WHERE p.fecha_pedido = ${fechaIso}::date
+      AND COALESCE(p.origen, 'asesor') = 'asesor'
+      AND p.estado <> 'Fallido'
+      AND NOT COALESCE(p.anulada, FALSE)
+      AND pi.unidad IN ('kg', 'KGM')
+      AND pr.origen_fisico IN ('vivo', 'desposte')
+    GROUP BY 1, 2
+
+    ORDER BY 3 DESC
+  `) as Array<Record<string, unknown>>;
+
+  const porCanal = (canal: string): LineaDesglose[] =>
+    filasDesglose
+      .filter((f) => f.canal === canal)
+      .map((f) => ({ concepto: String(f.concepto), kilos: r2(num(f.kilos)) }));
+
+  const desglose = {
+    campo: porCanal("campo"),
+    planta: porCanal("planta"),
+    ejecutivas: porCanal("ejecutivas"),
+  };
 
   // --- Captura manual del día ------------------------------------------------
   const filasManual = (await sql`
-    SELECT aves_macho, aves_hembra, kg_corte, kg_corte_especial, kg_pollo_entero, observaciones,
-           expr_corte, expr_corte_especial, expr_pollo_entero, expr_aves_macho, expr_aves_hembra
+    SELECT aves_macho, aves_hembra, observaciones,
+           expr_aves_macho, expr_aves_hembra,
+           kg_campo_ajustado, kg_campo_motivo, kg_planta_ajustado, kg_planta_motivo
     FROM public.cuadre_pollo_dia
     WHERE fecha = ${fechaIso}::date
   `) as Array<Record<string, unknown>>;
   const manual = filasManual[0];
 
-  const kgCorte = r2(num(manual?.kg_corte));
-  const kgCorteEspecial = r2(num(manual?.kg_corte_especial));
-  const kgPolloEntero = r2(num(manual?.kg_pollo_entero));
-  const kgSalidaCorte = r2(kgCorte + kgCorteEspecial + kgPolloEntero);
+  // Corrección manual de un total del sistema: manda el ajustado si existe.
+  // Es el mismo criterio que ya usan las aves y las metas: el consumidor recibe el
+  // valor EFECTIVO y un flag, no tiene que resolver el override.
+  const campoAjustado = manual?.kg_campo_ajustado != null;
+  const plantaAjustado = manual?.kg_planta_ajustado != null;
+  const kgCampo = campoAjustado ? r2(num(manual?.kg_campo_ajustado)) : kgCampoSistema;
+  const kgPlanta = plantaAjustado ? r2(num(manual?.kg_planta_ajustado)) : kgPlantaSistema;
+
+  // --- Líneas propias de la usuaria ------------------------------------------
+  const filasLineas = (await sql`
+    SELECT id, seccion, concepto, expresion, kilos, jabas, pendiente_registrar, orden
+    FROM public.cuadre_pollo_lineas
+    WHERE fecha = ${fechaIso}::date
+    ORDER BY seccion, orden, concepto
+  `) as Array<Record<string, unknown>>;
+
+  const lineas: LineaLibre[] = filasLineas.map((f) => ({
+    id: String(f.id),
+    seccion: f.seccion === "entrada" ? "entrada" : "salida",
+    concepto: String(f.concepto),
+    expresion: (f.expresion as string | null) ?? null,
+    kilos: r2(num(f.kilos)),
+    jabas: num(f.jabas),
+    pendienteRegistrar: Boolean(f.pendiente_registrar),
+    orden: num(f.orden),
+  }));
+
+  const kgSalidaCorte = r2(
+    lineas.filter((l) => l.seccion === "salida").reduce((a, l) => a + l.kilos, 0)
+  );
+  const entradasManuales = lineas.filter((l) => l.seccion === "entrada");
+  const kgEntradaManual = r2(entradasManuales.reduce((a, l) => a + l.kilos, 0));
+
+  // Lo que entró de verdad = lo registrado en Compras + lo que ella cargó a mano
+  // porque esa compra aún no está digitada.
+  const kgNetoIngresado = r2(kgNetoCompras + kgEntradaManual);
+  const jabas = jabasCompras + entradasManuales.reduce((a, l) => a + l.jabas, 0);
 
   // Las aves de la compra mandan; las manuales solo rellenan cuando no hay desglose.
   const hayAvesEnCompra = avesMachoCompra > 0 || avesHembraCompra > 0;
@@ -280,15 +428,22 @@ export async function construirCuadrePollo(
     kgTara,
     kgNetoIngresado,
     guiasCompra,
+    jabasCompras,
+    kgEntradaManual,
     avesMacho,
     avesHembra,
     avesTotal,
     avesManuales: !hayAvesEnCompra && avesTotal > 0,
     kgCampo,
     kgPlanta,
-    kgCorte,
-    kgCorteEspecial,
-    kgPolloEntero,
+    kgCampoSistema,
+    kgPlantaSistema,
+    campoMotivo: (manual?.kg_campo_motivo as string | null) ?? null,
+    plantaMotivo: (manual?.kg_planta_motivo as string | null) ?? null,
+    campoAjustado,
+    plantaAjustado,
+    desglose,
+    lineas,
     kgSalidaCorte,
     kgTotalSalida,
     mermaReal,
@@ -303,9 +458,6 @@ export async function construirCuadrePollo(
     diferenciaDelivery: r2(kgFacturadoAsesoras - kgSalidaCorte),
     usoFacturadoComoSalida,
     expresiones: {
-      corte: (manual?.expr_corte as string | null) ?? null,
-      corteEspecial: (manual?.expr_corte_especial as string | null) ?? null,
-      polloEntero: (manual?.expr_pollo_entero as string | null) ?? null,
       avesMacho: (manual?.expr_aves_macho as string | null) ?? null,
       avesHembra: (manual?.expr_aves_hembra as string | null) ?? null,
     },

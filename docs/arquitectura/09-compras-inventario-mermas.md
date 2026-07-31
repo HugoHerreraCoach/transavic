@@ -389,10 +389,46 @@ obligaría a re-teclear las otras diez.
 - Verificado contra **las 667 fórmulas aritméticas reales** de sus 32 hojas: 667/667 coinciden con
   lo que calculó Excel.
 
-**Contrato de persistencia:** las columnas numéricas (`kg_corte`, `aves_macho`, …) son la **fuente de
-verdad del cálculo**; las `expr_*` (migración `migrate-cuadre-pollo-expresiones-2026-07-30.sql`) solo
-guardan el texto para poder reeditarlo. El `POST` **revalida en servidor**: si la expresión no evalúa
+**Contrato de persistencia:** el número es la **fuente de verdad del cálculo**; la expresión solo
+guarda el texto para poder reeditarlo. El `POST` **revalida en servidor**: si la expresión no evalúa
 al número enviado (tolerancia 0.01), responde **400**. NULL = se digitó un número suelto.
+
+### 7bis.8 Flexibilidad: líneas propias y corrección de totales (30 jul 2026)
+
+En su Excel ella controla el 100 % del input; acá el sistema aporta la mayor parte, así que la hoja
+le deja intervenir sin salirse. Migración: `migrate-cuadre-pollo-lineas-2026-07-30.sql`.
+
+**a) Desglose de los totales automáticos.** El `GET` devuelve `desglose.{campo,planta,ejecutivas}`
+con los kilos por cliente, y la hoja los despliega en un acordeón inline (no un modal: en su Excel la
+lista está en la misma hoja). Viaja en el GET principal — son <80 filas por día — así que expandir es
+instantáneo y no hay endpoint aparte.
+⚠️ **Las queries del desglose usan EXACTAMENTE el mismo WHERE que los totales** (incluido
+`pr.origen_fisico IN ('vivo','desposte')`). Si un filtro se desalinea, el desglose no suma el total y
+la pantalla pierde credibilidad. `/api/reportes/cuadre-fisico/detalle` **no sirve** para esto: exige
+`producto_id`.
+
+**b) Líneas propias — `cuadre_pollo_lineas`.** Reemplazan a las columnas fijas
+`kg_corte`/`kg_corte_especial`/`kg_pollo_entero` (que quedan sin uso, no se borraron para que el
+rollback sea seguro). `Corte`, `Corte especial` y `Pollo entero` son ahora las **tres líneas que se
+siembran** al abrir un día nuevo; se pueden renombrar, borrar y ampliar.
+⚠️ **`seccion` ('entrada' | 'salida') es lo que protege la regla de §7bis.3**: decide de qué lado del
+cuadre suma una línea. Sin ese campo, una línea podría sumarse al lado equivocado y falsear la merma.
+El `POST` guarda con **replace-all dentro de `sql.transaction`** (upsert cabecera → `DELETE` líneas →
+N × `INSERT`), con los ids generados en JS porque el batch HTTP de Neon no encadena `RETURNING`.
+
+**c) Corregir un total del sistema.** `cuadre_pollo_dia.kg_campo_ajustado` / `kg_planta_ajustado` +
+su motivo. **NULL = manda el sistema**; con valor manda el valor y el **motivo es obligatorio** (CHECK
+en la tabla, zod en el endpoint y botón bloqueado en la UI). El delta se calcula, no se digita.
+Borrar el valor vuelve a automático. Quien consume el módulo recibe el valor **efectivo** más los
+flags `campoAjustado`/`plantaAjustado` y `kgCampoSistema`/`kgPlantaSistema` — no resuelve el override
+(mismo criterio que las aves y que `lib/metas.ts`).
+**El PDF imprime el ajuste y su motivo**: un cuadre corregido a mano que Antonio no puede distinguir
+de uno limpio deja de ser un control.
+
+**d) Entrada pendiente de registrar.** Una línea de `seccion='entrada'` con
+`pendiente_registrar=true` suma al neto ingresado y se marca en ámbar. Resuelve el caso real del
+**25 jul 2026**, cuando la compra se registró incompleta (163 kg contra 2 001 kg de salida) y el
+cuadre daba **−1 837 kg** sin que ella pudiera hacer nada.
 
 ---
 

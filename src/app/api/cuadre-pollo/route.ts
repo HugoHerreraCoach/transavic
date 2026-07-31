@@ -18,19 +18,38 @@ const FECHA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 /** El desglose de pesadas tal como se tecleó ("62+62.2+62.5…"). */
 const expresion = z.string().max(500).nullable().optional();
 
+/** Una línea propia de la usuaria (Corte, Corte especial, Muestras, lo que sea). */
+const LineaSchema = z.object({
+  seccion: z.enum(["entrada", "salida"]),
+  concepto: z.string().trim().min(1).max(120),
+  expresion: expresion,
+  kilos: z.number().min(0).max(100000),
+  jabas: z.number().int().min(0).max(10000).optional().default(0),
+  pendiente_registrar: z.boolean().optional().default(false),
+});
+
+/**
+ * Corrección manual de un total del sistema. El motivo es OBLIGATORIO: un ajuste
+ * que Antonio no puede explicar deja de ser un control. `null` = sin corrección.
+ */
+const AjusteSchema = z
+  .object({
+    kilos: z.number().min(0).max(100000),
+    motivo: z.string().trim().min(3, { message: "Explica por qué lo corriges (mín. 3 letras)" }),
+  })
+  .nullable()
+  .optional();
+
 const GuardarSchema = z.object({
   fecha: z.string().regex(FECHA_REGEX, { message: "Fecha inválida" }),
   aves_macho: z.number().int().min(0).max(100000),
   aves_hembra: z.number().int().min(0).max(100000),
-  kg_corte: z.number().min(0).max(100000),
-  kg_corte_especial: z.number().min(0).max(100000),
-  kg_pollo_entero: z.number().min(0).max(100000),
   observaciones: z.string().max(1000).nullable().optional(),
-  expr_corte: expresion,
-  expr_corte_especial: expresion,
-  expr_pollo_entero: expresion,
   expr_aves_macho: expresion,
   expr_aves_hembra: expresion,
+  lineas: z.array(LineaSchema).max(60).optional().default([]),
+  ajuste_campo: AjusteSchema,
+  ajuste_planta: AjusteSchema,
 });
 
 /**
@@ -105,17 +124,31 @@ export async function POST(req: NextRequest) {
     }
     const d = validacion.data;
 
+    // Se descartan las filas que quedaron en blanco (la UI siempre deja una vacía
+    // al final para poder seguir tecleando) — mismo criterio que compras-client.
+    const lineas = d.lineas.filter((l) => l.concepto.trim() !== "" || l.kilos > 0);
+
     const incoherencias = [
-      expresionIncoherente(d.expr_corte, d.kg_corte),
-      expresionIncoherente(d.expr_corte_especial, d.kg_corte_especial),
-      expresionIncoherente(d.expr_pollo_entero, d.kg_pollo_entero),
       expresionIncoherente(d.expr_aves_macho, d.aves_macho),
       expresionIncoherente(d.expr_aves_hembra, d.aves_hembra),
+      ...lineas.map((l) => {
+        const e = expresionIncoherente(l.expresion, l.kilos);
+        return e ? `${l.concepto}: ${e}` : null;
+      }),
     ].filter(Boolean);
 
     if (incoherencias.length > 0) {
       return NextResponse.json(
         { error: `El desglose no cuadra con el total: ${incoherencias.join("; ")}` },
+        { status: 400 }
+      );
+    }
+
+    // Una línea sin concepto no se puede leer después en el PDF.
+    const sinConcepto = lineas.find((l) => l.concepto.trim() === "");
+    if (sinConcepto) {
+      return NextResponse.json(
+        { error: "Hay una línea con kilos pero sin nombre. Ponle un concepto o bórrala." },
         { status: 400 }
       );
     }
@@ -127,36 +160,50 @@ export async function POST(req: NextRequest) {
     };
 
     // Un cuadre por día: la PK es la fecha, así que guardar dos veces corrige la
-    // misma fila en vez de duplicarla.
-    await sql`
-      INSERT INTO public.cuadre_pollo_dia (
-        fecha, aves_macho, aves_hembra,
-        kg_corte, kg_corte_especial, kg_pollo_entero,
-        expr_corte, expr_corte_especial, expr_pollo_entero,
-        expr_aves_macho, expr_aves_hembra,
-        observaciones, usuario_id
-      ) VALUES (
-        ${d.fecha}::date, ${d.aves_macho}, ${d.aves_hembra},
-        ${d.kg_corte}, ${d.kg_corte_especial}, ${d.kg_pollo_entero},
-        ${limpiar(d.expr_corte)}, ${limpiar(d.expr_corte_especial)}, ${limpiar(d.expr_pollo_entero)},
-        ${limpiar(d.expr_aves_macho)}, ${limpiar(d.expr_aves_hembra)},
-        ${d.observaciones ?? null}, ${session.user.id}
-      )
-      ON CONFLICT (fecha) DO UPDATE SET
-        aves_macho = EXCLUDED.aves_macho,
-        aves_hembra = EXCLUDED.aves_hembra,
-        kg_corte = EXCLUDED.kg_corte,
-        kg_corte_especial = EXCLUDED.kg_corte_especial,
-        kg_pollo_entero = EXCLUDED.kg_pollo_entero,
-        expr_corte = EXCLUDED.expr_corte,
-        expr_corte_especial = EXCLUDED.expr_corte_especial,
-        expr_pollo_entero = EXCLUDED.expr_pollo_entero,
-        expr_aves_macho = EXCLUDED.expr_aves_macho,
-        expr_aves_hembra = EXCLUDED.expr_aves_hembra,
-        observaciones = EXCLUDED.observaciones,
-        usuario_id = EXCLUDED.usuario_id,
-        updated_at = (NOW() AT TIME ZONE 'America/Lima')
-    `;
+    // misma fila en vez de duplicarla. Las líneas se reemplazan por completo
+    // (DELETE + INSERT) dentro de la MISMA transacción que la cabecera, para que un
+    // guardado a medias no deje el día con las líneas borradas.
+    // ⚠️ El batch HTTP de Neon no encadena RETURNING: los ids se generan en JS.
+    await sql.transaction([
+      sql`
+        INSERT INTO public.cuadre_pollo_dia (
+          fecha, aves_macho, aves_hembra,
+          expr_aves_macho, expr_aves_hembra,
+          kg_campo_ajustado, kg_campo_motivo, kg_planta_ajustado, kg_planta_motivo,
+          observaciones, usuario_id
+        ) VALUES (
+          ${d.fecha}::date, ${d.aves_macho}, ${d.aves_hembra},
+          ${limpiar(d.expr_aves_macho)}, ${limpiar(d.expr_aves_hembra)},
+          ${d.ajuste_campo?.kilos ?? null}, ${d.ajuste_campo?.motivo ?? null},
+          ${d.ajuste_planta?.kilos ?? null}, ${d.ajuste_planta?.motivo ?? null},
+          ${d.observaciones ?? null}, ${session.user.id}
+        )
+        ON CONFLICT (fecha) DO UPDATE SET
+          aves_macho = EXCLUDED.aves_macho,
+          aves_hembra = EXCLUDED.aves_hembra,
+          expr_aves_macho = EXCLUDED.expr_aves_macho,
+          expr_aves_hembra = EXCLUDED.expr_aves_hembra,
+          kg_campo_ajustado = EXCLUDED.kg_campo_ajustado,
+          kg_campo_motivo = EXCLUDED.kg_campo_motivo,
+          kg_planta_ajustado = EXCLUDED.kg_planta_ajustado,
+          kg_planta_motivo = EXCLUDED.kg_planta_motivo,
+          observaciones = EXCLUDED.observaciones,
+          usuario_id = EXCLUDED.usuario_id,
+          updated_at = (NOW() AT TIME ZONE 'America/Lima')
+      `,
+      sql`DELETE FROM public.cuadre_pollo_lineas WHERE fecha = ${d.fecha}::date`,
+      ...lineas.map(
+        (l, i) => sql`
+          INSERT INTO public.cuadre_pollo_lineas (
+            id, fecha, seccion, concepto, expresion, kilos, jabas, pendiente_registrar, orden, usuario_id
+          ) VALUES (
+            ${crypto.randomUUID()}, ${d.fecha}::date, ${l.seccion}, ${l.concepto.trim()},
+            ${limpiar(l.expresion)}, ${l.kilos}, ${l.jabas},
+            ${l.seccion === "entrada" ? l.pendiente_registrar : false}, ${i}, ${session.user.id}
+          )
+        `
+      ),
+    ]);
 
     // Recalcular con lo recién guardado y devolverlo (evita un GET extra).
     const cuadre = await construirCuadrePollo(sql, d.fecha);

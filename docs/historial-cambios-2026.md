@@ -164,6 +164,49 @@ de `cuadre-mermas-tab`), y eso empujaba el layout de toda la página. El scroll 
 pesadas reales dan 493.85; guardar y recargar devuelve la expresión completa, no el total; expresión
 rota → botón bloqueado y celda en rojo; POST incoherente → 400.
 
+### Tercera vuelta: flexibilidad de Excel sin perder la automatización
+
+Hugo preguntó lo correcto: *"¿estás seguro que lo que has hecho se parece a su Excel o es mejor y más
+intuitivo?"*. Al contrastarlo de verdad, la respuesta honesta fue **no**: era más automático, pero le
+quitaba algo que ella sí tiene hoy.
+
+- **Ella controla el 100 % del input en su Excel; en la pantalla controlaba el 30 %.** "Venta en
+  Campo 1,204.55 kg" venía del sistema, sin poder verlo por dentro ni corregirlo.
+- **Su "VENTA" es auditable línea por línea; la nuestra era un total opaco.**
+- **No podía agregar conceptos propios** — y en su Excel, `CORTE` y `CORTES E.` son exactamente eso.
+
+Y los datos reales de producción lo confirmaban: del 18 al 26 de julio las mermas daban 92–267 kg
+(creíbles, su Excel da 200–330), pero el **25 de julio daba −1 837 kg** porque la compra se registró
+incompleta — y ella se habría quedado sin cuadre y sin poder avanzar.
+
+**Lo construido** (migración `migrate-cuadre-pollo-lineas-2026-07-30.sql`):
+
+1. **Desglose inline de cada total automático.** Se toca `▸ Venta en Campo` y se despliegan los
+   clientes con sus kilos, dentro de la misma tabla. Viaja en el GET principal (<80 filas/día), así
+   que expandir es instantáneo. Las queries usan el MISMO WHERE que los totales — si un filtro se
+   desalinea, el desglose no suma y la pantalla pierde crédito. (`/api/reportes/cuadre-fisico/detalle`
+   no servía: exige `producto_id`.)
+2. **Líneas propias — tabla `cuadre_pollo_lineas`.** Las columnas fijas de corte pasan a ser las tres
+   líneas que se siembran por defecto, renombrables y borrables, y se pueden agregar más en salida y
+   en entrada. El campo **`seccion`** es lo que protege la regla de no duplicar el peso del delivery.
+   Guardado con replace-all dentro de `sql.transaction`.
+3. **Corregir el total de Campo o Planta**, con **motivo obligatorio** (CHECK en la tabla + zod +
+   botón bloqueado). El delta se calcula solo y la hoja muestra `el sistema calculó 1,204.55 · +45.45
+   · motivo`. **El PDF lo imprime**: un cuadre corregido a mano que Antonio no puede distinguir de uno
+   limpio deja de ser un control. Borrar el valor vuelve a automático.
+4. **Entrada pendiente de registrar**: desbloquea el caso del 25 de julio y queda marcada en ámbar
+   como recordatorio de que esa compra falta digitar en Compras.
+
+**Verificado E2E en `dev-hugo`:** la hoja 05-03 sigue dando **−3.50** tras el refactor completo; el
+desglose despliega los clientes y suma el total; las líneas persisten con su expresión
+(`Corte especial = 16+38.5`); sin motivo el botón se bloquea y con motivo guarda `+45.45`; un día sin
+compras deja de estar bloqueado al cargar una entrada a mano (1074+97.2 = 1 171.20 kg, 51 jabas); y
+el CASCADE borra las líneas junto con el día.
+
+**Detalle que costó encontrar:** el desglose "no se desplegaba" — resultó que el selector de la prueba
+estaba clickeando el acordeón **del sidebar**, que también se llama "Venta en Campo". El componente
+funcionaba desde el principio.
+
 **Fuera de alcance (anotado):** la **cartera diaria de campo** (la zona izquierda de su hoja: ~43
 destinos con SALDO ANTERIOR / A CUENTA / saldo final). Existe a medias en
 `/dashboard/clientes-avicola/liquidacion`, sin saldo anterior anclado a la fecha, sin kg ni precio
