@@ -47,7 +47,7 @@ export const CATALOGO_VISTAS: VistaCatalogo[] = [
   // Producción & Compras
   { key: "/dashboard/resumen", label: "Resumen a Preparar", grupo: "Producción & Compras" },
   { key: "/dashboard/produccion", label: "Producción", grupo: "Producción & Compras" },
-  { key: "/dashboard/produccion/mermas", label: "Calculadora Mermas", grupo: "Producción & Compras" },
+  { key: "/dashboard/cuadre-pollo", label: "Cuadre de Pollo", grupo: "Producción & Compras" },
   { key: "/dashboard/inventario", label: "Inventario Flex", grupo: "Producción & Compras" },
   { key: "/dashboard/compras", label: "Compras", grupo: "Producción & Compras" },
   { key: "/dashboard/proveedores", label: "Proveedores", grupo: "Producción & Compras" },

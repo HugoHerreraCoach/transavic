@@ -16,8 +16,14 @@ export interface ParametrosNegocio {
   /** Semáforo de margen del catálogo: verde si ≥ bueno, ámbar si ≥ regular, rojo debajo. */
   margen_bueno_pct: number;
   margen_regular_pct: number;
-  /** Umbral de alerta de merma alta (%) en la calculadora de mermas. */
+  /** Umbral de alerta de merma alta (%) en el cuadre de pollo. */
   merma_alta_pct: number;
+  /**
+   * Merma ESPERADA del beneficio, en kg por ave (Cuadre de Pollo).
+   * Es el número que Marianela aplica al total de aves en su Excel — verificado
+   * en las 32 hojas de marzo 2026, todas dan 0.32 exacto.
+   */
+  merma_estandar_ave_kg: number;
   /** Rendimiento usado por Rentabilidad cuando no hay mermas registradas (%). */
   rendimiento_fallback_pct: number;
   /** Cortes de antigüedad de deuda del panel avícola (días). */
@@ -33,6 +39,7 @@ export const PARAMETROS_NEGOCIO_DEFAULT: ParametrosNegocio = {
   margen_bueno_pct: 25,
   margen_regular_pct: 15,
   merma_alta_pct: 10,
+  merma_estandar_ave_kg: 0.32,
   rendimiento_fallback_pct: 80,
   cortes_deuda_avicola: [7, 15, 30],
 };
@@ -55,6 +62,8 @@ export function normalizarParametros(crudo: unknown): ParametrosNegocio {
   base.margen_bueno_pct = numeroPositivo(p.margen_bueno_pct) ?? base.margen_bueno_pct;
   base.margen_regular_pct = numeroPositivo(p.margen_regular_pct) ?? base.margen_regular_pct;
   base.merma_alta_pct = numeroPositivo(p.merma_alta_pct) ?? base.merma_alta_pct;
+  base.merma_estandar_ave_kg =
+    numeroPositivo(p.merma_estandar_ave_kg) ?? base.merma_estandar_ave_kg;
   base.rendimiento_fallback_pct =
     numeroPositivo(p.rendimiento_fallback_pct) ?? base.rendimiento_fallback_pct;
   if (

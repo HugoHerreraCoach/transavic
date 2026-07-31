@@ -101,12 +101,14 @@ function NumeroEditable({
   valor,
   onChange,
   sufijo = "%",
+  step = "1",
 }: {
   titulo: string;
   ayuda: string;
   valor: number;
   onChange: (v: number) => void;
   sufijo?: string;
+  step?: string;
 }) {
   return (
     <div className="flex items-start justify-between gap-4">
@@ -120,9 +122,10 @@ function NumeroEditable({
         <input
           type="number"
           min="0"
-          step="1"
+          step={step}
           value={Number.isFinite(valor) ? valor : ""}
           onChange={(e) => onChange(Number(e.target.value))}
+          onWheel={(e) => (e.target as HTMLInputElement).blur()}
           className="w-20 rounded-xl border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-bold text-right tabular-nums text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
         />
         <span className="text-xs font-semibold text-gray-500">{sufijo}</span>
@@ -222,10 +225,19 @@ export default function ConfiguracionClient() {
         <div className="border-t border-gray-100" />
         <NumeroEditable
           titulo="Alerta de merma alta"
-          ayuda="En la calculadora de mermas, un porcentaje mayor a esto se marca como merma alta."
+          ayuda="En el Cuadre de Pollo, una merma mayor a este porcentaje del peso comprado se marca en rojo."
           valor={params.merma_alta_pct}
           onChange={(v) => setParams({ ...params, merma_alta_pct: v })}
         />
+        <NumeroEditable
+          titulo="Merma esperada por ave"
+          ayuda="Kilos que pierde un ave en el beneficio (pluma, sangre, vísceras). El Cuadre de Pollo multiplica esto por el total de aves del día para saber cuánta merma era normal."
+          valor={params.merma_estandar_ave_kg}
+          onChange={(v) => setParams({ ...params, merma_estandar_ave_kg: v })}
+          sufijo="kg"
+          step="0.01"
+        />
+        <div className="border-t border-gray-100" />
         <NumeroEditable
           titulo="Rendimiento estándar de rentabilidad"
           ayuda="Cuando no hay mermas registradas en el periodo, Rentabilidad asume este rendimiento del pollo."

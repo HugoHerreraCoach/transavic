@@ -46,10 +46,15 @@ export async function GET(req: NextRequest) {
 
     const rows = await sql`
       WITH productos_carnicos AS (
-        -- Seleccionar productos de categorías de carne (Pollo, Carnes)
+        -- Solo productos de REVENTA: los que entran y salen iguales (gallinas,
+        -- carnes de res/cerdo), donde comparar compra contra venta sí tiene sentido.
+        -- El pollo vivo y sus cortes se cuadran en bloque en /dashboard/cuadre-pollo:
+        -- se compra 1 producto y se vende en ~20, así que fila por fila es imposible.
         SELECT id, nombre, categoria, unidad
         FROM productos
-        WHERE categoria IN ('Pollo', 'Carnes') AND activo IS NOT FALSE
+        WHERE categoria IN ('Pollo', 'Carnes')
+          AND activo IS NOT FALSE
+          AND origen_fisico = 'reventa'
       ),
       compras_dia AS (
         -- Sumatoria de kilos e ingresados por compras completadas en el rango de fechas
@@ -70,29 +75,36 @@ export async function GET(req: NextRequest) {
         GROUP BY ci.producto_id
       ),
       ventas_ejecutivas AS (
-        -- Sumatoria de kilos reales pesados para ejecutivas/delivery en el rango de fechas
-        SELECT 
+        -- Sumatoria de kilos reales pesados para ejecutivas/delivery en el rango de fechas.
+        -- Se ancla a fecha_pedido (= fecha de ENTREGA, gotcha #8) porque este es un
+        -- cuadre FÍSICO: la mercadería sale el día que se entrega, no el día que se
+        -- registró la venta. Es además la misma fecha que usa el drill-down (/detalle).
+        -- Solo kilos: sumar unidades como si fueran kg contamina la merma.
+        SELECT
           pi.producto_id,
           COALESCE(SUM(COALESCE(pi.cantidad_real, pi.cantidad, 0)), 0)::numeric(14, 2) AS kg_ejecutivas
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
+        WHERE p.fecha_pedido BETWEEN ${desde}::date AND ${hasta}::date
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
+          AND pi.unidad IN ('kg', 'KGM')
         GROUP BY pi.producto_id
       ),
       ventas_planta AS (
-        -- Sumatoria de kilos del POS de planta en el rango de fechas
-        SELECT 
+        -- Sumatoria de kilos del POS de planta en el rango de fechas.
+        -- El POS pesa en el acto, por eso usa cantidad y no cantidad_real.
+        SELECT
           pi.producto_id,
           COALESCE(SUM(pi.cantidad), 0)::numeric(14, 2) AS kg_planta
         FROM pedido_items pi
         JOIN pedidos p ON p.id = pi.pedido_id
-        WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${desde}::date AND ${hasta}::date
+        WHERE p.fecha_pedido BETWEEN ${desde}::date AND ${hasta}::date
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
+          AND pi.unidad IN ('kg', 'KGM')
         GROUP BY pi.producto_id
       ),
       ventas_campo AS (

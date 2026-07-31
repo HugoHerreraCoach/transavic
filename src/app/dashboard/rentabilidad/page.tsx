@@ -422,10 +422,11 @@ export default function RentabilidadPage() {
             <div className="overflow-x-auto">
               {data.mermasDiarias.length === 0 ? (
                 <div className="p-8 text-center text-gray-500 text-sm">
-                  No se registraron mermas ni procesos en este período. Registra procesos en la{" "}
-                  <Link href="/dashboard/produccion/mermas" className="font-semibold text-indigo-600 hover:underline">
-                    Calculadora de Mermas
-                  </Link>.
+                  No se registraron mermas ni procesos en este período. Se registran al guardar el{" "}
+                  <Link href="/dashboard/cuadre-pollo" className="font-semibold text-indigo-600 hover:underline">
+                    Cuadre de Pollo
+                  </Link>{" "}
+                  de cada día.
                 </div>
               ) : (
                 <table className="w-full text-left text-sm text-gray-700">

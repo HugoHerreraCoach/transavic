@@ -24,7 +24,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "dia", label: "Día a día", icon: <FiClipboard /> },
   { id: "salida_carnes", label: "Salida de Productos", icon: <FiBox /> },
   { id: "cartera_asesoras", label: "Cartera Asesoras", icon: <FiUsers /> },
-  { id: "cuadre_mermas", label: "Cuadre de Mermas", icon: <FiClipboard /> },
+  { id: "cuadre_mermas", label: "Cuadre por Producto", icon: <FiClipboard /> },
   { id: "cuadre_consolidado", label: "Cuadre General", icon: <FiActivity /> },
 ];
 

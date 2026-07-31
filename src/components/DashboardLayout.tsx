@@ -96,7 +96,7 @@ const navItems: NavItem[] = [
   // ── PRODUCCIÓN & COMPRAS ──
   { href: "/dashboard/resumen", label: "Resumen a Preparar", icon: <FiBox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"] },
   { href: "/dashboard/produccion", label: "Producción", icon: <FiClipboard className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"] },
-  { href: "/dashboard/produccion/mermas", label: "Calculadora Mermas", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
+  { href: "/dashboard/cuadre-pollo", label: "Cuadre de Pollo", icon: <FiCheckSquare className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/inventario", label: "Inventario", icon: <FiBox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/compras", label: "Compras", icon: <FiInbox className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
   { href: "/dashboard/proveedores", label: "Proveedores", icon: <FiUsers className="h-5 w-5 flex-shrink-0" />, roles: ["admin", "produccion"], isBeta: true },
@@ -171,7 +171,7 @@ const GROUP_BY_HREF: Record<string, string> = {
 
   "/dashboard/resumen": "Producción & Compras",
   "/dashboard/produccion": "Producción & Compras",
-  "/dashboard/produccion/mermas": "Producción & Compras",
+  "/dashboard/cuadre-pollo": "Producción & Compras",
   "/dashboard/inventario": "Producción & Compras",
   "/dashboard/compras": "Producción & Compras",
   "/dashboard/proveedores": "Producción & Compras",

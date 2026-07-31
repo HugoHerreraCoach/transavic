@@ -121,6 +121,8 @@ export async function GET(req: NextRequest) {
           AND COALESCE(p.origen, 'asesor') = 'asesor'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
+          -- Mismo filtro que el agregado, o el modal no suma lo que muestra la celda.
+          AND pi.unidad IN ('kg', 'KGM')
         ORDER BY p.created_at DESC
       `;
     } else if (canal === "planta") {
@@ -141,6 +143,7 @@ export async function GET(req: NextRequest) {
           AND p.origen = 'pos_planta'
           AND p.estado <> 'Fallido'
           AND NOT COALESCE(p.anulada, FALSE)
+          AND pi.unidad IN ('kg', 'KGM')
         ORDER BY p.created_at DESC
       `;
     } else if (canal === "ajuste") {

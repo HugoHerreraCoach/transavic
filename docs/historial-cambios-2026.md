@@ -8,6 +8,108 @@
 
 ---
 
+## 30 jul 2026 — Cuadre de Pollo: reemplazar el Excel de Marianela
+
+**Contexto.** Marianela (equipo de Antonio, lleva compras y proveedores) cuadra a mano en Excel, todos
+los días, la merma del beneficio de pollo. Se le había construido la pestaña **"Cuadre de Mermas"** en
+`/dashboard/reportes`, pero no le servía. Mandó un video de su pantalla del 30 de julio con la columna
+CARGA (COMPRA) vacía y mermas de `-83.40 kg`, `-146.00 kg` por fila; una foto de su Excel con la nota
+*"yo solo necesitaría un ítem para hacer este cálculo, o lo que tú colocaste cómo podría yo ingresar el
+total de compras para poder analizar la merma"*; y un audio: *"todo lo que se va para delivery, que él
+coloca en su hoja como corte, eso no lo estamos incluyendo en ningún lado… eso me tiene un poco
+agobiada"*.
+
+### Lo que su Excel realmente hace (descifrado de las 32 hojas de `VENTAS MARZO NELA mio.xlsx`)
+
+No es un cuadre por producto. Es **un solo ítem: el pollo**, global del día:
+
+```
+Neto comprado   = Σ por proveedor (bruto − tara) − devoluciones     ← pollo vivo en jabas
+Total salida    = clientes de campo + CORTE + CORTES ESPECIALES     ← lo beneficiado que sale
+Merma real      = Neto comprado − Total salida
+Merma esperada  = N° de aves × 0.32 kg
+DIFERENCIA      = Merma esperada − Merma real
+```
+
+**La constante 0.32 kg/ave está verificada en las 32 hojas**: 28-02 → 217.6/680; 01-03 → 156.48/489;
+05-03 → 198.4/620; 10-03 → 253.76/793; 20-03 y 31-03 → 247.36/773. Todas dan **0.32 exacto**. Los
+"macho 0.35 / hembra 0.30" que anota al costado son referencia y **no entran en su fórmula** — el
+código anterior sí los usaba, inventando una fórmula que nadie había validado. La DIFERENCIA también
+cuadra en todas (05-03: 198.4 − 201.9 = −3.5; 31-03: 247.36 − 331.05 = −83.69).
+
+### Las 4 causas de que no le sirviera (todas verificadas contra producción)
+
+1. **El cuadre por producto no puede cuadrar nunca.** Se compra pollo vivo contra
+   `Pollo entero con/sin menudencia` y se vende en ~20 cortes. Cada corte da merma = −(todo lo
+   vendido) y el pollo entero da +(todo lo comprado). Es aritmética, no un bug.
+2. **No había compras registradas desde el 26 de julio** → por eso CARGA salía vacía el día 30, sin
+   ninguna explicación en pantalla.
+3. **`total_pollos` / `jabas_macho` / `jabas_hembra` = 0 en el 100 % de las filas**
+   (`SELECT COUNT(*) FROM compra_items WHERE total_pollos > 0` → **0**). La merma estimada que el
+   código ya calculaba siempre daba 0.
+4. **Faltaba el peso que sale a CORTE/delivery**: en su Excel es el **30-45 % del peso diario**
+   (~500 kg de 1 650). Sin eso la merma se dispara.
+
+### Módulos muertos encontrados
+
+- `mermas_diarias` → **0 filas**. La "Calculadora Mermas" del sidebar nunca se usó. **Retirada.**
+- `ajustes_cuadre_fisico` → **0 filas**. El "Ajuste Manual" del cuadre tampoco. Se conserva.
+
+### Lo que se construyó
+
+**`/dashboard/cuadre-pollo`** (ítem propio en el sidebar, grupo Producción & Compras, admin +
+produccion), que reemplaza a la Calculadora de Mermas. Cuatro bloques: **1. Entró** (tabla por
+proveedor con jabas/bruto/tara/neto y las devoluciones como fila propia en negativo, igual que su
+"DEV. BENF."; aves macho/hembra), **2. Salió** (Campo y Planta automáticos + los 3 campos manuales de
+lo que salió a picar), **3. Cuadre** (merma real vs esperada, DIFERENCIA con semáforo) y **4. Control
+de delivery**. Con PDF y "Copiar Resumen" para WhatsApp.
+
+**Decisión clave — no duplicar el peso del delivery:** el cuadre usa la **salida física a corte**, NO
+lo que las asesoras facturaron. Son dos medidas del mismo flujo; sumarlas duplicaría el 30-45 % del
+día. Lo facturado va aparte en el Control de delivery — que es literalmente lo que ella pidió en el
+audio. Sin salida a corte digitada, el cuadre cae a lo facturado y lo advierte.
+
+**Tolerancia:** la diferencia cuadra si `|diferencia| ≤ 1 % del neto ingresado`. Pesar ~2 000 kg tiene
+ruido de varios kilos; sin esa banda, el −3.50 kg que su Excel daba por bueno salía como alerta roja.
+
+**`productos.origen_fisico`** (`vivo` | `desposte` | `reventa`, default `reventa`): la pieza que
+faltaba para separar los dos niveles de cuadre. `rendimiento_porcentaje` no servía — está en `100.00`
+en los 84 productos.
+
+### Lo que se corrigió del cuadre existente
+
+- **Solo reventa:** `cuadre-fisico` ahora filtra `origen_fisico = 'reventa'`. Se renombró a **"Cuadre
+  por Producto"** con una nota que remite al Cuadre de Pollo.
+- **Filtro `kg`/`uni`:** sumaba unidades como si fueran kilos (a diferencia de `salida-carnes`, que sí
+  filtraba) — por eso los dos reportes daban totales distintos para el mismo rango.
+- **Fecha:** el agregado usaba `created_at` y su propio drill-down `fecha_pedido`. Ambos (y también
+  `salida-carnes`) pasan a **`fecha_pedido` = fecha de ENTREGA**, que es lo correcto para un cuadre
+  físico. Como ~86 % de los pedidos se entrega en fecha distinta a la de registro, **los números
+  históricos de ambos reportes se movieron** — es la corrección, no un efecto secundario.
+
+### Verificación E2E en `dev-hugo`
+
+Se sembró la hoja **05-03-2026** (compras 1 954.75 neto con la devolución de −65.70, 620 aves, campo
+1 204.55, corte 493.80 + 54.50) y la pantalla dio **exactamente** lo del Excel:
+
+| | Excel | Sistema |
+|---|---|---|
+| Neto ingresado | 1 954.75 | 1 954.75 ✓ |
+| Total salida | 1 752.85 | 1 752.85 ✓ |
+| Merma real | 201.90 | 201.90 ✓ |
+| Merma esperada | 198.40 | 198.40 ✓ |
+| **DIFERENCIA** | **−3.50** | **−3.50** ✓ |
+
+También verificado: día sin compras → banner ámbar en vez de tabla en blanco; guardar dos veces → una
+sola fila en `cuadre_pollo_dia` y en `mermas_diarias` (upsert por PK `fecha`); caso rojo forzado
+(−97.30 kg) → alerta correcta; el Cuadre por Producto ya NO muestra los cortes de pollo (0 filas ese
+día); PDF generado sin errores; `/dashboard/produccion/mermas` → 404; Rentabilidad sigue cargando.
+
+**Migración:** `scripts/migrate-cuadre-pollo-2026-07-30.sql` (+ rollback), aditiva e idempotente.
+Detalle técnico: [doc 09 §7bis](./arquitectura/09-compras-inventario-mermas.md).
+
+---
+
 ## 20 jul 2026 (tarde) — Segunda marca en WhatsApp: el código listo para el RUC 10
 
 **Contexto (pedido de Hugo):** Transavic (RUC 20) ya opera en WhatsApp desde el 19 jul. Ahora toca

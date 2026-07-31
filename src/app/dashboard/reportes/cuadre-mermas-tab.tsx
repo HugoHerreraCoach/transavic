@@ -408,7 +408,7 @@ export default function CuadreMermasTab() {
 
       doc.setTextColor(31, 41, 55);
       doc.setFontSize(16);
-      doc.text("Cuadración Física e Inventario Diario (Mermas)", 148.5, 32, { align: "center" });
+      doc.text("Cuadre por Producto (reventa)", 148.5, 32, { align: "center" });
 
       doc.setTextColor(107, 114, 128);
       doc.setFont("helvetica", "normal");
@@ -634,6 +634,20 @@ export default function CuadreMermasTab() {
         )}
       </div>
 
+      {/* El pollo NO se cuadra aquí: se compra 1 producto (vivo) y se vende en ~20
+          cortes, así que fila por fila la merma nunca cuadra. Va en su propio módulo. */}
+      <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-xs text-blue-900 flex items-start gap-2">
+        <FiInfo className="shrink-0 mt-0.5" size={14} />
+        <span>
+          Aquí solo salen los productos que se compran y se venden <strong>iguales</strong>{" "}
+          (gallinas, carnes de res y cerdo). El pollo vivo y sus cortes se cuadran en{" "}
+          <a href="/dashboard/cuadre-pollo" className="font-bold underline">
+            Cuadre de Pollo
+          </a>
+          .
+        </span>
+      </div>
+
       {loading && (
         <div className="flex flex-col items-center justify-center py-20">
           <FiLoader className="h-8 w-8 text-red-600 animate-spin mb-2" />
@@ -667,7 +681,7 @@ export default function CuadreMermasTab() {
                       TRANSAVIC & LA AVÍCOLA DE TONY
                     </h2>
                     <h1 className="text-lg font-black text-gray-900 tracking-tight">
-                      Cuadración Física e Inventario Diario
+                      Cuadre por Producto (reventa)
                     </h1>
                     <p className="text-[11px] font-semibold text-gray-500 mt-1 capitalize">
                       {fechaInicio === fechaFin

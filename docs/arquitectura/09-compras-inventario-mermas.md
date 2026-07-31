@@ -279,31 +279,82 @@ El ajuste es atómico (upsert del saldo + kardex `tipo='ajuste'` en `sql.transac
 
 ---
 
-## 7. Mermas — `POST /api/mermas`
+## 7. Mermas — Cuadre de Pollo (`/dashboard/cuadre-pollo`)
 
-**Roles:** `GET` con sesión; `POST` solo `admin` o `produccion`. UI: `/dashboard/produccion/mermas` (`mermas-client.tsx`).
+> **⚠️ La "Calculadora de Mermas" (`/dashboard/produccion/mermas`, `POST /api/mermas`) fue RETIRADA el 30 jul 2026.** Nunca se usó: `mermas_diarias` tenía **0 filas** en producción. La reemplaza el **Cuadre de Pollo** (§7bis), que es el cuadre que Marianela llevaba a mano en Excel. La tabla `mermas_diarias` se conserva y ahora la alimenta el módulo nuevo, porque `/api/rentabilidad` la lee.
 
-### 7.1 Fórmula y validación
+### 7.1 Fórmula heredada de `mermas_diarias`
 
 ```
 merma_kg   = peso_bruto − (peso_limpio + peso_menudencia)
 porcentaje = merma_kg / peso_bruto × 100
 ```
 
-El zod `refine` **rechaza físicamente lo imposible**: `peso_limpio + peso_menudencia ≤ peso_bruto` (no puede salir más carne de la que entró). La fecha es opcional (`YYYY-MM-DD`) con default el día de HOY en Lima.
+El Cuadre de Pollo escribe esa tabla con `peso_bruto` = kilos que entraron, `peso_limpio` = kilos que salieron y `peso_menudencia` = 0, de modo que `merma` sigue siendo la merma real del día y Rentabilidad no cambia de contrato.
 
 ### 7.2 Merma por lote (`compra_id`)
 
-`compra_id` es un vínculo **opcional** a la carga del día: la UI carga las compras registradas HOY y deja elegir a cuál corresponde el procesamiento. Con eso, el reporte de rentabilidad puede responder "¿qué rendimiento dio la carga de tal proveedor?" en lugar de solo el agregado del día. Si no se elige, la merma queda global (comportamiento anterior, `compra_id = NULL`).
+`compra_id` sigue existiendo en `mermas_diarias` como vínculo **opcional** a una carga concreta. El Cuadre de Pollo escribe con `compra_id = NULL` (cuadra el día completo, no un lote), y por eso su upsert borra solo las filas del día con `compra_id IS NULL`.
 
 ### 7.3 La merma es INFORMATIVA (decisión pendiente de rediseño)
 
-El `POST` **solo inserta en `mermas_diarias`** — no toca `inventario_lotes` ni escribe kardex. Es deliberado: hoy la merma es un KPI de rendimiento (alimenta `/api/rentabilidad`), no un movimiento de stock. El rediseño está **pendiente de conversación con Antonio**, con dos opciones sobre la mesa:
+El registro de merma **no toca `inventario_lotes` ni escribe kardex**. Es deliberado: la merma es un KPI de rendimiento (alimenta `/api/rentabilidad`), no un movimiento de stock. El rediseño está **pendiente de conversación con Antonio**, con dos opciones sobre la mesa:
 
 - **Opción A — merma como transformación de inventario:** registrar la merma descontaría el producto "entero" (kg brutos) y acreditaría los productos resultantes (limpio, menudencia) con un tipo de kardex nuevo (`merma`/`transformacion`). Es el modelo contablemente correcto, pero exige mapear la merma a productos concretos del catálogo (hoy la merma se registra en kg globales, sin `producto_id`).
 - **Opción B — mantenerla informativa y regularizar por ajuste:** el stock se cuadra periódicamente con ajustes manuales — el motivo **"Merma no registrada" ya existe** en la lista cerrada de §6 precisamente como válvula para esto. Más simple, pero el stock del día flota hasta el ajuste.
 
 Hasta que Antonio decida, **no agregar descuentos de inventario a las mermas** — se duplicaría contra los ajustes que la operación ya hace.
+
+---
+
+## 7bis. Cuadre de Pollo (30 jul 2026 — pedido de Marianela)
+
+**Ruta:** `/dashboard/cuadre-pollo` · **API:** `GET`/`POST /api/cuadre-pollo` · **Fórmula:** `src/lib/cuadre-pollo.ts` (fuente ÚNICA) · **Roles:** `admin` + `produccion`.
+
+### 7bis.1 Por qué existe
+
+El cuadre por producto (§10.2) **no puede cuadrar el pollo**: se compra pollo vivo contra 1-2 productos (`Pollo entero con/sin menudencia`) y se vende en ~20 cortes. Cada corte mostraba una merma falsa de −(todo lo vendido). Marianela lo cuadraba a mano en Excel, **globalmente**, y eso es lo que replica este módulo.
+
+### 7bis.2 La fórmula (verificada contra sus 32 hojas de marzo 2026)
+
+```
+Neto ingresado = Σ compras del día (peso_neto) de productos 'vivo' y 'desposte',
+                 con las devoluciones en negativo
+Total salida   = Venta Campo + Venta Planta + lo que SALIÓ a picar para delivery
+Merma real     = Neto ingresado − Total salida
+Merma esperada = total de aves × merma_estandar_ave_kg   (0.32 kg, configurable)
+DIFERENCIA     = Merma esperada − Merma real
+```
+
+`0.32 kg/ave` está verificado: en las 32 hojas el cociente `merma esperada / aves` da 0.32 exacto. Los "macho 0.35 / hembra 0.30" que ella anota al costado son referencia, **no entran en su cálculo** — no reproducirlos como fórmula.
+
+**Tolerancia:** la diferencia se considera cuadrada si `|diferencia| ≤ 1% del neto ingresado`. Pesar ~2 000 kg en balanza de planta tiene ruido de varios kilos; sin esa banda, un −3.50 kg (que su Excel daba por bueno) salía como alerta roja.
+
+### 7bis.3 REGLA CRÍTICA — no duplicar el peso del delivery
+
+El cuadre usa la **salida física a corte** (los 3 campos manuales: corte, corte especial, pollo entero), **NO** lo que las asesoras facturaron. Son dos medidas del MISMO flujo; sumarlas duplicaría el 30-45 % del peso del día. Lo facturado se muestra aparte, en el **Control de delivery**, que es justo lo que ella pidió por audio: *"cómo yo podría ver si todo lo que están incluyendo en delivery es la misma suma de lo que ellos están sacando a la hora de picar"*.
+
+Si no se digitó la salida a corte, el cuadre cae a lo facturado por asesoras y lo advierte en pantalla (`usoFacturadoComoSalida`).
+
+### 7bis.4 `productos.origen_fisico` — la pieza que faltaba
+
+Columna nueva (migración `migrate-cuadre-pollo-2026-07-30.sql`), CHECK `('vivo','desposte','reventa')`, default `'reventa'`:
+
+| Valor | Qué es | Dónde se cuadra |
+|---|---|---|
+| `vivo` | pollo vivo que entra a beneficio | ENTRADA del Cuadre de Pollo |
+| `desposte` | corte que SALE del beneficio (y a veces se compra a terceros) | en bloque, dentro del Cuadre de Pollo |
+| `reventa` | entra y sale igual (gallinas, carnes de res/cerdo) | por producto, en Reportes (§10.2) |
+
+**No sirve `productos.rendimiento_porcentaje`**: está en `100.00` en los 84 productos, nadie lo configuró nunca.
+
+### 7bis.5 Aves
+
+Se leen del desglose `jabas_macho`/`jabas_hembra`/`sueltos_*` de `compra_items` (7 machos o 9 hembras por jaba). **En producción esos campos están en 0 en el 100 % de las filas** — nadie los llena —, así que cuando vienen vacíos la usuaria digita machos y hembras en el propio cuadre (`cuadre_pollo_dia.aves_macho/aves_hembra`). Si la compra SÍ trae el desglose, manda la compra y los inputs quedan deshabilitados.
+
+### 7bis.6 Persistencia
+
+`cuadre_pollo_dia` con **PK `fecha`** (un cuadre por día; guardar dos veces corrige la misma fila, no duplica). Al guardar se escribe además el espejo en `mermas_diarias` para que Rentabilidad tenga rendimiento real. Si ese espejo falla, se loguea y el cuadre igual queda guardado.
 
 ---
 
@@ -393,23 +444,26 @@ está en el [doc 26](./26-proveedores-cuentas-por-pagar.md).
 
 ## 10. Reportes de Operación de Carnes e Inventario (Marianela - Julio 2026)
 
-Implementados en el Hub de Reportes (`/dashboard/reportes` -> pestañas **"Salida de Carnes"** y **"Cuadre de Mermas"**).
+Implementados en el Hub de Reportes (`/dashboard/reportes` -> pestañas **"Salida de Productos"** y **"Cuadre por Producto"**).
 
 ### 10.1 Reporte Diario de Salida de Carnes (Kilos por Canal)
-* **API:** `GET /api/reportes/salida-carnes?fecha=YYYY-MM-DD`
+* **API:** `GET /api/reportes/salida-carnes?fecha_inicio&fecha_fin`
 * **Lógica:** Consolida y agrupa los kilogramos reales despachados para:
-  1. **Ejecutivas (Asesoras):** Pedidos del día (según `created_at` Lima), no fallidos ni anulados, de origen `'asesor'`. Suma `cantidad_real` (o `cantidad` como fallback).
-  2. **Planta (POS):** Pedidos del día (según `created_at` Lima), no fallidos ni anulados, de origen `'pos_planta'`. Suma `cantidad`.
+  1. **Ejecutivas (Asesoras):** Pedidos con `fecha_pedido` en el rango, no fallidos ni anulados, de origen `'asesor'`. Suma `cantidad_real` (o `cantidad` como fallback), solo ítems en `kg`/`KGM`.
+  2. **Planta (POS):** Pedidos con `fecha_pedido` en el rango, no fallidos ni anulados, de origen `'pos_planta'`. Suma `cantidad`, solo `kg`/`KGM`.
   3. **Campo:** Ventas de campo (`ventas_avicola`) no anuladas del día. Suma `peso_kg`.
 
-### 10.2 Reporte de Cuadración Física y Mermas Diarias
-* **API:** `GET /api/reportes/cuadre-fisico?fecha=YYYY-MM-DD`
-* **Lógica:** Realiza un cruce diario por cada producto activo de categoría `Pollo` o `Carnes`:
-  $$\text{Diferencia (Merma)} = \text{Kilos Comprados (Entradas)} - \text{Kilos Vendidos (Salidas Totales)}$$
+> **Fecha (corregido 30 jul 2026):** antes usaba `created_at` (cuándo la asesora registró la venta). Ahora usa **`fecha_pedido` = fecha de ENTREGA** (gotcha #8), porque el reporte mide SALIDA FÍSICA de mercadería. Debe coincidir con `cuadre-fisico` o los dos reportes se contradicen. Como ~86 % de los pedidos se entrega en fecha distinta a la de registro, los números históricos de ambos reportes se movieron.
+
+### 10.2 Cuadre por Producto — reventa (`GET /api/reportes/cuadre-fisico`)
+* **Universo (corregido 30 jul 2026):** SOLO productos con **`origen_fisico = 'reventa'`** (gallinas, carnes de res y cerdo) — los que entran y salen iguales. El pollo vivo y sus cortes salieron de aquí: se cuadran en el **Cuadre de Pollo** (§7bis). Antes cada corte mostraba una merma falsa de −(todo lo vendido).
+* **Lógica:**
+  $$\text{Diferencia (Merma)} = \text{Kilos Comprados} - \text{Kilos Vendidos} + \text{Ajuste manual}$$
 * **Fuentes de Datos:**
   * **Kilos Comprados:** Sumatoria de `peso_neto` en las compras completadas del día (`c.fecha = :fecha`, `c.estado <> 'Anulado'`, `ci.tipo = 'ingreso'`).
-  * **Kilos Vendidos:** Sumatoria de las salidas en los 3 canales (Ejecutivas, Campo y Planta).
+  * **Kilos Vendidos:** Sumatoria de las salidas en los 3 canales (Ejecutivas, Campo y Planta), **solo ítems en `kg`/`KGM`** (antes sumaba unidades como si fueran kilos, y por eso este reporte y "Salida de Productos" daban totales distintos).
   * **Significado de la Diferencia:**
     * **Valor Positivo (> 0):** Merma física de producción (pérdida de humedad, pluma, víscera, etc.).
     * **Valor Negativo (< 0):** Descuadre de inventario físico (se vendió más peso del registrado en las compras del día).
+* **Ajuste manual** (`ajustes_cuadre_fisico`, único por `(fecha, producto_id)`): **0 filas en producción**, nunca se usó.
 

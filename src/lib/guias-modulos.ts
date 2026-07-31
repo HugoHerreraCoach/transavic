@@ -55,13 +55,15 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
     ],
     nota: "Presiona Enter en el campo de costo para agregar otra fila sin usar el mouse.",
   },
-  mermas: {
-    nombre: "Calculadora de Mermas",
+  "cuadre-pollo": {
+    nombre: "Cuadre de Pollo",
     pasos: [
-      { titulo: "Elige la carga del día", detalle: "precarga el peso bruto de esa compra" },
-      { titulo: "Ingresa el peso limpio y la menudencia" },
-      { titulo: "Guarda el registro", detalle: "la merma y el rendimiento se calculan solos" },
+      { titulo: "Registra primero la compra del día en Compras", detalle: "de ahí salen solos los kilos y las jabas que entraron" },
+      { titulo: "Ingresa cuántas aves fueron machos y cuántas hembras", detalle: "si la guía de compra ya trae el desglose, aparece llenado" },
+      { titulo: "Ingresa los kilos que salieron a picar para delivery", detalle: "corte, corte especial y pollo entero, del parte de Antonio" },
+      { titulo: "Toca Guardar y revisa la DIFERENCIA", detalle: "en verde la merma fue normal; en rojo se perdió más peso del esperado" },
     ],
+    nota: "Campo y Planta se suman solos. La merma se calcula con lo que salió a picar, NO con lo que las asesoras facturaron — eso se compara aparte, en Control de delivery.",
   },
   // "pos-planta": guía retirada el 13 jul 2026 (pedido de Hugo — el POS es lo bastante
   // simple y se entiende solo). El componente <GuiaModulo modulo="pos-planta"> queda,

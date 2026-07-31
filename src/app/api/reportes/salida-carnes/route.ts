@@ -71,7 +71,10 @@ export async function GET(req: NextRequest) {
       FROM pedidos p
       JOIN pedido_items pi ON pi.pedido_id = p.id
       JOIN productos pr ON pr.id = pi.producto_id
-      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
+      -- fecha_pedido = fecha de ENTREGA (gotcha #8). Este reporte mide SALIDA física
+      -- de mercadería, así que se ancla al día en que sale, no al día de la venta.
+      -- Debe coincidir con /api/reportes/cuadre-fisico o los dos reportes se contradicen.
+      WHERE p.fecha_pedido BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
         AND COALESCE(p.origen, 'asesor') = 'asesor'
         AND p.estado <> 'Fallido'
         AND NOT COALESCE(p.anulada, FALSE)
@@ -86,7 +89,7 @@ export async function GET(req: NextRequest) {
       FROM pedidos p
       JOIN pedido_items pi ON pi.pedido_id = p.id
       JOIN productos pr ON pr.id = pi.producto_id
-      WHERE (p.created_at AT TIME ZONE 'America/Lima')::date BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
+      WHERE p.fecha_pedido BETWEEN ${fechaInicio}::date AND ${fechaFin}::date
         AND p.origen = 'pos_planta'
         AND p.estado <> 'Fallido'
         AND NOT COALESCE(p.anulada, FALSE)
