@@ -1,15 +1,16 @@
 // src/lib/apisperu.ts
 // ════════════════════════════════════════════════════════════════════════════
-// Consulta de RUC y DNI vía apisperu.com (https://dniruc.apisperu.com).
+// Consulta de RUC y DNI vía Decolecta (https://api.decolecta.com) o
+// Apisperu (https://dniruc.apisperu.com) con sistema de fallback automático.
 //
-// - El token vive SOLO en el server (env APISPERU_TOKEN). Nunca se expone al
-//   navegador: la UI llama a /api/consulta-documento, que usa este helper.
-// - Cuenta: transavicdev@gmail.com.
-// - Nunca tira excepción hacia arriba: devuelve { ok:false, code, mensaje } para
-//   que la UI siempre permita escribir los datos a mano si el servicio falla.
+// - Los tokens viven SOLO en el servidor (DECOLECTA_TOKEN / APISPERU_TOKEN).
+// - La UI llama a /api/consulta-documento.
+// - Nunca lanza excepción: devuelve { ok:false, code, mensaje } para que la UI
+//   siempre permita escribir los datos a mano si las APIs fallan.
 // ════════════════════════════════════════════════════════════════════════════
 
-const BASE = "https://dniruc.apisperu.com/api/v1";
+const APISPERU_BASE = "https://dniruc.apisperu.com/api/v1";
+const DECOLECTA_BASE = "https://api.decolecta.com/v1";
 
 export interface ConsultaRucResult {
   ruc: string;
@@ -48,39 +49,107 @@ export interface ConsultaError {
 export type ConsultaRucResponse = ({ ok: true } & ConsultaRucResult) | ConsultaError;
 export type ConsultaDniResponse = ({ ok: true } & ConsultaDniResult) | ConsultaError;
 
-function getToken(): string | null {
+function getApisperuToken(): string | null {
   return process.env.APISPERU_TOKEN || null;
 }
 
-/** Mapea el status HTTP de apisperu a nuestro código de error. */
-function errorPorStatus(status: number): ConsultaError | null {
-  if (status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "Documento no encontrado." };
-  if (status === 401 || status === 403)
-    return { ok: false, code: "TOKEN", mensaje: "Token inválido o sin permisos." };
-  if (status === 422) return { ok: false, code: "FORMATO", mensaje: "Número de documento inválido." };
-  if (status === 429)
-    return { ok: false, code: "CUOTA", mensaje: "Cuota de consultas agotada. Intenta más tarde." };
-  if (status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error del servicio (${status}).` };
-  return null;
+function getDecolectaToken(): string | null {
+  return process.env.DECOLECTA_TOKEN || null;
 }
 
-export async function consultarRuc(ruc: string): Promise<ConsultaRucResponse> {
-  const limpio = (ruc || "").trim();
-  if (!/^\d{11}$/.test(limpio)) {
-    return { ok: false, code: "FORMATO", mensaje: "El RUC debe tener 11 dígitos." };
-  }
-  const token = getToken();
-  if (!token) return { ok: false, code: "TOKEN", mensaje: "APISPERU_TOKEN no configurado." };
-
+/** Consulta RUC usando Decolecta API */
+async function consultarRucDecolecta(limpio: string, token: string): Promise<ConsultaRucResponse> {
   try {
-    const res = await fetch(`${BASE}/ruc/${limpio}?token=${encodeURIComponent(token)}`, {
+    const res = await fetch(`${DECOLECTA_BASE}/sunat/ruc?numero=${limpio}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
       cache: "no-store",
     });
-    const err = errorPorStatus(res.status);
-    if (err) return err;
+
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Decolecta inválido o sin saldo." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Decolecta agotada." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Decolecta (${res.status}).` };
 
     const data = await res.json().catch(() => null);
-    // apisperu a veces responde {success:false, message} con HTTP 200.
+    if (!data || (!data.razon_social && !data.numero_documento)) {
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado en Decolecta." };
+    }
+
+    return {
+      ok: true,
+      ruc: data.numero_documento ?? limpio,
+      razonSocial: data.razon_social ?? "",
+      direccion: data.direccion ?? null,
+      estado: data.estado ?? null,
+      condicion: data.condicion ?? null,
+      departamento: data.departamento ?? null,
+      provincia: data.provincia ?? null,
+      distrito: data.distrito ?? null,
+      ubigeo: data.ubigeo ?? null,
+    };
+  } catch {
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Decolecta." };
+  }
+}
+
+/** Consulta DNI usando Decolecta API */
+async function consultarDniDecolecta(limpio: string, token: string): Promise<ConsultaDniResponse> {
+  try {
+    const res = await fetch(`${DECOLECTA_BASE}/reniec/dni?numero=${limpio}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Decolecta inválido o sin saldo." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Decolecta agotada." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Decolecta (${res.status}).` };
+
+    const data = await res.json().catch(() => null);
+    if (!data || (!data.first_name && !data.full_name)) {
+      return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "DNI no encontrado en Decolecta." };
+    }
+
+    const nombres: string = data.first_name ?? "";
+    const apellidoPaterno: string = data.first_last_name ?? "";
+    const apellidoMaterno: string = data.second_last_name ?? "";
+    const nombreCompleto: string =
+      data.full_name ?? `${apellidoPaterno} ${apellidoMaterno} ${nombres}`.replace(/\s+/g, " ").trim();
+
+    return {
+      ok: true,
+      dni: data.document_number ?? limpio,
+      nombres,
+      apellidoPaterno,
+      apellidoMaterno,
+      nombreCompleto,
+    };
+  } catch {
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Decolecta." };
+  }
+}
+
+/** Consulta RUC con Apisperu */
+async function consultarRucApisperu(limpio: string, token: string): Promise<ConsultaRucResponse> {
+  try {
+    const res = await fetch(`${APISPERU_BASE}/ruc/${limpio}?token=${encodeURIComponent(token)}`, {
+      cache: "no-store",
+    });
+
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "RUC no encontrado." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Apisperu inválido." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Apisperu agotada." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Apisperu (${res.status}).` };
+
+    const data = await res.json().catch(() => null);
     if (!data || data.success === false || (!data.ruc && !data.razonSocial)) {
       return { ok: false, code: "NO_ENCONTRADO", mensaje: data?.message || "RUC no encontrado." };
     }
@@ -97,24 +166,21 @@ export async function consultarRuc(ruc: string): Promise<ConsultaRucResponse> {
       ubigeo: data.ubigeo ?? null,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio de consulta." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Apisperu." };
   }
 }
 
-export async function consultarDni(dni: string): Promise<ConsultaDniResponse> {
-  const limpio = (dni || "").trim();
-  if (!/^\d{8}$/.test(limpio)) {
-    return { ok: false, code: "FORMATO", mensaje: "El DNI debe tener 8 dígitos." };
-  }
-  const token = getToken();
-  if (!token) return { ok: false, code: "TOKEN", mensaje: "APISPERU_TOKEN no configurado." };
-
+/** Consulta DNI con Apisperu */
+async function consultarDniApisperu(limpio: string, token: string): Promise<ConsultaDniResponse> {
   try {
-    const res = await fetch(`${BASE}/dni/${limpio}?token=${encodeURIComponent(token)}`, {
+    const res = await fetch(`${APISPERU_BASE}/dni/${limpio}?token=${encodeURIComponent(token)}`, {
       cache: "no-store",
     });
-    const err = errorPorStatus(res.status);
-    if (err) return err;
+
+    if (res.status === 404) return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
+    if (res.status === 401 || res.status === 403) return { ok: false, code: "TOKEN", mensaje: "Token Apisperu inválido." };
+    if (res.status === 429) return { ok: false, code: "CUOTA", mensaje: "Cuota Apisperu agotada." };
+    if (res.status >= 400) return { ok: false, code: "DESCONOCIDO", mensaje: `Error de Apisperu (${res.status}).` };
 
     const data = await res.json().catch(() => null);
     if (!data || data.success === false) {
@@ -127,8 +193,8 @@ export async function consultarDni(dni: string): Promise<ConsultaDniResponse> {
       return { ok: false, code: "NO_ENCONTRADO", mensaje: "DNI no encontrado." };
     }
     const nombreCompleto: string =
-      data.nombreCompleto ??
-      `${apellidoPaterno} ${apellidoMaterno} ${nombres}`.replace(/\s+/g, " ").trim();
+      data.nombreCompleto ?? `${apellidoPaterno} ${apellidoMaterno} ${nombres}`.replace(/\s+/g, " ").trim();
+
     return {
       ok: true,
       dni: data.dni ?? limpio,
@@ -138,6 +204,76 @@ export async function consultarDni(dni: string): Promise<ConsultaDniResponse> {
       nombreCompleto,
     };
   } catch {
-    return { ok: false, code: "RED", mensaje: "No se pudo conectar con el servicio de consulta." };
+    return { ok: false, code: "RED", mensaje: "No se pudo conectar con Apisperu." };
   }
+}
+
+/**
+ * Consulta RUC con cadena de Fallback:
+ * 1. Decolecta (si DECOLECTA_TOKEN está activo)
+ * 2. Apisperu (si Decolecta falla o APISPERU_TOKEN está activo)
+ */
+export async function consultarRuc(ruc: string): Promise<ConsultaRucResponse> {
+  const limpio = (ruc || "").trim();
+  if (!/^\d{11}$/.test(limpio)) {
+    return { ok: false, code: "FORMATO", mensaje: "El RUC debe tener 11 dígitos." };
+  }
+
+  const decolectaToken = getDecolectaToken();
+  const apisperuToken = getApisperuToken();
+
+  if (!decolectaToken && !apisperuToken) {
+    return { ok: false, code: "TOKEN", mensaje: "No hay token de consulta configurado (DECOLECTA_TOKEN o APISPERU_TOKEN)." };
+  }
+
+  // Intenta Decolecta primero si tiene token
+  if (decolectaToken) {
+    const resDecolecta = await consultarRucDecolecta(limpio, decolectaToken);
+    if (resDecolecta.ok) return resDecolecta;
+
+    // Si falla por token/cuota/red y tenemos apisperu, probamos apisperu como respaldo
+    if (apisperuToken) {
+      const resApisperu = await consultarRucApisperu(limpio, apisperuToken);
+      if (resApisperu.ok) return resApisperu;
+    }
+    return resDecolecta;
+  }
+
+  // Si no hay Decolecta, usa Apisperu
+  return consultarRucApisperu(limpio, apisperuToken!);
+}
+
+/**
+ * Consulta DNI con cadena de Fallback:
+ * 1. Decolecta (si DECOLECTA_TOKEN está activo)
+ * 2. Apisperu (si Decolecta falla o APISPERU_TOKEN está activo)
+ */
+export async function consultarDni(dni: string): Promise<ConsultaDniResponse> {
+  const limpio = (dni || "").trim();
+  if (!/^\d{8}$/.test(limpio)) {
+    return { ok: false, code: "FORMATO", mensaje: "El DNI debe tener 8 dígitos." };
+  }
+
+  const decolectaToken = getDecolectaToken();
+  const apisperuToken = getApisperuToken();
+
+  if (!decolectaToken && !apisperuToken) {
+    return { ok: false, code: "TOKEN", mensaje: "No hay token de consulta configurado (DECOLECTA_TOKEN o APISPERU_TOKEN)." };
+  }
+
+  // Intenta Decolecta primero si tiene token
+  if (decolectaToken) {
+    const resDecolecta = await consultarDniDecolecta(limpio, decolectaToken);
+    if (resDecolecta.ok) return resDecolecta;
+
+    // Si falla y tenemos apisperu, probamos apisperu como respaldo
+    if (apisperuToken) {
+      const resApisperu = await consultarDniApisperu(limpio, apisperuToken);
+      if (resApisperu.ok) return resApisperu;
+    }
+    return resDecolecta;
+  }
+
+  // Si no hay Decolecta, usa Apisperu
+  return consultarDniApisperu(limpio, apisperuToken!);
 }
