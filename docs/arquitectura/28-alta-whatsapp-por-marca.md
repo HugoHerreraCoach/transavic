@@ -49,16 +49,34 @@ y suscrito a `messages`. Probado end-to-end el 19 jul.
 
 ### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO (Actualizado 3 ago 2026)
 
+**Identificadores (no son secretos — se documentan para no volver a buscarlos):**
+
+| Recurso | ID |
+|---|---|
+| Portfolio **TONIO LADT** | `2200578807071141` |
+| App de Meta *CRM La Avicola de Tony* | `1572345110399260` |
+| **WABA** *La Avícola de Tony* → `WHATSAPP_AVI_WABA_ID` | `1372799911704998` |
+| Número **+51 936 303 850** → `WHATSAPP_AVI_PHONE_NUMBER_ID` | `1269524296240191` |
+| System User *CRM Avicola de Tony* | `61592610189811` |
+| └ su identidad como actor de la API (`GET /me` con su token) | `122102414115420339` |
+| Cuenta de pago *LA AVICOLA DE TONY 2025* | `1410201126951666` |
+
+> El **WABA ID no se puede leer** con el token del system user (`owned_whatsapp_business_accounts` pide
+> `business_management`, que ese token no tiene → error 200). Sale en la **URL del Administrador de
+> WhatsApp** como `asset_id=…` (`business.facebook.com/wa/manage/phone-numbers/?business_id=…`), y una vez
+> que lo tienes, `GET /<WABA_ID>` y `/<WABA_ID>/phone_numbers` sí responden. **[PANTALLA 3 ago 2026]**
+
 | Punto | Estado **[PANTALLA]** |
 |---|---|
 | Verificación de la empresa | ✅ **Verificada** (19 jul, confirmada 20 jul) — `RESURRECCION GAMARRA TONIO`, RUC `10710548841`, web `laavicoladetony.com` |
-| Cuenta de WhatsApp (WABA) / Número | ✅ **Creada / Número agregado** (3 ago 2026) — **+51 936 303 850** (`phone_number_id`: `1269524296240191`), Display Name: *La Avícola de Tony* |
+| Cuenta de WhatsApp (WABA) / Número | ✅ **Creada / Número agregado** (3 ago 2026) — WABA `1372799911704998` (divisa **PEN**, `account_review_status: APPROVED`) · **+51 936 303 850** (`phone_number_id`: `1269524296240191`), Display Name: *La Avícola de Tony* |
 | Método de pago WABA | ✅ **Cargado/Asignado** (3 ago 2026) |
 | App de Meta propia | ✅ **Creada** (3 ago 2026) — *CRM La Avicola de Tony* `1572345110399260`, caso de uso **"Conecta con los clientes a través de WhatsApp"**, portfolio **TONIO LADT**. Ve la WABA y el número en *Configuración de la API* |
 | System User | ✅ **Creado** (3 ago 2026) — *CRM Avicola de Tony* `61592610189811`, rol **Admin**, con la app y la WABA asignadas en **control total** |
-| Token permanente | ⛔ **BLOQUEADO por la 2FA**: al generar el token Meta corta con *"Ya casi has terminado — para proteger esta cuenta, debes verificarla"*. Hay que activar la verificación en dos pasos en la cuenta personal del admin (Toñito) y reintentar |
+| Token permanente | ✅ **Generado** (3 ago 2026, caducidad *Nunca*) tras activar la **2FA** del admin — sin 2FA Meta corta con *"Ya casi has terminado, debes verificarla"*. Guardado en `.env.local` y en `CREDENCIALES-PRODUCCION.local.md`. Verificado: `GET /me` → `CRM Avicola de Tony` |
 | App Secret (`META_APP_SECRET_AVI`) | ⏳ Pendiente — *Configuración → Información básica → Mostrar* (pide la contraseña de la cuenta) |
-| Registro por API (`POST /register`) | ⏳ Pendiente (número en `PENDING` hasta ejecutar `/register` con el PIN de 6 dígitos) |
+| Registro del número (`POST /register`) | ✅ **No hizo falta**: el número quedó `status: CONNECTED` + `code_verification_status: VERIFIED` directo desde el alta por la UI. `name_status: PENDING_REVIEW` **no bloquea** recibir ni responder |
+| Suscripción de la app a la WABA | ✅ `POST /<WABA_ID>/subscribed_apps` → `{"success":true}`; el GET lista *CRM La Avicola de Tony* `1572345110399260` |
 | Variables Vercel y Webhook | ⏳ Pendiente (`WHATSAPP_AVI_PHONE_NUMBER_ID=1269524296240191`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`, `WHATSAPP_AVI_WABA_ID`) |
 | Página de Facebook | ❌ Ninguna (*Página principal: ninguna*) — hace falta **solo para Click-to-WhatsApp** |
 | Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada → es lo que hoy frena el token |

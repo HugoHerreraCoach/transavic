@@ -485,15 +485,18 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 | Qué | ID |
 |---|---|
 | **App de Meta** "CRM La Avicola de Tony" (portfolio TONIO LADT, caso de uso WhatsApp) | `1572345110399260` |
+| **WABA del CRM** "La Avícola de Tony" → `WHATSAPP_AVI_WABA_ID` (PEN, `account_review_status: APPROVED`) | `1372799911704998` |
+| └ número del CRM **+51 936 303 850** → `WHATSAPP_AVI_PHONE_NUMBER_ID` (estado **CONNECTED**) | `1269524296240191` |
 | **Usuario del sistema** "CRM Avicola de Tony" (Admin; app + WABA en control total) | `61592610189811` |
-| └ número del CRM **+51 936 303 850** → `WHATSAPP_AVI_PHONE_NUMBER_ID` | `1269524296240191` |
-| WABA del CRM → `WHATSAPP_AVI_WABA_ID` | *pendiente de leer por API* |
+| └ su identidad como actor de la API (`GET /me`) | `122102414115420339` |
 
-> Empresa ya **verificada** y WABA + número creados. Lo que falta: **token permanente** (bloqueado
-> porque Meta exige 2FA en la cuenta del admin), App Secret, `POST /register` con el PIN, variables en
-> Vercel y webhook. Sigue faltando la **Página de Facebook** (TONIO LADT tiene 0, y CTWA la exige; no
-> bloquea el CRM). ⚠️ **WhatsApp solo se activa marcando su CASO DE USO al crear la app** — una app con
-> `Tipo: Ninguno` jamás lo ofrece y no se puede corregir (pasó 4 veces). Runbook: [doc 28](./docs/arquitectura/28-alta-whatsapp-por-marca.md).
+> Al 3 ago 2026: empresa verificada, WABA + número **CONNECTED** (Meta lo registró en el alta, **no hizo
+> falta `POST /register`**), app y usuario del sistema creados, token permanente emitido y **app suscrita
+> a la WABA** (`subscribed_apps` ✅). Falta: **App Secret** (`META_APP_SECRET_AVI`), cargar las 4 vars en
+> Vercel + redeploy y recién entonces el **webhook**. Sigue sin **Página de Facebook** (TONIO LADT tiene 0;
+> solo la exige Click-to-WhatsApp, no bloquea el CRM). ⚠️ **WhatsApp solo se activa marcando su CASO DE USO
+> al crear la app** — una app con `Tipo: Ninguno` jamás lo ofrece y no se puede corregir (pasó 4 veces).
+> Runbook: [doc 28](./docs/arquitectura/28-alta-whatsapp-por-marca.md).
 
 > ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User), el
 > `META_VERIFY_TOKEN` ni el **PIN de registro del número** (2FA de 6 dígitos, hace falta para
