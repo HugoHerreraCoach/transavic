@@ -491,12 +491,18 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 | └ su identidad como actor de la API (`GET /me`) | `122102414115420339` |
 
 > Al 3 ago 2026: empresa verificada, WABA + número **CONNECTED** (Meta lo registró en el alta, **no hizo
-> falta `POST /register`**), app y usuario del sistema creados, token permanente emitido y **app suscrita
-> a la WABA** (`subscribed_apps` ✅). Falta: **App Secret** (`META_APP_SECRET_AVI`), cargar las 4 vars en
-> Vercel + redeploy y recién entonces el **webhook**. Sigue sin **Página de Facebook** (TONIO LADT tiene 0;
-> solo la exige Click-to-WhatsApp, no bloquea el CRM). ⚠️ **WhatsApp solo se activa marcando su CASO DE USO
-> al crear la app** — una app con `Tipo: Ninguno` jamás lo ofrece y no se puede corregir (pasó 4 veces).
-> Runbook: [doc 28](./docs/arquitectura/28-alta-whatsapp-por-marca.md).
+> falta `POST /register`**), app y usuario del sistema creados, **app suscrita a la WABA**
+> (`subscribed_apps` ✅) y **App Secret** ya leído y validado. **Falta:** ⛔ **regenerar el token** (el
+> primero salió sin `whatsapp_business_messaging` y se revocó), cargar las 4 vars en Vercel + redeploy y
+> recién entonces el **webhook**. Sigue sin **Página de Facebook** (TONIO LADT tiene 0; solo la exige
+> Click-to-WhatsApp, no bloquea el CRM).
+>
+> ⚠️ Dos trampas que ya nos costaron caro (detalle en [doc 28 §4.7 bis y §8](./docs/arquitectura/28-alta-whatsapp-por-marca.md)):
+> **(a)** WhatsApp solo se activa marcando su **CASO DE USO al CREAR la app** — una app con `Tipo: Ninguno`
+> jamás lo ofrece y no se puede corregir (pasó 4 veces); **(b)** el permiso **`whatsapp_business_messaging`
+> viene DESMARCADO** al generar el token del system user — sin él el bot recibe pero **no puede responder**
+> y falla en silencio (`lead_mensajes.estado='fallido'`). **Validar todo token nuevo con `debug_token`
+> antes de subirlo a Vercel.**
 
 > ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User), el
 > `META_VERIFY_TOKEN` ni el **PIN de registro del número** (2FA de 6 dígitos, hace falta para

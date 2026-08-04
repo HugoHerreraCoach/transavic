@@ -73,8 +73,8 @@ y suscrito a `messages`. Probado end-to-end el 19 jul.
 | Método de pago WABA | ✅ **Cargado/Asignado** (3 ago 2026) |
 | App de Meta propia | ✅ **Creada** (3 ago 2026) — *CRM La Avicola de Tony* `1572345110399260`, caso de uso **"Conecta con los clientes a través de WhatsApp"**, portfolio **TONIO LADT**. Ve la WABA y el número en *Configuración de la API* |
 | System User | ✅ **Creado** (3 ago 2026) — *CRM Avicola de Tony* `61592610189811`, rol **Admin**, con la app y la WABA asignadas en **control total** |
-| Token permanente | ✅ **Generado** (3 ago 2026, caducidad *Nunca*) tras activar la **2FA** del admin — sin 2FA Meta corta con *"Ya casi has terminado, debes verificarla"*. Guardado en `.env.local` y en `CREDENCIALES-PRODUCCION.local.md`. Verificado: `GET /me` → `CRM Avicola de Tony` |
-| App Secret (`META_APP_SECRET_AVI`) | ⏳ Pendiente — *Configuración → Información básica → Mostrar* (pide la contraseña de la cuenta) |
+| Token permanente | ⛔ **REVOCADO y pendiente de regenerar.** El primero (3 ago) salió **sin `whatsapp_business_messaging`** → habría dejado al bot mudo; se revocó (también estaba filtrado) y el nuevo quedó a medias porque Meta pide **verificación de identidad en CADA emisión**. Receta exacta en §4.7 |
+| App Secret (`META_APP_SECRET_AVI`) | ✅ **Leído y validado** (3 ago 2026) con `GET /debug_token?...&access_token=<APP_ID>\|<SECRET>`. Guardado en `.env.local` y en `CREDENCIALES-PRODUCCION.local.md` |
 | Registro del número (`POST /register`) | ✅ **No hizo falta**: el número quedó `status: CONNECTED` + `code_verification_status: VERIFIED` directo desde el alta por la UI. `name_status: PENDING_REVIEW` **no bloquea** recibir ni responder |
 | Suscripción de la app a la WABA | ✅ `POST /<WABA_ID>/subscribed_apps` → `{"success":true}`; el GET lista *CRM La Avicola de Tony* `1572345110399260` |
 | Variables Vercel y Webhook | ⏳ Pendiente (`WHATSAPP_AVI_PHONE_NUMBER_ID=1269524296240191`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`, `WHATSAPP_AVI_WABA_ID`) |
@@ -133,10 +133,36 @@ correcto** — Meta suele abrir el último portfolio usado. **[PANTALLA]**
 | **4.4** Método de pago | `business.facebook.com/latest/billing_hub?business_id=…` (pestaña *Cuentas de WhatsApp Business*) | La tarjeta del portfolio **no basta**: hay que designarla como fondeo de la WABA (`primary_funding_id`; estado `PENDING_VALID_PAYMENT_METHOD`). **Solo se puede después de crear la cuenta** **[OFICIAL]**. Lo que el pago condiciona es **enviar mensajes**, no dar de alta el número |
 | **4.5** App propia | `developers.facebook.com/apps/creation/` → **Detalles** (nombre + correo) → **Casos de uso** → filtro *Mensajes empresariales* → marcar **"Conecta con los clientes a través de WhatsApp"** → **Empresa: el portfolio de la marca** → Requisitos → *Crear aplicación* (**pide la contraseña**) | ⚠️ WhatsApp **NO** es un producto que se agregue después: **es un caso de uso y solo se elige al crear** — sin él la app nace con `Tipo: Ninguno` y ya no hay vuelta atrás (ver §8). El portfolio define el permiso: **elegirlo mal es el error caro**. Guardar el **App Secret** (Configuración → Información básica → *Mostrar*, pide contraseña). Verificado 3 ago 2026 **[PANTALLA]** |
 | **4.6** System User | `business.facebook.com/latest/settings/system_users?business_id=…` → Añadir → rol **Administrador** | Asignarle **la app** y **la WABA** con *Control total*. Recargar y confirmar antes de generar el token (la asignación tarda) |
-| **4.7** Token | mismo panel → *Generar nuevo token* | App de la marca · caducidad **Nunca** · permisos `whatsapp_business_messaging` + `whatsapp_business_management`. **Se muestra una sola vez** |
+| **4.7** Token | mismo panel → *Generar identificador* | App de la marca · caducidad **Nunca** · permisos `whatsapp_business_messaging` + `whatsapp_business_management`. **Se muestra una sola vez.** ⚠️ Tres trampas verificadas el 3 ago 2026 **[PANTALLA]**, ver abajo |
 | **4.8** Registrar el número | por API (§6) | La UI deja el número en `PENDING`; **el registro solo existe por API** |
 | **4.9** Webhook | App → WhatsApp → Configuración → Webhooks | URL `https://app.transavic.com/api/webhooks/meta`, **el mismo `META_VERIFY_TOKEN`**, campo `messages` (+ `message_template_status_update` si se usarán plantillas). **Hacerlo DESPUÉS del deploy con el secret nuevo** |
 | **4.10** Variables y deploy | Vercel (§9) | Sin redeploy la marca queda en modo mock **sin avisar** |
+
+### 4.7 bis · Las tres trampas del token (3 ago 2026, costaron un token revocado) **[PANTALLA]**
+
+1. **`whatsapp_business_messaging` viene DESMARCADO.** El desplegable *Seleccionar permisos* abre con
+   *"2 opciones seleccionadas"* — y son `whatsapp_business_manage_events` + `whatsapp_business_management`.
+   Hay que **marcar a mano** `whatsapp_business_messaging`, que es el que permite **enviar**. Sin él el
+   token luce válido, `GET /me` responde, la app se suscribe a la WABA… y el bot **no puede contestar
+   nada**, con el agravante de que `sender.ts` **nunca lanza**: los mensajes quedan en `fallido` y no
+   salta ningún error. Confirmar SIEMPRE con `debug_token` antes de subirlo a Vercel.
+2. **La caducidad se reinicia a "60 días (recomendado)"** en la segunda emisión y siguientes (la primera
+   abre en *Nunca*). Un token de 60 días mata el CRM en silencio dos meses después.
+3. **Meta exige verificación de identidad en CADA emisión** (*"Ya casi has terminado — para proteger esta
+   cuenta, debes verificarla"*), no solo la primera vez. Es un paso humano: no se puede automatizar.
+   Distinto de la **2FA**, que además debe estar activa en la cuenta del admin o el asistente ni arranca.
+
+Comprobación obligatoria del token recién generado:
+
+```bash
+curl -s -G "https://graph.facebook.com/v23.0/debug_token" \
+  -d "input_token=<TOKEN>" -d "access_token=<APP_ID>|<APP_SECRET>"
+# esperado: type SYSTEM_USER · is_valid true · expires_at 0 ·
+#           scopes con whatsapp_business_messaging Y whatsapp_business_management
+```
+
+**Revocar** (por permisos mal puestos o token filtrado): *Usuarios del sistema → el usuario →
+**Revocar identificadores*** — revoca **TODOS** los del usuario de golpe, no hay revocación selectiva.
 
 **Otras rutas útiles [PANTALLA]:** WhatsApp Manager `business.facebook.com/wa/manage/home/?business_id=…` ·
 Apps del portfolio `/latest/settings/apps?business_id=…` · Info del negocio `/latest/settings/business_info/?business_id=…` ·
@@ -226,7 +252,8 @@ registro 72 horas. PIN equivocado → **133005**. **No probar a ciegas.** No hay
 |---|---|---|
 | **La app no ofrece WhatsApp en "Añadir producto"** (salen App Events, Webhooks, Messenger, Instagram… y WhatsApp no) | La app se creó **sin caso de uso** → queda con `Tipo de aplicación: Ninguno`, y ese tipo **no se puede cambiar** después (tampoco aparece "Añadir casos de uso") **[PANTALLA 3 ago 2026]** | **Crear la app de nuevo** marcando el caso de uso *Mensajes empresariales → "Conecta con los clientes a través de WhatsApp"* y borrar la inservible. Conectarla al portfolio después NO arregla el tipo. Pasó 4 veces seguidas en LADT antes de detectarlo |
 | "Vuelve a introducir tu contraseña" al pulsar *Crear aplicación* | Reautenticación de Meta | La escribe una persona; el agente no maneja contraseñas |
-| **"Ya casi has terminado — para proteger esta cuenta, debes verificarla"** al generar el token del system user | El admin **no tiene 2FA** activada; Meta la exige para emitir tokens de usuario del sistema **[PANTALLA 3 ago 2026]** | Activar la verificación en dos pasos en la cuenta personal del admin y repetir *Generar identificador* |
+| **"Ya casi has terminado — para proteger esta cuenta, debes verificarla"** al generar el token del system user | (a) el admin **no tiene 2FA** activada — Meta la exige para emitir tokens de system user; (b) aun con 2FA, Meta pide **verificación de identidad en cada emisión** **[PANTALLA 3 ago 2026]** | Activar la verificación en dos pasos en la cuenta del admin; y en cada token, pulsar *Verificar cuenta* y completar el código. **Paso humano** |
+| **El bot recibe pero no responde nunca** (todo en `lead_mensajes.estado='fallido'`, sin errores visibles) | El token del system user **no tiene `whatsapp_business_messaging`** — viene desmarcado en el asistente (§4.7 bis) **[PANTALLA 3 ago 2026]** | `debug_token` → si falta el scope, revocar y regenerar marcándolo a mano. Comprobarlo SIEMPRE antes de subir el token a Vercel |
 | reCAPTCHA en el asistente | Antiautomatización de Meta | Lo resuelve una persona. No insistir por agente |
 | "Añadir número" en gris | Falta método de pago en la WABA **[OBSERVADO en TONIO DAT]** | Cargar/designar la tarjeta. Si sigue gris, revisar que la verificación se haya propagado. El tope de 2 números por portfolio **[OFICIAL]** no aplica con cero números |
 | Error **200** en cualquier llamada | (a) token de otro portfolio, (b) activo no asignado al system user, (c) la app no es dueña de la WABA | `debug_token` y revisar §4.6 |

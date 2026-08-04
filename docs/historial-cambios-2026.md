@@ -8,6 +8,84 @@
 
 ---
 
+## 3 ago 2026 — WhatsApp del RUC 10: la app, el usuario del sistema y dos trampas de Meta
+
+**Contexto.** Hugo mandó una captura de `developers.facebook.com/apps`: había **cuatro apps llamadas
+"CRM Avicola de Tony"** y ninguna servía. Su pedido: borrar las que sobran y crear de una vez la app de
+La Avícola de Tony (RUC 10), porque la WABA y el número ya estaban listos en el portfolio desde el día
+anterior.
+
+**El diagnóstico.** Las cuatro tenían `Tipo de aplicación: Ninguno` y ninguna estaba ligada a un
+portfolio. Al abrir *Añadir producto* en una de ellas, la lista traía App Events, Webhooks, Audience
+Network, Facebook Login, Messenger, Marketing API, Instagram… **y no traía WhatsApp**. Comparando con
+*Transavic CRM* (la que sí opera) se vio la diferencia: su panel dice *"Personaliza el caso de uso
+**Conectar con los clientes a través de WhatsApp**"*. O sea: en el flujo actual de Meta, **WhatsApp no es
+un producto que se agregue después — es un CASO DE USO que solo se elige al crear la app**, y el tipo no
+se puede cambiar ni aparece "Añadir casos de uso" en una app que nació sin él. Por eso Hugo repitió el
+intento cuatro veces con el mismo resultado. Conectar la app a un portfolio a posteriori (probado:
+*Ajustes de TONIO LADT → Aplicaciones → Añadir → Conectar un identificador*) funciona, pero **no arregla
+el tipo**.
+
+**Lo que se hizo.**
+
+1. **App nueva bien creada**: `developers.facebook.com/apps/creation/` → Detalles → **Casos de uso →
+   filtro *Mensajes empresariales* → "Conecta con los clientes a través de WhatsApp"** → **Empresa:
+   TONIO LADT** → Crear (Meta pide la contraseña de la cuenta: paso humano). Resultado:
+   **CRM La Avicola de Tony `1572345110399260`**. En *Configuración de la API* ya aparecía el número
+   **+51 936 303 850**, señal de que la app veía la WABA correcta.
+2. **Las 4 duplicadas eliminadas** (`37590723450543044`, `1590104335862754`, `1534073668399964`,
+   `1049460644499486`) desde *Opciones avanzadas → Suprimir aplicación*. Quedaron solo las dos que deben
+   existir: la nueva (TONIO LADT) y *Transavic CRM* (TONIO DAT). Meta avisa que se pueden restaurar desde
+   el correo de contacto (`trg199017@gmail.com`).
+3. **Usuario del sistema** *CRM Avicola de Tony* **`61592610189811`**, rol Admin, con la **app** y la
+   **WABA** asignadas en **control total**. Antes de dejar crearlo, Meta exige aceptar su *política de no
+   discriminación* en nombre del portfolio (lo aceptó Hugo).
+4. **IDs levantados y verificados por API**: WABA **`1372799911704998`** (divisa PEN,
+   `account_review_status: APPROVED`), número **`1269524296240191`** con
+   `status: CONNECTED` + `code_verification_status: VERIFIED`. **No hizo falta `POST /register`** — Meta
+   dejó el número registrado desde el alta por la UI, así que no se gastó ninguno de los 10 intentos por
+   72 h. `name_status: PENDING_REVIEW` no bloquea recibir ni responder.
+5. **App suscrita a la WABA**: `POST /<WABA_ID>/subscribed_apps` → `{"success":true}`.
+6. **App Secret** leído y validado con `debug_token`.
+
+**Trampa nº1 — el WABA ID no se puede leer con ese token.**
+`GET /<business_id>/owned_whatsapp_business_accounts` devuelve **error 200 "Requires business_management
+permission"**: el token del system user tiene `whatsapp_business_management`, que es otro permiso.
+Tampoco existe el campo `whatsapp_business_account` en el nodo del número. Sale en la **URL del
+Administrador de WhatsApp** (`business.facebook.com/wa/manage/phone-numbers/?business_id=…` redirige a
+una URL con `asset_id=<WABA_ID>`), y con ese ID en mano `GET /<WABA_ID>` y `/<WABA_ID>/phone_numbers` sí
+responden.
+
+**Trampa nº2 — el token salió sin permiso para enviar (la cara).**
+El `debug_token` del primer token mostró `whatsapp_business_management`,
+`whatsapp_business_manage_events` y `public_profile`: **faltaba `whatsapp_business_messaging`**. Con ese
+token todo *parece* bien —`GET /me` responde, la suscripción a la WABA funciona— pero **el bot no puede
+enviar una sola respuesta**, y como `src/lib/whatsapp/sender.ts` **nunca lanza**, los mensajes habrían
+quedado en `lead_mensajes.estado='fallido'` sin ningún error visible: un CRM "conectado" y mudo. Al
+reabrir el asistente se vio la causa: el desplegable *Seleccionar permisos* abre con **"2 opciones
+seleccionadas"** (`manage_events` + `management`) y **`whatsapp_business_messaging` viene desmarcado**.
+Se **revocó** el token (*Revocar identificadores* revoca todos los del usuario, no hay revocación
+selectiva) — lo que además resolvió que se había pegado en texto plano en el chat — y se relanzó la
+generación marcando los tres permisos. Se detectó de paso que **la caducidad se reinicia a "60 días
+(recomendado)"** a partir de la segunda emisión (la primera abre en *Nunca*): un token de 60 días mata el
+CRM en silencio dos meses después.
+
+**Dónde quedó.** El token nuevo quedó a mitad: Meta pide **verificación de identidad en CADA emisión**
+(*"Ya casi has terminado — para proteger esta cuenta, debes verificarla"*), no solo la primera vez, y eso
+es un paso humano. **Al cierre del 3 ago no hay token válido para la Avícola** (`WHATSAPP_AVI_TOKEN`
+vacío en `.env.local`, con el motivo anotado). Lo que falta: regenerarlo con los 3 permisos y caducidad
+*Nunca* → validarlo con `debug_token` → cargar las 4 variables en Vercel (`WHATSAPP_AVI_TOKEN`,
+`WHATSAPP_AVI_PHONE_NUMBER_ID`, `WHATSAPP_AVI_WABA_ID`, `META_APP_SECRET_AVI`) → redeploy → **y recién
+entonces** configurar el webhook en Meta (al revés, Meta reintenta 7 días y puede desactivarlo) → probar
+las dos marcas en paralelo.
+
+**Pendientes que arrastra:** rotar los dos tokens (el de Transavic también se filtró, el 19 jul), el RUC
+equivocado en la cuenta de pagos de la Avícola, y la Página de Facebook de TONIO LADT (solo la exige
+Click-to-WhatsApp). Runbook actualizado: [doc 28](./arquitectura/28-alta-whatsapp-por-marca.md) — §1
+(tabla de IDs), §4.7 bis (las tres trampas del token) y §8 (dos síntomas nuevos).
+
+---
+
 ## 31 jul 2026 — La factura de Neon: $23 casi enteros por estar prendida sin trabajo
 
 **Contexto.** Hugo vio que Neon le iba a cobrar **$22.94** y preguntó si convenía mudarse a Supabase
