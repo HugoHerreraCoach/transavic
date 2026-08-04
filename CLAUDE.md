@@ -480,17 +480,20 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 > `whatsapp_business_messaging` + `whatsapp_business_management`. Avícola de Tony necesitará **su
 > propio usuario del sistema** dentro de TONIO LADT (los usuarios del sistema son por portfolio).
 
-**🏪 LA AVÍCOLA DE TONY — RUC 10** (env vars `WHATSAPP_AVI_*`) — *pendiente*
+**🏪 LA AVÍCOLA DE TONY — RUC 10** (env vars `WHATSAPP_AVI_*`) — *en proceso (3 ago 2026)*
 
 | Qué | ID |
 |---|---|
-| WABA del CRM → `WHATSAPP_AVI_WABA_ID` | *pendiente* |
-| └ número del CRM → `WHATSAPP_AVI_PHONE_NUMBER_ID` | *pendiente* |
+| **App de Meta** "CRM La Avicola de Tony" (portfolio TONIO LADT, caso de uso WhatsApp) | `1572345110399260` |
+| **Usuario del sistema** "CRM Avicola de Tony" (Admin; app + WABA en control total) | `61592610189811` |
+| └ número del CRM **+51 936 303 850** → `WHATSAPP_AVI_PHONE_NUMBER_ID` | `1269524296240191` |
+| WABA del CRM → `WHATSAPP_AVI_WABA_ID` | *pendiente de leer por API* |
 
-> Bloqueado hasta que pase la **verificación del RUC 10** (motivo del rechazo: la razón social
-> `RESURRECCION GAMARRA TONIO` debe aparecer en `laavicoladetony.com`) y se le cree su **Página de
-> Facebook** (TONIO LADT tiene 0 páginas, y CTWA la exige). Tendrá su **propia WABA y su propio
-> número** — una WABA no cruza portfolios. Ver gotcha #52.
+> Empresa ya **verificada** y WABA + número creados. Lo que falta: **token permanente** (bloqueado
+> porque Meta exige 2FA en la cuenta del admin), App Secret, `POST /register` con el PIN, variables en
+> Vercel y webhook. Sigue faltando la **Página de Facebook** (TONIO LADT tiene 0, y CTWA la exige; no
+> bloquea el CRM). ⚠️ **WhatsApp solo se activa marcando su CASO DE USO al crear la app** — una app con
+> `Tipo: Ninguno` jamás lo ofrece y no se puede corregir (pasó 4 veces). Runbook: [doc 28](./docs/arquitectura/28-alta-whatsapp-por-marca.md).
 
 > ⚠️ **Nunca comitear al repo:** `META_APP_SECRET`, los access tokens (System User), el
 > `META_VERIFY_TOKEN` ni el **PIN de registro del número** (2FA de 6 dígitos, hace falta para

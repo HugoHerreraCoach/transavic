@@ -47,20 +47,21 @@ App *Transavic CRM* `1043268678158460` · WABA `883642441471852` · número **+5
 (`phone_number_id 1181655271701439`) · System User *CRM Transavic* `61591800645031` · webhook verificado
 y suscrito a `messages`. Probado end-to-end el 19 jul.
 
-### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO
+### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO (Actualizado 3 ago 2026)
 
 | Punto | Estado **[PANTALLA]** |
 |---|---|
 | Verificación de la empresa | ✅ **Verificada** (19 jul, confirmada 20 jul) — `RESURRECCION GAMARRA TONIO`, RUC `10710548841`, web `laavicoladetony.com` |
-| Método de pago | ✅ Ya cargado a nivel portfolio: cuenta de pagos *LA AVICOLA DE TONY 2025* (`1410201126951666`), una Visa activa, divisa **PEN**; aparece también en la pestaña *Cuentas de WhatsApp Business* del Centro de facturación |
-| Cuenta de WhatsApp (WABA) | ❌ **Ninguna** — botón "+ Añadir" habilitado |
-| Número | ❌ Ninguno. El chip **+51 936 303 850** es **nuevo y nunca tuvo WhatsApp** (no hay cuenta que eliminar) |
-| App de Meta propia | ❌ No creada |
-| System User propio | ❌ No creado |
+| Cuenta de WhatsApp (WABA) / Número | ✅ **Creada / Número agregado** (3 ago 2026) — **+51 936 303 850** (`phone_number_id`: `1269524296240191`), Display Name: *La Avícola de Tony* |
+| Método de pago WABA | ✅ **Cargado/Asignado** (3 ago 2026) |
+| App de Meta propia | ✅ **Creada** (3 ago 2026) — *CRM La Avicola de Tony* `1572345110399260`, caso de uso **"Conecta con los clientes a través de WhatsApp"**, portfolio **TONIO LADT**. Ve la WABA y el número en *Configuración de la API* |
+| System User | ✅ **Creado** (3 ago 2026) — *CRM Avicola de Tony* `61592610189811`, rol **Admin**, con la app y la WABA asignadas en **control total** |
+| Token permanente | ⛔ **BLOQUEADO por la 2FA**: al generar el token Meta corta con *"Ya casi has terminado — para proteger esta cuenta, debes verificarla"*. Hay que activar la verificación en dos pasos en la cuenta personal del admin (Toñito) y reintentar |
+| App Secret (`META_APP_SECRET_AVI`) | ⏳ Pendiente — *Configuración → Información básica → Mostrar* (pide la contraseña de la cuenta) |
+| Registro por API (`POST /register`) | ⏳ Pendiente (número en `PENDING` hasta ejecutar `/register` con el PIN de 6 dígitos) |
+| Variables Vercel y Webhook | ⏳ Pendiente (`WHATSAPP_AVI_PHONE_NUMBER_ID=1269524296240191`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`, `WHATSAPP_AVI_WABA_ID`) |
 | Página de Facebook | ❌ Ninguna (*Página principal: ninguna*) — hace falta **solo para Click-to-WhatsApp** |
-| Aviso *"WhatsApp needs more information"* | Pendiente **no accionable todavía**: el selector de caso de uso solo ofrece "aumentar límite de gasto". Meta pedirá esos datos cuando exista la cuenta de WhatsApp |
-| Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada |
-| Deuda de anuncios | S/ 225,29 pendientes (se cobran al llegar a S/ 251 o el 4 ago) |
+| Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada → es lo que hoy frena el token |
 | ⚠️ Identificación fiscal de la cuenta de pagos | **`20612806901` (RUC de Transavic)** en la cuenta de la Avícola → las facturas de Meta salen con el RUC equivocado. Corregir con Antonio |
 
 ---
@@ -112,7 +113,7 @@ correcto** — Meta suele abrir el último portfolio usado. **[PANTALLA]**
 | **4.2** Detalles | mismo asistente | Nombre para mostrar, categoría, foto de perfil, y *Mostrar más opciones* (descripción, correo, web, dirección). Ver §5 |
 | **4.3** Número | mismo asistente | +51 y el número sin prefijo; verificación por **SMS o llamada**. No martillar reintentos |
 | **4.4** Método de pago | `business.facebook.com/latest/billing_hub?business_id=…` (pestaña *Cuentas de WhatsApp Business*) | La tarjeta del portfolio **no basta**: hay que designarla como fondeo de la WABA (`primary_funding_id`; estado `PENDING_VALID_PAYMENT_METHOD`). **Solo se puede después de crear la cuenta** **[OFICIAL]**. Lo que el pago condiciona es **enviar mensajes**, no dar de alta el número |
-| **4.5** App propia | `developers.facebook.com` → **Crear app** → elegir **el portfolio de la marca** → *Añadir producto* → **WhatsApp** → *Configuración de la API* | Ese vínculo define el permiso: **elegirlo mal es el error caro**. Guardar el **App Secret** (Configuración → Básica) |
+| **4.5** App propia | `developers.facebook.com/apps/creation/` → **Detalles** (nombre + correo) → **Casos de uso** → filtro *Mensajes empresariales* → marcar **"Conecta con los clientes a través de WhatsApp"** → **Empresa: el portfolio de la marca** → Requisitos → *Crear aplicación* (**pide la contraseña**) | ⚠️ WhatsApp **NO** es un producto que se agregue después: **es un caso de uso y solo se elige al crear** — sin él la app nace con `Tipo: Ninguno` y ya no hay vuelta atrás (ver §8). El portfolio define el permiso: **elegirlo mal es el error caro**. Guardar el **App Secret** (Configuración → Información básica → *Mostrar*, pide contraseña). Verificado 3 ago 2026 **[PANTALLA]** |
 | **4.6** System User | `business.facebook.com/latest/settings/system_users?business_id=…` → Añadir → rol **Administrador** | Asignarle **la app** y **la WABA** con *Control total*. Recargar y confirmar antes de generar el token (la asignación tarda) |
 | **4.7** Token | mismo panel → *Generar nuevo token* | App de la marca · caducidad **Nunca** · permisos `whatsapp_business_messaging` + `whatsapp_business_management`. **Se muestra una sola vez** |
 | **4.8** Registrar el número | por API (§6) | La UI deja el número en `PENDING`; **el registro solo existe por API** |
@@ -205,6 +206,9 @@ registro 72 horas. PIN equivocado → **133005**. **No probar a ciegas.** No hay
 
 | Síntoma | Causa | Salida |
 |---|---|---|
+| **La app no ofrece WhatsApp en "Añadir producto"** (salen App Events, Webhooks, Messenger, Instagram… y WhatsApp no) | La app se creó **sin caso de uso** → queda con `Tipo de aplicación: Ninguno`, y ese tipo **no se puede cambiar** después (tampoco aparece "Añadir casos de uso") **[PANTALLA 3 ago 2026]** | **Crear la app de nuevo** marcando el caso de uso *Mensajes empresariales → "Conecta con los clientes a través de WhatsApp"* y borrar la inservible. Conectarla al portfolio después NO arregla el tipo. Pasó 4 veces seguidas en LADT antes de detectarlo |
+| "Vuelve a introducir tu contraseña" al pulsar *Crear aplicación* | Reautenticación de Meta | La escribe una persona; el agente no maneja contraseñas |
+| **"Ya casi has terminado — para proteger esta cuenta, debes verificarla"** al generar el token del system user | El admin **no tiene 2FA** activada; Meta la exige para emitir tokens de usuario del sistema **[PANTALLA 3 ago 2026]** | Activar la verificación en dos pasos en la cuenta personal del admin y repetir *Generar identificador* |
 | reCAPTCHA en el asistente | Antiautomatización de Meta | Lo resuelve una persona. No insistir por agente |
 | "Añadir número" en gris | Falta método de pago en la WABA **[OBSERVADO en TONIO DAT]** | Cargar/designar la tarjeta. Si sigue gris, revisar que la verificación se haya propagado. El tope de 2 números por portfolio **[OFICIAL]** no aplica con cero números |
 | Error **200** en cualquier llamada | (a) token de otro portfolio, (b) activo no asignado al system user, (c) la app no es dueña de la WABA | `debug_token` y revisar §4.6 |
