@@ -301,15 +301,32 @@ webhook de la app nueva.
 printf '%s' "$VALOR" | npx vercel env add WHATSAPP_AVI_TOKEN production
 ```
 
-Dos cosas verificadas el 5 ago 2026:
+Tres cosas verificadas el 5 ago 2026:
 
-- **No se pueden releer para comprobarlas.** `vercel env pull` devuelve **`VAR=""`** para *todas* las
-  variables cifradas del proyecto (también las de Transavic, que sí funcionan) y el CLI **no tiene
-  `env get`**. O sea: no hay forma de validar por CLI que el valor llegó íntegro — la comprobación real es
-  la prueba end-to-end de §7. Sí sirve medir el largo **antes** de mandarlo.
+- **Nacen como `Sensitive` y NADIE las vuelve a leer.** Las variables que crea el CLI quedan marcadas
+  *Sensitive* en Vercel: `vercel env pull` devuelve **`VAR=""`**, el CLI **no tiene `env get`**, y en el
+  panel *Copy to Clipboard* sale deshabilitado y *Edit* abre el campo **vacío**. O sea: **el valor solo
+  existe donde tú lo guardaste**. Anotarlo SIEMPRE en `.env.local` y en
+  `CREDENCIALES-PRODUCCION.local.md` (ambos gitignored) *antes* de subirlo. Si se pierde, la única salida
+  es rotarlo.
+- **`vercel env update` no funciona sobre una `Sensitive`**: responde *"You cannot change the key of a
+  Sensitive Environment Variable"*. Se cambia **desde el panel** (fila → ··· → *Edit* → pegar → *Save*) o
+  borrando y recreando (`env rm` + `env add`).
 - **`vercel redeploy` falla con "Deployment belongs to a different team"** aunque `vercel whoami` y
   `vercel switch` digan lo correcto (y `--scope` fue rechazado por el clasificador de permisos). El
   camino que sí funciona es el de siempre: **commit a `main` → Vercel despliega solo**.
+
+> **`META_VERIFY_TOKEN` rotado el 5 ago 2026.** El valor original (19 jul) era *Sensitive* y ya no lo
+> podía leer nadie, así que no había forma de usarlo para verificar el webhook de la segunda marca. Se
+> generó uno nuevo (`transavic_crm_<40 hex>`), se guardó en `.env.local` y se reemplazó en Vercel desde el
+> panel. **Rotarlo es inofensivo:** ese token solo interviene cuando Meta verifica una URL de webhook; las
+> suscripciones ya verificadas (Transavic) siguen intactas. **Comprobación directa** de que la variable
+> llegó bien — el único chequeo posible de una `Sensitive`:
+>
+> ```bash
+> curl -s "https://app.transavic.com/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=<TOKEN>&hub.challenge=12345"
+> # → 12345 (si devuelve 403, la variable no coincide; si 503, falta)
+> ```
 
 ---
 
