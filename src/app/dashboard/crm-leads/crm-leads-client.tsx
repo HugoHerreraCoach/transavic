@@ -124,7 +124,9 @@ const formatDateSeparator = (dateStr: string | Date) => {
   });
 };
 
-const RUBROS_CRM = ['Restaurante', 'Cafetería', 'Avícola', 'Chifa', 'Fast food', 'Market / Minimarket', 'Tienda / Bodega', 'Casa / Hogar', 'Otro'];
+// 'Pollería' está a propósito: es el ÚNICO rubro al que no se le vende (regla de
+// Antonio), y sin la etiqueta era imposible marcarlo en la ficha del lead.
+const RUBROS_CRM = ['Restaurante', 'Cafetería', 'Avícola', 'Chifa', 'Fast food', 'Market / Minimarket', 'Tienda / Bodega', 'Casa / Hogar', 'Pollería', 'Otro'];
 const DISTRITOS_CRM = ['La Victoria', 'Lince', 'San Isidro', 'San Miguel', 'San Borja', 'Breña', 'Surquillo', 'Cercado de Lima', 'Miraflores', 'La Molina', 'Surco', 'Magdalena', 'Jesús María', 'Salamanca', 'Barranco', 'San Luis', 'Santa Beatriz', 'Pueblo Libre'];
 
 export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
@@ -1654,7 +1656,11 @@ function ChatPane({
                   m.created_at
                 );
 
-              const isMe = m.sender !== "cliente" && m.sender !== "bot";
+              // 'sistema' = nota interna del propio ERP (ej. "el bot no pudo
+              // responder"). El cliente NUNCA la vio: se pinta centrada y en gris,
+              // no como burbuja de la asesora.
+              const isSistema = m.sender === "sistema";
+              const isMe = !isSistema && m.sender !== "cliente" && m.sender !== "bot";
               const isBot = m.sender === "bot";
               const timeStr = new Date(m.created_at).toLocaleTimeString("es-PE", {
                 hour: "2-digit",
@@ -1670,6 +1676,14 @@ function ChatPane({
                       </span>
                     </div>
                   )}
+                  {isSistema && (
+                    <div className="flex justify-center my-2">
+                      <span className="max-w-[85%] text-center bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold px-3 py-1.5 rounded-lg">
+                        {m.body} <span className="font-normal opacity-70">· {timeStr}</span>
+                      </span>
+                    </div>
+                  )}
+                  {!isSistema && (
                   <div className={`flex flex-col ${isMe || isBot ? "items-end" : "items-start"}`}>
                     <div className="flex items-center gap-1.5 mb-0.5 text-[9px] font-bold text-gray-400">
                       <span className="capitalize">{m.sender === "bot" ? "Bot IA" : m.sender}</span>
@@ -1727,6 +1741,7 @@ function ChatPane({
                       )}
                     </div>
                   </div>
+                  )}
                 </div>
               );
             })

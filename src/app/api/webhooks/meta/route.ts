@@ -1,8 +1,8 @@
 // src/app/api/webhooks/meta/route.ts
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createHmac, timingSafeEqual } from "crypto";
 import { neon } from "@neondatabase/serverless";
-import { handleInboundMessage } from "@/lib/chatbot/bot-orchestrator";
+import { registrarEntrante, responderTurno } from "@/lib/chatbot/bot-orchestrator";
 import {
   type EmpresaWhatsApp,
   empresaDesdePhoneNumberId,
@@ -217,14 +217,28 @@ export async function POST(request: NextRequest) {
               `📥 [Meta Webhook] ${empresa} ← ${from} (${profileName}) [${tipo}]: "${textoParaBot || "(media)"}"`
             );
 
-            // El orquestador crea/actualiza el lead, guarda el mensaje, corre el bot y
-            // ENVÍA la respuesta por WhatsApp (si la marca está configurada).
-            await handleInboundMessage(from, profileName, textoParaBot, empresa, {
+            // ACK-FIRST: acá solo se registra el mensaje (rápido) y se le responde
+            // 200 a Meta. La respuesta del bot —debounce + IA + envío, hasta ~45s—
+            // corre en `after()`, ya con Meta desconectado.
+            //
+            // Por qué: si Meta no recibe el 200 a tiempo REINTREGA el webhook, y cada
+            // reintento era otra invocación haciendo el mismo trabajo. Además el
+            // debounce de la ráfaga sería imposible con Meta esperando.
+            const tarea = await registrarEntrante(from, profileName, textoParaBot, empresa, {
               whatsappMessageId: message.id,
               tipo,
               mediaDataUrl,
               referral,
             });
+            if (tarea) {
+              after(async () => {
+                try {
+                  await responderTurno(tarea);
+                } catch (err) {
+                  console.error("❌ [Meta Webhook] Falló el turno del bot:", err);
+                }
+              });
+            }
           }
         }
       }

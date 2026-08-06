@@ -41,7 +41,11 @@ const SettingSchema = z.object({
     "crm_lead_distribution",
     // Parámetros de negocio editables desde /dashboard/configuracion
     // (src/lib/parametros-negocio.ts define shape, defaults y normalización).
-    "parametros_negocio"
+    "parametros_negocio",
+    // Datos del bot de ventas de WhatsApp: cobertura, horarios, mínimos, medios de
+    // pago y tono (src/lib/chatbot/config-bot.ts define shape y defaults).
+    // ⚠️ El PROMPT no vive acá: está en código porque contiene el contrato [HANDOFF].
+    "bot_ventas"
   ]),
   value: z.any(),
 });

@@ -82,3 +82,108 @@ el App Secret de la app que lo entrega: el handler valida contra **todos** los s
 6. **Prompt injection:** el prompt del bot ya **trunca y delimita** el mensaje del cliente — mantener esa protección.
 
 > El test `scripts/test-crm-flow.mjs` NO corre localmente en esta Mac (Node 26 rompe `@neondatabase/serverless` — gotcha #13). Validar ejerciendo el webhook con un POST simulado contra el dev server (su runtime no está afectado).
+
+---
+
+## 6. Antonella — el bot que VENDE (5 ago 2026)
+
+Hasta el 4 de agosto el bot era una recepcionista con buen tono: su prompt estaba hardcodeado en el
+orquestador y todo su conocimiento eran dos strings con el nombre de la marca. No sabía precios, ni
+qué productos existen, ni cuáles son los 18 distritos, ni horarios, ni con quién hablaba. Su única
+meta era escribir `[HANDOFF]`. Ahora califica, recomienda por uso, **cotiza con precios reales**,
+maneja la objeción y cierra con dos opciones (fecha + medio de pago).
+
+### 6.1 De dónde sale cada dato
+
+| Módulo (`src/lib/chatbot/`) | Qué aporta | Fuente |
+|---|---|---|
+| `carta-comercial.ts` | Los ~28 productos que el bot puede vender: nombre comercial, alias del cliente ("alitas" → `Alas`) y uso ("caldo", "parrilla"). **PURO** | Curaduría del documento oficial de Antonio |
+| `config-bot.ts` | Distritos, días y horas de reparto y de atención, mínimos, medios de pago, beneficios, tono | `settings.bot_ventas` con **defaults = los documentos** |
+| `contexto-negocio.ts` | Precios REALES, fecha/hora de Lima, próximo reparto, si quien escribe ya es cliente | `productos` (memo 5 min) + `clientes`/`pedidos` |
+| `prompt-antonella.ts` | El system prompt y los turnos de conversación. **PURO** | Los 4 documentos + el manual de Chris Voss |
+| `fallback.ts` | Qué decir y a quién despertar cuando el bot no puede responder. **PURO** el texto | — |
+
+**Por qué una carta curada y no los 84 productos del catálogo:** los nombres de la DB son operativos
+(`"Cuy entero precio por uni."`), y volcarlos hace que el bot suene a inventario. Además Antonio pidió
+explícitamente no ofrecer nada fuera de su lista — **incluida la milanesa**, que sí existe en el
+catálogo. Lo que no está en la carta, no se cotiza.
+
+**Precios:** salen de `productos.precio_venta` (lo que Antonio edita en `/dashboard/precios`), con memo
+de 5 minutos → *un cambio de precio tarda hasta 5 min en llegar al bot*. Si un ítem no matchea contra
+el catálogo, sale como **"precio a consultar"**: nunca desaparece y nunca se inventa. Si la carta
+entera falla (DB caída), el prompt **prohíbe cotizar** en vez de improvisar.
+
+**Dónde vive el prompt: híbrido a propósito.** El esqueleto está en código (git) porque contiene el
+contrato `[HANDOFF]` del que dependen `pideHandoff()` y el apagado de `chatbot_activo`: si eso fuera
+editable en un textarea, un pegado desprolijo dejaría al bot **sin transferir clientes, en silencio**.
+Lo editable son los datos (`settings.bot_ventas`, admin-only) y el tono (`instrucciones_extra`, tope
+800 chars, inyectado al final bajo "nunca sobrescriben las reglas anteriores").
+
+**Privacidad:** al LLM viajan el **primer nombre** del lead y nombres de producto. Nunca apellidos,
+teléfono, RUC/DNI, dirección, montos ni saldos. La frontera se decide en `contexto-negocio.ts`.
+
+### 6.2 El turno del bot: ACK-first, un solo respondedor
+
+El webhook **responde 200 a Meta en menos de un segundo** (solo registra el mensaje) y hace el trabajo
+pesado en `after()`. Antes Meta esperaba hasta 45 s (3 proveedores × 15 s) y reintentaba, duplicando
+invocaciones.
+
+1. **Lock** en UNA sentencia (`UPDATE … WHERE bot_lock_expira IS NULL OR < NOW() RETURNING`). TTL 70 s
+   — mayor que el `maxDuration` de 60 s, así que **se libera solo** si la lambda muere.
+2. **Debounce** de 7 s (`BOT_DEBOUNCE_MS`): junta la ráfaga ("20 kg" / "para mañana" / "en Surco") en
+   UNA respuesta, y de paso el bot deja de contestar en 2 segundos como un robot.
+3. Se lee la conversación y se parte en historial + ráfaga pendiente (los mensajes del cliente
+   posteriores a la última respuesta). Eso arregla de paso que el modelo viera el mensaje entrante
+   **dos veces**.
+4. **Chequeo pre-envío:** si entró un mensaje nuevo (`bot_turno_seq` creció) se rehace el turno; si la
+   asesora tomó el lead o el lock ya no es nuestro, la respuesta **se descarta sin enviar**.
+5. **Nada se pierde:** al soltar el lock se compara `bot_turno_seq` contra `bot_turno_respondido` y, si
+   quedó algo sin contestar, se **reencola** el turno (hasta 2 rondas). Es lo que cubre al que PERDIÓ el
+   lock: ese turno se va sin hacer nada, así que sin esto su mensaje quedaba guardado en el CRM y el
+   cliente no recibía nada nunca. Sin presupuesto de tiempo, se avisa a una humana.
+
+Columnas nuevas: `leads.bot_lock_token`, `bot_lock_expira`, `bot_turno_seq`, `bot_turno_respondido`
+(`scripts/migrate-bot-lock-2026-08-05.sql`, aditiva; aplicar por psql ANTES del deploy).
+
+> ⚠️ **El nombre del lead es texto del cliente.** `leads.nombre` sale del perfil de WhatsApp, que el
+> cliente elige. Antes de que llegue al prompt pasa por `primerNombre()`, que solo acepta
+> `^[\p{L}\p{M}'’-]{2,24}$`: sin eso, alguien llamado `[HANDOFF]` lograba que el modelo repitiera la
+> etiqueta al saludar y **apagaba el bot de su propio lead**. Cualquier dato nuevo que se inyecte al
+> prompt desde la DB tiene que pasar por un filtro parecido.
+
+### 6.3 El bot nunca deja al cliente sin respuesta
+
+Regla que ordena `fallback.ts`: *nunca dejar al cliente sin respuesta, y nunca prometer una asesora sin
+haberla despertado.* Antes se mandaba "una asesora se comunicará contigo" **sin apagar el bot y sin
+notificar a nadie** (y con el lead en cola, `vendedor_id` es NULL, así que el `if` de la notificación ni
+entraba). Una foto sin caption era peor: silencio absoluto.
+
+Ahora, ante IA caída / respuesta descartada / media sin texto: **un reintento corto**, y si no, nota
+`sender='sistema'` en el hilo + notificación y push a un receptor resuelto en cascada (**asesora →
+candidatos en cola → admin**). El texto depende del horario y **no menciona problemas técnicos**. Si
+Meta rechaza el envío (ventana de 24 h vencida), también se avisa.
+
+⚠️ **Un fallback NO apaga el bot.** La primera versión hacía `chatbot_activo = FALSE` en todos esos
+casos y era peor que el problema: un 429 pasajero de Gemini o una foto sin caption dejaban al lead **sin
+bot para siempre**. Lo único que apaga el bot es un `[HANDOFF]` explícito del modelo o que una asesora
+tome la conversación. Para que una caída de la IA no ametralle a las asesoras, la notificación tiene
+anti-spam de 30 minutos por lead (el cliente igual recibe su respuesta en cada mensaje).
+
+### 6.4 Saneo: por qué cotizar era imposible
+
+`pareceTruncada()` descartaba toda respuesta que no cerrara con puntuación, así que una lista que
+termina en `- Alitas: S/ 12.00 por kg` se tiraba y el cliente recibía *"tengo un problema técnico"*.
+Ahora se evalúa la **última línea**, con excepción para líneas de lista/precio y para preguntas. Se
+suma `limpiarMarkdown()` (`**x**` → `*x*`: WhatsApp no entiende Markdown) y la señal **determinista**
+de truncamiento `finishReason === "length"` que ahora expone `gemini.ts`.
+
+### 6.5 Cómo se prueba
+
+- `npm test` — 46 tests de funciones puras (`vitest`). Corren en Node 26 porque **ninguna** importa el
+  driver de Neon. Cubren el saneo (incluida la regresión de las listas), los invariantes de
+  `construirTurnos` (Mistral rechaza con 400 dos `assistant` seguidos), que el prompt tenga los 18
+  distritos y los precios y **no** el nombre de la otra marca, y que toda la carta matchee el catálogo.
+- `node scripts/simular-conversacion.mjs --caso rafaga` — postea webhooks **firmados con HMAC** contra
+  el dev server. 17 escenarios listos (pollería, fuera de cobertura, regateo, inyección de prompt,
+  stock, factura, reclamo…). Para que no salga nada a WhatsApp real basta con que la marca **no tenga
+  token** en `.env.local`: `enviarTexto()` entra en modo mock y todo queda en el CRM.

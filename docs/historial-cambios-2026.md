@@ -8,6 +8,115 @@
 
 ---
 
+## 5 ago 2026 (noche) — Antonella: el bot deja de ser recepcionista y empieza a vender
+
+**Contexto.** Con el CRM de la Avícola ya operando, Hugo pasó los cuatro documentos que usa Antonio
+—"Antonella 2.0 – Verdad Única", la Ficha Comercial, los Beneficios y un manual de negociación basado
+en *Rompe la barrera del NO* de Chris Voss— y pidió analizarlos a fondo y mejorar las respuestas del bot.
+
+**El diagnóstico.** El bot no sabía nada del negocio. Su prompt vivía hardcodeado en
+`bot-orchestrator.ts` y todo su conocimiento eran dos strings: el nombre de la marca y una lista de
+categorías. No conocía precios, ni qué productos existen, ni cuáles son los 18 distritos (decía
+"reparto en 18 distritos" sin poder enumerarlos), ni horarios, ni medios de pago, ni mínimos, ni el
+nombre de quien le escribía, ni qué día era, ni si esa persona era cliente desde hacía años. Su única
+meta era escribir `[HANDOFF]`.
+
+Y tres agujeros hacían que el cliente recibiera una respuesta mala o ninguna:
+
+1. **El saneo tiraba las cotizaciones.** `pareceTruncada()` descartaba toda respuesta que no cerrara
+   con puntuación: una lista que termina en `- Alitas: S/ 12.00 por kg` se descartaba y el cliente
+   recibía *"Disculpa, en este momento tengo un problema técnico"*. **Cotizar era literalmente
+   imposible.** (De yapa: `quitarEtiquetaHandoff` colapsaba `\s{2,}` → " ", o sea que aplastaba los
+   saltos de línea y dejaba cualquier lista en un renglón.)
+2. **Ráfagas encimadas.** "20 kg" / "para mañana" / "en Surco" en cuatro segundos = tres llamadas a la
+   IA y tres respuestas superpuestas. La idempotencia por wamid solo cubre el reintento del MISMO
+   mensaje.
+3. **El fallback mentía.** Se mandaba "una asesora se comunicará contigo" pero NO se apagaba el bot y
+   NO se notificaba a nadie — peor: con el lead todavía en cola, `vendedor_id` es NULL, así que el `if`
+   de la notificación ni siquiera entraba. Una foto sin caption era silencio absoluto (`return null`).
+
+**Decisiones de Hugo (las cuatro, antes de escribir código).** El bot **vende y cierra** (pasa a la
+asesora con el pedido armado); **sí da precios**, de una carta curada con el precio real de la base;
+la verdad operativa del documento **sigue vigente** (reparto lun–sáb 8–12, atención 8–20, mínimos 5/10
+kg); y esta tanda incluye el prompt **más** los tres arreglos críticos.
+
+**Lo que se construyó.** Cinco módulos nuevos en `src/lib/chatbot/`: `carta-comercial.ts` (curaduría
+comercial + alias del cliente), `config-bot.ts` (`settings.bot_ventas`, defaults = los documentos),
+`contexto-negocio.ts` (precios reales, hora de Lima, próximo reparto, si ya es cliente),
+`prompt-antonella.ts` (el prompt y los turnos) y `fallback.ts`. El orquestador se partió en
+`registrarEntrante()` (síncrono, con Meta esperando) y `responderTurno()` (en `after()`), con lock de
+turno, debounce de 7 s y chequeo pre-envío. `gemini.ts` ganó chat multi-turno con `systemInstruction`,
+`finishReason` y presupuesto de tiempo. Detalle completo: [doc 15 §6](./arquitectura/15-asistente-ia.md).
+
+**Tres decisiones que vale la pena recordar:**
+- **Carta curada, no los 84 productos.** Los nombres de la DB son operativos (`"Cuy entero precio por
+  uni."`) y volcarlos hace que el bot suene a inventario. Además Antonio pidió no ofrecer nada fuera de
+  su lista, **incluida la milanesa**, que sí está en el catálogo.
+- **El prompt en código, los datos en settings.** El prompt contiene el token `[HANDOFF]`; si fuera
+  editable en un textarea, un pegado desprolijo dejaría al bot sin transferir clientes en silencio.
+- **El precio nunca se inventa:** sin match en el catálogo el ítem sale "a consultar", y si la carta
+  entera falla, el prompt PROHÍBE cotizar.
+
+**Verificación.** 46 tests de funciones puras con `vitest` (corren en Node 26 porque ninguna importa el
+driver de Neon — el motivo por el que `test-crm-flow.mjs` nunca corrió acá) y un simulador nuevo,
+`scripts/simular-conversacion.mjs`, que postea webhooks firmados con HMAC contra el dev server con 17
+escenarios. Probado contra `dev-hugo` en **modo mock** (la marca sin token no manda nada a Meta):
+
+| Escenario | Qué hizo el bot |
+|---|---|
+| "¿a cuánto está la pechuga?" | Dos presentaciones con el **precio real de la DB**, nombre comercial y pregunta de avance |
+| "soy de la pollería El Sabroso" | No cotizó, cerró con amabilidad |
+| "¿llegan a Comas?" | Dijo que no, sin inventar, y ofreció tomar los datos |
+| Ráfaga de 3 mensajes | **UNA** sola respuesta que junta los tres — y saludó "Buenas noches" (sabe la hora de Lima) |
+
+**Trampa del entorno que casi cuesta caro:** el `localhost:3000` de la Mac estaba ocupado por el dev
+server de OTRO proyecto (se delató con un 308 a URL con barra final, que Transavic no usa). Postearle
+payloads de webhook a un proyecto ajeno habría sido feo: **verificar siempre de quién es el puerto**
+antes de simular.
+
+### La revisión adversarial (46 agentes) y lo que encontró
+
+Antes de tocar producción se pasó todo el cambio por cinco lentes independientes (concurrencia, SQL de
+Neon, prompt y seguridad, fallback/UX, regresiones) con un verificador escéptico por hallazgo. Salieron
+**41 defectos distintos, 4 críticos** — tres de ellos **introducidos por este mismo cambio**. Los cuatro
+grandes y su arreglo:
+
+1. **El mensaje que llega con el lock tomado se perdía para siempre.** El diseño asumía que el ganador
+   del lock leería los mensajes del perdedor, y eso solo es cierto si llegan durante el debounce. Si
+   entraban después de que el ganador ya leyó, nadie los respondía: el cliente veía silencio absoluto.
+   → Columna nueva **`leads.bot_turno_respondido`**: al soltar el lock se compara contra `bot_turno_seq`
+   y, si quedó algo sin responder, se **reencola** el turno (hasta 2 rondas); si no alcanza el
+   presupuesto, se avisa a una humana en vez de dejarlo colgado.
+2. **El cliente podía apagar el bot poniéndose `[HANDOFF]` de nombre en WhatsApp.** El nombre de perfil
+   es texto que elige el cliente; llegaba crudo al prompt, el modelo lo repetía al saludar y
+   `pideHandoff()` lo leía como una orden de transferir. → `primerNombre()` ahora solo acepta
+   `^[\p{L}\p{M}'’-]{2,24}$`. Verificado en vivo: un lead llamado `[HANDOFF]` recibe su saludo y el bot
+   **sigue encendido**.
+3. **El caption de una foto se descartaba.** `body` guarda la dataURL de la imagen, así que el texto
+   escrito sobre la foto ("quiero 20 kg de esto para mañana") se perdía y el bot contestaba "recibí tu
+   archivo, ¿qué necesitas?" a quien acababa de decirle exactamente qué necesitaba. → El caption se
+   guarda como una fila de texto aparte.
+4. **El fallback apagaba el bot para siempre.** Un 429 pasajero de Gemini, un falso positivo del saneo o
+   una foto sin caption dejaban al lead sin bot **permanentemente**. → **Un fallback ya no apaga el
+   bot**: solo lo apaga un `[HANDOFF]` explícito o una asesora. Se sumó anti-spam de notificaciones (una
+   cada 30 min por lead) para que una caída de la IA no ametralle a las asesoras.
+
+Otros arreglos de la misma tanda: `pareceTruncada` perdió la regla "más de 3 palabras sin puntuación"
+(descartaba respuestas válidas — en WhatsApp nadie cierra con punto, y ahora cada falso positivo
+despierta a una asesora); las notificaciones usan la cascada **asesora → candidatos en cola → admin**
+(con `vendedor_id` NULL, o sea todo lead recién creado, antes no le llegaban a nadie); el presupuesto
+del turno se mide desde el arranque de la invocación y no desde `responderTurno`; el `INSERT` de lead
+lleva `ON CONFLICT (telefono, empresa)` (dos webhooks simultáneos reventaban con 23505); las gallinas y
+el pato se cotizan **por kilo** aunque el catálogo diga `uni` (S/ 17.90 "por unidad" para un ave de 4 kg
+es cuatro veces menos); el osobuco se partió en dos ítems porque son dos precios; el historial de
+compras ya no mete en el prompt productos que la carta excluye; y `cargarCatalogo` ordena por nombre
+para que el match sea determinista.
+
+Reacciones, stickers y ubicaciones vuelven a ser no-op (antes se guardaban como texto vacío y
+disparaban el "recibí tu archivo").
+
+---
+
 ## 5 ago 2026 — El token de la Avícola, por fin (y las variables ya en Vercel)
 
 **Contexto.** Hugo retomó el alta del RUC 10 con un mensaje corto: *"antonio ya esta activo, abre el
