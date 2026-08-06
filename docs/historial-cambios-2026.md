@@ -41,11 +41,32 @@ y el CLI no tiene `env get`, así que la única comprobación real es la prueba 
 **`vercel redeploy` falla con *"Deployment belongs to a different team"*** pese a que `whoami` y `switch`
 dan lo correcto — el camino bueno es el de siempre: commit a `main` y que Vercel despliegue.
 
-**Higiene pendiente.** El token nuevo se pegó en texto plano en el chat (igual que el de Transavic el
-19 jul), así que **los dos tokens siguen en la lista de rotación**.
+**El `META_VERIFY_TOKEN` que ya nadie podía leer.** Para suscribir el webhook hace falta ese token, y
+resultó que **no estaba en ningún lado legible**: no está en `.env.local` ni en `.env` (nunca estuvo), y
+en Vercel figura como **`Sensitive`** — o sea que *no se puede revelar*: `vercel env pull` devuelve `""`,
+el CLI no tiene `env get`, en el panel *Copy to Clipboard* está deshabilitado y *Edit* abre el campo
+vacío. La lección: **una variable Sensitive existe solo donde tú la anotaste**. Se rotó (valor nuevo en
+`.env.local`, reemplazado en Vercel desde el panel — `vercel env update` **falla** sobre una Sensitive con
+*"You cannot change the key of a Sensitive Environment Variable"*), lo cual es inofensivo porque ese token
+solo interviene cuando Meta verifica una URL de webhook. Comprobación directa, que además es el **único
+chequeo posible** de una Sensitive: `GET /api/webhooks/meta?hub.mode=subscribe&hub.verify_token=…&hub.challenge=12345`
+→ devolvió **`12345`** (y `403` con un valor incorrecto, o sea que valida de verdad).
 
-**Dónde quedó.** Falta el **webhook** en la app *CRM La Avicola de Tony* (campo `messages`, misma URL y
-mismo `META_VERIFY_TOKEN` que Transavic) y la prueba con las dos marcas en paralelo.
+**Webhook y prueba real.** `POST /<APP_ID>/subscriptions` (`object=whatsapp_business_account`,
+`fields=messages,message_template_status_update`) → `{"success":true}`, `active: true` en el GET, y el
+aviso *"not subscribed to the message webhook"* desapareció del `health_status`. Con eso, un WhatsApp real
+al **+51 936 303 850**: el lead entró con **`empresa = Avícola de Tony`**, el bot respondió *"¡Hola!
+Bienvenido a La Avícola de Tony…"* **desde ese número y sin nombrar a la otra marca**, el saliente quedó en
+**✓✓** (no `fallido`) y la rotación arrancó en fase grupal. **El CRM de la segunda marca está operando.**
+
+**Higiene pendiente.** El token nuevo se pegó en texto plano en el chat (igual que el de Transavic el
+19 jul), así que **los dos tokens siguen en la lista de rotación**; ninguno caduca, la exposición no
+expira sola.
+
+**Detalle de infraestructura para la próxima vez.** `vercel redeploy` falla con *"Deployment belongs to a
+different team"* aunque `whoami`/`switch` estén bien; el camino que funciona es commit a `main`. Y las
+variables que crea el CLI nacen **Sensitive**: anotar SIEMPRE el valor en `.env.local` y en
+`CREDENCIALES-PRODUCCION.local.md` antes de subirlo, porque después no hay forma de recuperarlo.
 
 ---
 

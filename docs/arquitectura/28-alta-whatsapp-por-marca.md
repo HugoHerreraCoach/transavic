@@ -47,7 +47,7 @@ App *Transavic CRM* `1043268678158460` · WABA `883642441471852` · número **+5
 (`phone_number_id 1181655271701439`) · System User *CRM Transavic* `61591800645031` · webhook verificado
 y suscrito a `messages`. Probado end-to-end el 19 jul.
 
-### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO (Actualizado 5 ago 2026)
+### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ✅ OPERANDO (5 ago 2026)
 
 **Identificadores (no son secretos — se documentan para no volver a buscarlos):**
 
@@ -78,7 +78,8 @@ y suscrito a `messages`. Probado end-to-end el 19 jul.
 | Registro del número (`POST /register`) | ✅ **No hizo falta**: el número quedó `status: CONNECTED` + `code_verification_status: VERIFIED` directo desde el alta por la UI. Al 5 ago `name_status` ya es **APPROVED** y `health_status.can_send_message` = **AVAILABLE** en las 4 entidades (número, WABA, negocio, app) |
 | Suscripción de la app a la WABA | ✅ `POST /<WABA_ID>/subscribed_apps` → `{"success":true}`; el GET lista *CRM La Avicola de Tony* `1572345110399260` |
 | Variables en Vercel producción | ✅ **Cargadas (5 ago 2026)**: `WHATSAPP_AVI_PHONE_NUMBER_ID`, `WHATSAPP_AVI_WABA_ID`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`. Toman efecto con el siguiente deploy |
-| Webhook en la app de la marca | ⏳ **Pendiente** — el propio `health_status` lo grita: *"Your app is not subscribed to the message webhook"*. Va DESPUÉS del redeploy (§4.9) |
+| Webhook en la app de la marca | ✅ **Suscrito y activo (5 ago 2026)** por API: `POST /<APP_ID>/subscriptions` con `object=whatsapp_business_account`, `callback_url=https://app.transavic.com/api/webhooks/meta`, `fields=messages,message_template_status_update` → `{"success":true}`; el `GET` lo confirma con `active: true`, y el aviso *"not subscribed to the message webhook"* desapareció del `health_status` |
+| Prueba end-to-end | ✅ **5 ago 2026** — WhatsApp real al número: lead creado con `empresa = Avícola de Tony`, el bot respondió **desde ese número** presentándose solo como esa marca, mensaje saliente en **✓✓** (no `fallido`) y la rotación entró en fase grupal |
 | Página de Facebook | ❌ Ninguna (*Página principal: ninguna*) — hace falta **solo para Click-to-WhatsApp** |
 | Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada. No impidió emitir el token: bastó la verificación por SMS al admin (§4.7 bis, punto 4) |
 | ⚠️ Identificación fiscal de la cuenta de pagos | **`20612806901` (RUC de Transavic)** en la cuenta de la Avícola → las facturas de Meta salen con el RUC equivocado. Corregir con Antonio |
@@ -354,7 +355,9 @@ Nada de esto hay que volver a hacerlo (commits `dff5710` y `a5341ed`, 20 jul 202
 1. **Página de Facebook** dentro del portfolio de la marca: obligatoria para Click-to-WhatsApp
    (`page_id` es campo del creativo) **[OFICIAL]**. No bloquea el CRM.
 2. **RUC de la cuenta de pagos** de la Avícola: hoy tiene el de Transavic (§1).
-3. **Rotar `WHATSAPP_TRA_TOKEN`**: se compartió en texto plano el 19 jul y no caduca.
+3. **Rotar los DOS tokens de WhatsApp**: `WHATSAPP_TRA_TOKEN` (compartido en texto plano el 19 jul) y
+   `WHATSAPP_AVI_TOKEN` (el 5 ago). Ninguno caduca, así que la exposición no expira sola. Rotar = revocar
+   en *Usuarios del sistema* (revoca TODOS los del usuario) + generar de nuevo con los 3 permisos.
 4. **2FA de los administradores** del portfolio: 0 de 2.
 5. **RNPD** (`sipdp.minjus.gob.pe`): inscribir los bancos de datos personales, uno por RUC. Gratuito y
    automático; la política publicada cubre el requisito de Meta, no la obligación ante la ANPD.

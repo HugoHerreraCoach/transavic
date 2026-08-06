@@ -490,13 +490,14 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 | **Usuario del sistema** "CRM Avicola de Tony" (Admin; app + WABA en control total) | `61592610189811` |
 | └ su identidad como actor de la API (`GET /me`) | `122102414115420339` |
 
-> Al 5 ago 2026: empresa verificada, WABA + número **CONNECTED** / `name_status: APPROVED` (Meta lo
-> registró en el alta, **no hizo falta `POST /register`**), app y usuario del sistema creados, **app
-> suscrita a la WABA** (`subscribed_apps` ✅), **App Secret** validado y **token permanente EMITIDO y
-> verificado** (`debug_token`: SYSTEM_USER, `expires_at: 0`, con `whatsapp_business_messaging`). Las 4
-> vars ya están en Vercel producción. **Falta:** el **webhook** en la app de Meta (después del redeploy)
-> y la prueba end-to-end de las dos marcas en paralelo. Sigue sin **Página de Facebook** (TONIO LADT
-> tiene 0; solo la exige Click-to-WhatsApp, no bloquea el CRM).
+> **Al 5 ago 2026 el CRM de la Avícola OPERA**: número CONNECTED / `name_status: APPROVED`, app + usuario
+> del sistema, `subscribed_apps` ✅, token permanente validado con `debug_token` (`expires_at: 0`, **con
+> `whatsapp_business_messaging`**), las 4 vars en Vercel y el **webhook suscrito** (`messages`). Probado
+> con un WhatsApp real: lead con `empresa = Avícola de Tony`, bot respondiendo desde ese número, saliente
+> en ✓✓. Sigue sin **Página de Facebook** (solo la exige Click-to-WhatsApp) y **los 2 tokens están
+> pendientes de rotar** (se compartieron en texto plano). ⚠️ Las env vars de Vercel nacen **Sensitive** y
+> **no se pueden releer** — anotarlas en `.env.local` + credenciales locales al crearlas (por eso hubo que
+> rotar `META_VERIFY_TOKEN`). Detalle: [doc 28 §9](./docs/arquitectura/28-alta-whatsapp-por-marca.md).
 >
 > ⚠️ Dos trampas que ya nos costaron caro (detalle en [doc 28 §4.7 bis y §8](./docs/arquitectura/28-alta-whatsapp-por-marca.md)):
 > **(a)** WhatsApp solo se activa marcando su **CASO DE USO al CREAR la app** — una app con `Tipo: Ninguno`
