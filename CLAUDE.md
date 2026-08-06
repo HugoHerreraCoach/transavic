@@ -490,12 +490,13 @@ crear una 2ª cuenta personal está **prohibido** por las Normas Comunitarias y 
 | **Usuario del sistema** "CRM Avicola de Tony" (Admin; app + WABA en control total) | `61592610189811` |
 | └ su identidad como actor de la API (`GET /me`) | `122102414115420339` |
 
-> Al 3 ago 2026: empresa verificada, WABA + número **CONNECTED** (Meta lo registró en el alta, **no hizo
-> falta `POST /register`**), app y usuario del sistema creados, **app suscrita a la WABA**
-> (`subscribed_apps` ✅) y **App Secret** ya leído y validado. **Falta:** ⛔ **regenerar el token** (el
-> primero salió sin `whatsapp_business_messaging` y se revocó), cargar las 4 vars en Vercel + redeploy y
-> recién entonces el **webhook**. Sigue sin **Página de Facebook** (TONIO LADT tiene 0; solo la exige
-> Click-to-WhatsApp, no bloquea el CRM).
+> Al 5 ago 2026: empresa verificada, WABA + número **CONNECTED** / `name_status: APPROVED` (Meta lo
+> registró en el alta, **no hizo falta `POST /register`**), app y usuario del sistema creados, **app
+> suscrita a la WABA** (`subscribed_apps` ✅), **App Secret** validado y **token permanente EMITIDO y
+> verificado** (`debug_token`: SYSTEM_USER, `expires_at: 0`, con `whatsapp_business_messaging`). Las 4
+> vars ya están en Vercel producción. **Falta:** el **webhook** en la app de Meta (después del redeploy)
+> y la prueba end-to-end de las dos marcas en paralelo. Sigue sin **Página de Facebook** (TONIO LADT
+> tiene 0; solo la exige Click-to-WhatsApp, no bloquea el CRM).
 >
 > ⚠️ Dos trampas que ya nos costaron caro (detalle en [doc 28 §4.7 bis y §8](./docs/arquitectura/28-alta-whatsapp-por-marca.md)):
 > **(a)** WhatsApp solo se activa marcando su **CASO DE USO al CREAR la app** — una app con `Tipo: Ninguno`

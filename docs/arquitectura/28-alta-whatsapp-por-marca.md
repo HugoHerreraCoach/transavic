@@ -47,7 +47,7 @@ App *Transavic CRM* `1043268678158460` · WABA `883642441471852` · número **+5
 (`phone_number_id 1181655271701439`) · System User *CRM Transavic* `61591800645031` · webhook verificado
 y suscrito a `messages`. Probado end-to-end el 19 jul.
 
-### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO (Actualizado 3 ago 2026)
+### 🏪 La Avícola de Tony — RUC 10 — portfolio **TONIO LADT** `2200578807071141` ⏳ EN PROCESO (Actualizado 5 ago 2026)
 
 **Identificadores (no son secretos — se documentan para no volver a buscarlos):**
 
@@ -73,13 +73,14 @@ y suscrito a `messages`. Probado end-to-end el 19 jul.
 | Método de pago WABA | ✅ **Cargado/Asignado** (3 ago 2026) |
 | App de Meta propia | ✅ **Creada** (3 ago 2026) — *CRM La Avicola de Tony* `1572345110399260`, caso de uso **"Conecta con los clientes a través de WhatsApp"**, portfolio **TONIO LADT**. Ve la WABA y el número en *Configuración de la API* |
 | System User | ✅ **Creado** (3 ago 2026) — *CRM Avicola de Tony* `61592610189811`, rol **Admin**, con la app y la WABA asignadas en **control total** |
-| Token permanente | ⛔ **REVOCADO y pendiente de regenerar.** El primero (3 ago) salió **sin `whatsapp_business_messaging`** → habría dejado al bot mudo; se revocó (también estaba filtrado) y el nuevo quedó a medias porque Meta pide **verificación de identidad en CADA emisión**. Receta exacta en §4.7 |
+| Token permanente | ✅ **Emitido y verificado (5 ago 2026)** — `debug_token`: `type: SYSTEM_USER`, `is_valid: true`, **`expires_at: 0`**, scopes `whatsapp_business_management` + **`whatsapp_business_messaging`** + `whatsapp_business_manage_events`. El del 3 ago salió **sin `whatsapp_business_messaging`** y se revocó; este se destrabó completando la verificación de identidad (§4.7 bis, punto 4) |
 | App Secret (`META_APP_SECRET_AVI`) | ✅ **Leído y validado** (3 ago 2026) con `GET /debug_token?...&access_token=<APP_ID>\|<SECRET>`. Guardado en `.env.local` y en `CREDENCIALES-PRODUCCION.local.md` |
-| Registro del número (`POST /register`) | ✅ **No hizo falta**: el número quedó `status: CONNECTED` + `code_verification_status: VERIFIED` directo desde el alta por la UI. `name_status: PENDING_REVIEW` **no bloquea** recibir ni responder |
+| Registro del número (`POST /register`) | ✅ **No hizo falta**: el número quedó `status: CONNECTED` + `code_verification_status: VERIFIED` directo desde el alta por la UI. Al 5 ago `name_status` ya es **APPROVED** y `health_status.can_send_message` = **AVAILABLE** en las 4 entidades (número, WABA, negocio, app) |
 | Suscripción de la app a la WABA | ✅ `POST /<WABA_ID>/subscribed_apps` → `{"success":true}`; el GET lista *CRM La Avicola de Tony* `1572345110399260` |
-| Variables Vercel y Webhook | ⏳ Pendiente (`WHATSAPP_AVI_PHONE_NUMBER_ID=1269524296240191`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`, `WHATSAPP_AVI_WABA_ID`) |
+| Variables en Vercel producción | ✅ **Cargadas (5 ago 2026)**: `WHATSAPP_AVI_PHONE_NUMBER_ID`, `WHATSAPP_AVI_WABA_ID`, `WHATSAPP_AVI_TOKEN`, `META_APP_SECRET_AVI`. Toman efecto con el siguiente deploy |
+| Webhook en la app de la marca | ⏳ **Pendiente** — el propio `health_status` lo grita: *"Your app is not subscribed to the message webhook"*. Va DESPUÉS del redeploy (§4.9) |
 | Página de Facebook | ❌ Ninguna (*Página principal: ninguna*) — hace falta **solo para Click-to-WhatsApp** |
-| Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada → es lo que hoy frena el token |
+| Admins del portfolio | 2 personas; 2FA obligatoria pero **0 de 2** la tienen activada. No impidió emitir el token: bastó la verificación por SMS al admin (§4.7 bis, punto 4) |
 | ⚠️ Identificación fiscal de la cuenta de pagos | **`20612806901` (RUC de Transavic)** en la cuenta de la Avícola → las facturas de Meta salen con el RUC equivocado. Corregir con Antonio |
 
 ---
@@ -151,6 +152,15 @@ correcto** — Meta suele abrir el último portfolio usado. **[PANTALLA]**
 3. **Meta exige verificación de identidad en CADA emisión** (*"Ya casi has terminado — para proteger esta
    cuenta, debes verificarla"*), no solo la primera vez. Es un paso humano: no se puede automatizar.
    Distinto de la **2FA**, que además debe estar activa en la cuenta del admin o el asistente ni arranca.
+4. **Cómo se destraba esa verificación (5 ago 2026)** **[PANTALLA]**: la solicitud queda **pendiente** en
+   la ficha del system user (banner *"Verificación de la cuenta obligatoria"* con *Verificar cuenta* /
+   *Cancelar solicitud*) y **sobrevive días** — no hay que rehacerla. Al pulsar *Verificar cuenta* Meta
+   manda un **código SMS al celular del admin del portfolio** (aquí el de Antonio), lo teclea la persona,
+   y el banner pasa a *"Generación de identificadores de acceso aprobada"* con un botón **Generar
+   identificador**. Ese botón **emite el token de la solicitud anterior**: ya no vuelve a preguntar app,
+   caducidad ni permisos — usa los que se eligieron cuando se lanzó la solicitud. Por eso los permisos hay
+   que dejarlos bien **antes** de que aparezca la verificación, y hay que **confirmarlos con
+   `debug_token`** al recibirlo. El token se muestra **una sola vez**.
 
 Comprobación obligatoria del token recién generado:
 
@@ -284,6 +294,22 @@ WHATSAPP_AVI_WABA_ID           ← documental (hoy ningún código la consume)
 Pegar **sin espacios ni saltos de línea**. **Orden:** deploy del código → cargar variables → **redeploy** →
 recién entonces configurar el webhook en Meta. Al revés, Meta reintenta hasta 7 días y puede desactivar el
 webhook de la app nueva.
+
+**Cargarlas por CLI** (evita pegar el token en un formulario web):
+
+```bash
+printf '%s' "$VALOR" | npx vercel env add WHATSAPP_AVI_TOKEN production
+```
+
+Dos cosas verificadas el 5 ago 2026:
+
+- **No se pueden releer para comprobarlas.** `vercel env pull` devuelve **`VAR=""`** para *todas* las
+  variables cifradas del proyecto (también las de Transavic, que sí funcionan) y el CLI **no tiene
+  `env get`**. O sea: no hay forma de validar por CLI que el valor llegó íntegro — la comprobación real es
+  la prueba end-to-end de §7. Sí sirve medir el largo **antes** de mandarlo.
+- **`vercel redeploy` falla con "Deployment belongs to a different team"** aunque `vercel whoami` y
+  `vercel switch` digan lo correcto (y `--scope` fue rechazado por el clasificador de permisos). El
+  camino que sí funciona es el de siempre: **commit a `main` → Vercel despliega solo**.
 
 ---
 

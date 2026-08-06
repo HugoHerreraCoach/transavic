@@ -8,6 +8,47 @@
 
 ---
 
+## 5 ago 2026 — El token de la Avícola, por fin (y las variables ya en Vercel)
+
+**Contexto.** Hugo retomó el alta del RUC 10 con un mensaje corto: *"antonio ya esta activo, abre el
+navegador y continua"*. El 3 de agosto todo había quedado en un punto muy concreto: la solicitud de token
+del usuario del sistema *CRM Avicola de Tony* estaba **pendiente de verificación de identidad**, y esa
+verificación es un paso humano.
+
+**Lo que pasó.** El banner *"Verificación de la cuenta obligatoria"* **seguía intacto dos días después**
+(la solicitud no caduca sola). Al pulsar *Verificar cuenta*, Meta mandó un **código SMS al celular del
+admin del portfolio** (+51 946 209 950, el de Antonio); Hugo lo tecleó y el banner cambió a *"Generación
+de identificadores de acceso aprobada"*. El botón **Generar identificador** que aparece ahí **emite
+directamente el token de la solicitud anterior**: no vuelve a preguntar app, caducidad ni permisos — usa
+los que se eligieron cuando se lanzó la solicitud. Por suerte esa solicitud era la relanzada del 3 ago,
+con los tres permisos marcados a mano.
+
+**Verificación (lo que no se puede saltar).** `debug_token` devolvió `type: SYSTEM_USER`, `is_valid: true`,
+**`expires_at: 0`** (nunca caduca) y los scopes correctos, **con `whatsapp_business_messaging`** — el que
+faltaba en el token del 3 ago y habría dejado al bot recibiendo pero mudo. Con ese token:
+`GET /<PHONE_NUMBER_ID>` → `CONNECTED`, `code_verification_status: VERIFIED` y **`name_status: APPROVED`**
+(subió solo desde `PENDING_REVIEW`); `health_status` → `can_send_message: AVAILABLE` en las cuatro
+entidades (número, WABA, negocio, app), con un único aviso que es justamente el pendiente:
+*"Your app is not subscribed to the message webhook"*. Los errores 138024/138025 que salen ahí son de
+**llamadas SIP**, que no usamos.
+
+**Vercel.** Las 4 variables (`WHATSAPP_AVI_PHONE_NUMBER_ID`, `WHATSAPP_AVI_WABA_ID`, `WHATSAPP_AVI_TOKEN`,
+`META_APP_SECRET_AVI`) se cargaron por CLI a producción, con el valor entrando por *stdin* desde
+`.env.local` para no pegarlo en un formulario. Dos hallazgos de camino, ya anotados en
+[doc 28 §9](./arquitectura/28-alta-whatsapp-por-marca.md): (a) **no se pueden releer** — `vercel env pull`
+devuelve `VAR=""` para todas las variables cifradas del proyecto (también las de Transavic, que funcionan)
+y el CLI no tiene `env get`, así que la única comprobación real es la prueba end-to-end; (b)
+**`vercel redeploy` falla con *"Deployment belongs to a different team"*** pese a que `whoami` y `switch`
+dan lo correcto — el camino bueno es el de siempre: commit a `main` y que Vercel despliegue.
+
+**Higiene pendiente.** El token nuevo se pegó en texto plano en el chat (igual que el de Transavic el
+19 jul), así que **los dos tokens siguen en la lista de rotación**.
+
+**Dónde quedó.** Falta el **webhook** en la app *CRM La Avicola de Tony* (campo `messages`, misma URL y
+mismo `META_VERIFY_TOKEN` que Transavic) y la prueba con las dos marcas en paralelo.
+
+---
+
 ## 3 ago 2026 — WhatsApp del RUC 10: la app, el usuario del sistema y dos trampas de Meta
 
 **Contexto.** Hugo mandó una captura de `developers.facebook.com/apps`: había **cuatro apps llamadas
