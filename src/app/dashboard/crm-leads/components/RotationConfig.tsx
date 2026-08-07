@@ -21,6 +21,12 @@ interface RotationConfigProps {
 }
 
 interface GoldenTicketConfig {
+  /**
+   * "equitativo" (default): dentro de cada marca gana la que MENOS leads recibió
+   * hoy. "niveles": el patrón histórico 60/25/15 por nivel de prioridad.
+   * Lo lee `rotateAndSelectCandidate` en src/lib/chatbot/bot-orchestrator.ts.
+   */
+  modo?: "equitativo" | "niveles";
   sequenceIndex: number;
   sequencePattern: number[];
   dailyResetHour: number;
@@ -29,6 +35,7 @@ interface GoldenTicketConfig {
 }
 
 const DEFAULT_CONFIG: GoldenTicketConfig = {
+  modo: "equitativo",
   sequenceIndex: 0,
   sequencePattern: [1, 1, 2, 1, 3, 1, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1, 1, 2, 1, 3],
   dailyResetHour: 8,
@@ -50,6 +57,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
   const [percent2, setPercent2] = useState(25);
   const [percent3, setPercent3] = useState(15);
   const [resetHourInput, setResetHourInput] = useState(8);
+  const [modo, setModo] = useState<"equitativo" | "niveles">("equitativo");
 
   // Auto-balance de porcentajes (No me hagas pensar)
   const handlePercent1Change = (val: number) => {
@@ -120,6 +128,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
         const distConfig = settingsData.crm_lead_distribution || DEFAULT_CONFIG;
         setConfig(distConfig);
         setResetHourInput(distConfig.dailyResetHour ?? 8);
+        setModo(distConfig.modo === "niveles" ? "niveles" : "equitativo");
 
         const percentages = distConfig.tierPercentages || { "1": 60, "2": 25, "3": 15 };
         setPercent1(percentages["1"] ?? 60);
@@ -169,6 +178,7 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
       const updatedConfig: GoldenTicketConfig = {
         ...config,
+        modo,
         sequencePattern: newPattern,
         dailyResetHour: resetHourInput,
         tierPercentages: {
@@ -194,6 +204,35 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
     } catch (error) {
       console.error(error);
       showToast("error", "Error al guardar la configuración.");
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  const handleCambiarModo = async (nuevo: "equitativo" | "niveles") => {
+    if (nuevo === modo) return;
+    const previo = modo;
+    setModo(nuevo); // optimista: el interruptor responde al toque
+    setSavingSettings(true);
+    try {
+      const updatedConfig = { ...config, modo: nuevo };
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "crm_lead_distribution", value: updatedConfig }),
+      });
+      if (!res.ok) throw new Error("Error");
+      setConfig(updatedConfig);
+      showToast(
+        "ok",
+        nuevo === "equitativo"
+          ? "Los leads se repartirán en partes iguales dentro de cada marca."
+          : "Los leads se repartirán según los porcentajes por nivel."
+      );
+    } catch (e) {
+      console.error(e);
+      setModo(previo);
+      showToast("error", "No se pudo cambiar el modo de reparto.");
     } finally {
       setSavingSettings(false);
     }
@@ -356,8 +395,34 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
             <span className="text-indigo-600">🎫</span> Reparto Automático de Leads
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Arrastra y clasifica las asesoras según su nivel de prioridad para distribuir de forma automática los nuevos prospectos.
+            {modo === "equitativo"
+              ? "Cada asesora recibe los leads de sus marcas, en partes iguales: le toca a la que menos recibió hoy."
+              : "Cada nivel recibe el porcentaje que definas más abajo. Arrastra a las asesoras entre niveles."}
           </p>
+
+          {/* Modo de reparto. Un interruptor visible evita que la pantalla mienta:
+              con el reparto parejo, los niveles y los porcentajes no se usan. */}
+          <div className="mt-3 inline-flex items-center gap-1 p-1 bg-white border border-gray-200 rounded-xl shadow-xs">
+            {([
+              { id: "equitativo", label: "Partes iguales", ayuda: "Le toca a la que menos leads recibió hoy en esa marca" },
+              { id: "niveles", label: "Por niveles", ayuda: "Reparte según los porcentajes 60/25/15 que definas" },
+            ] as const).map((op) => (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => handleCambiarModo(op.id)}
+                disabled={savingSettings}
+                title={op.ayuda}
+                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer disabled:opacity-60 ${
+                  modo === op.id
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "text-gray-500 hover:bg-gray-100"
+                }`}
+              >
+                {op.label}
+              </button>
+            ))}
+          </div>
         </div>
         <button
           onClick={onClose}
@@ -606,8 +671,20 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
 
           {/* Configuración de Algoritmo de Rotación (Columna Derecha) */}
           <div className="w-full xl:w-[320px] shrink-0 space-y-6">
-            {/* Porcentajes de Reparto (Range Sliders Auto-balanceables) */}
-            <div className="bg-white border border-gray-200/60 rounded-2xl shadow-xs p-5 space-y-4">
+            {/* Porcentajes de Reparto (Range Sliders Auto-balanceables).
+                En modo "partes iguales" NO se usan: se atenúan y se dice por qué,
+                en vez de dejar unos controles que aparentan mandar y no mandan. */}
+            <div
+              className={`bg-white border border-gray-200/60 rounded-2xl shadow-xs p-5 space-y-4 transition-opacity ${
+                modo === "equitativo" ? "opacity-50" : ""
+              }`}
+            >
+              {modo === "equitativo" && (
+                <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  No se está usando: hoy el reparto es en partes iguales. Cambia a
+                  «Por niveles» arriba si quieres que estos porcentajes manden.
+                </p>
+              )}
               <h3 className="font-bold text-gray-800 flex items-center gap-2 text-sm border-b border-gray-100 pb-3">
                 <FiSliders className="text-indigo-500" /> Distribución de Carga
               </h3>
