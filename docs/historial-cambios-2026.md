@@ -8,6 +8,65 @@
 
 ---
 
+## 6 ago 2026 — Reparto de leads por marca, y el estado de cuenta que obligaba a sacar calculadora
+
+**Reparto de leads por marca (pedido de Hugo).** Hugo pasó la asignación real: Jhoselyn y Saraí atienden
+La Avícola de Tony; Yali y Yesica, Transavic. Al ir a implementarlo apareció el problema de fondo: **la
+rotación tomaba a TODAS las asesoras activas sin mirar la marca**, así que un lead que escribía a la
+Avícola podía caerle a una asesora de Transavic y al revés (el contador del día ya era por marca; el pool
+de candidatas no). Lo mismo el escalado de un lead sin atender: se ofrecía a las asesoras de la otra marca.
+
+Además el reparto **no era parejo por diseño**: el patrón de 20 pasos reparte 60/25/15 por nivel, y Yali
+(nivel 2) y Yesica (nivel 3) recibían bastante menos. Hugo eligió reparto parejo con los niveles apagados.
+
+Lo que se hizo: columna `users.empresas TEXT[]` (NULL o vacío = todas las marcas, para que un deploy no
+deje a nadie fuera del reparto sin querer), filtro por marca en la rotación **y** en el escalado, y modo
+**`equitativo` por defecto**: dentro de la marca gana la que MENOS leads recibió hoy en esa marca, y
+desempata la que hace más tiempo que no recibe (`ordenarPorEquidad`). Se auto-corrige solo: si alguien
+falta un día, al siguiente arranca abajo y recibe primero. En la pantalla de Reparto cada asesora tiene
+dos chips de marca. Yohana quedó fuera del reparto por decisión de Hugo.
+
+**De paso, una pantalla que mentía:** con el reparto parejo, el panel "Distribución de Carga 60/25/15"
+seguía ahí como si mandara. Ahora hay un selector visible de modo (*Partes iguales* / *Por niveles*) que
+se guarda al tocarlo, el subtítulo dice qué hace el modo activo, y los porcentajes se atenúan con el
+motivo cuando no se usan. Migración `migrate-asesoras-por-marca-2026-08-06.sql`.
+
+**Aclaración que salió en la misma conversación:** las **respuestas rápidas y las plantillas ya estaban
+separadas por marca** desde el 19-20 jul (campo `empresa` opcional, badge en la lista, y el chat solo
+ofrece las de la marca del lead). Lo único compartido que quedaba era el reparto.
+
+### El PDF del estado de cuenta perdía el detalle por producto
+
+Hugo mandó el estado de cuenta de una clienta: la columna **"Monto del día"** traía solo la suma. El
+cliente veía *"Gallina doble pechuga 7.2 kg × S/ 12.50 / Pollo entero con menudencia 258 kg × S/ 8.80"* y
+un único **S/ 2,360.40** al costado: para comprobar que le cobraban bien tenía que sacar la calculadora.
+En un documento de deuda, eso es lo peor que puede pasar.
+
+**El dato ya existía** (`VentaAvicolaItem.subtotal`) y **la pantalla del modal ya lo mostraba**: solo el
+PDF lo tiraba. Ahora cada día es un bloque: una fila por producto con SU importe, y una fila
+**TOTAL DEL DÍA** en negrita que lleva el saldo anterior, los abonos y el saldo actual. Un día de un solo
+producto no repite el total (sería el mismo número dos veces) y un día de solo abono sigue siendo una fila.
+
+Dos decisiones que vale la pena recordar:
+- **Sin `rowSpan`.** `jspdf-autotable` parte mal los bloques con `rowSpan` entre páginas y este PDF ya
+  pasa de una hoja; con filas planas (fecha y guía solo en la primera del bloque) + `rowPageBreak: "avoid"`
+  la paginación no falla y ningún total queda huérfano.
+- **Fila "Ajuste".** Al mostrar los importes uno por uno, la columna TIENE que sumar el total o el cliente
+  lo nota. Si alguna vez no cuadra, la diferencia sale como "Ajuste" en vez de dejar un PDF que se
+  contradice. Apareció justamente probando: una venta de dev-hugo tenía 5 ítems que sumaban 945.60 y un
+  total de 1200. **Producción está limpia** (768 ventas, 0 descuadradas) porque el API calcula el total
+  sumando los ítems — era un registro de prueba metido a mano, pero el seguro quedó.
+
+La construcción de filas se extrajo a `construirFilasEstadoCuenta` (pura, 8 tests). De paso, `vitest`
+ahora resuelve el alias `@/`, que era lo que impedía testear cualquier módulo que importara `@/lib/...`.
+
+**Tres mejoras anotadas para el futuro** (pedido explícito de Hugo): asignar un pedido desde el celular
+sin arrastrar ([07 §6.1](./arquitectura/07-despacho-rutas.md)), ver el trazo real de la ruta al asignar
+([07 §6.2](./arquitectura/07-despacho-rutas.md)) y marcar las cámaras de velocidad de Lima para que los
+motorizados no corran ([08 §5.1](./arquitectura/08-repartidores-gps.md)).
+
+---
+
 ## 5 ago 2026 (noche) — Antonella: el bot deja de ser recepcionista y empieza a vender
 
 **Contexto.** Con el CRM de la Avícola ya operando, Hugo pasó los cuatro documentos que usa Antonio

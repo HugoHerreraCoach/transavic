@@ -55,3 +55,24 @@ El sistema distingue entre la falta de señal física (involuntaria) y la evasi�
 1. **Beacon Inmediato (`POST /api/repartidor/beacon`):** Si el motorizado apaga el GPS del dispositivo o revoca los permisos de ubicación a la aplicación Capacitor, la app intercepta el evento e intenta enviar un beacon al servidor registrando `gps_status = 'permiso_revocado'`. Si tiene pedidos activos en ruta, se notifica inmediatamente al administrador en Despacho (con marca roja).
 2. **GPS Simulado (Mock GPS):** Si el repartidor intenta usar aplicaciones para simular ubicaciones falsas, el servidor detecta el flag `simulated = true` en el POST. El backend descarta la coordenada (para no alterar el mapa de despacho), actualiza el estado del rider a `mock` (rojo en el mapa) y retorna un status 200 envenenando la cola offline para evitar que la app móvil se trabe reintentando.
 3. **Cron de inactividad (`/api/cron/repartidores-oscuros`):** El job programado corre cada 10 minutos y comprueba los motorizados con pedidos activos. Si no reportan coordenadas en más de 10 minutos (estado `sin_senal`, ámbar), envía una notificación `repartidor_oscuro` al admin con debounce en `settings.gps_oscuros_alertados`.
+
+---
+
+## 5. Mejoras pendientes (pedido de Hugo, 6 ago 2026)
+
+### 5.1 Cámaras de velocidad de Lima en el mapa
+
+Marcar en el mapa dónde están las **cámaras de fiscalización de velocidad** de Lima, para que los
+motorizados no corran en esos tramos. El objetivo no es la cámara en sí: es que **dejen de correr** —
+menos multas (que hoy paga el negocio o el repartidor), menos riesgo de accidente y menos desgaste de
+las motos.
+
+Puntos a resolver cuando se implemente:
+- **De dónde salen los puntos.** No hay un padrón oficial abierto y estable; habría que cargarlos a mano
+  en una tabla propia (lat/lng + vía + sentido) y poder editarlos desde el dashboard, porque cambian.
+- **Cómo se avisa.** En el mapa de Despacho es informativo para el admin; para que sirva de verdad el
+  aviso tiene que llegarle al motorizado en `/dashboard/mi-ruta` (o en la app), y sin obligarlo a mirar
+  la pantalla mientras maneja.
+- **Qué NO hacer:** convertirlo en vigilancia de velocidad del repartidor. El GPS ya es obligatorio en
+  jornada (§4) y agregar "iba a X km/h" cambia la relación con el equipo; el objetivo declarado es
+  prevenir, no sancionar.

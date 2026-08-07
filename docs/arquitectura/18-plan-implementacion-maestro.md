@@ -112,6 +112,12 @@ Tras la auditoría, el mismo 5 jul se ejecutó una ola de optimización sobre lo
 7. **Notificación diaria de precios a asesoras** — publicar el precio del día (el pollo cambia a diario) por la campanita/comunicados al abrir la jornada.
 8. **Refactor del CRM monolítico** — `crm-leads-client.tsx` (~4.100 líneas) separado en `ChatView`/`KanbanView`/`RotationView` + hooks propios.
 
+**Agregados el 6 ago 2026 (pedidos de Hugo):**
+
+9. **Asignar un pedido desde el celular** — hoy la asignación del kanban depende de arrastrar y soltar, y en el teléfono eso no funciona: el admin en la calle no puede asignar. Detalle: [07 §6.1](./07-despacho-rutas.md).
+10. **Ver el trazo real de la ruta al asignar** — el mapa dibuja líneas rectas entre paradas; en zonas como Surco no se puede entrar por cualquier calle y hace falta ver el camino. La `polyline` ya viene en la respuesta de Google Directions que se usa para optimizar y hoy se descarta. Detalle: [07 §6.2](./07-despacho-rutas.md).
+11. **Cámaras de velocidad de Lima en el mapa** — para que los motorizados no corran: menos multas, menos riesgo, menos desgaste. Ojo con el límite: es prevención, NO vigilancia de la velocidad del repartidor. Detalle: [08 §5.1](./08-repartidores-gps.md).
+
 ### Backlog de optimización (deuda técnica detectada)
 
 > Depurado el 5 jul 2026: los ítems de toasts, polling en caja y la validación de mermas salieron de esta lista porque ya se implementaron (ver "Optimización operativa" arriba); el refactor del CRM se movió al backlog priorizado (#8).

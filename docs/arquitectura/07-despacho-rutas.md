@@ -58,3 +58,31 @@ Al presionar **"🧭 Optimizar Ruta"** en la columna de un motorizado (requiere 
 Ubicado al lado derecho del panel, proporciona visibilidad espacial del reparto:
 - **Polylines de Ruta:** Dibuja líneas que conectan los pedidos asignados a cada motorizado en orden correlativo (`orden_ruta ASC`), utilizando un color distintivo único por motorizado.
 - **Markers de Repartidores en Vivo:** Lee la tabla `rider_locations` y dibuja un ícono de motocicleta para cada motorizado que está transmitiendo. La flecha del marker rota en función del campo `heading` (rumbo) del GPS. El marcador cambia de color según el estado (`rojo` = mock/permiso revocado, `ámbar` = sin señal $\ge$ 10 min, `verde` = transmitiendo normalmente).
+
+---
+
+## 6. Mejoras pendientes (pedidos de Hugo, 6 ago 2026)
+
+Anotadas acá para no perderlas; ninguna está implementada.
+
+### 6.1 Asignar un pedido desde el celular (hoy solo se puede arrastrando)
+
+La asignación del kanban depende de **arrastrar y soltar** (`@hello-pangea/dnd`). En laptop funciona
+bien, pero **en el celular no se puede arrastrar**, y el admin muchas veces está en la calle o en planta
+con el teléfono en la mano: ahí simplemente no puede asignar.
+
+Hace falta un camino que no dependa del arrastre — por ejemplo un botón "Asignar a…" en cada tarjeta de
+pedido que abra la lista de motorizados y la resuelva de un toque. El drag-and-drop se queda como atajo
+para quien esté en computadora, no como única vía. (Ya existe un `select` de asignación rápida en
+Despacho; la mejora es que esa acción esté al alcance en la tarjeta, en pantalla chica, y sin conflicto
+con el scroll.)
+
+### 6.2 Ver el TRAZO de la ruta al asignar, no solo el destino
+
+Hoy el mapa dibuja **líneas rectas** entre paradas (`polylines` por `orden_ruta`, §5): sirven para
+entender el orden, pero no muestran **por dónde se va**. En zonas como Surco no se puede entrar por
+cualquier calle, y el motorizado termina resolviéndolo por su cuenta o dando vueltas.
+
+La mejora es dibujar el trazo real de calles (la `polyline` codificada que ya devuelve Google Directions
+en la respuesta que se usa para optimizar la ruta — hoy se descarta y solo se guarda el orden y la
+duración). Al asignar, el admin vería el camino que efectivamente va a hacer el reparto.
