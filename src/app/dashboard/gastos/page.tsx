@@ -34,7 +34,7 @@ export default async function GastosPage() {
           Registra un gasto con la fecha en que se gastó y consulta el historial por día.
         </p>
       </div>
-      <GastosClient />
+      <GastosClient esAdmin={session.user.role === "admin"} />
     </div>
   );
 }

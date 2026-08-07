@@ -73,7 +73,7 @@ const MONEDAS = [
   { valor: 0.1, etiqueta: "S/ 0.10" },
 ];
 
-export default function CajaDiariaClient() {
+export default function CajaDiariaClient({ esAdmin = false }: { esAdmin?: boolean }) {
   const [active, setActive] = useState<boolean>(false);
   const [caja, setCaja] = useState<ActiveBox | null>(null);
   const [historial, setHistorial] = useState<ClosedBox[]>([]);
@@ -435,6 +435,16 @@ export default function CajaDiariaClient() {
                 fetchCajaData();
               }}
               onError={(m: string) => mostrarToast(m, "error")}
+              esAdmin={esAdmin}
+              onCategoriaAgregada={({ lista, valor, yaExistia }) => {
+                setCategoriasGasto(lista);
+                mostrarToast(
+                  yaExistia
+                    ? `"${valor}" ya estaba en tus categorías: la dejamos seleccionada.`
+                    : `"${valor}" agregada a tus categorías.`,
+                  "exito"
+                );
+              }}
             />
 
             {/* Cierre de Caja */}

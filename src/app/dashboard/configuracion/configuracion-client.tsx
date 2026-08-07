@@ -3,11 +3,12 @@
 // listas de texto (chips agregar/quitar) y números con su explicación en simple.
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FiPlus, FiX, FiSave, FiLoader, FiSettings, FiList, FiPercent } from "react-icons/fi";
 import {
   fetchParametrosNegocio,
   PARAMETROS_NEGOCIO_DEFAULT,
+  type ListaAmpliable,
   type ParametrosNegocio,
 } from "@/lib/parametros-negocio";
 import { useToast, ToastContainer } from "@/components/Toast";
@@ -140,9 +141,18 @@ export default function ConfiguracionClient() {
   const [guardando, setGuardando] = useState(false);
   const { mostrarToast, toasts } = useToast();
 
+  // Las listas TAL COMO estaban al abrir la pantalla. Sirven para distinguir,
+  // al guardar, entre "esta opción la quitó el admin acá" y "esta opción la
+  // creó otra persona mientras la pantalla estaba abierta".
+  const listasAlCargar = useRef<Pick<ParametrosNegocio, ListaAmpliable> | null>(null);
+
   useEffect(() => {
     fetchParametrosNegocio().then((p) => {
       setParams(p);
+      listasAlCargar.current = {
+        categorias_gasto: p.categorias_gasto,
+        tipos_doc_compra: p.tipos_doc_compra,
+      };
       setCargando(false);
     });
   }, []);
@@ -155,15 +165,40 @@ export default function ConfiguracionClient() {
     }
     setGuardando(true);
     try {
+      // Este POST reescribe la clave ENTERA. Mientras esta pantalla estuvo
+      // abierta, alguien pudo crear una categoría de gasto o un tipo de
+      // documento desde su propio formulario: sin esto, guardar acá los
+      // borraría sin que nadie se entere. Se conservan SOLO las opciones que
+      // NO existían al cargar — las que el admin quitó a propósito acá siguen
+      // quitadas.
+      const vigentes = await fetchParametrosNegocio();
+      const conLasNuevasDeOtros = (clave: ListaAmpliable): string[] => {
+        const alCargar = listasAlCargar.current?.[clave] ?? [];
+        const nuevasDeOtros = vigentes[clave].filter((x) => !alCargar.includes(x));
+        return Array.from(new Set([...params[clave], ...nuevasDeOtros]));
+      };
+      const value: ParametrosNegocio = {
+        ...params,
+        categorias_gasto: conLasNuevasDeOtros("categorias_gasto"),
+        tipos_doc_compra: conLasNuevasDeOtros("tipos_doc_compra"),
+      };
+
       const res = await fetch("/api/settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: "parametros_negocio", value: params }),
+        body: JSON.stringify({ key: "parametros_negocio", value }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(typeof data?.error === "string" ? data.error : "No se pudo guardar.");
       }
+      // La pantalla pasa a reflejar lo que quedó guardado (puede incluir
+      // opciones que creó otra persona), y esa vuelve a ser la referencia.
+      setParams(value);
+      listasAlCargar.current = {
+        categorias_gasto: value.categorias_gasto,
+        tipos_doc_compra: value.tipos_doc_compra,
+      };
       mostrarToast("Configuración guardada. Ya está activa en todo el sistema.", "exito");
     } catch (error) {
       mostrarToast(error instanceof Error ? error.message : "No se pudo guardar.", "error");

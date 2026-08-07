@@ -2706,3 +2706,78 @@ Quedan pendientes únicamente las cuatro credenciales OAuth separadas
 `SUNAT_*_CONSULTA_CLIENT_*` para resolver automáticamente boletas `03`; no son ni
 deben sustituir las credenciales GRE existentes. Mientras falten, una boleta ambigua
 permanece `por_confirmar` + revisión y bloquea duplicados.
+
+---
+
+## 6 ago 2026 — Categorías que crea quien carga el gasto, y el arqueo que por fin significa algo
+
+**Pedido:** en su video Marianela pide "Delivery" como categoría de gasto. Hugo hace la pregunta correcta:
+*"¿y cómo agrega ella más opciones? Tiene que ser flexible."*
+
+### Lo que ya era flexible, pero estaba escondido
+
+`categorias_gasto` y `tipos_doc_compra` viven en `settings.parametros_negocio` desde la flexibilización de
+julio, y se editan con chips en `/dashboard/configuracion`. Marianela y Ariana son `admin`, o sea que
+**podían hacerlo desde siempre**. El problema era puro descubrimiento: nada en la pantalla del gasto
+insinuaba que esa lista existía, y había que abandonar la carga para ir a cambiarla.
+
+Dos hallazgos que abarataron el trabajo:
+
+- **`settings.parametros_negocio` no existía en producción** (0 filas): las 7 categorías que veía eran los
+  DEFAULT del código. Agregar "Delivery" ahí se lo mostró sin tocar datos.
+- **Una categoría nueva ya funcionaba sola de punta a punta**: el servidor no valida la categoría contra
+  la lista, el color del chip sale de un hash del texto y el filtro une las configuradas con las usadas.
+  No había nada que cablear aguas abajo.
+
+Lo único que faltaba era **agregar UN elemento**. El único escritor era `POST /api/settings`: admin-only y
+reescribe la clave entera, así que mandar el objeto completo desde el formulario habría pisado los
+umbrales que otro admin estuviera editando.
+
+### Lo que se construyó
+
+- **`POST /api/parametros-negocio/lista`** — read-modify-write en el servidor, para `categorias_gasto` y
+  `tipos_doc_compra`. Permiso: **admin + produccion**, los mismos que registran el gasto o la compra
+  (crear la categoría que falta no es "cambiar la configuración del negocio", es destrabar el trabajo).
+- **`agregarALista`** (`src/lib/parametros-negocio.ts`, puro, 16 tests): recorta y colapsa espacios,
+  capitaliza la inicial, deduplica ignorando tildes y mayúsculas, topes de 40 opciones y 30 caracteres.
+  **Si ya existe no es error**: devuelve la que hay y la UI la selecciona — quien la escribió quiere
+  usarla, no leer un cartel rojo.
+- **Centinela "➕ Nueva categoría…"** en el `<select>` del gasto (Gastos y Caja Diaria) y **"➕ Nuevo
+  tipo…"** en el de documento de Compras. Patrón inline, no modal: los modales del repo están reservados
+  para crear filas de base de datos, y esto es una palabra en una lista.
+- **Enlace "Administrar categorías"** (solo admin) al lado del select: crear en el momento resuelve hoy;
+  el enlace enseña dónde ordenar y quitar cuando quiera.
+- **Anti-*last-write-wins*:** `configuracion-client.tsx` re-lee los parámetros antes de guardar y conserva
+  las opciones que aparecieron mientras su pantalla estaba abierta — pero **solo esas**: las que el admin
+  quitó a propósito siguen quitadas (se comparan contra las listas tal como estaban al abrir).
+- **Corregir y borrar un gasto desde la lista**: `PATCH`/`DELETE /api/gastos/[id]` existían desde la tanda
+  anterior pero ningún componente los llamaba. Ahora hay ✏️ y 🗑️ por fila.
+
+**Bug cazado al verificar:** la pantalla de Gastos inicializaba las categorías en `[]`, así que durante la
+carga el `<select>` se quedaba sin opciones y mostraba **"➕ Nueva categoría…" como si fuera la categoría
+elegida** — y el default terminaba siendo "Otros" en vez de "Almuerzo". Se inicializa con
+`PARAMETROS_NEGOCIO_DEFAULT`, igual que Caja Diaria.
+
+### El arqueo: los gastos eran la punta, los pagos eran el iceberg
+
+Se aplicaron los **14 gastos** que tenían la fecha metida en la descripción (3–16 de julio). Al verificar
+la caja después, apareció el problema de verdad: **167 pagos a proveedor** (S/ 454 754.14) cargados en 8
+jornadas con la `fecha` correcta pero el `created_at` del día de digitación. Como el arqueo filtra por
+`created_at`, **S/ 11 982.62 en pagos de julio descontaban del efectivo esperado de la caja abierta** —
+frente a S/ 181 de gastos. La caja de Marianela pasó de S/ 12 862.62 en egresos a **S/ 880**, que es lo
+que de verdad salió desde el 5 de agosto.
+
+`scripts/alinear-created-at-pagos-proveedor.mjs` hace ese alineado (dry-run por defecto, respaldo CSV).
+Su filtro exige **las dos** condiciones —concepto de pago a proveedor **y** `created_at` posterior a la
+`fecha`— porque hay 6 movimientos del POS con el desfase invertido, que son otro bug (fecha calculada en
+UTC, un día adelantada) y que esta regla empeoraría. Antes de aplicar se verificó que **no existía ninguna
+caja cerrada**: no había ningún arqueo firmado al que meterle movimientos por detrás.
+
+**Verificado end-to-end en `dev-hugo`** con el dev server: crear "peaje  y   estacionamiento" → queda
+"Peaje y estacionamiento" (espacios colapsados, capitalizada, seleccionada y persistida); reescribirla en
+mayúsculas → *"ya estaba en tus categorías: la dejamos seleccionada"*, sin duplicar; registrar un gasto
+con ella; corregirle la fecha a 20/07 → gasto, transacción y `created_at` los tres en 20/07; eliminarlo →
+el saldo pasa de 68.06 a **80.40** (exactamente los 12.34) y no quedan filas huérfanas. 83/83 tests.
+
+**Quedan 2 gastos** sin fecha en el texto que Marianela tiene que ubicar: `DESAYUNO ACOPIO` (S/ 248.00) y
+`DESAYUNO KAREN` (S/ 232.00). Ya se corrigen desde la propia lista.

@@ -17,9 +17,13 @@
 //     gasto de otro día no toca la caja de hoy.
 "use client";
 
-import React, { useState } from "react";
-import { FiPlus } from "react-icons/fi";
+import React, { useMemo, useState } from "react";
+import { FiPlus, FiSettings, FiX } from "react-icons/fi";
 import { fechaBonita, hoyLimaCliente } from "@/lib/gastos/fecha-gasto";
+import { MAX_LARGO_OPCION } from "@/lib/parametros-negocio";
+
+/** Valor centinela del `<select>` que abre el campo "nueva categoría". */
+const NUEVA_CATEGORIA = "__nueva__";
 
 export interface CuentaSimple {
   id: string;
@@ -34,6 +38,13 @@ interface FormGastoProps {
   /** Se llama tras registrar con éxito, para refrescar la lista de quien lo use. */
   onRegistrado?: (info: { fecha: string; esRetroactivo: boolean }) => void;
   onError?: (mensaje: string) => void;
+  /**
+   * Se llama cuando se crea (o se reencuentra) una categoría desde el propio
+   * formulario, para que el padre refresque su lista y avise a su manera.
+   */
+  onCategoriaAgregada?: (info: { lista: string[]; valor: string; yaExistia: boolean }) => void;
+  /** Solo el admin ve el enlace a Configuración (quitar/renombrar vive ahí). */
+  esAdmin?: boolean;
   /** Texto del encabezado; en la caja dice "Egreso de Caja". */
   titulo?: string;
   compacto?: boolean;
@@ -45,6 +56,8 @@ export default function FormGasto({
   cuentaPorDefecto,
   onRegistrado,
   onError,
+  onCategoriaAgregada,
+  esAdmin = false,
   titulo = "Registrar gasto",
   compacto = false,
 }: FormGastoProps) {
@@ -56,15 +69,61 @@ export default function FormGasto({
   const [descripcion, setDescripcion] = useState("");
   const [guardando, setGuardando] = useState(false);
 
+  // Categorías creadas acá mismo. Se guardan aparte de la prop para que la
+  // recién creada NO desaparezca si el padre todavía no refrescó su lista.
+  const [agregadas, setAgregadas] = useState<string[]>([]);
+  const [creandoCategoria, setCreandoCategoria] = useState(false);
+  const [nuevaCategoria, setNuevaCategoria] = useState("");
+  const [guardandoCategoria, setGuardandoCategoria] = useState(false);
+
+  const opciones = useMemo(
+    () => Array.from(new Set([...categorias, ...agregadas])),
+    [categorias, agregadas]
+  );
+
   // La cuenta por defecto llega después del fetch: se adopta la primera vez.
   React.useEffect(() => {
     if (!cuentaId && cuentaPorDefecto) setCuentaId(cuentaPorDefecto);
   }, [cuentaPorDefecto, cuentaId]);
   React.useEffect(() => {
-    if (categorias.length && !categorias.includes(categoria)) setCategoria(categorias[0]);
-  }, [categorias, categoria]);
+    if (opciones.length && !opciones.includes(categoria)) setCategoria(opciones[0]);
+  }, [opciones, categoria]);
 
   const esRetroactiva = fecha !== hoy;
+
+  const cancelarNuevaCategoria = () => {
+    setCreandoCategoria(false);
+    setNuevaCategoria("");
+  };
+
+  const crearCategoria = async () => {
+    const valor = nuevaCategoria.trim();
+    if (!valor) return onError?.("Escribe el nombre de la categoría.");
+
+    setGuardandoCategoria(true);
+    try {
+      const res = await fetch("/api/parametros-negocio/lista", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lista: "categorias_gasto", valor }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Se conserva lo escrito: que no tenga que teclearlo de nuevo.
+        onError?.(typeof data?.error === "string" ? data.error : "No se pudo crear la categoría.");
+        return;
+      }
+      const lista: string[] = Array.isArray(data?.lista) ? data.lista : [];
+      setAgregadas(lista);
+      setCategoria(data.valor);
+      cancelarNuevaCategoria();
+      onCategoriaAgregada?.({ lista, valor: data.valor, yaExistia: Boolean(data.ya_existia) });
+    } catch {
+      onError?.("Error de red al crear la categoría.");
+    } finally {
+      setGuardandoCategoria(false);
+    }
+  };
 
   const registrar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -154,16 +213,76 @@ export default function FormGasto({
           <div className="space-y-1">
             <label className="block text-xs font-semibold text-gray-700">Categoría:</label>
             <select
-              value={categoria}
-              onChange={(e) => setCategoria(e.target.value)}
+              value={creandoCategoria ? NUEVA_CATEGORIA : categoria}
+              onChange={(e) => {
+                if (e.target.value === NUEVA_CATEGORIA) {
+                  setCreandoCategoria(true);
+                  setNuevaCategoria("");
+                  return;
+                }
+                setCategoria(e.target.value);
+              }}
               className={`${inputBase} bg-white`}
             >
-              {categorias.map((cat) => (
+              {opciones.map((cat) => (
                 <option key={cat} value={cat}>
                   {cat}
                 </option>
               ))}
+              {/* Crear la que falta sin salir de la pantalla ni saber que existe
+                  una página de Configuración (pedido de Marianela, 6 ago 2026). */}
+              <option value={NUEVA_CATEGORIA}>➕ Nueva categoría…</option>
             </select>
+
+            {creandoCategoria && (
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="text"
+                  autoFocus
+                  value={nuevaCategoria}
+                  maxLength={MAX_LARGO_OPCION}
+                  onChange={(e) => setNuevaCategoria(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter agrega la categoría, NO envía el gasto.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (!guardandoCategoria) crearCategoria();
+                    }
+                    if (e.key === "Escape") cancelarNuevaCategoria();
+                  }}
+                  placeholder="Ej: Delivery"
+                  className={`${inputBase} flex-1`}
+                />
+                <button
+                  type="button"
+                  onClick={crearCategoria}
+                  disabled={guardandoCategoria}
+                  className="shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl px-3 py-2.5 font-bold text-xs transition-all cursor-pointer active:scale-95"
+                >
+                  {guardandoCategoria ? "…" : "Agregar"}
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelarNuevaCategoria}
+                  disabled={guardandoCategoria}
+                  title="Cancelar"
+                  className="shrink-0 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg p-2 transition-all cursor-pointer"
+                >
+                  <FiX size={16} />
+                </button>
+              </div>
+            )}
+
+            {/* Quitar o renombrar afecta el catálogo entero: eso vive en
+                Configuración, y este enlace es cómo se descubre que existe. */}
+            {esAdmin && !creandoCategoria && (
+              <a
+                href="/dashboard/configuracion"
+                className="inline-flex items-center gap-1 text-[10px] text-gray-400 hover:text-indigo-600 transition-colors"
+              >
+                <FiSettings size={10} /> Administrar categorías
+              </a>
+            )}
           </div>
         </div>
 

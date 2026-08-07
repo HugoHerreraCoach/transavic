@@ -291,3 +291,46 @@ alta— rechazan con **409** si la caja de esa fecha ya fue arqueada, para no co
 `--prod` contra producción) extrae la fecha del texto de la descripción y reubica el gasto y su
 transacción. Se corre en dry-run, se revisa la lista con quien cargó los gastos, y recién ahí se aplica.
 
+
+**Aplicado en producción (6 ago 2026).** Se reubicaron **14 gastos** (3 al 16 de julio) que tenían la
+fecha escrita dentro de la descripción. Quedaron 2 sin fecha en el texto (`DESAYUNO ACOPIO` S/ 248.00 y
+`DESAYUNO KAREN` S/ 232.00), que se corrigen a mano desde el botón ✏️ de la lista.
+
+### 8.1 Los pagos a proveedor tenían la misma fuga — y pesaban mucho más
+
+Al verificar el arqueo después de reubicar los gastos apareció el problema real: **167 pagos a proveedor**
+(S/ 454 754.14, del 28 de junio al 4 de agosto) se habían tecleado en 8 jornadas de carga con la `fecha`
+correcta pero el `created_at` del día en que se digitaron. Como el arqueo filtra por `created_at`, **S/
+11 982.62 de pagos de julio estaban descontando del efectivo esperado de la caja abierta** — contra
+apenas S/ 181 de gastos. Eso, y no los gastos, era lo que descuadraba la caja.
+
+**`scripts/alinear-created-at-pagos-proveedor.mjs`** (dry-run por defecto, `--apply`, `--prod`; deja
+respaldo CSV en `scripts/respaldos/`) mueve el `created_at` al día de su `fecha` conservando la hora. No
+toca montos, cuentas, `fecha` ni saldos: solo a qué turno de caja pertenece el movimiento.
+
+⚠️ **El alcance es angosto a propósito**, y la segunda condición no es opcional:
+
+```sql
+t.concepto LIKE 'Pago a Proveedor%'
+AND (t.created_at AT TIME ZONE 'America/Lima')::date > t.fecha   -- tecleado DESPUÉS
+```
+
+Hay **6 movimientos del POS con el desfase invertido** (`created_at` ANTERIOR a la `fecha`): ahí el bug es
+otro —la `fecha` se calculó en UTC y quedó un día adelantada— y aplicarles esta regla los empeoraría.
+
+Antes de aplicarlo se verificó que **no existía ninguna caja cerrada**: meter movimientos en un día cuyo
+arqueo ya está firmado dejaría ese cuadre inconsistente. Si en el futuro se repite la operación con cajas
+cerradas de por medio, hay que excluir esos días o rehacer su cuadre.
+
+### 8.2 Las categorías las crea quien carga el gasto (6 ago 2026)
+
+Marianela pidió "Delivery" como categoría. La pregunta de fondo era otra: cómo agrega ella las que le
+falten. `categorias_gasto` **ya** era configurable, pero solo desde `/dashboard/configuracion` — otra
+pantalla, admin-only y sin ninguna pista desde el formulario.
+
+Ahora el `<select>` de categoría (y el de tipo de documento en Compras) termina en **"➕ Nueva
+categoría…"**: se escribe, se toca Agregar y queda seleccionada. `POST /api/parametros-negocio/lista`
+(admin + produccion) hace el read-modify-write **en el servidor**; el helper puro `agregarALista`
+(`src/lib/parametros-negocio.ts`) recorta espacios, capitaliza y deduplica ignorando tildes y mayúsculas
+—si ya existe la devuelve en vez de fallar—. Quitar o renombrar sigue en Configuración, con un enlace
+discreto desde el propio formulario para que se sepa que existe. Detalle en el gotcha #65 de CLAUDE.md.

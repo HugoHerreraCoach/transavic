@@ -6,7 +6,14 @@ import { FiPlus, FiTrash2, FiSave, FiCalendar, FiBox, FiFileText, FiX, FiEdit2 }
 import SearchableSelect from "@/components/SearchableSelect";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
-import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
+import {
+  fetchParametrosNegocio,
+  MAX_LARGO_OPCION,
+  PARAMETROS_NEGOCIO_DEFAULT,
+} from "@/lib/parametros-negocio";
+
+/** Valor centinela del `<select>` que abre el campo "nuevo tipo de documento". */
+const NUEVO_TIPO_DOC = "__nuevo_tipo_doc__";
 import { esLineaSinPeso } from "@/lib/compras-lineas";
 
 interface Proveedor {
@@ -100,8 +107,13 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
   const [proveedorId, setProveedorId] = useState("");
   const [fecha, setFecha] = useState(new Date().toISOString().split("T")[0]);
   const [tipoDoc, setTipoDoc] = useState("Factura");
-  // Tipos de documento configurables desde /dashboard/configuracion.
+  // Tipos de documento configurables desde /dashboard/configuracion — y, desde
+  // el 6 ago 2026, ampliables desde acá mismo (misma idea que las categorías de
+  // gasto: la lista estaba escondida en otra pantalla).
   const [tiposDoc, setTiposDoc] = useState<string[]>(PARAMETROS_NEGOCIO_DEFAULT.tipos_doc_compra);
+  const [creandoTipoDoc, setCreandoTipoDoc] = useState(false);
+  const [nuevoTipoDoc, setNuevoTipoDoc] = useState("");
+  const [guardandoTipoDoc, setGuardandoTipoDoc] = useState(false);
   const [nroDoc, setNroDoc] = useState("");
   const [items, setItems] = useState<CompraItemInput[]>([filaVacia()]);
 
@@ -307,6 +319,50 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
   };
 
   // Abre el modal "Nuevo producto"; `fila` = fila que auto-selecciona el producto.
+  const cancelarNuevoTipoDoc = () => {
+    setCreandoTipoDoc(false);
+    setNuevoTipoDoc("");
+  };
+
+  /** Agrega un tipo de documento a la lista del negocio y lo deja seleccionado. */
+  const crearTipoDoc = async () => {
+    const valor = nuevoTipoDoc.trim();
+    if (!valor) {
+      mostrarToast("Escribe el nombre del tipo de documento.", "error");
+      return;
+    }
+    setGuardandoTipoDoc(true);
+    try {
+      const res = await fetch("/api/parametros-negocio/lista", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lista: "tipos_doc_compra", valor }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Se conserva lo escrito para no obligar a teclearlo de nuevo.
+        mostrarToast(
+          typeof data?.error === "string" ? data.error : "No se pudo crear el tipo de documento.",
+          "error"
+        );
+        return;
+      }
+      if (Array.isArray(data?.lista)) setTiposDoc(data.lista);
+      setTipoDoc(data.valor);
+      cancelarNuevoTipoDoc();
+      mostrarToast(
+        data?.ya_existia
+          ? `"${data.valor}" ya estaba en la lista: lo dejamos seleccionado.`
+          : `"${data.valor}" agregado a los tipos de documento.`,
+        "exito"
+      );
+    } catch {
+      mostrarToast("Sin conexión. Revisa tu internet e intenta de nuevo.", "error");
+    } finally {
+      setGuardandoTipoDoc(false);
+    }
+  };
+
   const abrirModalProducto = (fila: number | null) => {
     setFilaDestino(fila);
     setNuevoProd({ nombre: "", categoria: "Insumos", unidad: "uni" });
@@ -570,14 +626,62 @@ export default function ComprasClient({ esAdmin = false }: { esAdmin?: boolean }
               <div className="space-y-2">
                 <label className="block text-sm font-semibold text-gray-700">Tipo Documento</label>
                 <select
-                  value={tipoDoc}
-                  onChange={(e) => setTipoDoc(e.target.value)}
+                  value={creandoTipoDoc ? NUEVO_TIPO_DOC : tipoDoc}
+                  onChange={(e) => {
+                    if (e.target.value === NUEVO_TIPO_DOC) {
+                      setCreandoTipoDoc(true);
+                      setNuevoTipoDoc("");
+                      return;
+                    }
+                    setTipoDoc(e.target.value);
+                  }}
                   className="block w-full rounded-xl border-gray-300 py-3 px-4 text-gray-900 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-gray-50 text-sm"
                 >
                   {tiposDoc.map((t) => (
                     <option key={t} value={t}>{t === "Guia" ? "Guía de Remisión" : t}</option>
                   ))}
+                  {/* Crear el que falta sin ir a Configuración (6 ago 2026). */}
+                  <option value={NUEVO_TIPO_DOC}>➕ Nuevo tipo…</option>
                 </select>
+
+                {creandoTipoDoc && (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      autoFocus
+                      value={nuevoTipoDoc}
+                      maxLength={MAX_LARGO_OPCION}
+                      onChange={(e) => setNuevoTipoDoc(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Enter agrega el tipo, NO envía la compra.
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (!guardandoTipoDoc) crearTipoDoc();
+                        }
+                        if (e.key === "Escape") cancelarNuevoTipoDoc();
+                      }}
+                      placeholder="Ej: Recibo"
+                      className="block w-full rounded-xl border-gray-300 py-2.5 px-3 text-gray-900 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 bg-gray-50 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={crearTipoDoc}
+                      disabled={guardandoTipoDoc}
+                      className="shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white rounded-xl px-3 py-2.5 font-bold text-xs transition-all cursor-pointer active:scale-95"
+                    >
+                      {guardandoTipoDoc ? "…" : "Agregar"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cancelarNuevoTipoDoc}
+                      disabled={guardandoTipoDoc}
+                      title="Cancelar"
+                      className="shrink-0 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg p-2 transition-all cursor-pointer"
+                    >
+                      <FiX size={16} />
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">

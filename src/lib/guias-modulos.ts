@@ -125,6 +125,8 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
       { titulo: "No necesitas tener una caja abierta para registrar gastos aquí" },
       { titulo: "Al cargar varios gastos del mismo día, la fecha se queda puesta", detalle: "solo cambias el monto y guardas" },
       { titulo: "Un gasto de otro día no afecta el arqueo de la caja de hoy", detalle: "por eso no aparece en los movimientos del turno" },
+      { titulo: "¿Falta una categoría? Créala en el mismo formulario", detalle: "elige \"➕ Nueva categoría…\" y escríbela; queda disponible para siempre" },
+      { titulo: "¿Cargaste un gasto mal? Tócalo y corrígelo", detalle: "el botón del lápiz cambia fecha, monto o categoría; el dinero se ajusta solo" },
       { titulo: "Filtra por categoría o por fechas para revisar un periodo" },
     ],
   },
