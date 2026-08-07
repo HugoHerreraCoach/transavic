@@ -1,7 +1,9 @@
 // src/app/dashboard/gastos/gastos-client.tsx
 // Listado de gastos: KPIs (hoy / mes actual), filtro por categoría (en memoria)
 // y por rango de fechas (server-side, GET /api/gastos?desde&hasta).
-// Los gastos se registran desde Caja Diaria — esta vista es solo consulta.
+// Desde el 6 ago 2026 los gastos TAMBIÉN se registran acá, con su fecha real y
+// SIN necesidad de tener una caja abierta (antes había que abrir una caja para
+// poder escribir un gasto, y la fecha terminaba escrita dentro de la descripción).
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
@@ -18,6 +20,8 @@ import {
 } from "react-icons/fi";
 import { fetchParametrosNegocio } from "@/lib/parametros-negocio";
 import GuiaModulo from "@/components/GuiaModulo";
+import FormGasto, { type CuentaSimple } from "./form-gasto";
+import { fechaBonita } from "@/lib/gastos/fecha-gasto";
 
 type Gasto = {
   id: string;
@@ -81,6 +85,8 @@ export default function GastosClient() {
 
   // Categorías configuradas por el admin (se unen con las de los gastos cargados).
   const [categoriasNegocio, setCategoriasNegocio] = useState<string[]>([]);
+  const [cuentas, setCuentas] = useState<CuentaSimple[]>([]);
+  const [aviso, setAviso] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
   const cargarGastos = useCallback(async () => {
     setLoading(true);
@@ -126,6 +132,20 @@ export default function GastosClient() {
     fetchParametrosNegocio().then((p) => {
       if (activo) setCategoriasNegocio(p.categorias_gasto);
     });
+    // Cuentas activas para el selector "Pagar con". Si falla, el formulario
+    // queda sin opciones pero la consulta de gastos sigue funcionando.
+    fetch("/api/cuentas")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: Array<{ id: string; nombre: string; activa?: boolean }>) => {
+        if (!activo) return;
+        const lista = Array.isArray(data) ? data : [];
+        setCuentas(
+          lista
+            .filter((c) => c.activa !== false)
+            .map((c) => ({ id: c.id, nombre: c.nombre }))
+        );
+      })
+      .catch(() => {});
     return () => {
       activo = false;
     };
@@ -161,6 +181,40 @@ export default function GastosClient() {
   return (
     <div className="space-y-6">
       <GuiaModulo modulo="gastos" />
+
+      {aviso && (
+        <div
+          className={`rounded-2xl border px-4 py-3 text-xs font-semibold ${
+            aviso.tipo === "ok"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-red-50 border-red-200 text-red-700"
+          }`}
+        >
+          {aviso.texto}
+        </div>
+      )}
+
+      {/* Registrar un gasto SIN depender de la caja: es la pantalla donde se
+          carga el mes atrasado. */}
+      <FormGasto
+        cuentas={cuentas}
+        categorias={categoriasNegocio}
+        cuentaPorDefecto={
+          // La mayoría de los gastos salen del efectivo de planta: es el default
+          // que ya usa la pantalla de Caja.
+          cuentas.find((c) => c.nombre === "Caja Efectivo Planta")?.id ?? cuentas[0]?.id
+        }
+        onRegistrado={({ fecha, esRetroactivo }: { fecha: string; esRetroactivo: boolean }) => {
+          setAviso({
+            tipo: "ok",
+            texto: esRetroactivo
+              ? `Gasto del ${fechaBonita(fecha)} registrado. Como es de otro día, no afecta el arqueo de la caja de hoy.`
+              : "Gasto registrado.",
+          });
+          cargarGastos();
+        }}
+        onError={(texto: string) => setAviso({ tipo: "error", texto })}
+      />
 
       {/* Error */}
       {error && (

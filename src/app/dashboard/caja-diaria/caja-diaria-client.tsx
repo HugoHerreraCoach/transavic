@@ -4,12 +4,13 @@
 import { useState, useEffect } from "react";
 import {
   FiDollarSign, FiTrendingUp, FiTrendingDown, FiLock,
-  FiPlus, FiList, FiCalendar, FiAlertCircle, FiCheckCircle
+  FiList, FiCalendar, FiAlertCircle, FiCheckCircle
 } from "react-icons/fi";
 import { usePollingVisible } from "@/lib/use-polling-visible";
 import { useToast, ToastContainer } from "@/components/Toast";
 import GuiaModulo from "@/components/GuiaModulo";
 import { fetchParametrosNegocio, PARAMETROS_NEGOCIO_DEFAULT } from "@/lib/parametros-negocio";
+import FormGasto from "@/app/dashboard/gastos/form-gasto";
 
 type Transaction = {
   id: string;
@@ -90,28 +91,19 @@ export default function CajaDiariaClient() {
   // Form states
   const [montoApertura, setMontoApertura] = useState<string>("");
   const [montoCierreReal, setMontoCierreReal] = useState<string>("");
-  const [gastoMonto, setGastoMonto] = useState<string>("");
-  const [gastoCategoria, setGastoCategoria] = useState<string>("Almuerzo");
   // Categorías de gasto configurables desde /dashboard/configuracion (fallback: las históricas).
   const [categoriasGasto, setCategoriasGasto] = useState<string[]>(
     PARAMETROS_NEGOCIO_DEFAULT.categorias_gasto
   );
-  const [gastoDescripcion, setGastoDescripcion] = useState<string>("");
   const [gastoCuentaId, setGastoCuentaId] = useState<string>("");
 
   const [loading, setLoading] = useState(true);
   const [aperturaLoading, setAperturaLoading] = useState(false);
-  const [gastoLoading, setGastoLoading] = useState(false);
   const [cierreLoading, setCierreLoading] = useState(false);
 
   useEffect(() => {
-    fetchParametrosNegocio().then((p) => {
-      setCategoriasGasto(p.categorias_gasto);
-      // Si la primera categoría configurada no es "Almuerzo", usarla como default.
-      setGastoCategoria((prev) =>
-        p.categorias_gasto.includes(prev) ? prev : p.categorias_gasto[0]
-      );
-    });
+    // Las categorías se pasan al formulario compartido, que elige el default.
+    fetchParametrosNegocio().then((p) => setCategoriasGasto(p.categorias_gasto));
   }, []);
 
   // Mini-modal de confirmación del cierre de caja (acción irreversible)
@@ -264,41 +256,6 @@ export default function CajaDiariaClient() {
       mostrarToast("Error de red", "error");
     } finally {
       setCierreLoading(false);
-    }
-  };
-
-  const handleGasto = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!gastoMonto || Number(gastoMonto) <= 0) return mostrarToast("Ingresa un monto de gasto válido", "error");
-    if (!gastoCuentaId) return mostrarToast("Selecciona la caja/cuenta de origen para el pago", "error");
-
-    setGastoLoading(true);
-    try {
-      const res = await fetch("/api/gastos", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fecha: new Date().toISOString().split("T")[0],
-          categoria: gastoCategoria,
-          descripcion: gastoDescripcion || "",
-          monto: Number(gastoMonto),
-          cuenta_id: gastoCuentaId
-        }),
-      });
-
-      if (res.ok) {
-        mostrarToast("Gasto registrado exitosamente", "exito");
-        setGastoMonto("");
-        setGastoDescripcion("");
-        fetchCajaData();
-      } else {
-        const err = await res.json();
-        mostrarToast(err.error || "Error al registrar el gasto", "error");
-      }
-    } catch {
-      mostrarToast("Error de red", "error");
-    } finally {
-      setGastoLoading(false);
     }
   };
 
@@ -460,75 +417,25 @@ export default function CajaDiariaClient() {
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Formulario de Gastos */}
-            <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                <FiPlus className="text-indigo-600" /> Registrar Gasto (Egreso de Caja)
-              </h3>
-              
-              <form onSubmit={handleGasto} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-gray-700">Monto Gasto (S/):</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      value={gastoMonto}
-                      onChange={(e) => setGastoMonto(e.target.value)}
-                      placeholder="0.00"
-                      className="block w-full rounded-xl border-gray-300 px-3 py-2.5 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="block text-xs font-semibold text-gray-700">Categoría:</label>
-                    <select
-                      value={gastoCategoria}
-                      onChange={(e) => setGastoCategoria(e.target.value)}
-                      className="block w-full rounded-xl border-gray-300 px-3 py-2.5 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                    >
-                      {categoriasGasto.map((cat) => (
-                        <option key={cat} value={cat}>{cat}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-gray-700">Pagar con (Cuenta/Caja):</label>
-                  <select
-                    value={gastoCuentaId}
-                    onChange={(e) => setGastoCuentaId(e.target.value)}
-                    className="block w-full rounded-xl border-gray-300 px-3 py-2.5 text-xs text-gray-900 outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                  >
-                    {cuentas.map(c => (
-                      <option key={c.id} value={c.id}>{c.nombre}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-gray-700">Descripción:</label>
-                  <input
-                    type="text"
-                    required
-                    value={gastoDescripcion}
-                    onChange={(e) => setGastoDescripcion(e.target.value)}
-                    placeholder="Ej: Pago almuerzo personal producción"
-                    className="block w-full rounded-xl border-gray-300 px-3 py-2.5 text-xs text-gray-900 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-gray-50"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={gastoLoading}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl py-3 font-bold text-xs shadow-md transition-all active:scale-98"
-                >
-                  {gastoLoading ? "Registrando..." : "Registrar Gasto"}
-                </button>
-              </form>
-            </div>
+            {/* El MISMO formulario que la pantalla de Gastos (fecha incluida).
+                Antes vivía duplicado acá y sin fecha, y por eso la fecha real
+                terminaba escrita dentro de la descripción. */}
+            <FormGasto
+              cuentas={cuentas}
+              categorias={categoriasGasto}
+              cuentaPorDefecto={gastoCuentaId}
+              titulo="Registrar Gasto (Egreso de Caja)"
+              onRegistrado={({ esRetroactivo, fecha }: { esRetroactivo: boolean; fecha: string }) => {
+                mostrarToast(
+                  esRetroactivo
+                    ? `Gasto del ${fecha.split("-").reverse().join("/")} registrado. No aparece en el turno de hoy porque es de otro día.`
+                    : "Gasto registrado exitosamente",
+                  "exito"
+                );
+                fetchCajaData();
+              }}
+              onError={(m: string) => mostrarToast(m, "error")}
+            />
 
             {/* Cierre de Caja */}
             <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">

@@ -246,3 +246,48 @@ CxP ya no bloquea un pago mayor a una guía ni exige saldo bancario suficiente. 
 pago pertenece al proveedor, puede cubrir varias deudas y dejar anticipo. La cuenta
 de origen puede quedar negativa, igual que la política flexible existente. Modelo,
 APIs, anulación y PDF: [doc 26](./26-proveedores-cuentas-por-pagar.md).
+
+---
+
+## 8. Gastos con su fecha real (6 ago 2026)
+
+**Qué pasaba.** El formulario de gasto vivía SOLO dentro de una caja abierta y mandaba
+`new Date().toISOString().split("T")[0]`: siempre hoy, sin poder cambiarlo, y en UTC (después de las
+19:00 de Lima guardaba la fecha de MAÑANA). Para cargar los gastos atrasados del mes, la administradora
+tuvo que **abrir una caja de S/ 10,000 que no correspondía a ningún día real**, y como no había dónde
+poner la fecha, la escribía dentro de la descripción: *"Gasto: Otros - PETER CON 13-07"*. En producción,
+14 de los 16 gastos cargados eran así.
+
+**Cómo quedó.**
+
+- El formulario es un componente compartido (`src/app/dashboard/gastos/form-gasto.tsx`) que usan la
+  pantalla de **Gastos** y la de **Caja Diaria**. En Gastos se puede registrar **sin caja abierta**: es
+  donde se carga el mes atrasado.
+- La **fecha va primera**, por defecto hoy, en ámbar cuando es de otro día, y **NO se resetea al
+  guardar** — cargar 20 gastos del 13 de julio es escribir 20 montos, no 20 montos y 20 fechas.
+- `descripcion` dejó de ser obligatoria (era obligatoria y por eso terminó usándose de campo fecha).
+
+**La regla que hace que los números vuelvan a significar algo:** la transacción del gasto se escribe con
+`fecha` = la del gasto y un **`created_at` sintético en ese mismo día**. Como el arqueo suma
+`transacciones` con `created_at >= caja.abierta_at`, un gasto atrasado queda **fuera** del turno de hoy y
+deja de generar un faltante fantasma. No hubo que tocar la aritmética del arqueo.
+
+> ⚠️ La misma fuga existía en los **pagos a proveedor** (`src/lib/proveedores/pagos.ts`): escribían
+> `transacciones.fecha` retroactiva pero dejaban `created_at` en "ahora", así que un pago retroactivo en
+> efectivo sí descontaba de la caja de hoy. Se corrigió igual. **Cualquier movimiento de dinero con fecha
+> elegible tiene que escribir las DOS: `fecha` y `created_at`.**
+
+**Validación** (`src/lib/gastos/fecha-gasto.ts`, puro y con tests): formato `AAAA-MM-DD`, fecha de
+calendario real (rechaza `2026-02-31`), **futura NO**, y **hacia atrás sin límite** (cargar julio en
+agosto es el caso real, a diferencia del límite legal de los comprobantes SUNAT). El "hoy" lo resuelve
+la BASE con `(NOW() AT TIME ZONE 'America/Lima')::date`, nunca `new Date()`.
+
+**Corregir y borrar.** `PATCH /api/gastos/[id]` y `DELETE` (admin) recalculan el saldo de la cuenta y la
+fila del ledger en la misma `sql.transaction`; antes **no había forma de corregir un gasto**. Ambos —y el
+alta— rechazan con **409** si la caja de esa fecha ya fue arqueada, para no contradecir un cuadre firmado
+(mismo criterio que editar o anular una venta del POS).
+
+**Los ya cargados.** `scripts/corregir-fechas-gastos.mjs` (dry-run por defecto, `--apply` para ejecutar,
+`--prod` contra producción) extrae la fecha del texto de la descripción y reubica el gasto y su
+transacción. Se corre en dry-run, se revisa la lista con quien cargó los gastos, y recién ahí se aplica.
+

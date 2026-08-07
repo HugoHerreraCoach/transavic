@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
           RETURNING id
         )
         INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id, fecha, created_at)
-        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta Rápida - Pedido ' || ${pedido_id}, ${pedido_id},
+        SELECT id, ${usuario_id}, 'ingreso', ${total_venta}, 'Venta Rápida en mostrador', ${pedido_id},
                COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date),
                COALESCE(
                  (${fecha ?? null}::date + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima',

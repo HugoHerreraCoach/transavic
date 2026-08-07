@@ -8,33 +8,27 @@ const MONTO = 3;
 const SALDO_ANTERIOR = 4;
 const SALDO_ACTUAL = 6;
 
-type ItemPrueba = {
-  id: string;
-  producto_nombre: string;
-  peso_kg: number;
-  precio_kg: number;
-  subtotal: number;
-};
+type ItemPrueba = DiaEstadoCuenta["items"][number];
 
 function item(nombre: string, peso: number, precio: number): ItemPrueba {
   return {
     id: `${nombre}-${peso}`,
+    venta_id: "venta-prueba",
+    producto_id: `prod-${nombre}`,
     producto_nombre: nombre,
     peso_kg: peso,
     precio_kg: precio,
     subtotal: Math.round(peso * precio * 100) / 100,
-  };
+  } as ItemPrueba;
 }
 
 function dia(over: Partial<DiaEstadoCuenta> & { items?: ItemPrueba[] }): DiaEstadoCuenta {
-  const items = (over.items ?? []) as DiaEstadoCuenta["items"];
+  const items = over.items ?? [];
   const venta = over.venta_del_dia ?? items.reduce((a, it) => a + it.subtotal, 0);
   return {
     fecha: "2026-07-26",
     guias: [445],
-    items,
     abonos: [],
-    venta_del_dia: venta,
     abonos_del_dia: 0,
     saldo_anterior: 418.8,
     saldo_actual: 418.8 + venta,

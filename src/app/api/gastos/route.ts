@@ -3,11 +3,16 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { FECHA_REGEX, fechaBonita, validarFechaGasto } from "@/lib/gastos/fecha-gasto";
+import { cajaDelDiaCerrada, conceptoDeGasto, hoyLimaSql } from "@/lib/gastos/registro";
 
 export const dynamic = "force-dynamic";
 
+// `fecha` es OPCIONAL: sin ella el gasto es de hoy (el 99% de los casos). Cuando
+// viene, se valida en serio — antes el schema era `z.string().min(1)` y aceptaba
+// cualquier cosa, incluida una fecha futura o "ayer".
 const CreateGastoSchema = z.object({
-  fecha: z.string().min(1),
+  fecha: z.string().regex(FECHA_REGEX, "Formato de fecha inválido (AAAA-MM-DD)").optional(),
   categoria: z.string().min(1),
   descripcion: z.string().optional().nullable(),
   monto: z.number().positive(),
@@ -91,42 +96,74 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { fecha, categoria, descripcion, monto, cuenta_id } = parsed.data;
+    const { categoria, descripcion, monto, cuenta_id } = parsed.data;
+
+    // La fecha del gasto: la que mandó el usuario, o hoy. El "hoy" lo resuelve la
+    // BASE en zona Lima — el reloj del navegador no es confiable (y con
+    // toISOString(), después de las 19:00 de Lima devolvía la fecha de mañana).
+    const hoy = await hoyLimaSql(sql);
+    const fecha = parsed.data.fecha ?? hoy;
+
+    const vf = validarFechaGasto(fecha, hoy);
+    if (!vf.ok) {
+      return NextResponse.json({ error: vf.motivo }, { status: 400 });
+    }
 
     // 1. Obtener detalles de la cuenta bancaria / caja chica
     const accounts = await sql`
-      SELECT id, nombre, saldo FROM cuentas_bancarias WHERE id = ${cuenta_id} LIMIT 1
+      SELECT id, nombre, tipo, saldo FROM cuentas_bancarias WHERE id = ${cuenta_id} LIMIT 1
     `;
     if (accounts.length === 0) {
       return NextResponse.json({ error: "La cuenta de origen no existe" }, { status: 400 });
     }
 
-    const cuentaNombre = accounts[0].nombre;
+    const cuentaNombre = accounts[0].nombre as string;
 
-    // 2. Insertar el Gasto
-    const insertedGasto = await sql`
-      INSERT INTO gastos (fecha, categoria, descripcion, monto, metodo_pago, created_by)
-      VALUES (${fecha}::date, ${categoria}, ${descripcion || null}, ${monto}, ${cuentaNombre}, ${session.user.id})
-      RETURNING id
-    `;
-    const gasto_id = insertedGasto[0].id;
+    // 2. No contradecir un arqueo ya firmado: si ese día la caja de esta cuenta
+    //    se cerró, el gasto cambiaría un cuadre que alguien ya dio por bueno.
+    if (await cajaDelDiaCerrada(sql, fecha, cuenta_id)) {
+      return NextResponse.json(
+        {
+          error: `La caja del ${fechaBonita(fecha)} ya fue cerrada, así que no se puede agregar un gasto a ese día. Regístralo con otra fecha o pide el ajuste al administrador.`,
+          codigo: "caja_cerrada",
+        },
+        { status: 409 }
+      );
+    }
 
-    // 3. Descontar saldo de la cuenta bancaria / caja
-    await sql`
-      UPDATE cuentas_bancarias
-      SET saldo = saldo - ${monto},
-          updated_at = (NOW() AT TIME ZONE 'America/Lima')
-      WHERE id = ${cuenta_id}
-    `;
+    // 3. Las tres escrituras van juntas o no van: un gasto sin su movimiento en
+    //    el ledger deja la cuenta descuadrada (CLAUDE.md §11).
+    const gasto_id = crypto.randomUUID();
+    const concepto = conceptoDeGasto(categoria, descripcion);
 
-    // 4. Registrar la transacción en el ledger general
-    const conceptoTransaccion = `Gasto: ${categoria}` + (descripcion ? ` - ${descripcion}` : "");
-    await sql`
-      INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id)
-      VALUES (${cuenta_id}, ${session.user.id}, 'egreso', ${monto}, ${conceptoTransaccion}, ${gasto_id})
-    `;
+    await sql.transaction([
+      sql`
+        INSERT INTO gastos (id, fecha, categoria, descripcion, monto, metodo_pago, created_by)
+        VALUES (${gasto_id}, ${fecha}::date, ${categoria}, ${descripcion || null}, ${monto}, ${cuentaNombre}, ${session.user.id})
+      `,
+      sql`
+        UPDATE cuentas_bancarias
+        SET saldo = saldo - ${monto},
+            updated_at = (NOW() AT TIME ZONE 'America/Lima')
+        WHERE id = ${cuenta_id}
+      `,
+      // `fecha` y un `created_at` SINTÉTICO en el día del gasto (patrón del POS,
+      // api/pos/route.ts): así un gasto atrasado NO entra al arqueo de la caja de
+      // hoy, que filtra por `created_at >= abierta_at`.
+      sql`
+        INSERT INTO transacciones (cuenta_id, usuario_id, tipo, monto, concepto, referencia_id, fecha, created_at)
+        VALUES (
+          ${cuenta_id}, ${session.user.id}, 'egreso', ${monto}, ${concepto}, ${gasto_id},
+          ${fecha}::date,
+          (${fecha}::date + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima'
+        )
+      `,
+    ]);
 
-    return NextResponse.json({ message: "Gasto registrado exitosamente", gasto_id }, { status: 201 });
+    return NextResponse.json(
+      { message: "Gasto registrado exitosamente", gasto_id, fecha, es_retroactivo: fecha !== hoy },
+      { status: 201 }
+    );
   } catch (error) {
     console.error("Error en POST /api/gastos:", error);
     return NextResponse.json({ error: "Error de servidor" }, { status: 500 });

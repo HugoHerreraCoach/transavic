@@ -121,8 +121,10 @@ export const GUIAS_MODULOS: Record<string, GuiaModuloDef> = {
   gastos: {
     nombre: "Gastos",
     pasos: [
-      { titulo: "Aquí ves todos los gastos registrados del negocio" },
-      { titulo: "Los gastos se registran desde Caja Diaria", detalle: "esta vista es solo para consultar y filtrar" },
+      { titulo: "Registra el gasto con la fecha en que se gastó", detalle: "no la de hoy: si el gasto fue el 13 de julio, elige el 13 de julio" },
+      { titulo: "No necesitas tener una caja abierta para registrar gastos aquí" },
+      { titulo: "Al cargar varios gastos del mismo día, la fecha se queda puesta", detalle: "solo cambias el monto y guardas" },
+      { titulo: "Un gasto de otro día no afecta el arqueo de la caja de hoy", detalle: "por eso no aparece en los movimientos del turno" },
       { titulo: "Filtra por categoría o por fechas para revisar un periodo" },
     ],
   },

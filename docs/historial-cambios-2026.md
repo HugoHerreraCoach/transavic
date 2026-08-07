@@ -8,6 +8,59 @@
 
 ---
 
+## 6 ago 2026 (noche) — El gasto recupera su fecha (petición de Marianela)
+
+**Contexto.** Marianela mandó un audio y un video. Pedía "poder elegir la fecha del gasto", pero en el
+audio contó sin darse cuenta el problema de fondo:
+
+> *"Me dice «caja diaria», así que **creé una caja por 10,000 soles** y estoy metiendo los gastos."*
+
+**Tuvo que inventar una caja de S/ 10,000 que no correspondía a ningún día real solo para poder escribir
+gastos**: el formulario únicamente existía dentro de una caja abierta. Y como no había campo de fecha,
+escribía la fecha DENTRO de la descripción — *"Gasto: Otros - PETER CON 13-07"*. En producción, **14 de
+los 16 gastos** cargados eran así. Encima, el pago a proveedor SÍ tenía selector de fecha y el gasto no,
+lo que terminaba de confundir.
+
+**Lo que encontró el análisis y achicó el trabajo:**
+
+- **`gastos.fecha` ya existía** (DATE) y **el API ya la aceptaba**. El único que forzaba "hoy" era la
+  pantalla: `caja-diaria-client.tsx` mandaba `new Date().toISOString().split("T")[0]` — que además es un
+  bug de zona horaria: **después de las 19:00 de Lima guardaba la fecha de MAÑANA**.
+- **Nadie más lee la tabla `gastos`** (grep exhaustivo: solo su propio endpoint; ni rentabilidad, ni
+  consolidado, ni crons). Arreglar la fecha no rompía nada aguas abajo.
+- **El arqueo ni siquiera mira `gastos`**: suma `transacciones` de la cuenta de efectivo con
+  `created_at >= caja.abierta_at`. Como `/api/gastos` no escribía `transacciones.fecha` ni `created_at`,
+  **todo gasto atrasado descontaba del efectivo estimado de HOY** — de ahí los S/ 3,167 de "Gastos
+  Planta" en su caja, que al cerrarla le habrían dado un faltante fantasma.
+
+**Cómo quedó.** Formulario compartido entre Gastos y Caja; en **Gastos se registra sin caja abierta**
+(que es donde se carga el mes atrasado); la fecha va primera, en ámbar cuando es de otro día, y **no se
+resetea al guardar**. La transacción se escribe con `fecha` y un **`created_at` sintético en el día del
+gasto**, que es lo que lo saca del turno de hoy sin tocar la aritmética del arqueo. Validación en
+`src/lib/gastos/fecha-gasto.ts` (pura, con tests): futura no, hacia atrás sin límite, "hoy" resuelto por
+SQL. Y por primera vez se puede **corregir o borrar** un gasto (`PATCH`/`DELETE /api/gastos/[id]`), con
+409 si la caja de esa fecha ya fue arqueada.
+
+**La misma fuga estaba viva en los pagos a proveedor** (`lib/proveedores/pagos.ts` escribía `fecha`
+retroactiva pero dejaba `created_at` en "ahora"): un pago atrasado en efectivo descontaba de la caja de
+hoy. Se corrigió en el mismo lote. La regla queda escrita: **todo movimiento con fecha elegible escribe
+`fecha` Y `created_at`**.
+
+**Verificado en vivo** contra dev-hugo: registrar un gasto del 13 de julio desde Gastos sin caja abierta
+guarda `gastos.fecha`, `transacciones.fecha` y `created_at` en el 13 de julio, y queda fuera del turno
+actual.
+
+**Los 16 ya cargados.** `scripts/corregir-fechas-gastos.mjs` (dry-run por defecto) extrae la fecha del
+texto: en producción detecta **14 para reubicar** (3 al 16 de julio) y 2 sin fecha en el texto
+(`DESAYUNO ACOPIO` S/ 248 y `DESAYUNO KAREN` S/ 232) que hay que corregir a mano. **No se aplicó**: la
+lista la revisa Marianela primero.
+
+De paso: el concepto del ledger mostraba el UUID crudo del pedido (*"Venta Rápida - Pedido
+43a6f3c9-4eca-…"*, visible en su video) y ahora dice "Venta Rápida en mostrador"; y los textos que decían
+"los gastos se registran desde Caja Diaria" dejaron de ser ciertos y se reescribieron.
+
+---
+
 ## 6 ago 2026 — Reparto de leads por marca, y el estado de cuenta que obligaba a sacar calculadora
 
 **Reparto de leads por marca (pedido de Hugo).** Hugo pasó la asignación real: Jhoselyn y Saraí atienden

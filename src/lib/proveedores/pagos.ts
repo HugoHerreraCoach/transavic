@@ -291,7 +291,7 @@ export async function registrarPagoProveedor(
         movimiento AS (
           INSERT INTO transacciones (
             cuenta_id, usuario_id, tipo, monto, concepto, referencia_id,
-            fecha, pago_proveedor_id
+            fecha, created_at, pago_proveedor_id
           )
           SELECT
             p.cuenta_bancaria_id,
@@ -302,6 +302,11 @@ export async function registrarPagoProveedor(
               COALESCE(' - ' || NULLIF(p.notas, ''), ''),
             COALESCE(p.deuda_prioritaria_id, p.proveedor_id),
             p.fecha,
+            -- created_at en el DÍA del pago, no en el de la digitación. Sin esto,
+            -- un pago retroactivo en efectivo descontaba del arqueo de la caja de
+            -- HOY (el arqueo filtra por created_at >= abierta_at) y generaba un
+            -- faltante fantasma. Mismo patrón que el POS y que /api/gastos.
+            (p.fecha + (NOW() AT TIME ZONE 'America/Lima')::time) AT TIME ZONE 'America/Lima',
             p.id
           FROM pago p
           JOIN proveedores prov ON prov.id = p.proveedor_id

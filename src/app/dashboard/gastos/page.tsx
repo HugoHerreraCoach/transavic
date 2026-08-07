@@ -31,7 +31,7 @@ export default async function GastosPage() {
           <FiTrendingDown className="text-red-500" /> Gastos
         </h1>
         <p className="text-xs text-gray-500 mt-1">
-          Historial de gastos del negocio. Los gastos se registran desde Caja Diaria.
+          Registra un gasto con la fecha en que se gastó y consulta el historial por día.
         </p>
       </div>
       <GastosClient />
