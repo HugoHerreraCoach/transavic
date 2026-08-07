@@ -19,6 +19,8 @@ const ROJO: [number, number, number] = [220, 38, 38];
 const ROJO_CLARO: [number, number, number] = [254, 242, 242];
 const GRIS_TX: [number, number, number] = [55, 65, 81];
 const GRIS_CL: [number, number, number] = [156, 163, 175];
+/** Fondo de la fila que cierra el día (el total). */
+const GRIS_FONDO: [number, number, number] = [243, 244, 246];
 const NEGRO: [number, number, number] = [23, 23, 23];
 
 function soles(n: number): string {
@@ -45,18 +47,15 @@ function horaCorta(createdAt: string): string {
 
 const kg = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
-/** Texto de la columna Peso/Producto de un día (con o sin el precio por kilo).
- *  Cada producto en 2 líneas (nombre / peso × precio) para que NUNCA se parta el
- *  monto a la mitad aunque el nombre sea largo (presentación limpia). */
-function textoProductos(dia: DiaEstadoCuenta, conPrecio: boolean): string {
-  if (dia.items.length === 0) return "";
-  return dia.items
-    .map((it) =>
-      conPrecio
-        ? `${it.producto_nombre}\n   ${kg(it.peso_kg)} kg × ${soles(it.precio_kg)}`
-        : `${it.producto_nombre}\n   ${kg(it.peso_kg)} kg`
-    )
-    .join("\n");
+/** Descripción de un producto: "Gallina doble pechuga — 7.2 kg × S/ 12.50". */
+function textoProducto(
+  it: { producto_nombre: string; peso_kg: number; precio_kg: number },
+  conPrecio: boolean
+): string {
+  const detalle = conPrecio
+    ? `${kg(it.peso_kg)} kg × ${soles(it.precio_kg)}`
+    : `${kg(it.peso_kg)} kg`;
+  return `${it.producto_nombre} — ${detalle}`;
 }
 
 function textoGuias(dia: DiaEstadoCuenta): string {
@@ -82,6 +81,88 @@ function textoAbonos(dia: DiaEstadoCuenta): string {
       ].join("\n");
     })
     .join("\n------\n");
+}
+
+/**
+ * Arma las filas de la tabla: un día = un BLOQUE (una fila por producto + total).
+ *
+ * PURA y exportada a propósito, para poder probar las reglas sin generar un PDF
+ * (`pdf-estado-cuenta-avicola.test.ts`). Devuelve también los índices de las
+ * filas que cierran un día, que es lo que el PDF pinta distinto.
+ *
+ * Antes cada día era UNA fila con todos los productos apelotonados en una celda
+ * y un solo importe sumado: para comprobar el cobro había que sacar calculadora.
+ */
+export function construirFilasEstadoCuenta(
+  dias: DiaEstadoCuenta[],
+  conPrecio: boolean
+): { body: string[][]; filasTotal: Set<number> } {
+  const body: string[][] = [];
+  const filasTotal = new Set<number>();
+
+  dias.forEach((d) => {
+    const columnasDelDia = (monto: string): string[] => [
+      monto,
+      soles(d.saldo_anterior),
+      d.hay_abono ? textoAbonos(d) : "",
+      soles(d.saldo_actual),
+    ];
+
+    // Día de solo abono (o sin ítems): una fila, como siempre.
+    if (d.items.length === 0) {
+      body.push([
+        fechaCorta(d.fecha),
+        textoGuias(d),
+        "",
+        ...columnasDelDia(d.hay_venta ? soles(d.venta_del_dia) : ""),
+      ]);
+      return;
+    }
+
+    // Los importes de la columna TIENEN que sumar el total: si no, el cliente
+    // hace la cuenta, no le cuadra y se rompe la confianza en el documento
+    // entero. El total manda (es el que mueve el saldo), así que cualquier
+    // diferencia se muestra como "Ajuste" en vez de esconderse.
+    // Hoy no debería pasar nunca — el API calcula el total sumando los ítems
+    // (api/avicola/ventas/route.ts) y en producción no hay ni una venta
+    // descuadrada —, pero un ajuste hecho a mano en la base no puede terminar
+    // en un PDF que se contradice a sí mismo.
+    const sumaItems = Math.round(d.items.reduce((acc, it) => acc + it.subtotal, 0) * 100) / 100;
+    const desfase = Math.round((d.venta_del_dia - sumaItems) * 100) / 100;
+    const hayDesfase = Math.abs(desfase) > 0.01;
+
+    // Un solo producto y sin desfase: su importe YA es el total del día.
+    // Repetirlo en una fila aparte sería el mismo número dos veces seguidas.
+    if (d.items.length === 1 && !hayDesfase) {
+      const it = d.items[0];
+      body.push([
+        fechaCorta(d.fecha),
+        textoGuias(d),
+        textoProducto(it, conPrecio),
+        ...columnasDelDia(soles(it.subtotal)),
+      ]);
+      return;
+    }
+
+    d.items.forEach((it, i) => {
+      body.push([
+        i === 0 ? fechaCorta(d.fecha) : "",
+        i === 0 ? textoGuias(d) : "",
+        textoProducto(it, conPrecio),
+        soles(it.subtotal),
+        "",
+        "",
+        "",
+      ]);
+    });
+    if (hayDesfase) {
+      body.push(["", "", "Ajuste", soles(desfase), "", "", ""]);
+    }
+    filasTotal.add(body.length);
+    body.push(["", "", "TOTAL DEL DÍA", ...columnasDelDia(soles(d.venta_del_dia))]);
+  });
+
+  return { body, filasTotal };
 }
 
 export interface OpcionesEstadoCuenta {
@@ -148,16 +229,10 @@ export async function generarPdfEstadoCuenta(
       : "Período: todo el historial";
   doc.text(periodoTxt, W - M, 40, { align: "right" });
 
-  // ── Tabla: un día por fila ──
-  const body: string[][] = est.dias.map((d) => [
-    fechaCorta(d.fecha),
-    textoGuias(d),
-    textoProductos(d, conPrecio),
-    d.hay_venta ? soles(d.venta_del_dia) : "",
-    soles(d.saldo_anterior),
-    d.hay_abono ? textoAbonos(d) : "",
-    soles(d.saldo_actual),
-  ]);
+  // ── Tabla: un día = un BLOQUE de filas (una por producto + el total) ──
+  // La construcción vive en `construirFilasEstadoCuenta` (pura y con tests).
+  const { body, filasTotal } = construirFilasEstadoCuenta(est.dias, conPrecio);
+
   if (body.length === 0) {
     body.push(["", "Sin movimientos en el período", "", "", soles(est.saldo_inicial), "", soles(est.saldo_final)]);
   }
@@ -169,8 +244,8 @@ export async function generarPdfEstadoCuenta(
     head: [[
       "Fecha",
       "Venta del día",
-      "Peso / Producto",
-      "Monto del día",
+      "Producto",
+      "Monto",
       "Saldo anterior",
       "Abonos separados",
       "Saldo actual",
@@ -178,6 +253,11 @@ export async function generarPdfEstadoCuenta(
     body,
     styles: { fontSize: 7.5, cellPadding: 1.6, textColor: NEGRO, valign: "top" },
     headStyles: { fillColor: ROJO, textColor: 255, fontStyle: "bold", fontSize: 7 },
+    // Sin franjas alternas: ahora rayarían POR PRODUCTO y romperían la lectura
+    // del día como bloque. La separación la da la fila de total.
+    alternateRowStyles: { fillColor: false as unknown as undefined },
+    // Un bloque no se parte entre páginas dejando el total huérfano.
+    rowPageBreak: "avoid",
     columnStyles: {
       0: { cellWidth: 17 },
       1: { cellWidth: 20 },
@@ -186,6 +266,14 @@ export async function generarPdfEstadoCuenta(
       4: { halign: "right", cellWidth: 23 },
       5: { halign: "left", cellWidth: 31, textColor: [22, 130, 60] },
       6: { halign: "right", cellWidth: 21, fontStyle: "bold" },
+    },
+    didParseCell: (data) => {
+      if (data.section !== "body" || !filasTotal.has(data.row.index)) return;
+      // La fila que cierra el día: en negrita y con fondo, para que el ojo
+      // encuentre el total sin buscarlo.
+      data.cell.styles.fillColor = GRIS_FONDO;
+      data.cell.styles.fontStyle = "bold";
+      if (data.column.index === 2) data.cell.styles.textColor = GRIS_TX;
     },
   });
 
