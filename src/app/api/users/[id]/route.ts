@@ -24,6 +24,9 @@ const UpdateUserSchema = z.object({
   activo_rotacion: z.boolean().optional(),
   orden_rotacion: z.number().int().optional(),
   leads_recibidos_hoy: z.number().int().optional(),
+  // Marcas que atiende en el reparto de leads del CRM. `null` o `[]` = todas.
+  // Los valores son los mismos de `leads.empresa` ('Transavic' | 'Avícola de Tony').
+  empresas: z.array(z.enum(["Transavic", "Avícola de Tony"])).nullable().optional(),
   // Desactivar = apagar el acceso de un ex-empleado (el login lo rechaza en auth.ts).
   // Se usa en vez de DELETE cuando el usuario tiene historial. JAMÁS borrar la fila.
   activo: z.boolean().optional(),
@@ -56,7 +59,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo } = parsedData.data;
+    const { name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas } = parsedData.data;
 
     // Nadie puede desactivarse a sí mismo (evita dejar el sistema sin admins por accidente).
     if (activo === false && session.user.id === (new URL(request.url)).pathname.split("/").pop()) {
@@ -77,7 +80,8 @@ export async function PATCH(request: NextRequest) {
       activo_rotacion === undefined &&
       orden_rotacion === undefined &&
       leads_recibidos_hoy === undefined &&
-      activo === undefined
+      activo === undefined &&
+      empresas === undefined
     ) {
       return NextResponse.json({ error: "No se proporcionaron campos para actualizar." }, { status: 400 });
     }
@@ -106,16 +110,19 @@ export async function PATCH(request: NextRequest) {
     if (orden_rotacion !== undefined) updates.orden_rotacion = orden_rotacion;
     if (leads_recibidos_hoy !== undefined) updates.leads_recibidos_hoy = leads_recibidos_hoy;
     if (activo !== undefined) updates.activo = activo;
+    // [] se guarda como NULL: "ninguna marca" y "todas las marcas" son lo mismo
+    // para el reparto, y NULL es el valor que el resto del código ya entiende.
+    if (empresas !== undefined) updates.empresas = empresas && empresas.length ? empresas : null;
 
     // vistas_permitidas es text[]: se castea explícito para que el driver HTTP de Neon
     // no infiera mal el tipo (gotcha #45c).
     const setClauses = Object.keys(updates)
-      .map((key, i) => `"${key}" = $${i + 1}${key === 'vistas_permitidas' ? '::text[]' : ''}`)
+      .map((key, i) => `"${key}" = $${i + 1}${key === 'vistas_permitidas' || key === 'empresas' ? '::text[]' : ''}`)
       .join(', ');
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas`,
       [...values, id]
     );
 

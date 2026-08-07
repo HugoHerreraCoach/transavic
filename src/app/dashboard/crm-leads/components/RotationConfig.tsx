@@ -424,15 +424,31 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                       ) : (
                         tierAdvisors.map((asesora) => {
                           const countToday = asesora.leads_recibidos_hoy || 0;
+                          const marcas = asesora.empresas ?? [];
+                          const atiende = (m: string) => marcas.length === 0 || marcas.includes(m);
+                          const alternarMarca = (m: string) => {
+                            // Vacío = atiende TODAS. Al tocar una marca por primera
+                            // vez, la asesora pasa a atender SOLO esa (que es lo que
+                            // la persona espera al elegir una); volver a tocarla
+                            // hasta quedar sin ninguna vuelve a "todas".
+                            const base = marcas.length === 0 ? [] : marcas;
+                            const nuevas = base.includes(m)
+                              ? base.filter((x) => x !== m)
+                              : [...base, m];
+                            handleUpdateUserField(asesora.id, {
+                              empresas: nuevas.length ? nuevas : null,
+                            });
+                          };
                           return (
                             <div
                               key={asesora.id}
                               draggable
                               onDragStart={(e) => handleDragStart(e, asesora)}
-                              className={`flex items-center justify-between p-2 bg-white border border-gray-150 rounded-xl hover:shadow-xs cursor-grab active:cursor-grabbing transition-all ${
+                              className={`p-2 bg-white border border-gray-150 rounded-xl hover:shadow-xs cursor-grab active:cursor-grabbing transition-all ${
                                 draggedAdvisor?.id === asesora.id ? "opacity-40" : ""
                               }`}
                             >
+                             <div className="flex items-center justify-between">
                               {/* Grip, Iniciales y Nombre (Inline) */}
                               <div className="flex items-center gap-2 min-w-0">
                                 <FiMove className="text-gray-400 shrink-0" size={12} />
@@ -484,6 +500,42 @@ export default function RotationConfig({ onClose }: RotationConfigProps) {
                                   +
                                 </button>
                               </div>
+                             </div>
+
+                              {/* Marcas que atiende. Sin ninguna marcada = atiende
+                                  las dos (es el default y hay que decirlo, no
+                                  dejarlo a la deducción). */}
+                              {!isInactiveColumn && (
+                                <div className="flex items-center gap-1 mt-1.5 pl-6">
+                                  {[
+                                    { valor: "Transavic", corto: "Transavic", activa: "bg-red-600 border-red-600 text-white" },
+                                    { valor: "Avícola de Tony", corto: "Avícola", activa: "bg-amber-500 border-amber-500 text-white" },
+                                  ].map((m) => (
+                                    <button
+                                      key={m.valor}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        alternarMarca(m.valor);
+                                      }}
+                                      disabled={updatingUser === asesora.id}
+                                      className={`px-1.5 py-0.5 rounded-full border text-[9px] font-bold transition-colors cursor-pointer disabled:opacity-50 ${
+                                        atiende(m.valor)
+                                          ? m.activa
+                                          : "bg-white border-gray-200 text-gray-400 hover:border-gray-300"
+                                      }`}
+                                      title={`Recibe leads de ${m.corto}`}
+                                    >
+                                      {m.corto}
+                                    </button>
+                                  ))}
+                                  {marcas.length === 0 && (
+                                    <span className="text-[9px] text-gray-400 ml-0.5">
+                                      (las dos)
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           );
                         })

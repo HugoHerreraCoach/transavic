@@ -75,6 +75,12 @@ export type User = {
   solo_lectura?: boolean;
   /** Lista de hrefs de sección que puede ver/abrir. NULL = sin restricción (defaults del rol). */
   vistas_permitidas?: string[] | null;
+  /**
+   * Marcas que atiende en el REPARTO DE LEADS del CRM ('Transavic' | 'Avícola de Tony').
+   * NULL o vacío = todas. No limita lo que ve en el resto del sistema: solo decide
+   * a quién le pueden caer los leads nuevos de cada marca.
+   */
+  empresas?: string[] | null;
 };
 
 export type Producto = {

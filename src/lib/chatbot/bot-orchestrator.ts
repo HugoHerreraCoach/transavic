@@ -829,6 +829,24 @@ interface AsesoraRotacion {
   name: string;
   orden_rotacion: number | null;
   leads_recibidos_hoy: number | null;
+  /** Último lead que recibió EN ESTA MARCA. Desempata el reparto parejo. */
+  ultimo_lead_at?: string | Date | null;
+}
+
+/**
+ * Reparto parejo: gana la que MENOS leads recibió hoy en esta marca; si empatan,
+ * la que hace más tiempo que no recibe; si aún empatan, por nombre (determinista).
+ *
+ * Se auto-corrige solo: si alguien no atiende un día, al día siguiente arranca
+ * abajo y recibe primero. No hace falta llevar cuentas a mano.
+ */
+function ordenarPorEquidad(a: AsesoraRotacion, b: AsesoraRotacion): number {
+  const porCarga = (a.leads_recibidos_hoy ?? 0) - (b.leads_recibidos_hoy ?? 0);
+  if (porCarga !== 0) return porCarga;
+  const ta = a.ultimo_lead_at ? new Date(a.ultimo_lead_at).getTime() : 0;
+  const tb = b.ultimo_lead_at ? new Date(b.ultimo_lead_at).getTime() : 0;
+  if (ta !== tb) return ta - tb;
+  return (a.name || "").localeCompare(b.name || "");
 }
 
 interface RotationSelection {
@@ -841,7 +859,7 @@ interface RotationSelection {
 export async function checkAndEscalateLeads(sql: NeonQueryFunction<false, false>): Promise<void> {
   try {
     const expiredLeads = await sql`
-      SELECT id, nombre, telefono, candidatos_nivel, candidato_actual, inicio_turno, timeout_nivel, golden_ticket_phase
+      SELECT id, nombre, telefono, empresa, candidatos_nivel, candidato_actual, inicio_turno, timeout_nivel, golden_ticket_phase
       FROM public.leads
       WHERE estado_asignacion = 'en_cola'
         AND inicio_turno IS NOT NULL
@@ -864,6 +882,10 @@ export async function escalateLead(
 ): Promise<void> {
   try {
     const phase = leadData.golden_ticket_phase || "individual";
+    // La marca del lead acota a quién se le puede escalar. Sin esto, un lead de
+    // una marca sin atender terminaba ofrecido a las asesoras de la otra.
+    // NULL = no sabemos la marca → no se filtra (mejor ofrecerlo a alguien).
+    const marcaLead = (leadData.empresa as string | undefined) ?? null;
 
     if (phase === "individual") {
       // 1. Expandir al nivel/tier entero
@@ -875,8 +897,15 @@ export async function escalateLead(
       }
 
       const tierAdvisors = await sql`
-        SELECT id FROM public.users 
+        SELECT id FROM public.users
         WHERE role = 'asesor' AND activo_rotacion = TRUE AND orden_rotacion = ${tier}
+          AND COALESCE(activo, TRUE) = TRUE
+          AND (
+            ${marcaLead}::text IS NULL
+            OR empresas IS NULL
+            OR cardinality(empresas) = 0
+            OR ${marcaLead}::text = ANY(empresas)
+          )
       `;
 
       if (tierAdvisors.length > 0) {
@@ -912,8 +941,15 @@ export async function escalateLead(
     if (leadData.golden_ticket_phase === "tier_expanded" || leadData.golden_ticket_phase === "individual") {
       // 2. Rescate: Escalar a Nivel 1 (Alta Prioridad)
       const nivel1Advisors = await sql`
-        SELECT id FROM public.users 
+        SELECT id FROM public.users
         WHERE role = 'asesor' AND activo_rotacion = TRUE AND orden_rotacion = 1
+          AND COALESCE(activo, TRUE) = TRUE
+          AND (
+            ${marcaLead}::text IS NULL
+            OR empresas IS NULL
+            OR cardinality(empresas) = 0
+            OR ${marcaLead}::text = ANY(empresas)
+          )
       `;
 
       if (nivel1Advisors.length > 0) {
@@ -995,6 +1031,14 @@ async function rotateAndSelectCandidate(
     // users.leads_recibidos_hoy, que es un contador GLOBAL compartido por las dos
     // marcas (ese se conserva intacto: lo muestra y edita la pantalla de rotación y
     // lo incrementa /api/crm/leads/[id]/atender).
+    //
+    // ⚠️ El pool se filtra POR MARCA (`users.empresas`). Antes se tomaban todas las
+    // asesoras activas sin mirar la marca, así que un lead que escribía a una marca
+    // podía caerle a alguien que atiende la otra. `empresas` NULL o vacío = atiende
+    // todas (es el default, para que nadie quede fuera del reparto sin querer).
+    //
+    // `ultimo_lead_at` es el desempate del reparto parejo: entre dos que hoy tienen
+    // la misma cantidad, va la que hace más tiempo que no recibe.
     const activeAdvisors = (await sql`
       SELECT u.id, u.name, u.orden_rotacion,
              (
@@ -1003,9 +1047,21 @@ async function rotateAndSelectCandidate(
                  AND l.empresa = ${empresa}
                  AND (l.created_at AT TIME ZONE 'America/Lima')::date
                      = (NOW() AT TIME ZONE 'America/Lima')::date
-             )::int AS leads_recibidos_hoy
+             )::int AS leads_recibidos_hoy,
+             (
+               SELECT MAX(l2.created_at) FROM public.leads l2
+               WHERE COALESCE(l2.vendedor_id, l2.candidato_actual) = u.id
+                 AND l2.empresa = ${empresa}
+             ) AS ultimo_lead_at
       FROM public.users u
-      WHERE u.role = 'asesor' AND u.activo_rotacion = TRUE
+      WHERE u.role = 'asesor'
+        AND u.activo_rotacion = TRUE
+        AND COALESCE(u.activo, TRUE) = TRUE
+        AND (
+          u.empresas IS NULL
+          OR cardinality(u.empresas) = 0
+          OR ${empresa}::text = ANY(u.empresas)
+        )
     `) as AsesoraRotacion[];
 
     await sql`
@@ -1114,6 +1170,23 @@ async function rotateAndSelectCandidate(
       return { candidato_actual: null, candidatos_nivel: [], actualTier: 1, vendedorId: adminId };
     }
 
+    // MODO DE REPARTO. "equitativo" (default) ignora los niveles: dentro de la
+    // marca gana la que menos leads recibió hoy. Los niveles quedan guardados por
+    // si algún día se quiere premiar a la que más vende, pero con 2 asesoras por
+    // marca el 60/25/15 solo hacía que una recibiera bastante menos que la otra.
+    const modo = config.modo === "niveles" ? "niveles" : "equitativo";
+    if (modo === "equitativo") {
+      const elegida = [...activeAdvisors].sort(ordenarPorEquidad)[0];
+      console.log(
+        `⚖️ [Rotación ${empresa}] ${elegida.name} (${elegida.leads_recibidos_hoy ?? 0} hoy) de ${activeAdvisors.length} candidatas.`
+      );
+      return {
+        candidato_actual: elegida.id,
+        candidatos_nivel: [elegida.id],
+        actualTier: elegida.orden_rotacion || 1,
+      };
+    }
+
     const pattern = config.sequencePattern || [1];
     const targetTier = pattern[currentIndex % pattern.length];
 
@@ -1142,11 +1215,7 @@ async function rotateAndSelectCandidate(
       return { candidato_actual: fallback.id, candidatos_nivel: [fallback.id], actualTier };
     }
 
-    candidates.sort((a, b) => {
-      const aLeads = a.leads_recibidos_hoy ?? 0;
-      const bLeads = b.leads_recibidos_hoy ?? 0;
-      return aLeads - bLeads;
-    });
+    candidates.sort(ordenarPorEquidad);
 
     const chosenAdvisor = candidates[0];
     return {
