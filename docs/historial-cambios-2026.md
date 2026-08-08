@@ -62,9 +62,9 @@ no existe en Node": existe desde Node 21, solo que **incompleto**, así que no e
 
 ---
 
-## 7 ago 2026 — Fase 1 de las peticiones de Marianela: el buscador vacío y la guía de planta
+## 7 ago 2026 — Fase 1 de las peticiones de Ariana: el buscador vacío y la guía de planta
 
-**Contexto.** Marianela mandó tres videos de pantalla (20:56–20:57). Se transcribieron con Whisper y
+**Contexto.** Ariana mandó tres videos de pantalla (20:56–20:57). Se transcribieron con Whisper y
 se analizaron los 90 fotogramas uno a uno; el análisis completo, con la transcripción literal de cada
 video, está en `recursos/2. petición marianela 07-08-2026/ANALISIS.md`. Son **tres peticiones
 independientes**, en tres módulos distintos, que se atacan en tres fases separadas y en el orden en
