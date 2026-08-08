@@ -94,6 +94,52 @@ Pedido de Ariana/Antonio: el POS no daba visibilidad de las ventas ni permitía 
 
 Las anuladas se **excluyen de todos los totales**: `resumenVentasGeneralesPorFecha` (Ventas Generales + Consolidado), `resumen-dia` ("Ventas de hoy" del POS) y `rentabilidad` (que filtra por `estado='Entregado'` — ahora también `AND NOT anulada`). Migración: `scripts/migrate-pos-anular-2026-07-13.sql` (campos `anulada/anulada_at/anulacion_motivo/anulada_por` en `pedidos`, aditiva/idempotente, aplicada a prod por psql ANTES del deploy). Endurecido tras revisión adversarial multi-agente; verificado E2E en beta (reversión cuadra: dinero neto 0, stock restaurado, excluida de todos los totales).
 
+### 2.5 Editar una venta: el catálogo que nunca cargaba (7 ago 2026)
+
+El modal *Editar Venta de Planta* (mismo `ventas-planta-client.tsx`) permite cambiar cantidades,
+precios, cliente, tipo de pago y **agregar productos**. Ese último caso estaba roto desde el commit
+`19b707a` (24 jul): el cliente hacía `Array.isArray(data)` sobre la respuesta de `/api/productos`,
+que devuelve **`{ data: [...] }`**, no un array pelado. El chequeo daba siempre `false`, el catálogo
+quedaba `[]` y el `.catch(() => {})` tapaba cualquier fallo real — el buscador respondía *"No se
+encontraron resultados"* a **cualquier** término, y abrir el desplegable sin escribir tampoco
+mostraba nada. **Regla: `Array.isArray(json?.data)`**, como en `ProductSelector.tsx:66`.
+
+Relacionado: `iniciarEdicion` pasaba `productoId: it.producto_id || ""` y el PATCH exige
+`z.string().uuid()` → 400 "Datos inválidos" sin decir cuál. Ahora el id se recupera del catálogo por
+nombre (normalizado sin tildes) y, si no aparece, el aviso **nombra el producto**.
+
+### 2.6 Imprimir y enviar la guía de una venta de planta (7 ago 2026)
+
+`/pedidos/[id]/guia` (`OrdenImprimible`) **ya servía** para ventas del POS —son filas de `pedidos`
+con `origen='pos_planta'`— y **no restringe por estado ni por fecha**; lo que faltaba eran enlaces:
+en toda la app solo existían dos, y el del POS vivía en el panel post-venta, que se pierde al
+cerrarlo. Ahora cada venta de la lista tiene:
+
+- **Imprimir** → `/pedidos/{id}/guia` (mismo patrón que `ventas-campo-client.tsx:511-519`).
+- **Enviar guía** → `GuiaPlantaModal`: JPEG con `html-to-image` y tres salidas — **Compartir**
+  (`navigator.share`), **Descargar** y **Abrir chat del cliente** (`wa.me`, solo si tiene teléfono).
+
+Ambos aparecen **también en ventas anuladas** (el ticket lleva la banda ANULADA): el cliente suele
+pedir el comprobante de una venta dada de baja.
+
+| Pieza | Rol |
+|---|---|
+| `src/lib/planta/guia-pos.ts` | `guiaDeVentaPlanta()` — arma la guía desde `pedidos` + `pedido_items`; espejo de `lib/avicola/guia.ts` |
+| `GET /api/pos/ventas/[id]` | Devuelve `{ guia }` (antes ese archivo solo tenía `PATCH`) |
+| `ticket-guia-planta.tsx` | Layout 500px para fotografiar |
+| `guia-planta-modal.tsx` | Modal JPEG + compartir |
+
+**Diferencias de dominio con campo (no copiar la guía avícola tal cual):** las líneas llevan
+**unidad variable** (`kg` | `uni`), no kilos fijos; y el **estado de cuenta es OPCIONAL** — una venta
+al contado no tiene cuenta corriente, así que el recuadro solo sale a crédito. Ese estado de cuenta
+se ancla por **`created_at`** (no por `fecha`, misma regla del caso Vicki) y, como en planta los
+abonos cuelgan de la **cobranza** (`abonos_planta.cobranza_id`) y no del cliente, el JOIN pasa por
+`cobranzas_planta` filtrando anuladas de ambos lados.
+
+**Por qué no la Cloud API:** la ventana de 24 h de Meta la haría fallar casi siempre — estos clientes
+no escriben al número del CRM. Y ⚠️ un enlace `wa.me` abre el chat y puede llevar texto pero **no
+puede adjuntar la imagen**, por eso "Abrir chat" descarga primero y lo dice en el subtítulo.
+
 ---
 
 ## 3. Caja diaria — `/dashboard/caja-diaria` + `/api/caja-diaria`

@@ -16,14 +16,18 @@ import {
   FiEdit2,
   FiEye,
   FiEyeOff,
+  FiPrinter,
   FiRefreshCw,
+  FiShare2,
   FiShoppingCart,
   FiTrash2,
   FiX,
 } from "react-icons/fi";
 import DetalleVentaPos from "@/components/planta/DetalleVentaPos";
 import SearchableSelect from "@/components/SearchableSelect";
+import GuiaPlantaModal from "@/app/dashboard/pos-planta/guia-planta-modal";
 import { OPERACIONES } from "@/lib/operaciones-venta";
+import type { GuiaPlantaData } from "@/lib/planta/guia-pos";
 import type { ItemDetalleVentaPos } from "@/lib/planta/ventas-pos";
 
 // ── Fechas (zona Lima SIEMPRE) ──
@@ -126,6 +130,11 @@ export default function VentasPlantaClient() {
   // Las anuladas se OCULTAN por defecto (no hacen ruido visual); se pueden mostrar a demanda.
   const [mostrarAnuladas, setMostrarAnuladas] = useState(false);
 
+  // Guía compartible (JPEG por WhatsApp). `cargandoGuia` guarda el id de la venta
+  // mientras se pide el detalle, para deshabilitar solo ESE botón.
+  const [guia, setGuia] = useState<GuiaPlantaData | null>(null);
+  const [cargandoGuia, setCargandoGuia] = useState<string | null>(null);
+
   // Estados para la Edición de Venta Completa
   const [editandoVenta, setEditandoVenta] = useState<VentaPlanta | null>(null);
   const [editFecha, setEditFecha] = useState("");
@@ -169,12 +178,15 @@ export default function VentasPlantaClient() {
       })
       .catch(() => {});
 
-    // Cargar catálogo de productos
+    // Cargar catálogo de productos.
+    // OJO: /api/productos devuelve { data: [...] }, NO un array pelado. Chequear
+    // `Array.isArray(json)` dejaba el catálogo vacío en silencio y el buscador de
+    // productos del modal de edición nunca encontraba nada.
     fetch("/api/productos")
       .then(res => res.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          setCatalogoProductos(data);
+      .then(json => {
+        if (Array.isArray(json?.data)) {
+          setCatalogoProductos(json.data);
         }
       })
       .catch(() => {});
@@ -204,6 +216,38 @@ export default function VentasPlantaClient() {
     return editItems.reduce((acc, it) => acc + (it.cantidad * it.precioUnitario), 0);
   }, [editItems]);
 
+  /** Busca el id de un producto del catálogo por su nombre (sin tildes ni mayúsculas). */
+  const idPorNombre = useCallback(
+    (nombre: string): string => {
+      const normalizar = (s: string) =>
+        s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+      const objetivo = normalizar(nombre);
+      return catalogoProductos.find(p => normalizar(p.nombre) === objetivo)?.id || "";
+    },
+    [catalogoProductos]
+  );
+
+  /** Pide el detalle de la venta y abre el modal de la guía compartible. */
+  const abrirGuia = async (v: VentaPlanta) => {
+    setCargandoGuia(v.id);
+    try {
+      const res = await fetch(`/api/pos/ventas/${v.id}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.guia) {
+        setGuia(data.guia as GuiaPlantaData);
+      } else {
+        setToast({
+          tipo: "error",
+          texto: typeof data.error === "string" ? data.error : "No se pudo cargar la guía.",
+        });
+      }
+    } catch {
+      setToast({ tipo: "error", texto: "Error de conexión al cargar la guía." });
+    } finally {
+      setCargandoGuia(null);
+    }
+  };
+
   const iniciarEdicion = (v: VentaPlanta) => {
     setEditandoVenta(v);
     setEditFecha(v.fecha);
@@ -214,7 +258,10 @@ export default function VentasPlantaClient() {
     setEditEmpresa(v.empresa as "Transavic" | "Avícola de Tony");
     setEditItems(
       v.items.map((it: ItemDetalleVentaPos) => ({
-        productoId: it.producto_id || "",
+        // Una venta vieja puede tener el ítem sin producto_id (texto suelto). El PATCH
+        // exige un UUID, así que lo recuperamos del catálogo por nombre; si aun así no
+        // aparece, guardarCambiosVenta avisa cuál es en vez de un 400 genérico.
+        productoId: it.producto_id || idPorNombre(it.producto_nombre),
         productoNombre: it.producto_nombre,
         cantidad: it.cantidad,
         unidad: it.unidad,
@@ -257,6 +304,17 @@ export default function VentasPlantaClient() {
     }
     if (editTipoPago === "Credito" && !editClienteId) {
       setToast({ tipo: "error", texto: "Debe seleccionar un cliente de planta para ventas al Crédito" });
+      return;
+    }
+    // El backend exige un producto del catálogo por línea. Si una venta vieja quedó con
+    // un ítem suelto que no matchea, decimos CUÁL en vez de dejar que el 400 diga
+    // "Datos inválidos" y la usuaria no sepa qué corregir.
+    const sinProducto = editItems.find(it => !it.productoId);
+    if (sinProducto) {
+      setToast({
+        tipo: "error",
+        texto: `"${sinProducto.productoNombre}" no está en el catálogo. Quítalo y vuelve a agregarlo desde el buscador.`,
+      });
       return;
     }
 
@@ -562,8 +620,31 @@ export default function VentasPlantaClient() {
                     costoTotal={v.costo_total}
                     costoCompleto={v.costo_completo}
                   />
-                  {!v.anulada && (
-                    <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
+                  <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3 sm:flex-row sm:items-center sm:justify-end">
+                    {/* Imprimir y Enviar guía SIEMPRE, incluso en anuladas: el cliente
+                        suele pedir el comprobante de una venta que se dio de baja, y el
+                        ticket sale con la banda ANULADA. */}
+                    <a
+                      href={`/pedidos/${v.id}/guia`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                      title="Abrir la orden imprimible de esta venta"
+                    >
+                      <FiPrinter size={13} /> Imprimir
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => abrirGuia(v)}
+                      disabled={cargandoGuia === v.id}
+                      className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                      title="Generar la guía como imagen para enviarla al cliente"
+                    >
+                      <FiShare2 size={13} />
+                      {cargandoGuia === v.id ? "Generando…" : "Enviar guía"}
+                    </button>
+                    {!v.anulada && (
+                      <>
                       <button
                         type="button"
                         disabled={Boolean(noEditable)}
@@ -590,8 +671,9 @@ export default function VentasPlantaClient() {
                       >
                         <FiTrash2 size={13} /> Anular
                       </button>
-                    </div>
-                  )}
+                      </>
+                    )}
+                  </div>
                 </div>
               </details>
             );
@@ -909,6 +991,9 @@ export default function VentasPlantaClient() {
           </div>
         </div>
       )}
+
+      {/* Guía compartible por WhatsApp */}
+      {guia && <GuiaPlantaModal data={guia} onClose={() => setGuia(null)} />}
 
       {/* Toast */}
       {toast && (

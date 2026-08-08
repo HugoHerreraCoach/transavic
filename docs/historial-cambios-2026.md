@@ -8,6 +8,98 @@
 
 ---
 
+## 7 ago 2026 — Fase 1 de las peticiones de Marianela: el buscador vacío y la guía de planta
+
+**Contexto.** Marianela mandó tres videos de pantalla (20:56–20:57). Se transcribieron con Whisper y
+se analizaron los 90 fotogramas uno a uno; el análisis completo, con la transcripción literal de cada
+video, está en `recursos/2. petición marianela 07-08-2026/ANALISIS.md`. Son **tres peticiones
+independientes**, en tres módulos distintos, que se atacan en tres fases separadas y en el orden en
+que ella las narró. Esta es la **Fase 1** (video 1, *Ventas de Planta*).
+
+### Lo que pidió
+
+> *"Él quiere la opción de imprimir o enviar la guía a su cliente, lo cual no lo podemos visualizar
+> aquí. Aparte, en editar venta… a veces Mateo vuelve a pesar un tiempo después y me pide que incluya
+> otro producto más. Entonces pongo producto, por ejemplo esta **molleja**, y no me bota aquí para
+> seleccionar: dice **no se encontraron resultados**."*
+
+### El bug del buscador: una línea, y no era "molleja"
+
+`/api/productos` devuelve un objeto envoltorio (`route.ts:57`: `NextResponse.json({ data })`), pero
+`ventas-planta-client.tsx:176` comprobaba si la respuesta **entera** era un array:
+
+```ts
+if (Array.isArray(data)) setCatalogoProductos(data);   // data es { data: [...] } → siempre false
+```
+
+`catalogoProductos` quedaba `[]` **para siempre**, y el `.catch(() => {})` se tragaba cualquier fallo
+real. Las opciones del `SearchableSelect` se reducían al placeholder `"Buscar producto..."`, que no
+contiene "molleja" → 0 resultados. **No faltaba el producto: no se podía agregar NINGUNO**, y abrir el
+desplegable sin escribir tampoco mostraba nada. Los otros cuatro consumidores del endpoint
+(`ProductSelector.tsx:66`, `emitir-client.tsx:784`, `emitir-guia-directa-modal.tsx:241`) lo leían
+bien; este era el único roto. Se introdujo en `19b707a` (modal de edición inline, 24 jul 2026).
+
+**Regla que deja:** `/api/productos` devuelve `{ data }`, no un array. Comprobar `Array.isArray(json?.data)`.
+
+### Bug latente del mismo modal
+
+`iniciarEdicion` mapeaba `productoId: it.producto_id || ""`, pero el PATCH exige `z.string().uuid()`
+→ una venta con un ítem sin `producto_id` daba 400 "Datos inválidos" al guardar, sin decir cuál. Ahora
+el id se recupera del catálogo por nombre (normalizado sin tildes) y, si aun así no aparece, el aviso
+**nombra el producto**: *"«X» no está en el catálogo. Quítalo y vuelve a agregarlo desde el buscador."*
+
+### Imprimir y enviar la guía
+
+La página imprimible `/pedidos/[id]/guia` **ya funcionaba** para ventas del POS (son filas de
+`pedidos` con `origen='pos_planta'`), pero en toda la app había **solo dos** enlaces hacia ella:
+Producción y el panel post-venta del POS, que se pierde al cerrarlo. La lista histórica no lo
+reofrecía. Se agregaron a cada venta:
+
+- **Imprimir** → `<a href="/pedidos/{id}/guia">`, mismo patrón que `ventas-campo-client.tsx:511-519`.
+- **Enviar guía** → `GuiaPlantaModal`, clon del pipeline JPEG de `guia-avicola-modal.tsx`.
+
+Ambos aparecen **también en las ventas anuladas** (el ticket sale con la banda ANULADA): el cliente
+suele pedir el comprobante de una venta dada de baja.
+
+Piezas nuevas:
+
+| Archivo | Qué hace |
+|---|---|
+| `src/lib/planta/guia-pos.ts` | `guiaDeVentaPlanta()` — arma la guía desde `pedidos` + `pedido_items`. Espejo de `lib/avicola/guia.ts` |
+| `src/app/api/pos/ventas/[id]/route.ts` | `GET` nuevo (antes solo `PATCH`) → `{ guia }` |
+| `src/app/dashboard/pos-planta/ticket-guia-planta.tsx` | Layout 500px para fotografiar |
+| `src/app/dashboard/pos-planta/guia-planta-modal.tsx` | Modal JPEG + compartir |
+
+**Diferencias de dominio con campo (no se copió tal cual):** las líneas llevan **unidad variable**
+(kg | uni), no kilos fijos; y el **estado de cuenta es opcional** — una venta al contado no tiene
+cuenta corriente que arrastrar, así que el recuadro solo sale si la venta fue a crédito.
+
+El estado de cuenta de la guía se ancla por **`created_at`**, no por `fecha` (misma regla del caso
+Vicki, gotcha #46), y en planta los abonos cuelgan de la **cobranza** (`abonos_planta.cobranza_id`),
+no del cliente — el JOIN va por `cobranzas_planta` filtrando anuladas de ambos lados.
+
+### Las tres salidas de WhatsApp (decisión de Hugo)
+
+No se usa la Cloud API: la ventana de 24 h de Meta la haría fallar casi siempre con estos clientes,
+que no escriben al número del CRM. En su lugar, tres botones: **Compartir** (`navigator.share`),
+**Descargar** y **Abrir chat del cliente** (`wa.me`). ⚠️ Un enlace `wa.me` abre la conversación y
+puede llevar texto, pero **no puede adjuntar la imagen** — por eso "Abrir chat" descarga primero y el
+subtítulo dice explícitamente que hay que adjuntarla. El botón solo aparece si el cliente tiene teléfono.
+
+### Verificación (dev-hugo, 7 ago)
+
+Venta de prueba en el POS (S/ 19.30) → *Editar venta* → escribir "molleja" → aparece **"mollejas de
+pollo (kg) — S/ 11.90"** → agregar y guardar → *"Venta editada correctamente"*, total S/ 31.20 (el
+PATCH reversó y reaplicó bien stock y cobro). La guía JPEG se generó con logo y **TOTAL S/ 19.30**
+coincidiendo con la venta; la orden imprimible salió como N° 00000367 con sus tres modos
+(Ticket/A4, Precios, RawBT). `tsc` y `eslint` limpios.
+
+**Hallazgo aparte (preexistente, no de este cambio):** `/dashboard/pos-planta` emite un error de
+hidratación de React — el servidor pinta un `<span>` y el cliente un `<button lg:hidden>` en el
+encabezado de "Venta Actual". No rompe nada visible pero fuerza un re-render de ese subárbol.
+
+---
+
 ## 6 ago 2026 (noche) — El gasto recupera su fecha (petición de Marianela)
 
 **Contexto.** Marianela mandó un audio y un video. Pedía "poder elegir la fecha del gasto", pero en el

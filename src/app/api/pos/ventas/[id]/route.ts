@@ -1,7 +1,9 @@
 // src/app/api/pos/ventas/[id]/route.ts
+// GET   — devuelve la guía de una venta del POS de planta (para imprimir/compartir).
 // PATCH — edita una venta del POS de planta in-place (reversando stock + cobro viejo, aplicando lo nuevo).
 // Roles admin + produccion.
 import { auth } from "@/auth";
+import { guiaDeVentaPlanta } from "@/lib/planta/guia-pos";
 import { redondearMonedaPos, subtotalVentaPos, totalVentaPos } from "@/lib/planta/ventas-pos";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
@@ -42,6 +44,35 @@ const PosSaleEditSchema = z.object({
   message: "Debe seleccionar una cuenta bancaria/caja para pagos al Contado, o un cliente de planta registrado para ventas al Crédito.",
   path: ["cuenta_id"]
 });
+
+/** GET → 200 { guia } con los datos para el ticket compartible / imprimible. */
+export async function GET(_req: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autenticado" }, { status: 401 });
+    }
+    if (!["admin", "produccion"].includes(session.user.role)) {
+      return NextResponse.json({ error: "Sin permisos" }, { status: 403 });
+    }
+
+    const { id } = await params;
+    if (!z.string().uuid().safeParse(id).success) {
+      return NextResponse.json({ error: "Venta no encontrada." }, { status: 404 });
+    }
+
+    const sql = neon(process.env.DATABASE_URL!);
+    const guia = await guiaDeVentaPlanta(sql, id);
+    if (!guia) {
+      return NextResponse.json({ error: "Venta no encontrada." }, { status: 404 });
+    }
+
+    return NextResponse.json({ guia });
+  } catch (error) {
+    console.error("Error GET /api/pos/ventas/[id]:", error);
+    return NextResponse.json({ error: "Error al obtener la venta" }, { status: 500 });
+  }
+}
 
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   const session = await auth();
