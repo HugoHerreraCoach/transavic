@@ -24,12 +24,25 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const fecha = searchParams.get("fecha"); // formato YYYY-MM-DD
     const search = searchParams.get("q")?.trim();
+    // Con `incluir_despachados=1` entran también los pedidos que ya salieron
+    // (Asignado / En_Camino / Entregado). Producción no puede TOCARLOS —sus
+    // endpoints /pesos, /listo y /reabrir devuelven 400 fuera de los 3 estados
+    // de abajo—, pero sí necesita poder REIMPRIMIR su guía: antes había que
+    // devolver el pedido a producción, imprimir y reasignarlo (doble trabajo).
+    const incluirDespachados = searchParams.get("incluir_despachados") === "1";
 
     const sql = neon(process.env.DATABASE_URL!);
 
-    // Filtros base: solo pedidos que producción puede tocar
+    // Filtros base: por defecto, solo pedidos que producción puede tocar. El
+    // default NO cambia: la cola de trabajo del día se sigue viendo igual.
     const conditions: string[] = [
-      "p.estado IN ('Pendiente', 'En_Produccion', 'Listo_Para_Despacho')",
+      incluirDespachados
+        ? "p.estado IN ('Pendiente', 'En_Produccion', 'Listo_Para_Despacho', 'Asignado', 'En_Camino', 'Entregado')"
+        : "p.estado IN ('Pendiente', 'En_Produccion', 'Listo_Para_Despacho')",
+      // Las ventas del POS de planta nacen en estado 'Entregado', así que sin
+      // este filtro aparecerían en la cola de Producción al incluir despachados.
+      // No son pedidos de asesora: se preparan y cobran en el mostrador.
+      "COALESCE(p.origen, 'asesor') <> 'pos_planta'",
     ];
     const params: unknown[] = [];
     let i = 1;
@@ -66,6 +79,7 @@ export async function GET(request: Request) {
           WHEN 'Pendiente' THEN 0
           WHEN 'En_Produccion' THEN 1
           WHEN 'Listo_Para_Despacho' THEN 2
+          ELSE 3
         END,
         p.hora_entrega NULLS LAST,
         p.created_at ASC`,
@@ -102,7 +116,13 @@ export async function GET(request: Request) {
     //      para que Producción pese cada línea (ej. 2 kg + 3 kg en bolsas separadas).
     // El desglose real solo vive en el texto del detalle; pedido_items lo perdió al
     // sumar. Idempotente y nunca toca pedidos ya pesados.
+    // Solo sobre los pedidos que Producción todavía trabaja: al listar fechas
+    // pasadas con `incluir_despachados` entrarían cientos de pedidos ya cerrados
+    // y este GET se pondría a escribir sobre el histórico. Un pedido ya
+    // despachado no se va a pesar, así que reconciliarlo no aporta nada.
+    const ESTADOS_RECONCILIABLES = ["Pendiente", "En_Produccion", "Listo_Para_Despacho"];
     for (const p of pedidos) {
+      if (!ESTADOS_RECONCILIABLES.includes(String(p.estado))) continue;
       if (!String(p.detalle || "").trim()) continue;
       const actuales = (itemsPorPedido[p.id as string] || []).map((it) => ({
         cantidad_real: (it.cantidad_real as number | string | null) ?? null,

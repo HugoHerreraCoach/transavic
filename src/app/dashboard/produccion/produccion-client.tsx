@@ -6,7 +6,7 @@
 //   - Botón "Listo para despacho" sólo aparece cuando todo está pesado.
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePollingVisible } from "@/lib/use-polling-visible";
 import {
   FiPackage,
@@ -93,7 +93,7 @@ function mananaEnLima(): { iso: string; etiqueta: string } {
 // Unidades comunes que producción puede elegir al ajustar un ítem.
 const UNIDADES_COMUNES = ["kg", "uni", "docena", "plancha", "paquete x 6", "jaba", "atado"];
 
-function estadoBadge(estado: Pedido["estado"]) {
+function estadoBadge(estado: Pedido["estado"] | string) {
   switch (estado) {
     case "Pendiente":
       return { color: "bg-amber-100 text-amber-700", label: "Pendiente" };
@@ -101,8 +101,28 @@ function estadoBadge(estado: Pedido["estado"]) {
       return { color: "bg-purple-100 text-purple-700", label: "En Producción" };
     case "Listo_Para_Despacho":
       return { color: "bg-teal-100 text-teal-700", label: "Listo p/ Despacho" };
+    // Estados de despacho: solo aparecen con "Incluir ya despachados".
+    case "Asignado":
+      return { color: "bg-blue-100 text-blue-700", label: "Asignado" };
+    case "En_Camino":
+      return { color: "bg-indigo-100 text-indigo-700", label: "En camino" };
+    case "Entregado":
+      return { color: "bg-green-100 text-green-700", label: "Entregado" };
+    case "Fallido":
+      return { color: "bg-red-100 text-red-700", label: "Fallido" };
+    // Nunca devolver undefined: la tarjeta lee badge.color y reventaría.
+    default:
+      return { color: "bg-gray-100 text-gray-600", label: String(estado) };
   }
 }
+
+/** Hoy en Lima, en formato YYYY-MM-DD (el que espera el <input type="date">). */
+function hoyLima(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date());
+}
+
+/** Estados en los que el pedido ya salió: Producción puede verlos, no tocarlos. */
+const ESTADOS_DESPACHADOS = ["Asignado", "En_Camino", "Entregado", "Fallido"];
 
 export default function ProduccionClient() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
@@ -111,12 +131,22 @@ export default function ProduccionClient() {
   const [query, setQuery] = useState("");
   const [pedidoActivo, setPedidoActivo] = useState<Pedido | null>(null);
   const [filtroEstado, setFiltroEstado] = useState<string>("todos");
+  const hoy = hoyLima();
+  const [fecha, setFecha] = useState(hoy);
+  // Ver los que ya salieron sirve para REIMPRIMIR su guía sin devolverlos a
+  // producción y volver a asignarlos. Apagado por defecto: la cola de trabajo
+  // del día se sigue viendo igual al abrir la pantalla.
+  const [verDespachados, setVerDespachados] = useState(false);
 
-  // ── Cargar pedidos del día ──
-  const fetchPedidos = async () => {
+  // ── Cargar pedidos ──
+  const fetchPedidos = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await fetch("/api/produccion/pedidos");
+      const params = new URLSearchParams();
+      if (fecha && fecha !== hoy) params.set("fecha", fecha);
+      if (verDespachados) params.set("incluir_despachados", "1");
+      const qs = params.toString();
+      const res = await fetch(`/api/produccion/pedidos${qs ? `?${qs}` : ""}`);
       if (!res.ok) {
         setLoading(false);
         return;
@@ -129,10 +159,19 @@ export default function ProduccionClient() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [fecha, hoy, verDespachados]);
+
+  // Al cambiar de fecha o de filtro hay que recargar: el polling de abajo solo
+  // re-ejecuta cuando cambia `enabled`, no cuando cambian las dependencias.
+  useEffect(() => {
+    setLoading(true);
+    fetchPedidos();
+  }, [fetchPedidos]);
 
   // Refresh cada 30s, solo con la pestaña visible (no consume Neon en segundo plano).
-  usePollingVisible(fetchPedidos, 30_000);
+  // `immediate: false` porque la carga inicial ya la hace el efecto de arriba —
+  // si no, cada cambio de fecha dispararía dos peticiones.
+  usePollingVisible(fetchPedidos, 30_000, { immediate: false });
 
   // ── Filtrado por búsqueda y estado de tarjeta ──
   const filtrados = useMemo(() => {
@@ -167,7 +206,9 @@ export default function ProduccionClient() {
           <div className="flex-1">
             <h1 className="text-lg font-bold text-gray-800">Producción</h1>
             <p className="text-xs text-gray-500">
-              Pedidos del día — registra los pesos exactos
+              {fecha === hoy
+                ? "Pedidos del día — registra los pesos exactos"
+                : "Otro día — solo para consultar y reimprimir"}
             </p>
           </div>
           <button
@@ -224,8 +265,8 @@ export default function ProduccionClient() {
           />
         </div>
 
-        {/* Buscador */}
-        <div className="px-4 sm:px-6 lg:px-8 pb-3">
+        {/* Buscador + fecha + ver despachados */}
+        <div className="px-4 sm:px-6 lg:px-8 pb-3 space-y-2">
           <div className="relative">
             <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
@@ -235,6 +276,42 @@ export default function ProduccionClient() {
               placeholder="Buscar cliente, distrito o asesora…"
               className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
             />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-sm">
+              <FiCalendar className="text-gray-400 shrink-0" />
+              <input
+                type="date"
+                value={fecha}
+                max={hoy}
+                onChange={(e) => setFecha(e.target.value || hoy)}
+                className="min-h-10 rounded-lg border border-gray-300 px-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                aria-label="Ver los pedidos de otro día"
+              />
+            </label>
+            {fecha !== hoy && (
+              <button
+                type="button"
+                onClick={() => setFecha(hoy)}
+                className="min-h-10 rounded-lg border border-gray-300 px-3 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Volver a hoy
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setVerDespachados((v) => !v)}
+              aria-pressed={verDespachados}
+              title="Muestra los pedidos que ya salieron, para poder reimprimir su guía"
+              className={`min-h-10 rounded-lg border px-3 text-xs font-semibold transition ${
+                verDespachados
+                  ? "border-purple-400 bg-purple-50 text-purple-700"
+                  : "border-gray-300 text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              {verDespachados ? "✓ " : ""}Incluir ya despachados
+            </button>
           </div>
         </div>
       </header>
@@ -263,13 +340,21 @@ export default function ProduccionClient() {
               0
             );
             const todoPesado = p.items.length > 0 && p.items.every((it) => it.cantidad_real != null);
+            // Un pedido ya despachado no se pesa (sus endpoints devuelven 400):
+            // acá solo se consulta y se reimprime.
+            const despachado = ESTADOS_DESPACHADOS.includes(p.estado);
 
             return (
-              <button
+              <div
                 key={p.id}
-                onClick={() => setPedidoActivo(p)}
-                className="w-full text-left bg-white rounded-xl shadow-sm border hover:border-purple-300 hover:shadow-md transition-all p-4"
+                className="bg-white rounded-xl shadow-sm border hover:border-purple-300 hover:shadow-md transition-all"
               >
+                <button
+                  type="button"
+                  onClick={() => !despachado && setPedidoActivo(p)}
+                  disabled={despachado}
+                  className="w-full text-left p-4 disabled:cursor-default"
+                >
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -326,7 +411,23 @@ export default function ProduccionClient() {
                     </div>
                   </div>
                 </div>
-              </button>
+                </button>
+
+                {/* Imprimir SIN abrir el modal. Antes el único acceso a la orden
+                    estaba dentro del modal de pesos, así que para reimprimir la
+                    guía de un pedido ya asignado había que devolverlo a
+                    producción, imprimir y reasignarlo. */}
+                <div className="px-4 pb-3 -mt-1">
+                  <a
+                    href={`/pedidos/${p.id}/guia`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+                  >
+                    <FiPrinter className="w-3.5 h-3.5" /> Imprimir orden
+                  </a>
+                </div>
+              </div>
             );
           })}
         </div>

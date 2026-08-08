@@ -62,6 +62,53 @@ no existe en Node": existe desde Node 21, solo que **incompleto**, así que no e
 
 ---
 
+## 7 ago 2026 — Fase 3 de las peticiones de Ariana: reimprimir guías sin el doble trabajo
+
+**Contexto.** Tercer video, el más corto y el más barato de resolver:
+
+> *"Que se puedan **imprimir las guías del día y también de días anteriores**, porque a veces los
+> clientes piden la guía de fechas anteriores con los pesos que se les entregó. Pero ya **no se puede
+> imprimir una vez que está asignado a los repartidores**: se tiene que **devolver a producción** para
+> volver a imprimir y **otra vez asignar** — hay un **doble trabajo**."*
+
+**El bloqueo era puramente de navegación.** `/pedidos/[id]/guia` no restringe nada: ni siquiera lee
+`p.estado`. Pegando la URL a mano, un pedido Asignado o Entregado de cualquier fecha imprime perfecto.
+Lo que lo escondía eran tres capas: (a) la query filtraba `estado IN (Pendiente, En_Produccion,
+Listo_Para_Despacho)`, así que al asignar el pedido desaparecía; (b) el único enlace a la orden vivía
+DENTRO del modal de pesos y encima gateado por `todoCompleto`; (c) en toda la app había solo dos
+enlaces a esa página. Y el endpoint **ya aceptaba `?fecha=`** desde siempre — nadie se la mandaba.
+
+**Qué se agregó** (sin migración): selector de fecha (`max` = hoy) con botón "Volver a hoy", toggle
+**"Incluir ya despachados"** (`?incluir_despachados=1`) y un botón **Imprimir orden** en cada tarjeta,
+fuera del modal. El subtítulo cambia a *"Otro día — solo para consultar y reimprimir"* cuando no es hoy.
+
+**El default NO cambia:** al abrir la pantalla se sigue viendo la cola de trabajo del día, igual que
+antes. Los despachados solo entran si se pide explícitamente, y su tarjeta no abre el modal de pesos
+(sus endpoints `/pesos`, `/listo` y `/reabrir` devuelven 400 fuera de los 3 estados de producción).
+
+**Tres trampas que aparecieron al ampliar el filtro de estados:**
+
+1. **Las ventas del POS nacen en `Entregado`** → con el toggle se habrían colado en la cola de
+   Producción. Se agregó `COALESCE(p.origen,'asesor') <> 'pos_planta'` (mismo criterio que
+   `lib/data.ts`). No son pedidos de asesora: se preparan y cobran en el mostrador.
+2. **`estadoBadge` solo cubría 3 estados** y no tenía `default` → devolvía `undefined` y la tarjeta
+   reventaba al leer `badge.color`. Ahora cubre los 7 y nunca devuelve undefined.
+3. **El backfill lazy de ítems escribe en DB durante un GET.** Hoy solo alcanza la cola del día; al
+   listar fechas pasadas habría empezado a escribir sobre cientos de pedidos cerrados. Se acotó a los
+   3 estados de producción — un pedido ya despachado no se va a pesar, así que reconciliarlo no aporta.
+
+También: el `CASE` del `ORDER BY` lleva `ELSE 3` (los despachados al fondo, explícito en vez de
+depender del NULLS LAST implícito), y el polling pasa a `immediate: false` porque la carga inicial la
+hace el efecto que reacciona al cambio de fecha — si no, cada cambio disparaba dos peticiones.
+
+**Verificación (dev-hugo, 7 ago).** Con el toggle activo y 0 pedidos hoy, las ventas del POS **no**
+aparecen (el filtro de origen funciona). En el 27/06/2026 salen los 36 pedidos, incluidos 5
+**Asignado** con su chip azul y su botón de imprimir — justo el caso del doble trabajo —, y la orden
+abre con su correlativo (N° 00000366) y sus ítems. `tsc`, `eslint` y 103 tests limpios; sin errores
+de consola.
+
+---
+
 ## 7 ago 2026 — Fase 2 de las peticiones de Ariana: la ficha del cliente de planta
 
 **Contexto.** Segundo video. Ariana abre la ficha de *Cabezón Acopio*, ve S/ 220.20 de deuda y dice:
