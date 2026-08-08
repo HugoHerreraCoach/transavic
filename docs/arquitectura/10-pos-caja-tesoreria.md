@@ -1,6 +1,6 @@
 # 10 — POS de Planta, Caja Diaria y Tesorería (Expansión ERP 2026)
 
-> **Última verificación contra código:** 2026-07-13
+> **Última verificación contra código:** 2026-08-07
 > **Estado del proyecto:** Beta y fixes del 12 jul en producción; detalle/costo POS y libro de pagos de proveedores en rama, con migraciones pendientes
 > **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/caja-diaria/route.ts`, `src/app/api/cuentas/route.ts`, `src/app/api/transacciones/route.ts`, `src/app/api/gastos/route.ts`, `src/app/api/cuentas-por-pagar/route.ts`, `src/app/dashboard/pos-planta/pos-client.tsx`, `scripts/migrate-caja-unica-abierta.sql`
 
@@ -47,7 +47,7 @@ La regla cruzada: **contado exige `cuenta_id`** (a qué caja/cuenta entra el din
 Todos los efectos van en un solo `sql.transaction([...])`; el `pedido_id` se genera con `crypto.randomUUID()` porque el batch del driver HTTP de Neon no permite encadenar `RETURNING`. Un fallo a mitad no puede dejar un pedido sin stock descontado ni una venta sin cobro/cobranza.
 
 1. **Pedido:** `INSERT INTO pedidos` con `origen='pos_planta'`, **estado `'Entregado'` directo** (no pasa por la máquina de estados de reparto), `fecha_pedido` = hoy Lima, `detalle`/`detalle_final` derivados del carrito (`"2 kg Molleja (limpia), ..."`), `entregado_por` = nombre del usuario POS, `lat/lng` NULL (no hay ruta).
-2. **Cliente denormalizado:** si se selecciona `clientes_planta`, el pedido copia nombre, razón social y RUC/DNI para poder facturar. `pedidos.cliente_id` queda `NULL` porque esa FK apunta al directorio de Ejecutivas; `asesor_id` identifica al usuario POS, no a una asesora comercial.
+2. **Cliente denormalizado + vínculo real:** si se selecciona `clientes_planta`, el pedido copia nombre, razón social y RUC/DNI para poder facturar, **y guarda `cliente_planta_id`** (7 ago 2026 — también en contado; ver §2.7). `pedidos.cliente_id` queda `NULL` porque esa FK apunta al directorio de Ejecutivas; `asesor_id` identifica al usuario POS, no a una asesora comercial.
 3. **Ítems + inventario + kardex** por cada línea: cantidad y precio se canonizan a dos decimales; cada subtotal se redondea a centavos y el cobro suma exactamente esos subtotales. Después se hace `INSERT pedido_items` (con `subtotal_real` igual al subtotal), se descuenta inventario flexible y se registra `inventario_movimientos` con `tipo='venta_pos'`. Esta regla evita que detalle, cuenta y cobranza difieran S/0.01.
 4. **Cobro (Contado):** CTE atómico que suma el saldo de la cuenta elegida y registra la transacción de tesorería en el mismo statement:
 
@@ -128,6 +128,20 @@ pedir el comprobante de una venta dada de baja.
 | `GET /api/pos/ventas/[id]` | Devuelve `{ guia }` (antes ese archivo solo tenía `PATCH`) |
 | `ticket-guia-planta.tsx` | Layout 500px para fotografiar |
 | `guia-planta-modal.tsx` | Modal JPEG + compartir |
+
+### 2.7 Dónde vive el pedido POS ahora: `pedidos.cliente_planta_id` (7 ago 2026)
+
+Hasta esta fecha el POS insertaba el pedido con **`cliente_id = NULL`** (esa FK apunta a `clientes`,
+de Ejecutivas) y el único puente con el cliente de planta era `cobranzas_planta.pedido_id`, **que solo
+existe a crédito**. Una venta al CONTADO quedaba huérfana: no aparecía en la ficha del cliente ni
+contaba como su "última compra".
+
+Ahora `api/pos/route.ts` guarda **`cliente_planta_id`** en el INSERT, y el PATCH de
+`api/pos/ventas/[id]` lo actualiza en su sentencia G. **Los dos puntos son obligatorios:** con solo el
+primero, editar una venta cambiándole el cliente actualizaría `razon_social`/`ruc_dni` pero dejaría el
+vínculo viejo pegado, y la venta seguiría colgando de la ficha anterior sin que nadie se entere.
+
+Migración y backfill: [doc 25 §16](./25-clientes-cobranzas-planta.md).
 
 **Diferencias de dominio con campo (no copiar la guía avícola tal cual):** las líneas llevan
 **unidad variable** (`kg` | `uni`), no kilos fijos; y el **estado de cuenta es OPCIONAL** — una venta

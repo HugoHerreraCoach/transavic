@@ -29,6 +29,7 @@ erDiagram
     clientes_avicola ||--o{ abonos_avicola : "cliente_id"
     ventas_avicola ||--o{ comprobantes : "venta_avicola_id"
     clientes_planta ||--o{ cobranzas_planta : "cliente_planta_id"
+    clientes_planta ||--o{ pedidos : "cliente_planta_id"
     pedidos ||--o{ cobranzas_planta : "pedido_id"
     cobranzas_planta ||--o{ abonos_planta : "cobranza_id"
     productos ||--o{ inventario_lotes : "producto_id"
@@ -120,6 +121,7 @@ CREATE TABLE pedidos (
     id                     UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
     cliente                VARCHAR(255) NOT NULL,        -- denormalizado
     cliente_id             UUID REFERENCES clientes(id) ON DELETE SET NULL,
+    cliente_planta_id      UUID REFERENCES clientes_planta(id) ON DELETE SET NULL,  -- POS de planta
     whatsapp               VARCHAR(50),
     direccion              TEXT NOT NULL,
     direccion_mapa         TEXT,
@@ -443,6 +445,8 @@ nueva de desarrollo/producción se entrega como SQL y se aplica con **psql**; lo
 |---|---|---|
 | `pedidos` | `origen VARCHAR(20) DEFAULT 'asesor'` | Distingue la venta de asesora del POS de planta (`'pos_planta'`). Las ventas POS se **excluyen** de metas/bonos (doc 14). |
 | `pedidos` | `cliente_id UUID → clientes` | Vínculo vivo al cliente (la migración lo asegura con `IF NOT EXISTS`; en producción ya existía). |
+| `pedidos` | `cliente_planta_id UUID → clientes_planta` | Cliente del POS de planta (7 ago 2026). NULL en pedidos de asesora y en ventas al paso. **El `cliente_id` de arriba NO sirve para planta**: apunta a `clientes`, que es de Ejecutivas. Sin esta columna, una venta al CONTADO quedaba huérfana — la cobranza solo existe a crédito (doc 25 §16). |
+| `clientes_planta` | `saldo_anterior NUMERIC(12,2) DEFAULT 0` | Deuda previa al sistema; paridad con `clientes_avicola`. Entra en `saldo_actual`. |
 | `pedido_items` | `notas TEXT` | Notas libres por línea de pedido (asegurada con `IF NOT EXISTS`). |
 | `users` | `activo_rotacion BOOLEAN DEFAULT TRUE` | Si la asesora participa en la rotación de leads del CRM. |
 | `users` | `orden_rotacion INT DEFAULT 1` | Posición en la rueda de asignación de leads. |

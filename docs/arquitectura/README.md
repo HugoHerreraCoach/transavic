@@ -63,10 +63,12 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 | GRE | 12 → 11 → 22 → 24 |
 | Ventas Generales, Consolidado o Hoy/Ayer | 27 → 22 → 14 → 18 → 23 |
 | Estado de cuenta/PDF de Campo | 21 → 13 → 24 |
+| Estado de cuenta/PDF/historial de Planta | 25 → 10 → 13 → 24 |
 | Meta, racha o ranking | 14 → 05 → 03 |
 | Compras/inventario/mermas | 09 → 10 → 18 → 23 |
 | Pago, anticipo o PDF de proveedor | 26 → 10 → 09 → 23 → 24 |
 | Reprogramar desde Producción | 06 → 04 → 16 → 23 → 24 |
+| Reimprimir guías / consultar otras fechas en Producción | 06 → 04 → 23 → 24 |
 | Detalle o costo histórico POS | 10 → 25 → 02 → 24 |
 | Conectar el WhatsApp de una marca | 28 → 15 → 16 → 24 |
 | CRM de leads o chatbot | 15 → 28 → 16 |

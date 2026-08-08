@@ -1,7 +1,7 @@
 # 06 — Flujo de Producción y Pesaje
 
-> **Última verificación contra código:** 2026-07-13
-> **Estado del proyecto:** core en producción; la reprogramación de §5 está implementada en `codex/cambios-operativos-julio`, aún sin desplegar
+> **Última verificación contra código:** 2026-08-07
+> **Estado del proyecto:** en producción, incluida la consulta de otras fechas y la reimpresión de guías (§6)
 > **Archivos clave:** `src/app/dashboard/produccion/produccion-client.tsx`, `src/app/api/produccion/pedidos/route.ts`, `src/app/api/pedidos/[id]/reprogramar/route.ts`, `src/lib/parse-detalle-pedido.ts`
 
 Este documento describe el módulo de producción y pesaje real, la lógica del pesaje en balanza física y el proceso de conversión de unidades y desagrupación de líneas de venta.
@@ -10,10 +10,12 @@ Este documento describe el módulo de producción y pesaje real, la lógica del 
 
 ## 1. El Rol y la Vista de Producción (`produccion-client.tsx`)
 
-El asistente de producción opera desde el panel `/dashboard/produccion`. Este rol solo visualiza las órdenes programadas para entrega el día de hoy que se encuentran en los estados:
+El asistente de producción opera desde el panel `/dashboard/produccion`. Por defecto ve las órdenes programadas para entrega **hoy** que se encuentran en los estados:
 - **`Pendiente`**: Listos para entrar a balanza.
 - **`En_Produccion`**: Siendo pesados actualmente.
 - **`Listo_Para_Despacho`**: Pesaje completado, en cola de asignación de transporte.
+
+Desde el 7 ago 2026 puede además **consultar otras fechas** y **ver los pedidos ya despachados**, pero solo para reimprimir — ver §6.
 
 ---
 
@@ -65,3 +67,53 @@ El servidor limita al rol `produccion` a mañana y a los tres estados productivo
 Conserva el avance, retira el pedido de la cola de hoy y lo hace aparecer en la cola
 del nuevo día. La ejecutiva responsable recibe una notificación persistente y popup.
 Cambiar esta función obliga a revisar docs 04, 16, 23 y 24.
+
+---
+
+## 6. Consultar otras fechas y reimprimir guías (7 ago 2026)
+
+**El problema que resolvía.** Cuando un pedido pasaba a `Asignado`, desaparecía de Producción.
+Para reimprimir su guía había que **devolverlo a producción, imprimir y volver a asignarlo** — doble
+trabajo, reportado por Ariana en video.
+
+**El bloqueo nunca estuvo en el documento.** `/pedidos/[id]/guia` (`OrdenImprimible`) **no lee
+`p.estado`**: sirve cualquier pedido, de cualquier fecha y en cualquier estado; solo exige sesión.
+Lo que lo escondía eran tres capas de navegación:
+
+1. la query filtraba `estado IN ('Pendiente','En_Produccion','Listo_Para_Despacho')`;
+2. el único enlace a la orden vivía **dentro del modal de pesos**, y encima gateado por `todoCompleto`;
+3. en toda la app existían solo **dos** enlaces a esa página (este y el panel post-venta del POS).
+
+Y el endpoint **ya aceptaba `?fecha=YYYY-MM-DD`** desde su primera versión; ningún cliente se la mandaba.
+
+### Qué ofrece la pantalla ahora
+
+| Control | Efecto |
+|---|---|
+| `<input type="date">` (`max` = hoy) + "Volver a hoy" | manda `?fecha=`; el subtítulo pasa a *"Otro día — solo para consultar y reimprimir"* |
+| Toggle **"Incluir ya despachados"** | manda `?incluir_despachados=1` → suma `Asignado`, `En_Camino`, `Entregado` |
+| Botón **Imprimir orden** en cada tarjeta | enlaza `/pedidos/{id}/guia`, **fuera** del modal |
+
+**El default NO cambia:** al abrir se sigue viendo la cola de trabajo del día. Los despachados solo
+entran si se piden, y su tarjeta **no abre el modal de pesos** — `/pesos`, `/listo` y `/reabrir`
+devuelven 400 fuera de los tres estados productivos, así que ofrecerlo sería mentir.
+
+### ⚠️ Tres trampas al ampliar el filtro de estados
+
+Las tres habrían roto algo; quedan documentadas porque cualquier cambio futuro del filtro las revive:
+
+1. **Las ventas del POS de planta nacen en `Entregado`** → con el toggle se habrían colado en la cola
+   de Producción. El WHERE lleva `COALESCE(p.origen,'asesor') <> 'pos_planta'` (mismo criterio que
+   `lib/data.ts`). No son pedidos de asesora: se preparan y cobran en el mostrador.
+2. **`estadoBadge` no tenía `default`** y solo cubría los 3 estados productivos → devolvía `undefined`
+   y la tarjeta reventaba al leer `badge.color`. Ahora cubre los 7 y nunca devuelve undefined.
+3. **El backfill lazy de ítems escribe en la base durante un `GET`** (§4, gotcha #31). Al listar
+   fechas pasadas habría empezado a escribir sobre cientos de pedidos ya cerrados, así que se acotó a
+   los 3 estados productivos: un pedido despachado no se va a pesar y reconciliarlo no aporta nada.
+
+Detalles menores del mismo cambio: el `CASE` del `ORDER BY` lleva `ELSE 3` (los despachados al fondo,
+explícito en vez de depender del `NULLS LAST` implícito), y `usePollingVisible` pasa a
+`immediate: false` porque la carga inicial la hace el efecto que reacciona al cambio de fecha — si no,
+cada cambio dispararía dos peticiones.
+
+Sin migración. Crónica: [historial](../historial-cambios-2026.md).

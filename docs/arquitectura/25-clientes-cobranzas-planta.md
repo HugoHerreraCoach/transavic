@@ -1,8 +1,8 @@
 # 25 — Clientes y Cobranzas de Planta
 
-> **Última verificación contra código:** 2026-07-13
-> **Estado:** núcleo, anulación integral y cambios del 12 jul desplegados; detalle/costo histórico POS en rama y pendiente de migración/despliegue
-> **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/clientes-planta/`, `src/app/api/cobranzas-planta/`, `src/lib/planta/types.ts`, `src/lib/planta/saldos.ts`, `src/app/dashboard/pos-planta/`, `src/app/dashboard/clientes-planta/`, `src/app/dashboard/cobranzas-planta/`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql`
+> **Última verificación contra código:** 2026-08-07
+> **Estado:** en producción, incluida la ficha 360 del cliente con historial y estado de cuenta (§16)
+> **Archivos clave:** `src/app/api/pos/route.ts`, `src/app/api/clientes-planta/`, `src/app/api/cobranzas-planta/`, `src/lib/planta/types.ts`, `src/lib/planta/saldos.ts`, `src/lib/planta/historial.ts`, `src/lib/planta/estado-cuenta.ts`, `src/lib/planta/guia-pos.ts`, `src/lib/reportes/pdf-estado-cuenta-planta.ts`, `src/app/dashboard/pos-planta/`, `src/app/dashboard/clientes-planta/`, `src/app/dashboard/cobranzas-planta/`, `scripts/migrate-planta-clientes-cobranzas-2026-07-08.sql`, `scripts/migrate-planta-historial-2026-08-07.sql`
 
 Este documento describe la operación **Venta en Planta**: su directorio de clientes, la cartera de ventas a crédito, los abonos parciales y sus relaciones con el POS, SUNAT, inventario, caja, tesorería y reportes. Es el documento de referencia para evitar que un cambio vuelva a mezclar Planta con las cobranzas de Ejecutivas o con las ventas de Campo.
 
@@ -92,9 +92,10 @@ Directorio compartido por quienes operan la planta; no tiene `asesor_id` ni scop
 | `plazo_pago_dias` | define `fecha_vencimiento` al vender a crédito |
 | `activo` | estado administrativo de la ficha |
 | `empresa` | `Transavic` o `Avícola de Tony`; valor por defecto del cliente |
+| `saldo_anterior` | deuda previa al sistema (7 ago 2026). `NUMERIC(12,2) DEFAULT 0`; paridad con `clientes_avicola`. Evita tener que inventar una venta falsa para cargar una deuda vieja |
 | `created_by`, timestamps | auditoría |
 
-El índice `ux_clientes_planta_ruc` evita dos clientes con el mismo documento no vacío. Se permiten varios clientes sin documento.
+El índice `ux_clientes_planta_ruc` evita dos clientes con el mismo documento no vacío. Se permiten varios clientes sin documento. **Ese índice es también lo que hace determinista el backfill por RUC de §16.**
 
 ### 3.2 `cobranzas_planta`
 
@@ -138,7 +139,7 @@ Cada abono permanece separado aunque existan varios el mismo día. Esta regla pe
 ```text
 total_abonado_deuda = SUM(abonos_planta.monto WHERE NOT anulado)
 saldo_deuda         = cobranza.monto - total_abonado_deuda
-saldo_cliente       = SUM(saldo_deuda WHERE cobranza NOT anulada)
+saldo_cliente       = saldo_anterior + SUM(saldo_deuda WHERE cobranza NOT anulada)
 ```
 
 Reglas derivadas:
@@ -148,6 +149,19 @@ Reglas derivadas:
 - saldo negativo: saldo a favor por sobrepago;
 - una deuda anulada no participa en el saldo del cliente;
 - un abono anulado no participa en ningún total.
+
+> ### ⚠️ DOS AGREGADOS QUE NO SON EL MISMO NÚMERO
+>
+> - El **saldo** lo mueven `saldo_anterior`, las ventas a **CRÉDITO** y los abonos.
+> - Lo **comprado** incluye además las ventas al **CONTADO**, que no generan deuda.
+>
+> `ClientePlantaConSaldo` los expone por separado: `saldo_actual` / `total_deuda` frente a
+> `total_contado`. Mezclarlos hace que la ficha se contradiga sola — muestra una deuda que no
+> corresponde con lo que hay que cobrar. En pantalla el contado va como línea aparte ("Además compró
+> S/ X al contado, ya pagado, no suma a la deuda") y en el PDF como fila marcada + total de pie.
+>
+> `ultima_compra` es la **más reciente entre crédito y contado** (`GREATEST`). Antes solo miraba
+> `MAX(cobranzas_planta.fecha_emision)`, así que una venta al contado ni siquiera contaba como compra.
 
 Los `NUMERIC` de Neon se convierten con `::float8` antes de llegar a TypeScript. No dupliques esta aritmética en una pantalla o reporte; reutiliza `listaClientesPlantaConSaldo()` o `listaCobranzasPlanta()`.
 
@@ -483,3 +497,74 @@ sin snapshot se rotulan **Sin costo registrado** y hacen que `costo_total` sea `
 No deben rellenarse con `productos.precio_compra` actual. La clasificación
 Contado/Crédito proviene de la operación original, aunque después se anule una
 cobranza.
+
+---
+
+## 16. Ficha 360 del cliente: historial y estado de cuenta (7 ago 2026)
+
+**El problema.** La ficha mostraba el monto de cada deuda y nada más: no había forma de saber **qué
+productos** ni **qué cantidades** se llevó el cliente. Pedido de Ariana en video, comparándola con el
+módulo de Campo ("la opción del señor Toño").
+
+### El bloqueante estructural que hubo que cerrar primero
+
+El POS insertaba el pedido con **`cliente_id = NULL`** (esa FK apunta a `clientes`, de Ejecutivas) y
+solo denormalizaba `razon_social`/`ruc_dni`. El **único** puente pedido↔cliente de planta era
+`cobranzas_planta.pedido_id`, **que solo existe a crédito**. Consecuencia: una compra al **contado** de
+un cliente registrado era invisible desde su ficha.
+
+`scripts/migrate-planta-historial-2026-08-07.sql` agrega **`pedidos.cliente_planta_id`**
+(`ON DELETE SET NULL` + índice parcial) y `clientes_planta.saldo_anterior`, con backfill idempotente:
+
+| Paso | Cobertura |
+|---|---|
+| Crédito, desde `cobranzas_planta` | 100 % de las ventas a crédito históricas |
+| Contado, por `ruc_dni` | determinista gracias a `ux_clientes_planta_ruc`; solo si el pedido lleva documento |
+
+Las ventas al paso sin documento quedan sin vincular **a propósito**: no hay a quién atribuirlas. En
+producción (7 ago) el resultado fue 12 de 62 vinculadas y **0 sin vincular teniendo documento**.
+
+> **⚠️ DOS puntos de escritura, ambos obligatorios.** El `INSERT` de `api/pos/route.ts` y la
+> **sentencia G** (`UPDATE pedidos`) de `api/pos/ventas/[id]`. Con solo el primero, editar una venta
+> cambiándole el cliente actualizaría `razon_social`/`ruc_dni` pero dejaría el `cliente_planta_id`
+> viejo pegado: la venta seguiría colgando de la ficha anterior, en silencio.
+
+### Capa de datos (espejo de Campo, con cuatro diferencias que NO se pueden copiar)
+
+| Pieza | Rol |
+|---|---|
+| `lib/planta/historial.ts` → `historialClientePlanta` | `UNION ALL` de compras + abonos; ítems en 2ª query agrupados en un `Map` |
+| `lib/planta/estado-cuenta.ts` → `construirEstadoCuentaPlanta` | **pura**, fuente ÚNICA de pantalla y PDF; con tests |
+| `lib/reportes/pdf-estado-cuenta-planta.ts` | PDF A4 violeta; `construirFilasEstadoCuentaPlanta` pura y testeada |
+| `clientes-planta/estado-cuenta-planta-modal.tsx` | período, toggle con/sin precio, WhatsApp o descarga |
+
+Diferencias con `lib/avicola/*` — copiar sus queries tal cual da resultados **mal**:
+
+1. el abono cuelga de la **COBRANZA** (`abonos_planta.cobranza_id`), no del cliente → hay que pasar
+   por `cobranzas_planta` filtrando anuladas **de ambos lados**;
+2. la venta vive en `pedidos` con `origen='pos_planta'`, no en tabla propia;
+3. los roles son `admin` + `produccion` (Campo es `admin` a secas);
+4. las líneas llevan **unidad variable** (`kg` | `uni`), no kilos fijos.
+
+Se reutilizó `abonosDeCobranza()` de `saldos.ts`, que existía sin ningún consumidor.
+
+`GET /api/clientes-planta/[id]` pasa a devolver `FichaClientePlanta { cliente, cobranzas, historial }`.
+
+### Reglas del PDF que no se deben romper
+
+Las del gotcha #63, heredadas del PDF de Campo: **nunca `rowSpan`** (jspdf-autotable parte mal los
+bloques entre páginas), `rowPageBreak: "avoid"`, `alternateRowStyles` desactivado, y fila **"Ajuste"**
+si los importes no suman el total — el total manda, y esconder la diferencia rompe la confianza en el
+documento entero.
+
+El estado de cuenta es el **libro de la deuda**. El contado aparece como fila marcada *"Pagado al
+contado (no suma a la deuda)"* y como total de pie, nunca dentro de la columna de saldo.
+
+### Lo que deliberadamente NO se tocó
+
+`OrdenImprimible.estadoCuenta` sigue **declarada y sin renderizar**: ese bloque se quitó a propósito de
+la orden impresa el 19 jul (`7e4f3c5`). El saldo viaja por los dos caminos donde sí corresponde — la
+guía JPEG que se comparte por WhatsApp (`guia-planta-modal.tsx`, que lo muestra en ventas a crédito) y
+este PDF. Ariana pidió los saldos *"en las guías que se vayan a enviar"*, que es exactamente el JPEG.
+
+Crónica: [historial](../historial-cambios-2026.md).
