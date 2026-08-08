@@ -42,18 +42,62 @@ export interface ClientePlanta {
   plazo_pago_dias: number;
   activo: boolean;
   empresa: EmpresaPlanta;
+  /** Deuda que el cliente traía de ANTES del sistema (default 0). */
+  saldo_anterior: number;
   created_at: string;
   updated_at: string;
 }
 
 /** Cliente + su deuda total (saldo pendiente) calculada al vuelo. */
 export interface ClientePlantaConSaldo extends ClientePlanta {
-  /** Σ (monto − abonos) de sus cobranzas NO anuladas. Negativo = a favor. */
+  /** saldo_anterior + total_deuda − total_abonado. Negativo = a favor. */
   saldo_actual: number;
-  total_deuda: number; // Σ monto de cobranzas no anuladas
+  total_deuda: number; // Σ monto de cobranzas no anuladas (solo CRÉDITO)
   total_abonado: number; // Σ abonos no anulados
+  /** Σ de sus ventas al CONTADO. Suma a lo comprado, NO a la deuda. */
+  total_contado: number;
+  /** La más reciente entre una compra a crédito y una al contado. */
   ultima_compra: string | null;
   ultimo_pago: string | null;
+}
+
+/** Un movimiento del historial del cliente de planta (compras + abonos). */
+export interface MovimientoPlanta {
+  tipo: "venta" | "abono";
+  id: string;
+  /** YYYY-MM-DD */
+  fecha: string;
+  created_at: string;
+  /** Total de la compra o monto del abono. */
+  monto: number;
+  /** Solo en ventas: si generó deuda o se pagó en el acto. */
+  tipo_pago: "Contado" | "Credito" | null;
+  medio_pago: MedioPagoPlanta | null;
+  observaciones: string | null;
+  anulado: boolean;
+  anulacion_motivo: string | null;
+  tiene_comprobante: boolean;
+  /** Serie-número del comprobante SUNAT vivo, si la venta lo tiene. */
+  comprobante_serie_numero: string | null;
+  creado_por_nombre: string | null;
+  /** Solo para ventas: las líneas de producto. */
+  items?: ItemMovimientoPlanta[];
+}
+
+export interface ItemMovimientoPlanta {
+  pedido_id: string;
+  producto_nombre: string;
+  cantidad: number;
+  unidad: string;
+  precio_unitario: number;
+  subtotal: number;
+}
+
+/** Respuesta de GET /api/clientes-planta/[id] (ficha 360). */
+export interface FichaClientePlanta {
+  cliente: ClientePlantaConSaldo;
+  cobranzas: CobranzaPlanta[];
+  historial: MovimientoPlanta[];
 }
 
 export interface CobranzaPlanta {

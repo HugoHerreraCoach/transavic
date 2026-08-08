@@ -62,6 +62,93 @@ no existe en Node": existe desde Node 21, solo que **incompleto**, así que no e
 
 ---
 
+## 7 ago 2026 — Fase 2 de las peticiones de Ariana: la ficha del cliente de planta
+
+**Contexto.** Segundo video. Ariana abre la ficha de *Cabezón Acopio*, ve S/ 220.20 de deuda y dice:
+
+> *"Me figura el **monto total** de lo que está debiendo, pero **no puedo visualizar el movimiento**,
+> o sea qué cantidad de qué productos se ha llevado en esta compra de este día. Quisiera que se pueda
+> visualizar **al igual que tiene la opción el señor Toño**, donde se verifica todos los abonos, todas
+> las ventas; y también para poder **imprimir** y que se envíe al **WhatsApp del cliente**."*
+
+La ficha de planta tenía **347 líneas**; la de campo, **1053**. No era cosmético: planta nunca tuvo
+la capa de historial / estado de cuenta / guía.
+
+### El bloqueante estructural
+
+El POS insertaba el pedido con **`cliente_id = NULL`** (esa FK apunta a `clientes`, de ejecutivas) y
+solo denormalizaba `razon_social`/`ruc_dni`. El **único** puente pedido↔cliente de planta era
+`cobranzas_planta.pedido_id`, que **solo existe a crédito**. Consecuencias:
+
+- una compra al **contado** de un cliente registrado era invisible desde su ficha;
+- `listaClientesPlantaConSaldo` calculaba `ultima_compra` como `MAX(fecha_emision)` **de las
+  cobranzas**, así que una venta al contado ni siquiera contaba como compra.
+
+Lo irónico: `cliente_planta_id` **ya viajaba en el body del POS** y ya se validaba contra la tabla
+incluso en contado (`api/pos/route.ts:106-122`). Solo faltaba persistirlo.
+
+**Migración `migrate-planta-historial-2026-08-07.sql`:** `pedidos.cliente_planta_id` (+ índice
+parcial) y `clientes_planta.saldo_anterior` (paridad con campo, `DEFAULT 0` ⇒ inocuo). Backfill
+idempotente en dos pasos: **crédito** desde `cobranzas_planta` (recupera el 100 %) y **contado** por
+`ruc_dni`, que es determinista gracias al índice único parcial `ux_clientes_planta_ruc` — las ventas
+al paso sin documento quedan fuera a propósito. El bloque de verificación reporta cuántas filas
+quedaron sin vincular, para revisarlo **antes** de correrlo en producción.
+
+**Dos puntos de escritura, ambos obligatorios:** el INSERT del POS y la sentencia G del PATCH. Si se
+hiciera solo el primero, editar una venta cambiándole el cliente actualizaría `razon_social`/`ruc_dni`
+pero dejaría el `cliente_planta_id` viejo pegado — la venta seguiría colgando de la ficha anterior.
+
+### Los dos agregados que NO son el mismo número
+
+Es la decisión de diseño central, y está anotada en la cabecera de `lib/planta/saldos.ts`:
+
+- El **saldo** lo mueven `saldo_anterior`, las ventas a **crédito** y los abonos.
+- Lo **comprado** incluye además el **contado**, que no genera deuda.
+
+Mezclarlos haría que la ficha se contradiga sola. Por eso el héroe mantiene las cifras de la deuda y
+lo pagado en el acto va aparte ("Además compró S/ X al contado, ya pagado, no suma a la deuda"), y en
+el PDF el contado aparece como línea `- S/ X` marcada *"Pagado al contado (no suma a la deuda)"* más
+un total de pie, en vez de ensuciar la columna de saldo.
+
+### Piezas nuevas
+
+| Archivo | Rol |
+|---|---|
+| `src/lib/planta/historial.ts` | `historialClientePlanta` — UNION ALL de compras + abonos, ítems en 2ª query agrupados en un `Map` |
+| `src/lib/planta/estado-cuenta.ts` | `construirEstadoCuentaPlanta` — **pura**, fuente única de pantalla y PDF |
+| `src/lib/reportes/pdf-estado-cuenta-planta.ts` | PDF A4 violeta, con `construirFilasEstadoCuentaPlanta` pura |
+| `src/app/dashboard/clientes-planta/estado-cuenta-planta-modal.tsx` | Período + toggle precio + WhatsApp/descarga |
+
+**Diferencias con campo que NO se pueden copiar tal cual** (y por las que la query de avícola daría
+resultados mal):
+
+- En planta el abono cuelga de la **cobranza** (`abonos_planta.cobranza_id`), no del cliente: hay que
+  pasar por `cobranzas_planta` filtrando anuladas de ambos lados.
+- La venta vive en `pedidos` con `origen='pos_planta'`, no en tabla propia.
+- Roles: planta es `admin` + `produccion`; campo es `admin` a secas.
+- Las líneas llevan **unidad variable** (kg | uni), no kilos fijos.
+
+Se reutilizó `abonosDeCobranza` (`lib/planta/saldos.ts`), que existía sin ningún consumidor.
+
+### La orden impresa NO se tocó
+
+El bloque de estado de cuenta se había quitado de `OrdenImprimible` **a propósito** el 19 jul
+(`7e4f3c5`). Se respetó esa decisión: la prop `estadoCuenta` sigue declarada y sin renderizar. El
+saldo viaja por los dos caminos donde sí corresponde — la guía JPEG de WhatsApp (que ya lo muestra
+desde la Fase 1, en ventas a crédito) y este PDF nuevo. Ariana pidió los saldos *"en las guías que se
+vayan a enviar"*, que es exactamente el JPEG.
+
+### Verificación (dev-hugo, 7 ago)
+
+Migración aplicada por psql. Cliente de prueba con **dos ventas el mismo día**: una al contado
+(S/ 8.90) y otra a crédito (S/ 10.40), más un abono de S/ 4.00. Resultado: deuda S/ 6.40 y el contado
+mostrado aparte; el historial lista las tres cosas con chip Crédito/Pagado y el acordeón abre
+*"Alas — 1 uni/kg × S/ 10.40"*; el PDF sale con la aritmética a la vista. Confirmado por SQL que
+**ambas** ventas quedaron con `cliente_planta_id` (la de contado era la que antes se perdía).
+`npm test` 103/103, `tsc` y `eslint` limpios.
+
+---
+
 ## 7 ago 2026 — Fase 1 de las peticiones de Ariana: el buscador vacío y la guía de planta
 
 **Contexto.** Ariana mandó tres videos de pantalla (20:56–20:57). Se transcribieron con Whisper y

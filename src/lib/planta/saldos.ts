@@ -1,9 +1,15 @@
 // src/lib/planta/saldos.ts
 // Aritmética de la cobranza de planta (operación 3). Saldo calculado AL VUELO:
 //   saldo por deuda   = monto − Σ abonos (NOT anulado)
-//   saldo por cliente = Σ (monto − Σ abonos) de sus cobranzas NO anuladas
+//   saldo por cliente = saldo_anterior + Σ (monto − Σ abonos) de cobranzas NO anuladas
 // Aislado de `facturas` de ejecutivas: al no leer/escribir ahí, la deuda de
 // planta no aparece en las cobranzas ni reportes de ejecutivas, y viceversa.
+//
+// ⚠️ DOS AGREGADOS QUE NO SON EL MISMO NÚMERO:
+//   - el SALDO lo mueven `saldo_anterior`, las ventas a CRÉDITO y los abonos;
+//   - lo COMPRADO incluye además las ventas al CONTADO, que no generan deuda.
+//   Mezclarlos hace que la ficha se contradiga a sí misma.
+//
 // ⚠️ Neon devuelve NUMERIC como string → todo monto se castea ::float8.
 import type { NeonQueryFunction } from "@neondatabase/serverless";
 import type {
@@ -25,12 +31,16 @@ export async function listaClientesPlantaConSaldo(
     SELECT
       c.id, c.nombre, c.razon_social, c.ruc_dni, c.telefono, c.direccion,
       c.plazo_pago_dias, c.activo, c.empresa,
+      c.saldo_anterior::float8 AS saldo_anterior,
       c.created_at::text AS created_at,
       c.updated_at::text AS updated_at,
       COALESCE(d.total_deuda, 0)::float8 AS total_deuda,
       COALESCE(d.total_abonado, 0)::float8 AS total_abonado,
-      (COALESCE(d.total_deuda, 0) - COALESCE(d.total_abonado, 0))::float8 AS saldo_actual,
-      d.ultima_compra::text AS ultima_compra,
+      (c.saldo_anterior + COALESCE(d.total_deuda, 0) - COALESCE(d.total_abonado, 0))::float8 AS saldo_actual,
+      COALESCE(v.total_contado, 0)::float8 AS total_contado,
+      -- Última compra = la más reciente entre crédito y contado. Antes solo
+      -- miraba las cobranzas, así que una venta al contado no contaba como compra.
+      GREATEST(d.ultima_compra, v.ultima_compra_contado)::text AS ultima_compra,
       d.ultimo_pago::text AS ultimo_pago
     FROM clientes_planta c
     LEFT JOIN (
@@ -53,6 +63,28 @@ export async function listaClientesPlantaConSaldo(
       WHERE NOT co.anulada
       GROUP BY co.cliente_planta_id
     ) d ON d.cliente_planta_id = c.id
+    -- Ventas al CONTADO: suman a lo comprado pero NO a la deuda. Se reconocen
+    -- por no tener cobranza viva (misma regla que GET /api/pos/ventas).
+    LEFT JOIN (
+      SELECT
+        p.cliente_planta_id,
+        SUM(COALESCE(pi.total, 0)) AS total_contado,
+        MAX(p.fecha_pedido)        AS ultima_compra_contado
+      FROM pedidos p
+      LEFT JOIN LATERAL (
+        SELECT SUM(COALESCE(i.subtotal_real, i.subtotal, 0)) AS total
+        FROM pedido_items i
+        WHERE i.pedido_id = p.id
+      ) pi ON TRUE
+      WHERE p.origen = 'pos_planta'
+        AND p.cliente_planta_id IS NOT NULL
+        AND NOT COALESCE(p.anulada, FALSE)
+        AND NOT EXISTS (
+          SELECT 1 FROM cobranzas_planta co2
+          WHERE co2.pedido_id = p.id AND NOT co2.anulada
+        )
+      GROUP BY p.cliente_planta_id
+    ) v ON v.cliente_planta_id = c.id
     ORDER BY c.nombre ASC
   `) as ClientePlantaConSaldo[];
   return rows;

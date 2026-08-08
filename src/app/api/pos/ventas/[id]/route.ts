@@ -302,6 +302,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     queries.push(sql`
       UPDATE pedidos
       SET cliente = ${clienteNombre},
+          -- Va junto a razon_social/ruc_dni: si se actualizan esos y no el id, la
+          -- venta seguiría colgando de la ficha del cliente ANTERIOR.
+          cliente_planta_id = ${cliente_planta_id ?? null}::uuid,
           razon_social = ${razonSocial},
           ruc_dni = ${rucDni},
           fecha_pedido = ${nuevaFecha}::date,

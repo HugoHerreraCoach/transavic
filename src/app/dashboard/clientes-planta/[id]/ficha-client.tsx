@@ -1,9 +1,10 @@
 "use client";
 
 // src/app/dashboard/clientes-planta/[id]/ficha-client.tsx
-// Ficha del cliente de planta: identidad + contacto, estado de cuenta (saldo) y
-// la lista de sus deudas (cobranzas) con su saldo y estado. El detalle de abonos
-// y el registro de pagos viven en "Cobranzas de Planta", no aquí.
+// Ficha del cliente de planta: identidad + contacto, estado de cuenta (saldo),
+// sus deudas (cobranzas) y el HISTORIAL completo de movimientos — cada compra
+// con sus productos y cada abono. El registro de pagos sigue viviendo en
+// "Cobranzas de Planta"; acá se ven, no se crean.
 // Mobile-first: botones ≥48px, textos grandes, active:scale-95. El client hace el
 // fetch de GET /api/clientes-planta/{id} para refrescar tras editar sin recargar.
 
@@ -11,18 +12,30 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   FiArrowLeft,
+  FiChevronDown,
+  FiDollarSign,
   FiEdit2,
+  FiFileText,
+  FiImage,
+  FiLoader,
   FiMapPin,
   FiMessageCircle,
   FiPhone,
+  FiPrinter,
+  FiShare2,
+  FiShoppingCart,
 } from "react-icons/fi";
-import type {
-  ClientePlantaConSaldo,
-  CobranzaPlanta,
-  EstadoCobranzaPlanta,
+import {
+  ETIQUETA_MEDIO_PAGO_PLANTA,
+  type EstadoCobranzaPlanta,
+  type FichaClientePlanta,
+  type MovimientoPlanta,
 } from "@/lib/planta/types";
 import { UMBRAL_DEUDA_PLANTA } from "@/lib/planta/saldos";
+import type { GuiaPlantaData } from "@/lib/planta/guia-pos";
+import GuiaPlantaModal from "@/app/dashboard/pos-planta/guia-planta-modal";
 import ClientePlantaForm from "../cliente-planta-form";
+import EstadoCuentaPlantaModal from "../estado-cuenta-planta-modal";
 
 const fmtSoles = (n: number) =>
   `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -43,16 +56,18 @@ const ESTILO_ESTADO: Record<EstadoCobranzaPlanta, string> = {
   Anulada: "bg-gray-100 text-gray-500",
 };
 
-interface FichaPlanta {
-  cliente: ClientePlantaConSaldo;
-  cobranzas: CobranzaPlanta[];
-}
+const cantidadLegible = (n: number) =>
+  n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
 export default function FichaPlantaClient({ clienteId }: { clienteId: string }) {
-  const [ficha, setFicha] = useState<FichaPlanta | null>(null);
+  const [ficha, setFicha] = useState<FichaClientePlanta | null>(null);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalEditar, setModalEditar] = useState(false);
+  const [modalEstado, setModalEstado] = useState(false);
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const [guia, setGuia] = useState<GuiaPlantaData | null>(null);
+  const [cargandoGuia, setCargandoGuia] = useState<string | null>(null);
 
   const cargarFicha = useCallback(async () => {
     try {
@@ -65,7 +80,7 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
         const data = await res.json().catch(() => null);
         throw new Error(typeof data?.error === "string" ? data.error : `Estado ${res.status}`);
       }
-      const data: FichaPlanta = await res.json();
+      const data: FichaClientePlanta = await res.json();
       setFicha(data);
       setError(null);
     } catch (err) {
@@ -75,6 +90,30 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
       setCargando(false);
     }
   }, [clienteId]);
+
+  const toggleExpandida = (id: string) => {
+    setExpandidas((prev) => {
+      const siguiente = new Set(prev);
+      if (siguiente.has(id)) siguiente.delete(id);
+      else siguiente.add(id);
+      return siguiente;
+    });
+  };
+
+  /** Pide el detalle de la venta y abre la guía compartible (misma de la Fase 1). */
+  const abrirGuia = async (ventaId: string) => {
+    setCargandoGuia(ventaId);
+    try {
+      const res = await fetch(`/api/pos/ventas/${ventaId}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data?.guia) setGuia(data.guia as GuiaPlantaData);
+      else alert(typeof data.error === "string" ? data.error : "No se pudo cargar la guía.");
+    } catch {
+      alert("Error de conexión al cargar la guía.");
+    } finally {
+      setCargandoGuia(null);
+    }
+  };
 
   useEffect(() => {
     cargarFicha();
@@ -197,9 +236,17 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
       {/* ESTADO DE CUENTA */}
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-5">
         <div className="grid grid-cols-2 gap-3">
+          {cliente.saldo_anterior !== 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                Saldo anterior
+              </p>
+              <p className="text-lg font-bold text-gray-900">{fmtSoles(cliente.saldo_anterior)}</p>
+            </div>
+          )}
           <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
-              Total vendido a crédito
+              Vendido a crédito
             </p>
             <p className="text-lg font-bold text-gray-900">{fmtSoles(cliente.total_deuda)}</p>
           </div>
@@ -226,11 +273,31 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
             </p>
           </div>
         </div>
+
+        {/* Lo pagado en el acto NO es deuda, pero sí es plata que este cliente
+            dejó: va aparte para que las dos cifras no se confundan. */}
+        {cliente.total_contado > UMBRAL_DEUDA_PLANTA && (
+          <p className="mt-3 text-xs text-gray-500 text-center">
+            Además compró{" "}
+            <span className="font-bold text-gray-700">{fmtSoles(cliente.total_contado)}</span> al
+            contado (ya pagado, no suma a la deuda).
+          </p>
+        )}
+
         <p className="mt-3 text-xs text-gray-400 text-center">
           Última compra: <span className="font-semibold">{fechaCorta(cliente.ultima_compra)}</span>
           {" · "}
           Último pago: <span className="font-semibold">{fechaCorta(cliente.ultimo_pago)}</span>
         </p>
+
+        <button
+          type="button"
+          onClick={() => setModalEstado(true)}
+          className="mt-4 w-full h-12 rounded-2xl bg-gray-800 text-white text-base font-bold flex items-center justify-center gap-2 active:scale-95 transition-transform"
+        >
+          <FiFileText size={18} />
+          Estado de cuenta
+        </button>
       </div>
 
       {/* CONTACTO */}
@@ -334,6 +401,36 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
         </Link>
       </div>
 
+      {/* HISTORIAL — compras (contado y crédito) y abonos, del más reciente al
+          más antiguo. Es lo que pidió Ariana: ver QUÉ se llevó, no solo cuánto debe. */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+          <h2 className="text-lg font-black text-gray-900">Historial</h2>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Toca una compra para ver los productos.
+          </p>
+        </div>
+
+        {ficha.historial.length === 0 ? (
+          <p className="p-6 text-base text-gray-500 text-center">
+            Sin movimientos todavía. Sus compras en el POS y sus pagos aparecerán aquí.
+          </p>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {ficha.historial.map((mov) => (
+              <MovimientoRow
+                key={`${mov.tipo}-${mov.id}`}
+                mov={mov}
+                expandida={expandidas.has(mov.id)}
+                onToggle={() => toggleExpandida(mov.id)}
+                cargandoGuia={cargandoGuia}
+                onEnviarGuia={abrirGuia}
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+
       {/* MODAL editar */}
       {modalEditar && (
         <ClientePlantaForm
@@ -342,6 +439,181 @@ export default function FichaPlantaClient({ clienteId }: { clienteId: string }) 
           onGuardado={cargarFicha}
         />
       )}
+
+      {/* MODAL estado de cuenta */}
+      {modalEstado && (
+        <EstadoCuentaPlantaModal cliente={cliente} onClose={() => setModalEstado(false)} />
+      )}
+
+      {/* MODAL guía compartible */}
+      {guia && <GuiaPlantaModal data={guia} onClose={() => setGuia(null)} />}
     </div>
+  );
+}
+
+/* ---------- Una fila del historial ---------- */
+
+function MovimientoRow({
+  mov,
+  expandida,
+  onToggle,
+  cargandoGuia,
+  onEnviarGuia,
+}: {
+  mov: MovimientoPlanta;
+  expandida: boolean;
+  onToggle: () => void;
+  cargandoGuia: string | null;
+  onEnviarGuia: (ventaId: string) => void;
+}) {
+  const esVenta = mov.tipo === "venta";
+  const tieneItems = esVenta && (mov.items?.length ?? 0) > 0;
+  const esCredito = mov.tipo_pago === "Credito";
+
+  const titulo = esVenta
+    ? esCredito
+      ? "Compra al crédito"
+      : "Compra al contado"
+    : `Abono · ${mov.medio_pago ? ETIQUETA_MEDIO_PAGO_PLANTA[mov.medio_pago] : "—"}`;
+
+  return (
+    <li className={mov.anulado ? "opacity-50" : ""}>
+      <div
+        className={`px-4 sm:px-5 py-3 flex items-start gap-3 ${tieneItems ? "cursor-pointer" : ""}`}
+        onClick={tieneItems ? onToggle : undefined}
+        role={tieneItems ? "button" : undefined}
+        tabIndex={tieneItems ? 0 : undefined}
+        onKeyDown={
+          tieneItems
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onToggle();
+                }
+              }
+            : undefined
+        }
+      >
+        <span
+          className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full ${
+            esVenta ? "bg-violet-50 text-violet-600" : "bg-green-50 text-green-600"
+          }`}
+          aria-hidden="true"
+        >
+          {esVenta ? <FiShoppingCart size={16} /> : <FiDollarSign size={16} />}
+        </span>
+
+        <div className="min-w-0 flex-1">
+          <p className="text-base font-bold text-gray-800 flex flex-wrap items-center gap-2">
+            {titulo}
+            {esVenta && (
+              <span
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                  esCredito ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
+                }`}
+              >
+                {esCredito ? "Crédito" : "Pagado"}
+              </span>
+            )}
+            {mov.anulado && (
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">
+                {esVenta ? "Anulada" : "Anulado"}
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {fechaCorta(mov.fecha)}
+            {mov.comprobante_serie_numero ? ` · ${mov.comprobante_serie_numero}` : ""}
+            {mov.creado_por_nombre ? ` · ${mov.creado_por_nombre}` : ""}
+          </p>
+          {mov.anulado && mov.anulacion_motivo && (
+            <p className="text-xs text-red-500 mt-0.5">Motivo: {mov.anulacion_motivo}</p>
+          )}
+          {!mov.anulado && mov.observaciones && (
+            <p className="text-xs text-gray-500 mt-0.5">{mov.observaciones}</p>
+          )}
+        </div>
+
+        <div className="shrink-0 flex items-center gap-2">
+          <p
+            className={`text-base font-black whitespace-nowrap ${
+              mov.anulado
+                ? "line-through text-gray-400"
+                : esVenta
+                  ? "text-gray-900"
+                  : "text-green-600"
+            }`}
+          >
+            {esVenta ? "" : "− "}
+            {fmtSoles(mov.monto)}
+          </p>
+          {tieneItems && (
+            <FiChevronDown
+              size={16}
+              className={`text-violet-500 transition-transform ${expandida ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Productos de la compra */}
+      {tieneItems && expandida && (
+        <div className="mx-4 sm:mx-5 mb-3 ml-[52px] rounded-2xl bg-gray-50 p-3">
+          <ul className="space-y-1 text-sm">
+            {mov.items!.map((it, i) => (
+              <li key={i} className="flex justify-between gap-3">
+                <span className="text-gray-700">
+                  {it.producto_nombre} — {cantidadLegible(it.cantidad)}{" "}
+                  {(it.unidad || "uni").toLowerCase()} × {fmtSoles(it.precio_unitario)}
+                </span>
+                <span className="whitespace-nowrap font-bold text-gray-900">
+                  {fmtSoles(it.subtotal)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Acciones */}
+      {esVenta && (
+        <div className="px-4 sm:px-5 pb-3 ml-[52px] flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => onEnviarGuia(mov.id)}
+            disabled={cargandoGuia === mov.id}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {cargandoGuia === mov.id ? (
+              <FiLoader size={13} className="animate-spin" />
+            ) : (
+              <FiShare2 size={13} />
+            )}
+            Enviar guía
+          </button>
+          <a
+            href={`/pedidos/${mov.id}/guia`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+          >
+            <FiPrinter size={13} /> Imprimir
+          </a>
+        </div>
+      )}
+      {!esVenta && mov.tiene_comprobante && (
+        <div className="px-4 sm:px-5 pb-3 ml-[52px]">
+          <a
+            href={`/api/cobranzas-planta/abonos/${mov.id}/comprobante`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-gray-200 px-3 text-xs font-semibold text-gray-600 transition hover:bg-gray-50"
+          >
+            <FiImage size={13} /> Ver comprobante
+          </a>
+        </div>
+      )}
+    </li>
   );
 }

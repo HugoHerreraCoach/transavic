@@ -1,12 +1,13 @@
 // src/app/api/clientes-planta/[id]/route.ts
 // Ficha y edición de un cliente de planta (operación 3 / POS, admin + produccion).
-// GET   → 200 { cliente: ClientePlantaConSaldo, cobranzas: CobranzaPlanta[] } | 404
+// GET   → 200 FichaClientePlanta { cliente, cobranzas, historial } | 404
 // PATCH → 200 { cliente: ClientePlantaConSaldo } (recalculado) | 404
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { EMPRESAS_PLANTA } from "@/lib/planta/types";
+import { historialClientePlanta } from "@/lib/planta/historial";
 import { saldoClientePlanta, listaCobranzasPlanta } from "@/lib/planta/saldos";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,8 @@ const ActualizarSchema = z
     plazo_pago_dias: z.number().int().min(0),
     empresa: z.enum(EMPRESAS_PLANTA),
     activo: z.boolean(),
+    // Deuda previa al sistema. Se permite negativa (saldo a favor del cliente).
+    saldo_anterior: z.number(),
   })
   .partial();
 
@@ -49,8 +52,11 @@ export async function GET(_req: Request, { params }: RouteParams) {
       return NextResponse.json({ error: "Cliente no encontrado" }, { status: 404 });
     }
 
-    const cobranzas = await listaCobranzasPlanta(sql, id);
-    return NextResponse.json({ cliente, cobranzas });
+    const [cobranzas, historial] = await Promise.all([
+      listaCobranzasPlanta(sql, id),
+      historialClientePlanta(sql, id),
+    ]);
+    return NextResponse.json({ cliente, cobranzas, historial });
   } catch (error) {
     console.error("Error GET /api/clientes-planta/[id]:", error);
     return NextResponse.json({ error: "Error al obtener el cliente" }, { status: 500 });
@@ -100,6 +106,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         plazo_pago_dias = COALESCE(${d.plazo_pago_dias ?? null}, plazo_pago_dias),
         empresa         = COALESCE(${d.empresa ?? null}, empresa),
         activo          = COALESCE(${d.activo ?? null}, activo),
+        saldo_anterior  = COALESCE(${d.saldo_anterior ?? null}, saldo_anterior),
         updated_at      = NOW()
       WHERE id = ${id}
       RETURNING id

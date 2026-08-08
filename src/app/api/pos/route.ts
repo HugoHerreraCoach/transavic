@@ -147,20 +147,27 @@ export async function POST(req: NextRequest) {
 
     // Venta COMPLETA en una sola transacción: pedido + items + inventario + cobro/deuda.
     // Un fallo a mitad no puede dejar un pedido sin stock descontado ni una venta sin
-    // cobro/cobranza. El pedido de planta va con cliente_id=NULL (la FK apunta a la
-    // tabla `clientes` de ejecutivas; el cliente de planta vive en cobranzas_planta),
-    // pero denormaliza razon_social/ruc_dni para el comprobante.
+    // cobro/cobranza. El pedido de planta va con cliente_id=NULL (esa FK apunta a la
+    // tabla `clientes` de ejecutivas) y guarda el cliente de planta en su propia
+    // columna `cliente_planta_id`, además de denormalizar razon_social/ruc_dni para
+    // el comprobante.
+    //
+    // ⚠️ `cliente_planta_id` se guarda TAMBIÉN en contado. Antes solo llegaba a
+    // `cobranzas_planta` (que existe únicamente a crédito), así que una compra al
+    // contado quedaba huérfana y no aparecía en la ficha del cliente.
     const queries = [
       // 1. Crear el Pedido (origen = pos_planta, estado = Entregado)
       sql`
         INSERT INTO pedidos (
-          id, cliente, cliente_id, razon_social, ruc_dni, fecha_pedido, detalle, detalle_final, estado,
+          id, cliente, cliente_id, cliente_planta_id, razon_social, ruc_dni, fecha_pedido,
+          detalle, detalle_final, estado,
           empresa, asesor_id, entregado_por, origen, created_at
         )
         VALUES (
           ${pedido_id},
           ${clienteNombre},
           NULL,
+          ${cliente_planta_id ?? null},
           ${razonSocial},
           ${rucDni},
           COALESCE(${fecha ?? null}::date, (NOW() AT TIME ZONE 'America/Lima')::date),
