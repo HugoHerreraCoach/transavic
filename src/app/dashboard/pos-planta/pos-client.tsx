@@ -154,7 +154,11 @@ export default function PosClient({
   const [notasGenerales, setNotasGenerales] = useState<string>("");
   const [showNotesInput, setShowNotesInput] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  // Arranca SIEMPRE en "con conexión" para que el primer render del cliente sea
+  // idéntico al del servidor (en Node existe `navigator` pero NO `onLine`, así que
+  // `!navigator.onLine` daba true en el SSR y false en el navegador → error de
+  // hidratación). El valor real se lee en el useEffect de abajo.
+  const [isOffline, setIsOffline] = useState(false);
   const [fechaVenta, setFechaVenta] = useState<string>("");
 
   const hoy = useMemo(() => {
@@ -293,6 +297,8 @@ export default function PosClient({
   }, [productosInit, searchQuery, selectedCategoria]);
 
   useEffect(() => {
+    // Estado de red real: recién acá (ya montados) el navegador expone `onLine`.
+    setIsOffline(!navigator.onLine);
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
     window.addEventListener("online", handleOnline);

@@ -8,6 +8,60 @@
 
 ---
 
+## 7 ago 2026 — El POS lanzaba un error de hidratación en cada carga (`navigator.onLine` en el SSR)
+
+**Síntoma.** Cada carga de `/dashboard/pos-planta` escupía en consola *"Hydration failed because the
+server rendered HTML didn't match the client"*. El diff de React apuntaba al encabezado de la tarjeta
+**"Venta Actual"**: el servidor pintaba un `<span>` donde el cliente pintaba un `<button>`. No rompía
+nada, pero ensuciaba la consola y forzaba a React a re-renderizar ese subárbol en cada visita.
+Preexistente, no lo introdujo ningún cambio reciente.
+
+**Causa.** `pos-client.tsx` inicializaba el estado de red leyendo el navegador:
+
+```ts
+const [isOffline, setIsOffline] = useState(!navigator.onLine);   // ← corre TAMBIÉN en el servidor
+```
+
+Node 26 **sí** expone `globalThis.navigator`, pero **no implementa `onLine`** (comprobado:
+`typeof navigator === "object"`, `navigator.onLine === undefined`). Así que en el SSR
+`!navigator.onLine` es `true` y en el navegador `false`:
+
+| | `navigator.onLine` | `isOffline` | HTML del encabezado |
+|---|---|---|---|
+| SSR (Node) | `undefined` | `true` | `<span>Sin conexión</span>` + `<button>` |
+| Cliente | `true` | `false` | solo `<button>` |
+
+El chip naranja de más corría la posición de los hijos, y de ahí el `span` vs `button` del reporte.
+**No tenía nada que ver con el `lg:hidden` del botón**: las clases responsive son puro CSS y no
+participan de la hidratación. La pista falsa es tentadora justamente porque el elemento que React
+nombra es el que lleva el `lg:`.
+
+**Fix** (dos líneas, `src/app/dashboard/pos-planta/pos-client.tsx`): el estado arranca en `false` —
+igual que el servidor— y el `useEffect` que ya registraba los listeners `online`/`offline` lee ahora
+`setIsOffline(!navigator.onLine)` al montar, para no perder el caso de abrir el POS ya sin conexión.
+Se descartó `suppressHydrationWarning` (tapa el síntoma y deja el re-render) y `ssr:false` sobre
+`PosClient` (mata el SSR de toda la pantalla por un chip).
+
+**Cómo se verificó sin poder iniciar sesión.** `/dashboard/pos-planta` exige sesión y el `:3000` de
+la máquina de desarrollo lo ocupaba otro proyecto (con `AUTH_URL` mandando los redirects ahí). Se
+levantó el dev server del worktree en otro puerto y se montó una ruta temporal —borrada al terminar—
+que renderiza el mismo `PosClient` con SSR **fuera de `/dashboard`** (el `authorized` de
+`auth.config.ts` solo exige login bajo `/dashboard`, así que una ruta en la raíz es pública). Con el
+código original: error de hidratación en cada carga y el HTML del servidor conteniendo literalmente
+`<span class="… text-orange-600 bg-orange-100 …">` con la máquina conectada. Con el fix: el servidor
+emite directamente `<button aria-label="Seguir agregando productos">` y la consola queda limpia.
+El indicador offline se probó despachando los eventos `online`/`offline` y, para el arranque sin
+conexión, mockeando `navigator.onLine = false` y forzando un remount real por Fast Refresh (un
+cambio de whitespace NO remonta: hay que alterar la firma de hooks del componente).
+
+**Regla que deja.** En un componente `"use client"` que igual se renderiza en el servidor, **nada de
+leer el entorno del navegador en el inicializador de `useState`** — ni `navigator`, ni `window`, ni
+`localStorage`, ni la hora local. El valor va en un `useEffect`. Y ojo con el reflejo de "`navigator`
+no existe en Node": existe desde Node 21, solo que **incompleto**, así que no explota — devuelve
+`undefined` y produce un mismatch silencioso en vez de un error claro.
+
+---
+
 ## 7 ago 2026 — Fase 1 de las peticiones de Marianela: el buscador vacío y la guía de planta
 
 **Contexto.** Marianela mandó tres videos de pantalla (20:56–20:57). Se transcribieron con Whisper y
