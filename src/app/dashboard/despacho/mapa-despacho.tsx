@@ -4,6 +4,7 @@
 import { useState, useMemo, useCallback, useEffect, Fragment } from "react";
 import { GoogleMap, useJsApiLoader, MarkerF, InfoWindowF, PolylineF } from "@react-google-maps/api";
 import { EstadoPedido } from "@/lib/types";
+import { haceCuanto } from "@/lib/tiempo-relativo";
 import {
   FiMapPin,
   FiPhone,
@@ -235,17 +236,8 @@ function modoRider(alerta: "deliberado" | "sin_senal" | null | undefined, enVivo
   return enVivo ? "vivo" : "gris";
 }
 
-// "hace 15 s" / "hace 3 min" / "hace 2 h" + los segundos (para decidir si está en vivo).
-function haceCuanto(iso: string): { texto: string; segundos: number } {
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return { texto: "", segundos: Number.POSITIVE_INFINITY };
-  const seg = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  let texto: string;
-  if (seg < 60) texto = `hace ${seg} s`;
-  else if (seg < 3600) texto = `hace ${Math.floor(seg / 60)} min`;
-  else texto = `hace ${Math.floor(seg / 3600)} h`;
-  return { texto, segundos: seg };
-}
+// "hace 15 s" / "hace 3 min" + segundos para decidir "en vivo": vive en
+// @/lib/tiempo-relativo (fuente única compartida con la campanita, con tests).
 
 export default function MapaDespacho({ pendientes, repartidores, baseLocation }: MapaDespachoProps) {
   const { isLoaded, loadError } = useJsApiLoader({

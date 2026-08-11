@@ -8,6 +8,79 @@
 
 ---
 
+## 11 ago 2026 — ETA honesto: "a unos 5 minutos" ya no llega faltando 1 (reporte de operación)
+
+**Síntoma (con captura de Ariana/operación).** La notificación "⏳ Pedido por llegar — el motorizado
+está a unos 5 minutos de llegar" aparecía y **~1 minuto después** llegaba "📍 Pedido en destino".
+Pasaba con todos los pedidos (caso Kelly Perez / Christian Odría del 11 ago). Además "los tiempos de
+la campanita no coinciden con el tiempo transcurrido".
+
+**Diagnóstico (6 causas concurrentes, todas en `src/app/api/repartidor/ubicacion/route.ts:94-165`):**
+
+1. El texto **"5 minutos" estaba hardcodeado** pero la condición disparaba con `durationRemaining <= 5`
+   (incluye 0 y 1). Si el motorizado pulsaba "Iniciar viaje" ya cerca del cliente (paradas consecutivas
+   del mismo distrito — el caso típico), el PRIMER ping decía "5 minutos" faltando 1.
+2. Con `d <= 0.15 km`, `durationRemaining = 0` **cumplía las dos condiciones** → "por llegar" y
+   "llegado" salían en el MISMO ping (y el ArriboPopup podía mostrarlas invertidas).
+3. **ETA ingenuo**: 3 min/km sobre Haversine EN LÍNEA RECTA (≡ 20 km/h radial, sin factor de ruta).
+   La ventana entre umbrales (1.83 km → 0.15 km) una moto la recorre en ~2 min reales, no 5. Peor: el
+   ETA REAL de Google Directions calculado en `iniciar-viaje` se PISABA con este modelo al primer
+   ping (~12 s después).
+4. **Pings rancios**: la cola offline preserva el `capturedAt` original pero la notificación se creaba
+   con `NOW()` → "hace 1 min" de algo que pasó hace 10.
+5. `LIMIT 1` sin `ORDER BY`: con 2 pedidos `En_Camino` solo se evaluaba uno arbitrario.
+6. Flags `notificado_*` con read-modify-write NO atómico: el UPDATE final escribía valores del SELECT
+   (stale) y podía **revertir** un flag recién marcado por un ping concurrente → duplicados posibles.
+
+En la UI, `NotificationBell.formatHora` usaba `Math.round` (a los 30 s ya decía "hace 1 min") y no
+tenía tick propio (el texto quedaba congelado entre polls). Timezone se descartó: `created_at` es
+TIMESTAMPTZ con DEFAULT NOW(), correcto.
+
+**Fix (commit de esta fecha):**
+
+- **`src/lib/eta-reparto.ts`** (NUEVO, puro, con tests): el modelo completo. `calibrarViaje()` deriva
+  del Directions que YA se paga en iniciar-viaje un **factor de ruta** (`distanciaRuta/líneaRecta`,
+  clamp 1.1–2.2, default 1.3) y una **velocidad efectiva** (clamp 8–45, default 18 km/h), persistidos
+  en `pedidos.eta_factor_ruta`/`eta_velocidad_kmh` (migración `migrate-eta-honesto.sql`, NULL = defaults).
+  `estimarEtaMin()` los usa en cada ping → **el ETA recalculado es CONTINUO con el de Google por
+  construcción** (primer ping ≈ duración Google; verificado E2E: Google 13 min, factor 1.36, 27.58 km/h).
+  `decidirAlertasArribo()` es la decisión pura: "por llegar" SOLO con ETA en [2..5] min y mensaje con
+  los **minutos reales** ("a unos 4 minutos"); con < 2 min se suprime; "llegado" (≤150 m) excluye
+  mutuamente y consume AMBOS flags. `esCapturaFresca()`: ping con `|ahora−capturedAt| > 120 s` guarda
+  posición pero NO evalúa alertas.
+- **`ubicacion/route.ts`**: loop sobre TODOS los `En_Camino` (orden `orden_ruta`); **claim atómico**
+  `UPDATE … WHERE flag = FALSE AND estado = 'En_Camino' RETURNING` ANTES de notificar (gana exactamente
+  un ping; verificado E2E con 2 POSTs simultáneos → 1 sola notificación); el UPDATE de ETA ya no toca
+  flags. El UPSERT de `rider_locations` lleva `WHERE EXCLUDED.captured_at >= rider_locations.captured_at`
+  (un replay de la cola offline no retrocede la posición viva del mapa; cláusula de escape para
+  `captured_at` futuro absurdo).
+- **`iniciar-viaje/route.ts`**: captura también `legs[0].distance.value` (antes se descartaba), persiste
+  la calibración, y si el viaje entero dura ≤ 6 min **suprime "por llegar" de fábrica**
+  (`notificado_por_llegar = TRUE` en el UPDATE): la asesora recibe "Pedido en camino" + "en destino",
+  sin un "por llegar" redundante segundos después. Fallback: sin Directions pero con origen real
+  (GPS del rider / último entregado), el ETA se estima con defaults (antes quedaba NULL).
+- **UI**: `src/lib/tiempo-relativo.ts` (NUEVO, con tests) unifica los 2 helpers "hace X" — SIEMPRE
+  `Math.floor`; `NotificationBell` lo consume + tick de 30 s solo con el panel abierto; el helper
+  duplicado de `mapa-despacho.tsx` se borró; etiqueta del popup "Arribo inminente (5 min)" → "Arribo
+  inminente". Copy de llegada: "ya está en la dirección de entrega".
+
+**Verificación:** 28 tests nuevos (131 total en verde), `tsc` limpio, y E2E completo contra `dev-hugo`
+con sesión real de repartidor (login UI + fetch same-origin): viaje de 4.4 km → "en camino" /
+"a unos **4** minutos" (ETA real 3.55 min) / "llegado", en orden y sin duplicados; ping rancio
+(−10 min) → cero notificaciones y la posición del mapa no retrocede; viaje corto (500 m, Google 6 min)
+→ nace suprimido; carrera de 2 pings simultáneos a 100 m → exactamente 1 "llegado"; campanita real:
+30 s → "ahora", 90 s → "hace 1 min". Migración validada con rollback + re-aplicación idempotente en dev.
+
+**Rollout:** `migrate-eta-honesto.sql` a producción por psql ANTES del deploy (gotcha #17/#58 — el
+código nuevo SELECTea/UPDATEa las columnas: sin migración, iniciar-viaje daría 500). Cambio de
+comportamiento a comunicar a operación: los minutos del aviso ahora son reales, y en entregas cortas
+ya no llega "por llegar" (solo "en camino" + "en destino"). Knobs si hiciera falta re-tunear:
+`VELOCIDAD_DEFAULT_KMH`, `UMBRAL_POR_LLEGAR_MIN`, `MIN_POR_LLEGAR_MIN`, `VIAJE_CORTO_MIN`,
+`MAX_DESFASE_PING_MS` (constantes testeadas en `eta-reparto.ts`). Futuro opcional: `serverNow` en
+`GET /api/notificaciones` para corregir clock skew del celular de la asesora.
+
+---
+
 ## 7 ago 2026 — El POS lanzaba un error de hidratación en cada carga (`navigator.onLine` en el SSR)
 
 **Síntoma.** Cada carga de `/dashboard/pos-planta` escupía en consola *"Hydration failed because the

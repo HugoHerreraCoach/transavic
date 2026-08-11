@@ -1,8 +1,8 @@
 # 16 — Sistema de Notificaciones e Hilos de Cron
 
-> **Última verificación contra código:** 2026-07-20
+> **Última verificación contra código:** 2026-08-11
 > **Fuente de horarios:** `vercel.json`
-> **Archivos clave:** `src/lib/notificaciones.ts`, `src/components/NotificationBell.tsx`, `src/app/api/cron/**/route.ts`, `vercel.json`
+> **Archivos clave:** `src/lib/notificaciones.ts`, `src/lib/eta-reparto.ts`, `src/lib/tiempo-relativo.ts`, `src/components/NotificationBell.tsx`, `src/app/api/cron/**/route.ts`, `vercel.json`
 
 Este documento describe el motor de mensajería in-app para alertas operativas interconectadas y la ejecución programada de procesos en segundo plano (cron jobs).
 
@@ -15,12 +15,45 @@ Para mantener comunicadas las 4 áreas sin necesidad de recargar la página:
 - **Tipos de Alertas:**
   - `pedido_asignado` $\rightarrow$ Alerta al repartidor que tiene una nueva orden de entrega.
   - `pedido_entregado` / `pedido_fallido` $\rightarrow$ Alerta a la asesora responsable que su venta cambió de estado.
-  - `pedido_por_llegar` / `pedido_llegado` $\rightarrow$ Alerta a la asesora que el motorizado está a 5 min o arribó a la dirección del cliente.
+  - `pedido_por_llegar` / `pedido_llegado` $\rightarrow$ Alerta a la asesora que el motorizado está por llegar (mensaje con los **minutos reales**, 2–5) o arribó a la dirección del cliente. Reglas del disparo en §1.1.
   - `repartidor_oscuro` $\rightarrow$ Alerta al admin de un posible apagado de GPS por parte del repartidor.
   - `factura_vencida` $\rightarrow$ Alerta a la asesora que una cobranza superó su plazo límite.
   - `factura_por_vencer` $\rightarrow$ Recordatorio anticipado de una cobranza próxima a vencer.
   - `meta_atrasada` $\rightarrow$ Alerta motivacional cuando el avance mensual va por debajo del ritmo.
   - `cliente_inactivo` $\rightarrow$ Sugiere reactivar un cliente recurrente sin compras recientes.
+
+- **"Hace X min":** la campanita y el mapa de despacho comparten `src/lib/tiempo-relativo.ts`
+  (SIEMPRE `Math.floor` — "hace 1 min" recién al minuto entero; con tests). La campanita además
+  tiene un tick de 30 s solo con el panel abierto, para que el texto no quede congelado entre polls.
+
+---
+
+## 1.1 Alertas de arribo (`pedido_por_llegar` / `pedido_llegado`) — modelo de ETA honesto (11 ago 2026)
+
+Las dos alertas se generan SOLO en `POST /api/repartidor/ubicacion` (cada ping GPS del motorizado);
+la decisión pura vive en **`src/lib/eta-reparto.ts`** (testeada en vitest). Reglas — respetarlas al
+tocar el endpoint:
+
+1. **Calibración por-viaje:** `iniciar-viaje` deriva del Google Directions inicial un factor de ruta
+   (`distanciaRuta/líneaRecta`, clamp 1.1–2.2) y una velocidad efectiva (clamp 8–45 km/h), y los
+   persiste en `pedidos.eta_factor_ruta`/`eta_velocidad_kmh` (migración `migrate-eta-honesto.sql`;
+   NULL = defaults 1.3 / 18 km/h). Cada ping estima `etaMin = línearecta × factor / velocidad` →
+   el ETA recalculado es **continuo** con el de Google (no lo pisa con otro modelo).
+2. **"Por llegar"** dispara solo con `etaMin` en **[2..5] min** y el mensaje lleva los minutos
+   reales ("a unos 4 minutos"). Con < 2 min se **suprime** (solo saldrá "llegado"). Si el viaje
+   entero dura ≤ 6 min, `iniciar-viaje` la suprime de fábrica (`notificado_por_llegar = TRUE`):
+   "Pedido en camino" ya es el aviso de inminencia.
+3. **"Llegado"** (≤ 150 m) **excluye mutuamente** a "por llegar" y consume AMBOS flags — jamás las
+   dos en el mismo ping ni "por llegar" después de "llegado".
+4. **Claim atómico:** el flag se marca ANTES de notificar con `UPDATE … WHERE flag = FALSE AND
+   estado = 'En_Camino' RETURNING id`; solo quien retorna fila inserta la notificación (2 pings
+   concurrentes → 1 sola alerta). El UPDATE que refresca `hora_llegada_estimada` NO toca flags.
+5. **Frescura:** un ping con `|ahora − capturedAt| > 120 s` (cola offline / reloj roto) actualiza la
+   posición del mapa pero NO evalúa alertas ni ETA (`esCapturaFresca`). El UPSERT de
+   `rider_locations` además rechaza retroceder `captured_at` (replay out-of-order).
+6. Se evalúan **todos** los pedidos `En_Camino` del día del rider (orden `orden_ruta`), no `LIMIT 1`.
+
+Crónica completa y verificación E2E: [historial 11 ago 2026](../historial-cambios-2026.md).
 
 ---
 

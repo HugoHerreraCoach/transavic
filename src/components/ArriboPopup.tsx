@@ -195,7 +195,7 @@ export default function ArriboPopup() {
           icono: "bg-indigo-50 text-indigo-650 border-indigo-100",
           chip: "bg-indigo-100 text-indigo-800",
           boton: "bg-indigo-650 hover:bg-indigo-700",
-          etiqueta: "Arribo inminente (5 min)",
+          etiqueta: "Arribo inminente",
         }
       : {
           icono: "bg-emerald-50 text-emerald-650 border-emerald-100",

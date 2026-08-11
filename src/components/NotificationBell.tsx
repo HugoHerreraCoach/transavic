@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { usePollingVisible } from "@/lib/use-polling-visible";
+import { tiempoRelativoNotificacion } from "@/lib/tiempo-relativo";
 import {
   FiBell,
   FiCheckCircle,
@@ -98,19 +99,8 @@ function acentoParaTipo(tipo: TipoNotificacion): string | null {
   }
 }
 
-function formatHora(iso: string): string {
-  const d = new Date(iso);
-  const ahora = new Date();
-  const diffMin = Math.round((ahora.getTime() - d.getTime()) / 60_000);
-  if (diffMin < 1) return "ahora";
-  if (diffMin < 60) return `hace ${diffMin} min`;
-  if (diffMin < 60 * 24) {
-    const h = Math.floor(diffMin / 60);
-    return `hace ${h} h`;
-  }
-  const days = Math.floor(diffMin / (60 * 24));
-  return `hace ${days} d`;
-}
+// El "hace X min" vive en @/lib/tiempo-relativo (fuente única, con floor y
+// tests — el helper local usaba Math.round y a los 30 s ya decía "hace 1 min").
 
 // El layout monta DOS campanitas (header mobile + flotante desktop) que con CSS
 // display:none NO se desmontan → ambas pollearían a la vez. Con `variant` cada
@@ -154,6 +144,15 @@ export default function NotificationBell({ variant }: { variant?: VariantBell })
 
   // Polling solo con la pestaña visible y solo en la instancia cuyo viewport está activo.
   usePollingVisible(fetchData, POLL_INTERVAL_MS, { enabled: viewportActivo });
+
+  // Tick de 30 s SOLO con el dropdown abierto: sin él, el "hace X min" quedaba
+  // congelado entre polls (y para siempre si un fetch fallaba).
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!open) return;
+    const intervalo = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(intervalo);
+  }, [open]);
 
   // Click fuera del dropdown → cerrar
   useEffect(() => {
@@ -279,7 +278,7 @@ export default function NotificationBell({ variant }: { variant?: VariantBell })
                       {n.mensaje}
                     </div>
                     <div className="text-[10px] text-gray-400 mt-1">
-                      {formatHora(n.created_at)}
+                      {tiempoRelativoNotificacion(n.created_at)}
                     </div>
                   </div>
                   {!n.leida && (

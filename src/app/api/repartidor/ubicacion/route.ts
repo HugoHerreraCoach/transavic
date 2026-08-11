@@ -10,6 +10,12 @@ import { auth } from "@/auth";
 import { z } from "zod";
 import { haversineKm } from "@/lib/utils";
 import { crearNotificacion } from "@/lib/notificaciones";
+import {
+  MAX_ACCURACY_M,
+  decidirAlertasArribo,
+  esCapturaFresca,
+  estimarEtaMin,
+} from "@/lib/eta-reparto";
 
 
 
@@ -89,73 +95,119 @@ export async function POST(request: Request) {
           simulated   = FALSE,
           gps_status  = 'activo',
           gps_status_changed_at = CASE WHEN rider_locations.gps_status IS DISTINCT FROM 'activo' THEN now() ELSE rider_locations.gps_status_changed_at END
+        WHERE EXCLUDED.captured_at >= rider_locations.captured_at
+           OR rider_locations.captured_at > now() + interval '5 minutes'
       `;
+      // El WHERE del DO UPDATE evita que un replay de la cola offline RETROCEDA
+      // la posición viva del mapa; la 2ª cláusula deja sanar una fila envenenada
+      // por un capturedAt futuro (reloj del celular roto).
 
       try {
-        // Recalcular ETA dinámico para el pedido activo En_Camino
-        const activePedido = await sql`
-          SELECT id, latitude, longitude, asesor_id, cliente, notificado_por_llegar, notificado_llegada
-          FROM pedidos
-          WHERE repartidor_id = ${session.user.id}
-            AND estado = 'En_Camino'
-            AND fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
-          LIMIT 1
-        `;
+        // Recalcular ETA dinámico + alertas de arribo para los pedidos En_Camino.
+        // La decisión pura vive en lib/eta-reparto.ts (testeada en vitest).
+        const ahoraMs = Date.now();
+        if (!esCapturaFresca(captured, ahoraMs)) {
+          // Ping rancio (cola offline) o reloj roto: la posición ya quedó en el
+          // mapa, pero notificar/estimar con una coordenada vieja es mentirle a
+          // la asesora ("hace 1 min" de algo que pasó hace 10).
+          console.warn(
+            `[ubicacion] Ping no fresco (capturedAt=${captured}, delta=${ahoraMs - Date.parse(captured)} ms) — sin evaluar alertas ni ETA.`
+          );
+        } else if (accuracy == null || accuracy <= MAX_ACCURACY_M) {
+          const activos = await sql`
+            SELECT id, latitude, longitude, asesor_id, cliente,
+                   notificado_por_llegar, notificado_llegada,
+                   eta_factor_ruta, eta_velocidad_kmh
+            FROM pedidos
+            WHERE repartidor_id = ${session.user.id}
+              AND estado = 'En_Camino'
+              AND fecha_pedido = (NOW() AT TIME ZONE 'America/Lima')::date
+              AND latitude IS NOT NULL
+              AND longitude IS NOT NULL
+            ORDER BY orden_ruta NULLS LAST, inicio_viaje_at
+          `;
 
-        if (activePedido.length > 0) {
-          const p = activePedido[0];
-          if (p.latitude && p.longitude && (accuracy == null || accuracy <= 150)) {
-            const destLat = parseFloat(p.latitude as string);
-            const destLng = parseFloat(p.longitude as string);
-            const dCurrent = haversineKm(lat, lng, destLat, destLng);
+          const aNumero = (v: unknown): number | null =>
+            v == null ? null : Number.parseFloat(String(v));
 
-            // Si la distancia es menor a 150m (0.15 km), ya llegó (0 minutos)
-            let durationRemaining = 0;
-            if (dCurrent > 0.15) {
-              // Estimar 3 minutos por km lineal (velocidad efectiva de 20 km/h en Lima)
-              durationRemaining = Math.max(1, Math.round(dCurrent * 3.0));
-            }
+          for (const p of activos) {
+            const dActual = haversineKm(
+              lat,
+              lng,
+              parseFloat(p.latitude as string),
+              parseFloat(p.longitude as string)
+            );
+            // Calibración por-viaje (Directions de iniciar-viaje); NULL → defaults.
+            const etaMin = estimarEtaMin(dActual, aNumero(p.eta_factor_ruta), aNumero(p.eta_velocidad_kmh));
+            const nuevaEta = new Date(ahoraMs + etaMin * 60_000).toISOString();
 
-            const newEta = new Date(Date.now() + durationRemaining * 60 * 1000);
+            const decision = decidirAlertasArribo({
+              etaMin,
+              distanciaKm: dActual,
+              notificadoPorLlegar: Boolean(p.notificado_por_llegar),
+              notificadoLlegada: Boolean(p.notificado_llegada),
+            });
 
-            // 1. Alerta 5 minutos antes
-            let flagPorLlegar = p.notificado_por_llegar;
-            if (durationRemaining <= 5 && !p.notificado_por_llegar) {
-              if (p.asesor_id) {
-                await crearNotificacion({
-                  userId: p.asesor_id as string,
-                  tipo: "pedido_por_llegar",
-                  titulo: "⏳ Pedido por llegar",
-                  mensaje: `${p.cliente} — el motorizado está a unos 5 minutos de llegar.`,
-                  link: "/dashboard",
-                  pedidoId: p.id,
-                });
-              }
-              flagPorLlegar = true;
-            }
-
-            // 2. Alerta de llegada (umbral 150 metros)
-            let flagLlegada = p.notificado_llegada;
-            if (dCurrent <= 0.15 && !p.notificado_llegada) {
-              if (p.asesor_id) {
+            if (decision.dispararLlegada) {
+              // CLAIM atómico (una sola sentencia): gana exactamente UN ping
+              // concurrente. Consume AMBOS flags → "por llegar" jamás sale junto
+              // ni después de "llegado". El guard de estado cubre la carrera con
+              // entregar/cancelar-viaje (que resetean los flags).
+              const claim = await sql`
+                UPDATE pedidos
+                SET notificado_llegada = TRUE,
+                    notificado_por_llegar = TRUE,
+                    hora_llegada_estimada = ${nuevaEta}
+                WHERE id = ${p.id}
+                  AND notificado_llegada = FALSE
+                  AND estado = 'En_Camino'
+                RETURNING id
+              `;
+              if (claim.length > 0 && p.asesor_id) {
                 await crearNotificacion({
                   userId: p.asesor_id as string,
                   tipo: "pedido_llegado",
                   titulo: "📍 Pedido en destino",
-                  mensaje: `${p.cliente} — el motorizado ha llegado al destino.`,
+                  mensaje: `${p.cliente} — el motorizado ya está en la dirección de entrega.`,
                   link: "/dashboard",
                   pedidoId: p.id,
                 });
               }
-              flagLlegada = true;
+              continue;
             }
 
+            if (decision.dispararPorLlegar) {
+              const claim = await sql`
+                UPDATE pedidos
+                SET notificado_por_llegar = TRUE,
+                    hora_llegada_estimada = ${nuevaEta}
+                WHERE id = ${p.id}
+                  AND notificado_por_llegar = FALSE
+                  AND notificado_llegada = FALSE
+                  AND estado = 'En_Camino'
+                RETURNING id
+              `;
+              if (claim.length > 0 && p.asesor_id) {
+                const m = decision.minutosMensaje;
+                await crearNotificacion({
+                  userId: p.asesor_id as string,
+                  tipo: "pedido_por_llegar",
+                  titulo: "⏳ Pedido por llegar",
+                  mensaje: `${p.cliente} — el motorizado está a unos ${m} ${m === 1 ? "minuto" : "minutos"} de llegar.`,
+                  link: "/dashboard",
+                  pedidoId: p.id,
+                });
+              }
+              continue;
+            }
+
+            // Sin alertas: solo refrescar el ETA visible en despacho/mi-ruta.
+            // (Los flags NO se tocan acá — escribirlos con valores del SELECT
+            // podía REVERTIR un flag recién marcado por un ping concurrente.)
             await sql`
               UPDATE pedidos
-              SET hora_llegada_estimada = ${newEta.toISOString()},
-                  notificado_por_llegar = ${flagPorLlegar},
-                  notificado_llegada = ${flagLlegada}
-              WHERE id = ${p.id}
+              SET hora_llegada_estimada = ${nuevaEta}
+              WHERE id = ${p.id} AND estado = 'En_Camino'
             `;
           }
         }

@@ -3,6 +3,8 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { crearNotificacion } from "@/lib/notificaciones";
+import { haversineKm } from "@/lib/utils";
+import { VIAJE_CORTO_MIN, calibrarViaje, estimarEtaMin } from "@/lib/eta-reparto";
 
 export const dynamic = "force-dynamic";
 
@@ -68,9 +70,19 @@ export async function POST(request: Request) {
       // No body o JSON inválido — continuar sin GPS
     }
 
-    // Calcular ETA con Google Directions
+    // Calcular ETA con Google Directions + calibración del viaje (factor de
+    // ruta y velocidad efectiva) que los pings GPS reutilizan para que el ETA
+    // recalculado sea CONTINUO con este — no otro modelo que lo pise.
     const googleMapsServerKey = process.env.Maps_SERVER_KEY;
-    if (googleMapsServerKey && pedido.latitude && pedido.longitude) {
+    let distanciaRutaKm: number | null = null;
+    let duracionSeg: number | null = null;
+    let lineaRectaKm: number | null = null;
+    // ¿El origen es real (GPS del rider / último entregado) o un fallback fijo
+    // (base/centro de Lima)? Con fallback fijo NO estimamos ETA propio: sería
+    // basura si el rider está en otro distrito.
+    let origenConfiable = false;
+
+    if (pedido.latitude && pedido.longitude) {
       try {
         // Prioridad de origen para ETA:
         // 1. GPS real del repartidor (más preciso)
@@ -79,6 +91,7 @@ export async function POST(request: Request) {
         // 4. Centro de Lima (fallback final)
         let origenLat = driverLat;
         let origenLng = driverLng;
+        origenConfiable = Boolean(origenLat && origenLng);
 
         if (!origenLat || !origenLng) {
           const pedidoAnterior = await sql`
@@ -93,6 +106,7 @@ export async function POST(request: Request) {
           if (pedidoAnterior.length > 0) {
             origenLat = pedidoAnterior[0].latitude;
             origenLng = pedidoAnterior[0].longitude;
+            origenConfiable = true;
           }
         }
 
@@ -102,20 +116,53 @@ export async function POST(request: Request) {
           origenLng = process.env.BASE_LONGITUDE || "-77.0451";
         }
 
-        const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${origenLat},${origenLng}&destination=${pedido.latitude},${pedido.longitude}&key=${googleMapsServerKey}&language=es&region=pe&mode=driving`;
+        lineaRectaKm = haversineKm(
+          parseFloat(origenLat),
+          parseFloat(origenLng),
+          parseFloat(pedido.latitude),
+          parseFloat(pedido.longitude)
+        );
 
-        const directionsRes = await fetch(directionsUrl);
-        const directionsData = await directionsRes.json();
+        if (googleMapsServerKey) {
+          const directionsUrl = `https://maps.googleapis.com/maps/api/directions/json?origin=${origenLat},${origenLng}&destination=${pedido.latitude},${pedido.longitude}&key=${googleMapsServerKey}&language=es&region=pe&mode=driving`;
 
-        if (directionsData.status === "OK" && directionsData.routes.length > 0) {
-          const durationSeconds = directionsData.routes[0].legs[0].duration.value;
-          const etaDate = new Date(Date.now() + durationSeconds * 1000);
-          horaLlegadaEstimada = etaDate.toISOString();
+          const directionsRes = await fetch(directionsUrl);
+          const directionsData = await directionsRes.json();
+
+          if (directionsData.status === "OK" && directionsData.routes.length > 0) {
+            const leg = directionsData.routes[0].legs[0];
+            duracionSeg = leg.duration.value;
+            distanciaRutaKm = leg.distance?.value != null ? leg.distance.value / 1000 : null;
+            const etaDate = new Date(Date.now() + (duracionSeg ?? 0) * 1000);
+            horaLlegadaEstimada = etaDate.toISOString();
+          }
         }
       } catch (etaError) {
         console.warn("No se pudo calcular tiempo de llegada:", etaError);
       }
     }
+
+    // Calibración del viaje (con datos faltantes cae a defaults, clamps siempre).
+    const { factorRuta, velocidadKmh } = calibrarViaje({ distanciaRutaKm, duracionSeg, lineaRectaKm });
+
+    // Fallback de ETA: Directions falló pero el origen es real → estimación
+    // honesta con defaults (antes quedaba NULL y despacho no mostraba "Llega:").
+    if (!horaLlegadaEstimada && origenConfiable && lineaRectaKm != null) {
+      const etaMinFallback = estimarEtaMin(lineaRectaKm, factorRuta, velocidadKmh);
+      horaLlegadaEstimada = new Date(Date.now() + etaMinFallback * 60_000).toISOString();
+    }
+
+    // Viaje corto (≤ 6 min de punta a punta): se SUPRIME la alerta "por llegar"
+    // marcando su flag como ya-notificado — la notificación "Pedido en camino"
+    // de más abajo ya es el aviso de inminencia. Evita el combo reportado:
+    // "a unos 5 minutos" + "ha llegado" con 1 minuto de diferencia.
+    const duracionMinInicial =
+      duracionSeg != null
+        ? duracionSeg / 60
+        : origenConfiable && lineaRectaKm != null
+          ? estimarEtaMin(lineaRectaKm, factorRuta, velocidadKmh)
+          : null;
+    const suprimirPorLlegar = duracionMinInicial != null && duracionMinInicial <= VIAJE_CORTO_MIN;
 
     // Actualizar el pedido
     await sql`
@@ -123,8 +170,10 @@ export async function POST(request: Request) {
       SET estado = 'En_Camino',
           inicio_viaje_at = ${now},
           hora_llegada_estimada = ${horaLlegadaEstimada},
+          eta_factor_ruta = ${factorRuta},
+          eta_velocidad_kmh = ${velocidadKmh},
           entregado = FALSE,
-          notificado_por_llegar = FALSE,
+          notificado_por_llegar = ${suprimirPorLlegar},
           notificado_llegada = FALSE
       WHERE id = ${id}
     `;
