@@ -182,7 +182,7 @@ Si falta fecha/monto o las credenciales REST de la empresa, la boleta conserva `
 
 **Límite de ambiente:** ambos mecanismos de consulta se usan solo en producción. En local/BETA con `dev-hugo` no se consulta ningún endpoint productivo ni se cruzan RUC, correlativos o estados. La migración/queries SQL se validan en `dev-hugo`; los contratos SOAP 01 y REST 03 se prueban con mocks mediante `npm run test:reconciliacion-sunat`. No existe E2E de consulta en BETA y, por ahora, tampoco E2E REST 03 porque aún no se han creado las cuatro credenciales nuevas.
 
-El cron `GET /api/cron/reconciliar-cpe-sunat`, protegido por `CRON_SECRET`, corre cada 5 minutos y procesa un lote pequeño en secuencia. Selecciona SOAP para 01 o REST para 03 y **nunca reenvía el CPE**. El endpoint manual `POST /api/comprobantes/[id]/verificar-sunat` aplica el mismo scoping admin/asesora y el mismo claim, por lo que cron y botón no duplican trabajo.
+El cron `GET /api/cron/reconciliar-cpe-sunat`, protegido por `CRON_SECRET`, corre cada 15 minutos dentro de la ventana de emisión (05:00–23:00 Lima, `dentroDeVentanaEmision()`; era cada 5 min sin ventana hasta el 31 jul 2026 — gotcha #60) y procesa un lote pequeño en secuencia. Selecciona SOAP para 01 o REST para 03 y **nunca reenvía el CPE**. El endpoint manual `POST /api/comprobantes/[id]/verificar-sunat` aplica el mismo scoping admin/asesora y el mismo claim, por lo que cron y botón no duplican trabajo.
 
 `mensaje_sunat`, los códigos/mensajes de envío y consulta, sus timestamps, `cdr_base64` y la marca `sunat_cdr_legible` se conservan para auditoría. El ZIP CDR se descarga crudo; no se reconstruye con un parser ZIP casero ni se muestra como disponible hasta haberlo validado.
 

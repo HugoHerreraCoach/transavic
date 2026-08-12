@@ -15,7 +15,10 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { enviarResumenDiario } from "@/lib/sunat/resumen-diario";
+import {
+  ESTADOS_BOLETA_EN_RESUMEN,
+  enviarResumenDiario,
+} from "@/lib/sunat/resumen-diario";
 import { type EmpresaId } from "@/lib/sunat/types";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +46,10 @@ export async function GET(req: NextRequest) {
   }
 
   const sql = neon(process.env.DATABASE_URL!);
+  // Este SELECT debe coincidir con el de `enviarResumenDiario` (fecha + estados),
+  // o el preview miente sobre lo que se enviaría. Antes divergía en las dos cosas:
+  // usaba solo created_at (una boleta retroactiva caía en el día equivocado —
+  // gotcha #33) y su lista de estados estaba escrita aparte.
   const boletas = (await sql`
     SELECT id, serie, numero, serie_numero,
       cliente_doc_tipo, cliente_doc_num, cliente_razon_social,
@@ -50,8 +57,8 @@ export async function GET(req: NextRequest) {
     FROM comprobantes
     WHERE empresa = ${empresa}
       AND tipo = '03'
-      AND DATE(created_at AT TIME ZONE 'America/Lima') = ${fecha}::date
-      AND estado IN ('aceptado','observado','rechazado','pendiente')
+      AND COALESCE(fecha_emision, DATE(created_at AT TIME ZONE 'America/Lima')) = ${fecha}::date
+      AND estado = ANY(${[...ESTADOS_BOLETA_EN_RESUMEN]}::text[])
     ORDER BY numero ASC
   `) as Array<Record<string, unknown>>;
 

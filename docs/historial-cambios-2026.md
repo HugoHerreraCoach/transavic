@@ -8,6 +8,106 @@
 
 ---
 
+## 11 ago 2026 (noche) — Boletas atascadas de Avícola, el Resumen Diario que nunca corrió, y una clave de producción en un repo público
+
+**Cómo empezó.** Operación reportó 2 boletas de Avícola (B002-318 y B002-319, del 6 ago) que "no
+las acepta SUNAT y tampoco se pueden eliminar". El botón *Verificar ahora* devolvía un aviso de
+credenciales faltantes. Al investigar aparecieron **tres** cosas, dos de ellas no reportadas.
+
+### 1) Las boletas atascadas: son 9, no 2 — y el candado del 20 jul funcionó
+
+La pantalla estaba filtrada. En producción hay **9 boletas `por_confirmar`, todas de Avícola**
+(RUC 10), desde el 15 jul. Los mensajes guardados son fallas **internas de SUNAT**, no rechazos:
+`0130` "No se pudo obtener el ticket de proceso – Error 422", `0133` "No se pudo grabar la entrada
+del log" (¡con ticket `202621530992392` ya asignado!) y `0140` "Existe un Documento igual en
+Proceso". El XML nuestro estaba bien: boletas del mismo día, minutos antes y después
+(B002-316 09:11, B002-317 09:26), salieron `aceptado` con código `0`.
+
+**Hallazgo clave — las 9 se parten en dos grupos por el 20 jul** (deploy del candado anti-duplicado):
+
+| Grupo | Boletas | ¿Tiene reemplazo aceptado? |
+|---|---|---|
+| **A — pre-fix** (15-16 jul) | 225, 226, 230, 233 | **Sí**: 244 (para 225 *y* 226, mismo pedido), 239, 235 |
+| **B — post-fix** (26 jul–6 ago) | 274, 284, 315, 318, 319 | No |
+
+Antes del candado la asesora podía re-emitir encima y lo hizo; después, ninguna pudo. **El candado
+hace exactamente lo que debía.** Pero deja al Grupo A con riesgo fiscal real: si SUNAT aceptó la
+atascada *y* su reemplazo, hay dos boletas válidas de la misma venta (el pedido de MILAGROS
+OLORTEGUI tiene **tres** comprobantes) → Nota de Crédito. Se resuelve sabiendo qué tiene SUNAT.
+
+**Por qué no se destraban:** una boleta `03` no se puede consultar por el SOAP de facturas (solo
+serie F); necesita la API REST *Consulta Integrada*, que exige
+`SUNAT_AVI_CONSULTA_CLIENT_ID/_SECRET` — **nunca creadas** (pendientes documentadas desde julio).
+El cron reintenta ~4×/día y siempre recibe `CFG_API03`: **B002-225 lleva 75 intentos**. Bucle
+cerrado por diseño: esa falta de configuración jamás autoriza otro correlativo.
+
+**Descartado tras verificar:** las 9 no tienen fila en `facturas`, pero **las aceptadas del mismo
+día tampoco** (`sunat_postproceso_estado='aplicado'`) — es el comportamiento normal de esta
+operación, no hay deuda perdida. Correlativos sin huecos y XML firmado íntegro.
+
+### 2) El Resumen Diario nunca completó una sola corrida (70 días)
+
+Buscando por qué no se puede "eliminar" una boleta —no se anula con Comunicación de Baja, se anula
+informándola en el RC con `estadoItem=3`— apareció esto en `resumenes_diarios`:
+
+> **60 filas, TODAS en `enviando`**, desde el 2 jun. Sin ticket, sin XML y **sin mensaje de error**.
+> Solo **1 fila de `avicola`** en toda la historia; las otras 59 de `transavic`.
+
+**Causa:** `api/cron/resumen-diario-sunat/route.ts` **no declaraba `maxDuration`** (sus hermanas
+`comprobantes/emitir`, `[id]/reintentar` y `guias/emitir` tienen `= 60`). Vercel mataba el handler
+por timeout **después** de crear la fila `enviando` y **antes del `catch`** → silencio absoluto.
+Y como recorría las dos empresas en serie sin protección, transavic consumía el tiempo y **avicola
+casi nunca se ejecutaba**. La branch `dev-hugo` tenía el mismo cuadro (23 filas colgadas).
+
+**Decisión (Hugo): NO reactivar el envío de altas.** Verificado que **las 579 boletas aceptadas
+tienen CDR legible** → SUNAT ya las registra una por una vía `sendBill`; declararlas otra vez en un
+RC sería una declaración repetida. Además Hugo advirtió que las asesoras pudieron emitir a mano en
+el portal, lo que agravaría el duplicado.
+
+**Fix aplicado** (`resumen-diario.ts` + el cron):
+
+- `export const maxDuration = 60`.
+- **Modo simulación por defecto**: opción `dryRun` que corta **antes** de consumir correlativo, de
+  escribir la fila `enviando` y de llamar a SUNAT; solo cuenta y loguea. Se enciende con
+  `SUNAT_RESUMEN_DIARIO_AUTO="true"` (pendiente de confirmar con el contador).
+- **`sanearResumenesColgados()`**: las filas `enviando` de más de 15 min pasan a `error` con causa
+  explícita. No presume que SUNAT no lo recibió (dice que es indeterminado) y **no reintenta solo**.
+- **try/catch por empresa**: un fallo de transavic ya no deja a avicola sin correr.
+- **`ESTADOS_BOLETA_EN_RESUMEN` como fuente única**: el envío ya no declara boletas inciertas
+  (`por_confirmar`/`emitiendo`/`error`/`no_registrado`) — antes el preview filtraba y el envío no,
+  así que la pantalla mostraba menos boletas de las que se habrían mandado. También se alineó la
+  fecha (`COALESCE(fecha_emision, created_at)`; el preview usaba solo `created_at` y una boleta
+  retroactiva caía en el día equivocado — gotcha #33).
+
+**Verificado E2E en `dev-hugo`:** 401 sin token; saneó las 23 filas colgadas y es idempotente
+(segunda corrida = 0); **corren las dos empresas**; con boletas reales devuelve `dryRun:true` y
+`boletas:1` por empresa **sin escribir ninguna fila ni consumir correlativo** (0 y 0 comprobados en
+DB); y una boleta puesta en `por_confirmar` **desaparece del conteo**. Fixture restaurado.
+
+### 3) La clave de la base de producción, en un repo PÚBLICO
+
+Barriendo el repo apareció que `scripts/check_e_series.mjs`, `compare_by_document.mjs`,
+`compare_sales.mjs`, `analyze_differences.mjs` y **`query_db_scratch.mjs`** (5, no 4) llevaban la
+cadena de conexión completa a Neon producción —usuario y contraseña— **en texto plano**, desde el
+commit `21416a2` del **20 jul 2026**. `HugoHerreraCoach/transavic` es **público**: 22 días expuesta.
+
+Fix (`820ad54`): los 5 leen `DATABASE_URL`/`DATABASE_URL_UNPOOLED` y abortan con mensaje claro si
+falta. **Quitarlo del código NO lo borra del historial de Git** → **la contraseña de Neon debe
+rotarse** (lo hace Hugo desde la consola; hay que actualizar Vercel y `.env` local). El resto del
+barrido salió limpio: las únicas otras coincidencias eran placeholders de `.env.example` y
+variables de shell en `create-neon-branch.sh`.
+
+### Pendiente (no es código)
+
+Crear la aplicación **"Consulta de Validez de Comprobantes"** en el portal SOL de cada RUC
+(empezando por el 10) y cargar las 4 `SUNAT_*_CONSULTA_CLIENT_*` en Vercel. Es OAuth
+`client_credentials` contra `api-seguridad.sunat.gob.pe/v1/clientesextranet/…`, scope
+`.../contribuyente/contribuyentes` — **distinta** de la de GRE (`clientessol`), que no se debe
+tocar ni rotar. Con eso las 5 del Grupo B se resuelven solas y el Grupo A queda con evidencia para
+decidir la NC.
+
+---
+
 ## 11 ago 2026 — ETA honesto: "a unos 5 minutos" ya no llega faltando 1 (reporte de operación)
 
 **Síntoma (con captura de Ariana/operación).** La notificación "⏳ Pedido por llegar — el motorizado

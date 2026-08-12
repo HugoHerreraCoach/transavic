@@ -7,7 +7,8 @@
 
 Si el sistema muestra **Por confirmar**, no emitas otra factura o boleta y no
 emitas una Nota de Crédito. El mismo número está protegido. El proceso automático
-corre cada cinco minutos y consultará ese mismo número cuando corresponda. También
+corre cada quince minutos, entre las 05:00 y las 23:00, y consultará ese mismo número
+cuando corresponda. También
 puedes usar **Verificar ahora**.
 
 ## Matriz rápida

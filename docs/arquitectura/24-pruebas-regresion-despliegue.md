@@ -202,7 +202,7 @@ Probar con dobles controlados: SOAP para el envío y la consulta de factura 01; 
 9. Disparar cron y **Verificar ahora** a la vez: el claim de consulta debe permitir una sola consulta efectiva y ambos caminos deben converger en el mismo estado.
 10. La aceptación tardía debe crear/enlazar una sola vez la cartera de Ejecutivas o Planta; Campo no debe crear `facturas`. Repetir cron/botón no puede duplicar el efecto.
 11. Intentar dos veces el postproceso y confirmar que los índices únicos impiden otra deuda por `comprobante_id` o por pedido + `numero_comprobante`.
-12. Con la lista abierta y visible, confirmar que refresca los pendientes cada 60 segundos. El cron debe ejecutar `/api/cron/reconciliar-cpe-sunat` cada 5 minutos y procesar lotes pequeños sin `sendBill`.
+12. Con la lista abierta y visible, confirmar que refresca los pendientes cada 60 segundos. El cron debe ejecutar `/api/cron/reconciliar-cpe-sunat` cada 15 minutos dentro de la ventana 05:00–23:00 Lima y procesar lotes pequeños sin `sendBill`.
 13. Probar que un XML firmado sin CDR no se presenta como prueba de aceptación. Si `getStatus=0001`
     confirma el CPE pero `getStatusCdr` no devuelve archivo, la UI debe decir aceptado/constancia
     pendiente, ocultar la descarga y mantener `sunat_cdr_legible=false`.

@@ -30,6 +30,8 @@ export interface ResultadoResumenDiario {
   ok: boolean;
   /** true si ya existía un resumen del día y no se reenvió (idempotencia). */
   skipped?: boolean;
+  /** true si solo se contó qué se enviaría, sin tocar SUNAT ni la DB. */
+  dryRun?: boolean;
   boletas: number;
   correlativo?: number;
   nombreArchivo?: string;
@@ -44,12 +46,66 @@ export interface ResultadoResumenDiario {
 
 const VENTANA_ENVIANDO_MS = 15 * 60 * 1000; // 'enviando' más viejo que esto se considera colgado
 
+/**
+ * Estados de boleta que SÍ se declaran en el Resumen Diario.
+ *
+ * Se excluyen a propósito los INCIERTOS (`por_confirmar`, `emitiendo`, `error`,
+ * `no_registrado`): declarar como alta una boleta que no sabemos si SUNAT
+ * recibió es exactamente cómo se fabrica una declaración duplicada.
+ *
+ * FUENTE ÚNICA — la usan el envío y el preview de `GET /api/comprobantes/
+ * resumen-diario`. Antes divergían: el preview filtraba y el envío no, así que
+ * la pantalla mostraba menos boletas de las que realmente se habrían mandado.
+ */
+export const ESTADOS_BOLETA_EN_RESUMEN = [
+  "aceptado",
+  "observado",
+  "rechazado",
+  "pendiente",
+] as const;
+
+/**
+ * Cierra las filas que quedaron colgadas en 'enviando'.
+ *
+ * Por qué existe: hasta el 11 ago 2026 el cron no declaraba `maxDuration`, así
+ * que Vercel lo mataba por timeout DESPUÉS de crear la fila 'enviando' y ANTES
+ * del `catch` — quedaban 60 filas sin ticket, sin XML y sin causa registrada,
+ * y nadie se enteró en 70 días. Un fallo tiene que dejar rastro.
+ *
+ * No se presume que SUNAT no lo recibió: el mensaje dice que es indeterminado y
+ * NO se reintenta solo (el reintento es una decisión manual).
+ */
+export async function sanearResumenesColgados(): Promise<number> {
+  const sql = neon(process.env.DATABASE_URL!);
+  // 15 minutos = VENTANA_ENVIANDO_MS. Literal en SQL a propósito: el driver HTTP
+  // de Neon infiere mal el tipo de un parámetro dentro de make_interval (gotcha #45c).
+  const filas = (await sql`
+    UPDATE resumenes_diarios
+    SET estado = 'error',
+        mensaje_sunat = COALESCE(
+          mensaje_sunat,
+          'Corrida interrumpida (la funcion se corto por timeout). No se pudo confirmar si SUNAT recibio este resumen; no se reintenta automaticamente.'
+        ),
+        updated_at = NOW()
+    WHERE estado = 'enviando'
+      AND updated_at < NOW() - interval '15 minutes'
+    RETURNING id
+  `) as Array<{ id: string }>;
+  return filas.length;
+}
+
 export async function enviarResumenDiario(opts: {
   empresa: EmpresaId;
   fecha: string; // YYYY-MM-DD (día de las boletas a resumir)
   forzar?: boolean;
+  /**
+   * Solo cuenta qué boletas entrarían. NO consume correlativo, NO escribe en
+   * `resumenes_diarios` y NO llama a SUNAT. Es el modo por defecto del cron
+   * (ver `SUNAT_RESUMEN_DIARIO_AUTO`).
+   */
+  dryRun?: boolean;
 }): Promise<ResultadoResumenDiario> {
-  const { empresa, fecha, forzar = false } = opts;
+  const { empresa, fecha, forzar = false, dryRun = false } = opts;
 
   const config = getSunatConfig(empresa);
   if (!config.certificateBase64) {
@@ -99,7 +155,8 @@ export async function enviarResumenDiario(opts: {
     }
   }
 
-  // 2. Boletas del día (mismas reglas que el flujo original)
+  // 2. Boletas del día. El filtro de estado es el MISMO que usa el preview
+  //    (ESTADOS_BOLETA_EN_RESUMEN): nunca se declara una boleta incierta.
   const boletas = (await sql`
     SELECT serie, numero, cliente_doc_tipo, cliente_doc_num,
       monto_subtotal, monto_igv, monto_total, estado
@@ -108,6 +165,7 @@ export async function enviarResumenDiario(opts: {
       AND ruc_emisor = ${config.ruc}
       AND tipo = '03'
       AND COALESCE(fecha_emision, DATE(created_at AT TIME ZONE 'America/Lima')) = ${fecha}::date
+      AND estado = ANY(${[...ESTADOS_BOLETA_EN_RESUMEN]}::text[])
     ORDER BY numero ASC
   `) as Array<{
     serie: string;
@@ -122,6 +180,21 @@ export async function enviarResumenDiario(opts: {
 
   if (boletas.length === 0) {
     return { empresa, ok: true, boletas: 0, mensaje: `Sin boletas para ${fecha}` };
+  }
+
+  // 2b. Modo simulación: cortamos ANTES de consumir correlativo, de escribir la
+  //     fila 'enviando' y de llamar a SUNAT. Solo deja constancia en el log de
+  //     cuántas boletas entrarían. Ver `SUNAT_RESUMEN_DIARIO_AUTO` en el cron.
+  if (dryRun) {
+    return {
+      empresa,
+      ok: true,
+      dryRun: true,
+      boletas: boletas.length,
+      mensaje:
+        `Simulacion: ${boletas.length} boleta(s) de ${fecha} entrarian en el resumen. ` +
+        `No se envio nada a SUNAT (envio automatico apagado).`,
+    };
   }
 
   // 3. Reservar/crear la fila 'enviando' (antes de enviar → evita doble envío concurrente)
