@@ -1,6 +1,13 @@
 import { neon } from '@neondatabase/serverless';
 
-const prodDbUrl = "postgres://neondb_owner:npg_UNCfhQeidK96@ep-cool-sound-adxrsjt5-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require";
+// La cadena de conexión NUNCA va en el repo (esta línea tuvo la clave de producción
+// en texto plano hasta el 11 ago 2026). Se lee del entorno:
+//   DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d= -f2- | tr -d '\"')" node scripts/compare_sales.mjs
+const prodDbUrl = process.env.DATABASE_URL || process.env.DATABASE_URL_UNPOOLED;
+if (!prodDbUrl) {
+  console.error("Falta DATABASE_URL (o DATABASE_URL_UNPOOLED) en el entorno.");
+  process.exit(1);
+}
 
 async function main() {
   const sql = neon(prodDbUrl);
