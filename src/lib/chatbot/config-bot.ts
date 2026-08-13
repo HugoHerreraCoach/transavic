@@ -15,9 +15,22 @@
 // desprolijo dejaría al bot sin transferir y nadie se enteraría.
 import type { NeonQueryFunction } from "@neondatabase/serverless";
 
+/**
+ * Cuándo habla el bot.
+ *  - `fuera_horario`: solo cuando NO hay asesoras (noches y días no laborables).
+ *    Dentro del horario responde una humana y el bot se queda callado.
+ *  - `siempre`: atiende las 24 h; la asesora lo pausa al entrar al chat.
+ */
+export type CuandoRespondeBot = "fuera_horario" | "siempre";
+
 export interface ConfigBot {
   /** Interruptor general: en false, el bot no responde (contesta una humana). */
   activo: boolean;
+  /**
+   * Decisión de Hugo (13 ago 2026): el bot cubre el hueco, no reemplaza a las
+   * asesoras. Por eso el default es `fuera_horario` y no `siempre`.
+   */
+  cuando_responde: CuandoRespondeBot;
   /** Nombre con el que se presenta. */
   asesora_nombre: string;
   anios_experiencia: number;
@@ -55,6 +68,7 @@ export interface ConfigBot {
 /** La verdad de los documentos de Antonio (5 ago 2026). */
 export const CONFIG_BOT_DEFAULT: ConfigBot = {
   activo: true,
+  cuando_responde: "fuera_horario",
   asesora_nombre: "Antonella",
   anios_experiencia: 9,
   // Ojo: la lista del docx dice "San Beatriz"; la del sistema (DISTRITOS_CRM en
@@ -135,6 +149,11 @@ export function normalizarConfigBot(crudo: unknown): ConfigBot {
     typeof v === "string" && v.trim() !== "" ? v.trim() : null;
 
   if (typeof p.activo === "boolean") base.activo = p.activo;
+  // Cualquier valor raro cae al default (`fuera_horario`): ante la duda, que el
+  // bot cubra el hueco y no que hable encima de las asesoras.
+  if (p.cuando_responde === "siempre" || p.cuando_responde === "fuera_horario") {
+    base.cuando_responde = p.cuando_responde;
+  }
   if (typeof p.incluir_carnes_rojas === "boolean") base.incluir_carnes_rojas = p.incluir_carnes_rojas;
   base.asesora_nombre = texto(p.asesora_nombre) ?? base.asesora_nombre;
   base.anios_experiencia = numero(p.anios_experiencia, 0, 200) ?? base.anios_experiencia;

@@ -58,6 +58,38 @@ export function textoDias(dias: number[]): string {
   return orden.map((d) => nombres[d - 1]).join(", ");
 }
 
+/** Horario legible para el cliente: "lunes a sábado de 8:00 a 20:00". */
+export function textoHorario(cfg: ConfigBot): string {
+  return `${textoDias(cfg.dias_atencion)} de ${cfg.atencion_hora_inicio}:00 a ${cfg.atencion_hora_fin}:00`;
+}
+
+/**
+ * ¿Le toca hablar al bot? PURA.
+ *
+ * Decisión de Hugo (13 ago 2026): el bot **cubre el hueco**, no reemplaza a las
+ * asesoras. Con `cuando_responde: "fuera_horario"` (el default) se queda callado
+ * mientras ellas están, y atiende de noche y los días no laborables.
+ *
+ * `activo: false` lo apaga siempre, sin importar la hora.
+ */
+export function botDebeResponder(opts: {
+  cfg: ConfigBot;
+  dentroDeAtencion: boolean;
+}): boolean {
+  if (!opts.cfg.activo) return false;
+  if (opts.cfg.cuando_responde === "siempre") return true;
+  return !opts.dentroDeAtencion;
+}
+
+/**
+ * Lo que se le dice al cliente cuando el bot pasa la conversación a una humana
+ * FUERA del horario. Sin esto, el `[HANDOFF]` nocturno apagaba el bot y el
+ * cliente quedaba escribiendo al vacío hasta que alguien entrara por la mañana.
+ */
+export function mensajeCierreFueraDeHorario(cfg: ConfigBot): string {
+  return `¡Gracias por escribirnos! 🙌 Nuestro horario de atención es ${textoHorario(cfg)}. Una asesora retoma tu pedido apenas empecemos el día y te confirma todo por aquí 😊`;
+}
+
 /**
  * El texto que recibe el cliente. PURO: depende solo del motivo y del horario.
  * Nunca menciona "problema técnico": eso no es asunto del cliente y suena a
@@ -68,7 +100,7 @@ export function mensajeFallback(
   opts: { dentroDeAtencion: boolean; cfg: ConfigBot }
 ): string {
   const { dentroDeAtencion, cfg } = opts;
-  const horario = `${textoDias(cfg.dias_atencion)} de ${cfg.atencion_hora_inicio}:00 a ${cfg.atencion_hora_fin}:00`;
+  const horario = textoHorario(cfg);
 
   if (motivo === "media_sin_texto") {
     return dentroDeAtencion

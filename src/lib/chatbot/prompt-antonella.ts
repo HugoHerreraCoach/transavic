@@ -17,6 +17,7 @@
 // tono por `instrucciones_extra`, que se inyecta acotado y al final.
 import type { MensajeChat } from "../gemini";
 import type { ContextoNegocio } from "./contexto-negocio";
+import { textoHorario } from "./fallback";
 
 /** Cuántos mensajes previos se le muestran al modelo. */
 export const HISTORIAL_MENSAJES = 12;
@@ -143,7 +144,11 @@ function bloqueCliente(ctx: ContextoNegocio): string {
     `- Hoy es ${ctx.momento.fechaLarga}, son las ${ctx.momento.hora} (hora de Lima). ${
       ctx.momento.dentroDeAtencion
         ? "Estamos DENTRO del horario de atención."
-        : "Estamos FUERA del horario de atención: puedes responder igual, pero no prometas una llamada inmediata."
+        : `Estamos FUERA del horario de atención (atendemos ${textoHorario(ctx.config)}). ` +
+          "Atiende normal: cotiza, toma el pedido y resuelve dudas. Pero DILE al cliente, " +
+          "con naturalidad y una sola vez, que a esta hora no hay asesoras y que una de " +
+          "ellas le confirma apenas empiece el día. NUNCA prometas una llamada ni una " +
+          "respuesta humana inmediata."
     }`
   );
   l.push(`- Próxima entrega disponible: ${ctx.momento.proximoReparto}.`);

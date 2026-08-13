@@ -33,7 +33,7 @@ import { Lead, LeadEstado, LeadMensaje } from "@/lib/types";
 import AudioRecorder from "./components/AudioRecorder";
 import QuickReplySelector from "./components/QuickReplySelector";
 import QuickRepliesManager from "./components/QuickRepliesManager";
-import WelcomeBotConfig from "./components/WelcomeBotConfig";
+import BotVentasConfig from "./components/BotVentasConfig";
 import TagManager from "./components/TagManager";
 import TagSelector from "./components/TagSelector";
 import TemplateModal from "./components/TemplateModal";
@@ -392,7 +392,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
                     <button
                       type="button"
                       onClick={() => setShowBotConfig(true)}
-                      title="Configurar Bot de Bienvenida"
+                      title="Configurar el bot de ventas"
                       className="p-1 rounded-lg hover:bg-gray-200 text-purple-600 transition-colors flex items-center justify-center cursor-pointer"
                     >
                       <span className="text-sm">🤖</span>
@@ -961,7 +961,7 @@ export default function CrmLeadsClient({ sessionUser }: CrmLeadsClientProps) {
       )}
 
       {/* Config Modales del CRM */}
-      {showBotConfig && <WelcomeBotConfig onClose={() => setShowBotConfig(false)} />}
+      {showBotConfig && <BotVentasConfig onClose={() => setShowBotConfig(false)} />}
       {showRepliesManager && <QuickRepliesManager isOpen={showRepliesManager} onClose={() => setShowRepliesManager(false)} />}
       {showTagManager && <TagManager isOpen={showTagManager} onClose={() => setShowTagManager(false)} />}
 

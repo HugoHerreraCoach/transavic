@@ -235,6 +235,78 @@ no existe en Node": existe desde Node 21, solo que **incompleto**, así que no e
 
 ---
 
+## 13 ago 2026 (noche) — El bot cubre el hueco, no reemplaza a las asesoras
+
+**Contexto.** Hugo pidió "que el bot de bienvenida responda por la noche cuando las asesoras no
+están", partiendo de tres supuestos. Los tres eran incorrectos, y por qué lo eran es la parte
+interesante:
+
+| Supuesto | Realidad |
+|---|---|
+| "No responde de noche" | **Sí respondía.** Últimos 20 días: 22h → 11 mensajes de clientes / 9 del bot; 23h → 2 y 2; 1am → 1 y 1 |
+| "No está entrenado" | Lo está: precios reales de `productos`, distritos, mínimos, horarios |
+| "Está desactivado por defecto" | Al revés: todo lead de WhatsApp nace con `chatbot_activo = TRUE` |
+| "Hay dos bots" | Hay **uno**. Ver abajo |
+
+### Por qué parecían dos bots
+
+`WelcomeBotConfig.tsx` — con su botón 🤖 en el CRM — mostraba "Estado del Bot", "Horario Comercial",
+"Días Laborales" y "Mensaje Fuera de Horario"… y **no hacía absolutamente nada**. Guardaba en
+`settings.crm_welcome_bot`, clave que **ningún proceso del servidor leía**. El backlog del propio repo
+ya lo tenía anotado como *"decorativo"*. O sea: había una pantalla que prometía exactamente lo que
+Hugo quería, y era de mentira. Configurarla no cambiaba nada, y de ahí la impresión de un segundo bot.
+
+### El cambio de fondo
+
+Hugo lo definió en una frase: **el bot cubre el hueco, no reemplaza a las asesoras**. Antes hablaba
+las 24 h, encima de ellas. Ahora `settings.bot_ventas.cuando_responde` decide:
+
+- **`"fuera_horario"` (default)** — calla dentro del horario de atención, responde de noche y en días
+  no laborables.
+- `"siempre"` — el comportamiento viejo, por si algún día se quiere.
+
+La regla vive en `botDebeResponder({cfg, dentroDeAtencion})` (`src/lib/chatbot/fallback.ts`), **pura y
+con tests**, y se evalúa en `ejecutarTurno`, donde antes solo se miraba `cfg.activo`.
+
+> ⚠️ **Cambiar ese default cambió producción al instante:** `settings.bot_ventas` **no existía**, así
+> que todo corría con los defaults del código. Por suerte los de horario ya eran exactamente los que
+> Hugo quería (lunes a sábado 8:00–20:00), así que no hizo falta migración ni tocar datos.
+
+### El agujero del handoff nocturno
+
+El que de verdad lastimaba. Si el bot emitía `[HANDOFF]` a las 2 a.m., apagaba `chatbot_activo` y el
+cliente quedaba **sin bot y sin humana**, escribiendo al vacío hasta que alguien entrara por la mañana
+y lo reencendiera a mano. Ahora, fuera de horario, antes de apagar se envía un cierre que dice cuándo
+lo retoman.
+
+No se tocó la regla de que **un fallback NO apaga el bot** (aprendida a la mala en agosto): acá solo
+se agrega un mensaje antes de un apagado que ya ocurría.
+
+Y el prompt fuera de horario pasó de pasivo —*"puedes responder igual, pero no prometas una llamada
+inmediata"*— a **ordenarle que se lo diga al cliente**, con el horario concreto.
+
+### La pantalla que ahora sí sirve
+
+`BotVentasConfig.tsx` reemplaza a la muerta y edita la config **real**: interruptor general, cuándo
+responde, y el horario (horas + días) en que atienden las asesoras. Cierra con un resumen en palabras
+—*"Las asesoras atienden lunes a sábado de 8:00 a 20:00. Fuera de ese horario responde el bot"*— para
+que se entienda sin interpretar los controles. La clave `crm_welcome_bot` se sacó de la lista blanca
+de `/api/settings`.
+
+> ⚠️ El panel hace **merge sobre lo que ya había** (`{...crudo, ...cfg}`): `POST /api/settings`
+> **reescribe la clave completa**, así que mandar solo los campos del formulario habría borrado
+> distritos, mínimos, medios de pago y beneficios.
+
+**Verificación.** 13 tests nuevos de las funciones puras (153 en total). En `dev-hugo`: el panel abre
+con "Solo cuando no hay asesoras" y 08:00–20:00, se guarda y persiste en `settings.bot_ventas`. Y
+ejercitando la regla con los defaults reales: martes 14:00 → el bot **no** responde; martes 23:00 y
+domingo → **sí**.
+
+**Queda fuera** (anotado, no hecho): los pushes no tienen hora de silencio —a las 2 a.m. igual suena
+el celular de la asesora— y la cascada de escalado se congela de madrugada porque no tiene cron.
+
+---
+
 ## 13 ago 2026 — Los leads por fin llegan a las asesoras (y no al admin)
 
 **Contexto.** Hugo pidió "mejorar el reparto de leads, que por ahora sea equitativo". El modo

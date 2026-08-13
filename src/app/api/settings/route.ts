@@ -37,7 +37,6 @@ const SettingSchema = z.object({
     "crm_quick_replies",
     "crm_whatsapp_templates",
     "crm_tags",
-    "crm_welcome_bot",
     "crm_lead_distribution",
     // Parámetros de negocio editables desde /dashboard/configuracion
     // (src/lib/parametros-negocio.ts define shape, defaults y normalización).

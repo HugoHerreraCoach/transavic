@@ -246,3 +246,48 @@ Además de la rotación: `POST /api/crm/leads/[id]/atender` (reclamo — un **ad
 cualquier lead**, saltándose marca y candidatura), el `PATCH` de reasignación manual, y el alta manual
 de un lead (que nace del usuario que lo crea y **no entra a la cola**). El desplegable de "Reasignar
 Chat" incluye admins y no filtra por marca.
+
+---
+
+## 8. Cuándo habla el bot (13 ago 2026)
+
+**Regla de negocio:** el bot **cubre el hueco**, no reemplaza a las asesoras.
+
+`settings.bot_ventas.cuando_responde` lo decide:
+
+| Valor | Comportamiento |
+|---|---|
+| **`"fuera_horario"` (default)** | Calla dentro del horario de atención; responde de noche y en días no laborables |
+| `"siempre"` | Atiende las 24 h (el comportamiento anterior) |
+
+La regla es **pura y con tests**: `botDebeResponder({ cfg, dentroDeAtencion })` en
+`src/lib/chatbot/fallback.ts`. El gate está en `ejecutarTurno` (`bot-orchestrator.ts`), donde antes
+solo se miraba `cfg.activo`. Ese interruptor sigue mandando: en `false` el bot no habla nunca.
+
+El horario sale de `atencion_hora_inicio` / `atencion_hora_fin` / `dias_atencion`
+(default **lunes a sábado 8:00–20:00**), y `dentroDeAtencion` lo calcula `contexto-negocio.ts`.
+
+> ⚠️ **`settings.bot_ventas` puede no existir**, y entonces manda `CONFIG_BOT_DEFAULT` del código.
+> Cambiar un default ahí cambia producción al instante, sin migración de por medio.
+
+### Fuera de horario, el bot lo dice
+
+Dos piezas, para que el cliente nunca quede esperando a alguien que no está:
+
+1. **El prompt** (`prompt-antonella.ts`) le ordena decir el horario y que una asesora le confirma al
+   abrir — antes solo decía "no prometas una llamada inmediata", que es pasivo.
+2. **El `[HANDOFF]` nocturno** envía `mensajeCierreFueraDeHorario()` **antes** de apagar
+   `chatbot_activo`. Sin eso, el cliente quedaba sin bot y sin humana hasta la mañana.
+
+### La pantalla
+
+`src/app/dashboard/crm-leads/components/BotVentasConfig.tsx` (botón 🤖 del CRM, admin-only) edita
+interruptor, modo y horario.
+
+Reemplazó a `WelcomeBotConfig.tsx`, que era **UI muerta**: guardaba en `settings.crm_welcome_bot`,
+clave que nadie leía. Mostraba "Horario Comercial" y "Mensaje Fuera de Horario" sin efecto alguno, y
+por eso parecía que había **dos bots** — uno "de bienvenida" y otro "de ventas". Hay uno solo.
+
+> ⚠️ El panel hace **merge sobre lo existente** (`{...crudo, ...cfg}`): `POST /api/settings`
+> reescribe la clave COMPLETA, así que mandar solo los campos del formulario borraría distritos,
+> mínimos, medios de pago y beneficios.

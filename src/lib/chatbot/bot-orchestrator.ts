@@ -17,7 +17,9 @@ import {
   type MensajeHistorial,
 } from "./prompt-antonella";
 import {
+  botDebeResponder,
   derivarAHumano,
+  mensajeCierreFueraDeHorario,
   mensajeFallback,
   resolverReceptores,
   type MotivoFallback,
@@ -648,8 +650,13 @@ async function ejecutarTurno(
       },
     });
 
-    // 3b. El admin apagó el bot para todas las marcas.
-    if (!ctx.config.activo) {
+    // 3b. ¿Le toca hablar al bot?
+    //
+    // Con la config por defecto (`cuando_responde: "fuera_horario"`) el bot CUBRE
+    // EL HUECO: se queda callado mientras las asesoras atienden y responde de
+    // noche y los días no laborables. Antes hablaba las 24 h, encima de ellas.
+    // El interruptor `activo` lo apaga siempre, sin importar la hora.
+    if (!botDebeResponder({ cfg: ctx.config, dentroDeAtencion: ctx.momento.dentroDeAtencion })) {
       await notificarMensajeAAsesora(
         sql,
         lead as Lead,
@@ -738,6 +745,18 @@ async function ejecutarTurno(
 
     // 6. Handoff pedido por el modelo: apagar el bot y avisar.
     if (hayHandoff) {
+      // Fuera de horario el handoff dejaba al cliente SIN bot y SIN humana: el
+      // bot se apagaba y nadie entraba hasta la mañana, así que escribía al
+      // vacío sin enterarse. Antes de apagar, se le dice cuándo lo atienden.
+      if (!ctx.momento.dentroDeAtencion) {
+        await persistirYEnviarBot(
+          sql,
+          tarea.leadId,
+          tarea.empresa,
+          tarea.telefono,
+          mensajeCierreFueraDeHorario(ctx.config)
+        );
+      }
       await sql`
         UPDATE public.leads
         SET chatbot_activo = FALSE, estado = 'Contactado', updated_at = NOW()
