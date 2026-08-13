@@ -1,7 +1,7 @@
 # 15 — Módulo del Asistente de IA Comercial
 
-> **Última verificación contra código:** 2026-07-12
-> **Estado del proyecto:** caché persistente y fallback en producción; WhatsApp saliente sigue pendiente
+> **Última verificación contra código:** 2026-08-13
+> **Estado del proyecto:** en producción, incluido el CRM con WhatsApp real y el reparto de leads por marca (§7)
 > **Archivos clave:** `src/lib/gemini.ts`, `src/lib/insights.ts`, `src/app/api/asistente-ia/route.ts`, `src/app/dashboard/asistente-ia/asistente-ia-client.tsx`
 
 Este documento describe el funcionamiento de la inteligencia artificial de análisis comercial, la anonimización de datos de clientes, el mecanismo de caché persistente y el respaldo de API ante caídas de cuotas.
@@ -187,3 +187,62 @@ de truncamiento `finishReason === "length"` que ahora expone `gemini.ts`.
   el dev server. 17 escenarios listos (pollería, fuera de cobertura, regateo, inyección de prompt,
   stock, factura, reclamo…). Para que no salga nada a WhatsApp real basta con que la marca **no tenga
   token** en `.env.local`: `enviarTexto()` entra en modo mock y todo queda en el CRM.
+
+---
+
+## 7. Reparto de leads: a quién le llega cada conversación (13 ago 2026)
+
+Un lead entrante de WhatsApp **no nace con dueña**. Se crea `estado_asignacion = 'en_cola'` con
+`vendedor_id = NULL` y solo `candidato_actual`: la asesora tiene que tocar **"Atender"** para quedárselo.
+
+### El pool y la regla
+
+`rotateAndSelectCandidate` (`bot-orchestrator.ts`) arma el pool con
+`role = 'asesor' AND activo_rotacion = TRUE AND COALESCE(activo, TRUE)`, filtrado por marca con
+`users.empresas` (**NULL o vacío = atiende todas**, que es el default para que nadie quede fuera del
+reparto sin querer). **Un `admin` nunca entra al pool.**
+
+La regla de equidad vive en **`src/lib/chatbot/equidad-leads.ts`** — pura y con tests, separada del
+orquestador porque ese importa `neon` en el top level y eso mata cualquier test (gotcha #13):
+
+1. gana la que **menos leads** recibió hoy **en esa marca**;
+2. si empatan, la que **hace más tiempo que no recibe**;
+3. si aún empatan, por nombre (solo para que sea determinista).
+
+El modo `niveles` (60/25/15) sigue en el código y en la pantalla de Reparto, pero **no se usa**: el
+modo por defecto es `equitativo` y cualquier valor distinto de `"niveles"` cae ahí.
+
+### La cascada cuando nadie reclama
+
+| Fase | Espera | A quién se le ofrece |
+|---|---|---|
+| `individual` | 15 s | la candidata elegida por equidad |
+| `tier_expanded` | 45 s | todas las asesoras de **su mismo nivel** y marca |
+| `rescue` | 60 s | todas las de **Nivel 1** de esa marca |
+| final | — | **se la asigna una asesora de la marca**, por equidad |
+
+> ⚠️ **Hasta el 13 ago 2026 ese paso final asignaba al primer admin**, y como nadie alcanza a
+> reclamar en 2 minutos, **todos** los leads terminaban ahí: Mateo tenía 10 y las dos asesoras de
+> Avícola, cero. Y se realimentaba — al escalar se pone `candidato_actual = NULL`, la carga se cuenta
+> con `COALESCE(vendedor_id, candidato_actual)`, así que el lead dejaba de contar para nadie, las
+> candidatas quedaban empatadas en 0 para siempre y el desempate alfabético le ofrecía **siempre a la
+> misma**. Ver la crónica en el [historial](../historial-cambios-2026.md).
+
+Hoy el admin solo recibe un lead si la marca **no tiene ninguna asesora habilitada** — un problema de
+configuración, y el aviso lo dice explícitamente.
+
+**Señal de alarma:** si el desempate **alfabético** se está usando seguido, algo anda mal — significa
+que las candidatas están todas en cero y sin historial, o sea que los leads no les están quedando.
+
+### El reloj lo mueve el CRM, no un cron
+
+`checkAndEscalateLeads` no tiene cron: se dispara con **cada mensaje entrante** y con **cada
+`GET /api/crm/leads`** (el CRM hace polling cada 15 s). O sea que tener el CRM abierto es lo que hace
+avanzar el escalado.
+
+### Otros caminos hacia `vendedor_id`
+
+Además de la rotación: `POST /api/crm/leads/[id]/atender` (reclamo — un **admin puede reclamar
+cualquier lead**, saltándose marca y candidatura), el `PATCH` de reasignación manual, y el alta manual
+de un lead (que nace del usuario que lo crea y **no entra a la cola**). El desplegable de "Reasignar
+Chat" incluye admins y no filtra por marca.

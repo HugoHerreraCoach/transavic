@@ -235,6 +235,72 @@ no existe en Node": existe desde Node 21, solo que **incompleto**, así que no e
 
 ---
 
+## 13 ago 2026 — Los leads por fin llegan a las asesoras (y no al admin)
+
+**Contexto.** Hugo pidió "mejorar el reparto de leads, que por ahora sea equitativo". El modo
+`equitativo` **ya estaba activo** desde el 6 ago y el filtro por marca **funcionaba** (cero leads
+cruzados en producción). Pero el reparto real era:
+
+| Marca | Reparto observado |
+|---|---|
+| Avícola de Tony | Mateo (admin) **5** · Jhoselyn **0** · Saraí **0** |
+| Transavic | Yali 9 · Mateo (admin) **5** · Yesica 4 · Antonio 1 |
+
+Las dos asesoras de Avícola, correctamente configuradas y activas, no habían recibido **ni un lead**.
+
+### Las dos causas, encadenadas
+
+**1. El lead nace sin dueña y cae al admin a los 2 minutos.** Un lead entrante se crea `en_cola` con
+`vendedor_id = NULL` y solo `candidato_actual`; la asesora tiene que tocar "Atender". Si nadie lo hace
+en **15 + 45 + 60 s**, el paso 3 de `escalateLead` hacía:
+
+```sql
+SELECT id FROM public.users WHERE role = 'admin' LIMIT 1
+```
+
+y le colgaba el lead. Nadie mira el CRM a las 21:19 para reclamar en dos minutos, así que **todos**
+terminaban en el mismo admin. Los 5 leads de Avícola tenían la huella exacta: `estado_asignacion =
+'asignado'`, `candidato_actual IS NULL`, `golden_ticket_phase IS NULL`, `inicio_turno IS NULL`.
+
+**2. Y eso rompía la equidad, que se realimentaba sola.** Al escalar se pone `candidato_actual = NULL`,
+y la carga del día se cuenta con `COALESCE(l.vendedor_id, l.candidato_actual) = u.id`. Un lead que
+escalaba **dejaba de contar para nadie**. Jhoselyn y Saraí quedaban empatadas en
+`leads_recibidos_hoy = 0` y `ultimo_lead_at = NULL` **para siempre**, así que el desempate caía en
+`localeCompare(name)` y el sistema le ofrecía **siempre a la primera alfabéticamente**. No es que
+repartiera mal entre las dos: nunca llegaba a rotar.
+
+### El arreglo
+
+El fallback final ahora llama a `rotateAndSelectCandidate` y **asigna a una asesora real de esa
+marca**, elegida por la misma regla de equidad. Con eso el lead vuelve a tener `vendedor_id`, vuelve a
+contar, y la rotación avanza sola. El admin queda **solo** como red de seguridad para cuando la marca
+no tiene ninguna asesora habilitada — un problema de configuración, no de operación — y en ese caso el
+aviso lo dice: *"no tiene ninguna asesora habilitada para su marca. Revisa el reparto"*. De paso ese
+`SELECT` ahora filtra `activo` y ordena por `created_at` en vez de depender de un `LIMIT 1` sin
+`ORDER BY`.
+
+La regla de equidad se extrajo a **`src/lib/chatbot/equidad-leads.ts`**, pura y con 9 tests (incluida
+una simulación de 6 leads que termina 3 y 3, y otra donde una asesora atrasada se empareja sola). Vive
+aparte porque `bot-orchestrator.ts` importa `neon` en el top level y eso mata cualquier test bajo
+Node 26 (gotcha #13).
+
+> ⚠️ **Señal de alarma:** que el desempate **alfabético** se use seguido significa que las candidatas
+> están todas en cero y sin historial — o sea, que los leads no les están quedando. Quedó anotado en
+> el propio archivo.
+
+### Data-op
+
+`scripts/reasignar-leads-mateo-2026-08-13.sql` sacó del admin los 10 leads acumulados y los repartió
+entre las asesoras de su misma marca **mirando la carga que ya tenían**, no por turno redondo: los 5
+de Transavic fueron todos a Yesica (que iba 4 contra 9 de Yali) para dejar **9 y 9**, y los de Avícola
+se alternaron **3 y 2**. Solo cambia el responsable: mensajes, estado e historial quedan intactos. Es
+idempotente (el `WHERE` exige que el lead siga siendo del admin) y verifica al final que no haya
+ningún lead en manos de quien no atiende esa marca (dio 0).
+
+Antonio conserva 1 lead de Transavic: es el dueño, no se tocó.
+
+---
+
 ## 7 ago 2026 — Fase 3 de las peticiones de Ariana: reimprimir guías sin el doble trabajo
 
 **Contexto.** Tercer video, el más corto y el más barato de resolver:

@@ -72,6 +72,7 @@ Esta carpeta es la referencia técnica y de negocio del sistema. Los documentos 
 | Detalle o costo histórico POS | 10 → 25 → 02 → 24 |
 | Conectar el WhatsApp de una marca | 28 → 15 → 16 → 24 |
 | CRM de leads o chatbot | 15 → 28 → 16 |
+| Reparto/rotación de leads entre asesoras | 15 → 03 → 16 |
 | Roles, ruta o sidebar | 03 → 23 → documento temático |
 | Desplegar a producción | 20 → 24 → 02 → 19 |
 

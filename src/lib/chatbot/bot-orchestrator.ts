@@ -9,6 +9,7 @@ import {
 } from "../whatsapp/config";
 import { enviarTexto } from "../whatsapp/sender";
 import { pideHandoff, sanearRespuestaBot } from "./sanear-respuesta";
+import { ordenarPorEquidad, type AsesoraRotacion } from "./equidad-leads";
 import { construirContextoNegocio, type ContextoNegocio } from "./contexto-negocio";
 import {
   construirSystemPrompt,
@@ -824,31 +825,6 @@ export async function handleInboundMessage(
   if (tarea) await responderTurno(tarea);
 }
 
-interface AsesoraRotacion {
-  id: string;
-  name: string;
-  orden_rotacion: number | null;
-  leads_recibidos_hoy: number | null;
-  /** Último lead que recibió EN ESTA MARCA. Desempata el reparto parejo. */
-  ultimo_lead_at?: string | Date | null;
-}
-
-/**
- * Reparto parejo: gana la que MENOS leads recibió hoy en esta marca; si empatan,
- * la que hace más tiempo que no recibe; si aún empatan, por nombre (determinista).
- *
- * Se auto-corrige solo: si alguien no atiende un día, al día siguiente arranca
- * abajo y recibe primero. No hace falta llevar cuentas a mano.
- */
-function ordenarPorEquidad(a: AsesoraRotacion, b: AsesoraRotacion): number {
-  const porCarga = (a.leads_recibidos_hoy ?? 0) - (b.leads_recibidos_hoy ?? 0);
-  if (porCarga !== 0) return porCarga;
-  const ta = a.ultimo_lead_at ? new Date(a.ultimo_lead_at).getTime() : 0;
-  const tb = b.ultimo_lead_at ? new Date(b.ultimo_lead_at).getTime() : 0;
-  if (ta !== tb) return ta - tb;
-  return (a.name || "").localeCompare(b.name || "");
-}
-
 interface RotationSelection {
   candidato_actual: string | null;
   candidatos_nivel: string[];
@@ -981,9 +957,55 @@ export async function escalateLead(
       }
     }
 
-    // 3. Fallback final al administrador
+    // 3. Fallback final: se lo queda una ASESORA de la marca, no el admin.
+    //
+    // Antes esto hacía `SELECT id FROM users WHERE role='admin' LIMIT 1` y le
+    // colgaba el lead. Como nadie alcanza a tocar "Atender" en 2 minutos (15+45+60),
+    // en la práctica TODOS los leads terminaban en el mismo admin: en producción los
+    // 5 de Avícola eran de Mateo y las dos asesoras de esa marca tenían cero.
+    //
+    // Peor: al escalar se pone `candidato_actual = NULL`, y la equidad cuenta por
+    // COALESCE(vendedor_id, candidato_actual). Un lead que escalaba dejaba de contar
+    // para nadie, así que las asesoras quedaban empatadas en 0 para siempre y el
+    // desempate alfabético le ofrecía SIEMPRE a la misma. Al asignar aquí a una
+    // asesora real, el lead vuelve a contar y la rotación avanza sola.
+    // Sin marca no se puede elegir por marca; ese lead cae en la red de abajo.
+    const responsableId = marcaLead
+      ? (await rotateAndSelectCandidate(sql, marcaLead as EmpresaWhatsApp)).candidato_actual
+      : null;
+
+    if (responsableId) {
+      await sql`
+        UPDATE public.leads
+        SET vendedor_id = ${responsableId},
+            estado_asignacion = 'asignado',
+            candidato_actual = NULL,
+            candidatos_nivel = '{}',
+            inicio_turno = NULL,
+            golden_ticket_phase = NULL,
+            updated_at = NOW()
+        WHERE id = ${leadId}
+      `;
+
+      await sendPushNotification(responsableId, {
+        title: "⚠️ Lead sin atender",
+        body: `El prospecto ${leadData.nombre} no fue atendido a tiempo y queda a tu cargo.`,
+        url: `/dashboard/crm-leads?leadId=${leadId}`,
+        tag: `lead-fallback-${leadId}`,
+        renotify: true,
+      });
+
+      console.log(`⚠️ Lead ${leadId} asignado por timeout a la asesora de turno.`);
+      return;
+    }
+
+    // Solo si la marca NO tiene ninguna asesora habilitada: red de seguridad para
+    // que el lead no quede huérfano. Es un caso de configuración, no de operación.
     const fallbackAdmins = await sql`
-      SELECT id FROM public.users WHERE role = 'admin' LIMIT 1
+      SELECT id FROM public.users
+      WHERE role = 'admin' AND COALESCE(activo, TRUE) = TRUE
+      ORDER BY created_at ASC
+      LIMIT 1
     `;
     const adminId = fallbackAdmins.length > 0 ? fallbackAdmins[0].id : null;
 
@@ -1001,14 +1023,16 @@ export async function escalateLead(
       `;
 
       await sendPushNotification(adminId, {
-        title: "⚠️ Lead Sin Atención",
-        body: `El prospecto ${leadData.nombre} no fue atendido a tiempo y se te ha asignado como fallback.`,
+        title: "⚠️ Lead sin asesora disponible",
+        body: `El prospecto ${leadData.nombre} no tiene ninguna asesora habilitada para su marca. Revisa el reparto.`,
         url: `/dashboard/crm-leads?leadId=${leadId}`,
         tag: `lead-fallback-${leadId}`,
         renotify: true,
       });
 
-      console.log(`⚠️ Lead ${leadId} asignado al admin de fallback por timeout.`);
+      console.warn(
+        `⚠️ Lead ${leadId} (${leadData.empresa}) fue al admin: no hay asesoras habilitadas para esa marca.`
+      );
     }
   } catch (error) {
     console.error("❌ Error en escalateLead:", error);
