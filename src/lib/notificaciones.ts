@@ -141,6 +141,38 @@ export async function notificarComprobanteConProblema(params: {
   }
 }
 
+/** Alertas de arribo: pierden todo sentido cuando el pedido deja de estar en camino. */
+export const TIPOS_ALERTA_ARRIBO = ["pedido_por_llegar", "pedido_llegado"] as const;
+
+/**
+ * Cierra (marca leídas) las alertas de arribo pendientes de un pedido.
+ *
+ * "El motorizado está llegando" caduca en el momento en que el pedido se
+ * entrega, falla, cancela el viaje o se reprograma: si la fila sigue no leída,
+ * el popup vuelve a interrumpir a la asesora al día siguiente con un aviso de
+ * un pedido ya cerrado (reportado por Yesica, 20 ago 2026).
+ *
+ * Best-effort: NUNCA lanza — la transición del pedido no puede fallar por una
+ * notificación. Devuelve cuántas cerró, para logging.
+ */
+export async function cerrarAlertasArriboDePedido(pedidoId: string): Promise<number> {
+  try {
+    const sql = neon(process.env.DATABASE_URL!);
+    const filas = (await sql`
+      UPDATE notificaciones
+      SET leida = TRUE
+      WHERE pedido_id = ${pedidoId}::uuid
+        AND tipo = ANY(${[...TIPOS_ALERTA_ARRIBO]}::text[])
+        AND leida = FALSE
+      RETURNING id
+    `) as Array<{ id: string }>;
+    return filas.length;
+  } catch (e) {
+    console.error("Error al cerrar alertas de arribo (no crítico):", e);
+    return 0;
+  }
+}
+
 /**
  * Mantenimiento: borra notificaciones YA LEÍDAS de más de `diasRetencion` días
  * (default 30) para que la tabla `notificaciones` no crezca sin límite.

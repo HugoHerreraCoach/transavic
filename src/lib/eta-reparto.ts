@@ -147,3 +147,26 @@ export function decidirAlertasArribo(p: {
     minutosMensaje: Math.max(1, Math.min(UMBRAL_POR_LLEGAR_MIN, Math.ceil(p.etaMin))),
   };
 }
+
+/**
+ * Cuánto tiempo un aviso de arribo sigue mereciendo interrumpir la pantalla.
+ * Una hora cubre de sobra el caso "estaba atendiendo y volví"; más allá, el
+ * motorizado ya entregó y el aviso solo confunde.
+ */
+export const VIGENCIA_POPUP_ARRIBO_MS = 60 * 60_000;
+
+/**
+ * ¿Este aviso de arribo todavía describe algo que está pasando?
+ *
+ * El popup interrumpe a pantalla completa, así que solo puede mostrar avisos
+ * VIVOS. Una notificación no leída no caduca nunca en la base (es correcto: la
+ * asesora debe poder verla en la campana), pero al día siguiente ya no debe
+ * saltar sobre la pantalla — le pasó a Yesica con pedidos entregados hacía dos
+ * días (20 ago 2026). Fecha inválida = no vigente (fail-safe: ante la duda, no
+ * se interrumpe; la campana la sigue mostrando igual).
+ */
+export function avisoArriboVigente(createdAtIso: string, ahoraMs: number): boolean {
+  const t = Date.parse(createdAtIso);
+  if (Number.isNaN(t)) return false;
+  return t <= ahoraMs && ahoraMs - t <= VIGENCIA_POPUP_ARRIBO_MS;
+}

@@ -2,6 +2,7 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { cerrarAlertasArriboDePedido } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -56,6 +57,10 @@ export async function POST(request: Request) {
           notificado_llegada = FALSE
       WHERE id = ${id}
     `;
+
+    // El viaje se canceló: las alertas de arribo que alcanzó a ver la asesora ya
+    // no describen nada real. Se cierran para que no reaparezcan mañana.
+    await cerrarAlertasArriboDePedido(id);
 
     return NextResponse.json({
       message: "Viaje cancelado. El pedido vuelve a Asignado.",

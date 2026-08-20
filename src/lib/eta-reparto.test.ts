@@ -7,6 +7,8 @@ import {
   FACTOR_RUTA_DEFAULT,
   MAX_DESFASE_PING_MS,
   VELOCIDAD_DEFAULT_KMH,
+  VIGENCIA_POPUP_ARRIBO_MS,
+  avisoArriboVigente,
   calibrarViaje,
   decidirAlertasArribo,
   esCapturaFresca,
@@ -168,5 +170,40 @@ describe("decidirAlertasArribo", () => {
         }
       }
     }
+  });
+});
+
+describe("avisoArriboVigente", () => {
+  // Reporte de Yesica (20 ago 2026): el popup le saltaba con avisos de pedidos
+  // entregados uno o dos días antes, porque una notificación no leída no caduca.
+  const ahora = Date.parse("2026-08-20T15:00:00.000Z");
+
+  it("un aviso recién creado interrumpe", () => {
+    expect(avisoArriboVigente("2026-08-20T14:59:30.000Z", ahora)).toBe(true);
+  });
+
+  it("sigue vigente dentro de la ventana (la asesora estaba atendiendo)", () => {
+    expect(avisoArriboVigente("2026-08-20T14:15:00.000Z", ahora)).toBe(true);
+  });
+
+  it("justo en el borde de la vigencia todavía cuenta", () => {
+    const borde = new Date(ahora - VIGENCIA_POPUP_ARRIBO_MS).toISOString();
+    expect(avisoArriboVigente(borde, ahora)).toBe(true);
+  });
+
+  it("un aviso de ayer NO interrumpe (el motorizado ya entregó)", () => {
+    expect(avisoArriboVigente("2026-08-19T15:30:00.000Z", ahora)).toBe(false);
+  });
+
+  it("un aviso de anteayer tampoco", () => {
+    expect(avisoArriboVigente("2026-08-18T09:48:00.000Z", ahora)).toBe(false);
+  });
+
+  it("fecha inválida = no vigente (fail-safe: ante la duda no se interrumpe)", () => {
+    expect(avisoArriboVigente("no-es-fecha", ahora)).toBe(false);
+  });
+
+  it("fecha futura (reloj adelantado) = no vigente", () => {
+    expect(avisoArriboVigente("2026-08-20T15:05:00.000Z", ahora)).toBe(false);
   });
 });

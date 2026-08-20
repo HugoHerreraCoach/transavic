@@ -12,6 +12,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { cerrarAlertasArriboDePedido } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -414,6 +415,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         },
         { status: esProduccion ? 409 : 403 }
       );
+    }
+
+    // Si el reparto se reseteó, las alertas de arribo de la fecha anterior ya no
+    // describen nada: cerrarlas evita que el popup las repita en los días
+    // siguientes (van fuera del CTE: son best-effort y no deben abortar nada).
+    if (resultado.estado_reseteado) {
+      await cerrarAlertasArriboDePedido(id);
     }
 
     return NextResponse.json({

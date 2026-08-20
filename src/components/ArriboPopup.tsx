@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FiX, FiCheck, FiTruck, FiMapPin, FiClock, FiCalendar } from "react-icons/fi";
 import Link from "next/link";
 import { usePollingVisible } from "@/lib/use-polling-visible";
+import { avisoArriboVigente } from "@/lib/eta-reparto";
+import { tiempoRelativoNotificacion } from "@/lib/tiempo-relativo";
 
 interface Notificacion {
   id: string;
@@ -76,13 +78,19 @@ export default function ArriboPopup() {
       // Arribos y reprogramaciones son operativamente urgentes. Cerrar el popup no
       // marca la notificación como leída: permanece en la campana y no vuelve a
       // interrumpir durante esta sesión.
+      //
+      // Un arribo solo interrumpe mientras SIGUE PASANDO: pasada su vigencia, el
+      // motorizado ya entregó y el aviso solo confunde (le saltaban avisos de
+      // pedidos entregados dos días antes). La reprogramación no caduca así: es
+      // información de agenda que la asesora debe ver aunque vuelva mañana.
+      const ahora = Date.now();
       const alertasArribo = notifs.filter(
         (n) =>
           !n.leida &&
-          (n.tipo === "pedido_por_llegar" ||
-            n.tipo === "pedido_llegado" ||
-            n.tipo === "pedido_reprogramado") &&
-          !cerradosTemporales.includes(n.id)
+          !cerradosTemporales.includes(n.id) &&
+          (n.tipo === "pedido_reprogramado" ||
+            ((n.tipo === "pedido_por_llegar" || n.tipo === "pedido_llegado") &&
+              avisoArriboVigente(n.created_at, ahora)))
       );
 
       // Si hay alertas activas, tomamos la más reciente
@@ -105,7 +113,7 @@ export default function ArriboPopup() {
   // Polling solo con la pestaña visible (no consume Neon en segundo plano).
   usePollingVisible(fetchNotificaciones, POLL_INTERVAL_MS);
 
-  const handleMarcarLeido = async () => {
+  const handleMarcarLeido = useCallback(async () => {
     if (!activo || marcandoLeido) return;
     setMarcandoLeido(true);
     try {
@@ -120,10 +128,14 @@ export default function ArriboPopup() {
       setVisible(false);
     } catch (error) {
       console.error("Error al marcar como leída la notificación de arribo:", error);
+      // El popup igual se descarta en esta sesión: si el PATCH falló, la alerta
+      // sigue en la campana, pero no debe quedarse trabada en pantalla.
+      if (activo) cerrarDuranteSesion(activo.id);
+      setVisible(false);
     } finally {
       setMarcandoLeido(false);
     }
-  };
+  }, [activo, cerrarDuranteSesion, marcandoLeido]);
 
   const handleCerrarTemporal = useCallback(() => {
     if (activo) {
@@ -131,6 +143,18 @@ export default function ArriboPopup() {
     }
     setVisible(false);
   }, [activo, cerrarDuranteSesion]);
+
+  // La ✕ y Escape descartan igual que el botón: en un arribo eso significa
+  // marcarlo leído. Antes solo se guardaba en sessionStorage y el aviso volvía a
+  // saltar en la siguiente pestaña. Una reprogramación sí sigue pendiente:
+  // es agenda, no un evento que se agota.
+  const handleDescartar = useCallback(() => {
+    if (activo && activo.tipo !== "pedido_reprogramado") {
+      void handleMarcarLeido();
+      return;
+    }
+    handleCerrarTemporal();
+  }, [activo, handleCerrarTemporal, handleMarcarLeido]);
 
   // El aviso interrumpe la operación, por eso se comporta como diálogo real:
   // mueve el foco al cierre, permite Escape, contiene Tab y devuelve el foco al
@@ -146,7 +170,7 @@ export default function ArriboPopup() {
     const manejarTeclado = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        handleCerrarTemporal();
+        handleDescartar();
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
@@ -177,7 +201,7 @@ export default function ArriboPopup() {
       document.removeEventListener("keydown", manejarTeclado);
       if (focoAnterior?.isConnected) focoAnterior.focus();
     };
-  }, [activo, handleCerrarTemporal, visible]);
+  }, [activo, handleDescartar, visible]);
 
   if (!activo || !visible) return null;
 
@@ -192,15 +216,15 @@ export default function ArriboPopup() {
       }
     : esPorLlegar
       ? {
-          icono: "bg-indigo-50 text-indigo-650 border-indigo-100",
+          icono: "bg-indigo-50 text-indigo-600 border-indigo-100",
           chip: "bg-indigo-100 text-indigo-800",
-          boton: "bg-indigo-650 hover:bg-indigo-700",
+          boton: "bg-indigo-600 hover:bg-indigo-700",
           etiqueta: "Arribo inminente",
         }
       : {
-          icono: "bg-emerald-50 text-emerald-650 border-emerald-100",
+          icono: "bg-emerald-50 text-emerald-600 border-emerald-100",
           chip: "bg-emerald-100 text-emerald-800",
-          boton: "bg-emerald-650 hover:bg-emerald-700",
+          boton: "bg-emerald-600 hover:bg-emerald-700",
           etiqueta: "Motorizado en destino",
         };
 
@@ -212,7 +236,7 @@ export default function ArriboPopup() {
         aria-modal="true"
         aria-labelledby="titulo-notificacion-emergente"
         aria-describedby="mensaje-notificacion-emergente"
-        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-150 transform transition-all duration-300 scale-100 p-6"
+        className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-200 transform transition-all duration-300 scale-100 p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -221,8 +245,8 @@ export default function ArriboPopup() {
         {/* Botón cerrar */}
         <button
           ref={cerrarRef}
-          onClick={handleCerrarTemporal}
-          aria-label="Cerrar aviso por esta sesión"
+          onClick={handleDescartar}
+          aria-label={esReprogramacion ? "Cerrar aviso por esta sesión" : "Descartar aviso"}
           className="absolute right-4 top-4 flex min-h-11 min-w-11 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 transition"
         >
           <FiX size={18} />
@@ -246,6 +270,11 @@ export default function ArriboPopup() {
             <h3 id="titulo-notificacion-emergente" className="text-base font-bold text-gray-800 mt-1">
               {activo.titulo}
             </h3>
+            {/* La campana siempre mostró la antigüedad; el popup no, y por eso un
+                aviso viejo se leía como recién llegado. */}
+            <p className="text-[11px] text-gray-500">
+              {tiempoRelativoNotificacion(activo.created_at)}
+            </p>
           </div>
         </div>
 

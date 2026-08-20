@@ -3,7 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
-import { crearNotificacion } from "@/lib/notificaciones";
+import { cerrarAlertasArriboDePedido, crearNotificacion } from "@/lib/notificaciones";
 import { calcularMetaDiaria, ventasHoy } from "@/lib/metas";
 import { aUnitCodeSunat } from "@/lib/sunat/unidades";
 import { descontarInventarioPedido, reponerInventarioPedido } from "@/lib/inventario";
@@ -203,6 +203,9 @@ export async function POST(request: Request) {
       }
     }
 
+    // El pedido dejó de estar en camino: sus alertas de arribo ya no aplican.
+    await cerrarAlertasArriboDePedido(id);
+
     // Notificar a la asesora del pedido (no bloqueante)
     const asesorInfo = await sql`
       SELECT cliente, asesor_id FROM pedidos WHERE id = ${id}
@@ -332,6 +335,10 @@ export async function PATCH(request: Request) {
     // Reponer el inventario descontado por la entrega (si la hubo). Idempotente
     // por el mismo guard `inventario_descontado`; no bloqueante.
     await reponerInventarioPedido(sql, id, session.user.id ?? null);
+
+    // Los flags de arribo vuelven a FALSE arriba: si quedaran alertas viejas sin
+    // leer, el próximo arribo real se mezclaría con ellas en el popup.
+    await cerrarAlertasArriboDePedido(id);
 
     return NextResponse.json({
       message: "Entrega revertida. El pedido vuelve a Asignado.",
