@@ -91,14 +91,17 @@ describe("construirTurnos", () => {
 });
 
 describe("construirSystemPrompt", () => {
-  it("incluye la verdad del negocio: distritos, precios reales, horario y mínimos", () => {
+  it("incluye la verdad del negocio: distritos, horario, mínimos y prohíbe dar precios", () => {
     const p = construirSystemPrompt(contextoDePrueba());
     for (const distrito of CONFIG_BOT_DEFAULT.distritos_cobertura) {
       expect(p).toContain(distrito);
     }
-    expect(p).toContain("S/ 10.50 por kg");
-    expect(p).toContain("S/ 18.00 por kg");
-    expect(p).toContain("S/ 35.00 por unidad");
+    // NUNCA debe inyectar precios numéricos en el prompt
+    expect(p).not.toContain("S/ 10.50");
+    expect(p).not.toContain("S/ 18.00");
+    expect(p).not.toContain("S/ 35.00");
+    expect(p).toContain("REGLA DE ORO DE PRECIOS");
+    expect(p).toContain("NUNCA des precios");
     expect(p).toContain("5 kg para hogar");
     expect(p).toContain("Yape");
   });
@@ -138,10 +141,11 @@ describe("construirSystemPrompt", () => {
     expect(p).toContain("No le vuelvas a pedir estos datos");
   });
 
-  it("si no hay precios, PROHÍBE cotizar en vez de inventar", () => {
-    const p = construirSystemPrompt(contextoDePrueba({ carta: [], cartaDegradada: true }));
-    expect(p).toContain("NO tienes la lista de precios");
-    expect(p).not.toContain("S/ 10.50");
+  it("prohíbe dar precios y exige derivar a la asesora humana", () => {
+    const p = construirSystemPrompt(contextoDePrueba());
+    expect(p).toContain("PROHIBIDO DAR PRECIOS");
+    expect(p).toContain("asesora");
+    expect(p).toContain("[HANDOFF]");
   });
 
   it("mete las instrucciones del admin al final y acotadas", () => {
