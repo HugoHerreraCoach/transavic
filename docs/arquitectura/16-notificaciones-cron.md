@@ -122,10 +122,15 @@ al cerrar la pestaña; en celular, cada apertura desde un enlace es sesión nuev
 Reglas vigentes:
 
 - **`cerrarAlertasArriboDePedido(pedidoId)`** (`src/lib/notificaciones.ts`) marca leídas
-  las alertas de arribo pendientes del pedido. La llaman las cuatro transiciones que
-  sacan al pedido de `En_Camino`: entregar/fallar, revertir entrega, cancelar viaje y
-  reprogramar. Es best-effort (nunca lanza) e idempotente — la offline-queue del
-  repartidor repite el POST de entrega.
+  las alertas de arribo pendientes del pedido. La llaman **las cinco** vías que sacan al
+  pedido de `En_Camino`: entregar/fallar, revertir entrega, cancelar viaje, reprogramar
+  y el **PATCH genérico `/api/pedidos/[id]`** (el "Entregar" de la lista del dashboard y
+  el "desasignar" de Despacho — es el camino más usado cuando el motorizado no marcó la
+  entrega desde su app, y se pasó por alto en la primera versión del fix: lo cazó la
+  revisión adversarial). Es best-effort (nunca lanza) e idempotente — la offline-queue
+  del repartidor repite el POST de entrega. **Si agregas una transición nueva que cierre
+  un pedido, llámala también**: sin eso el backlog de alertas huérfanas se reacumula y
+  hay que repetir la data-op.
 - **`avisoArriboVigente(createdAt, ahora)`** (`src/lib/eta-reparto.ts`, puro y con
   tests) decide si un aviso todavía puede interrumpir: solo dentro de
   `VIGENCIA_POPUP_ARRIBO_MS` (1 h). Fuera de esa ventana sigue en la campana, pero no

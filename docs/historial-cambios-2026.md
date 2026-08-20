@@ -78,6 +78,29 @@ Verificación: `tsc --noEmit` limpio, 160/160 tests, y el render de los botones
 comprobado en el dev server. Regla que queda: *el popup interrumpe solo con lo que está
 pasando; lo demás vive en la campana.*
 
+### Postdata: la revisión adversarial encontró el camino que faltaba (commit `5cfdd3e`)
+
+Tras desplegar se corrió una revisión multi-agente sobre el propio commit (4 dimensiones
+— SQL, flujos, UI, endpoint/data-op — y cada hallazgo pasado por un verificador
+instruido para refutarlo). De 28 agentes salieron **3 hallazgos confirmados, todos el
+mismo y ninguno crítico ni alto**: `cerrarAlertasArriboDePedido` se cableó en cuatro
+sitios pero **faltaba en el PATCH genérico `/api/pedidos/[id]`**, que es el camino de
+`table.tsx:executeDelivery` ("Entregar" desde la lista del dashboard) y de
+`despacho-content.tsx:handleDesasignar`. Es decir: el invariante no se cumplía
+justamente por la vía que usa la asesora cuando el motorizado no marca la entrega desde
+su app — el caso original del reporte. Sin eso, el filtro de vigencia tapaba el síntoma
+pero el backlog de filas huérfanas se seguía acumulando y la data-op habría que
+repetirla.
+
+El verificador refutó dos partes del hallazgo que vale registrar: (a) **no** hace falta
+resetear `notificado_por_llegar`/`notificado_llegada` en ese PATCH — el único camino a
+`En_Camino` es `/iniciar-viaje`, que ya los limpia en cada viaje, y el claim de
+`/api/repartidor/ubicacion` exige `estado='En_Camino'`, así que un flag huérfano no puede
+disparar ni suprimir nada; (b) la severidad no es alta porque toda vía de descarte del
+popup ya marca leído. El fix quedó en 3 líneas, con la condición evaluada en JS
+(gotcha #45c) y dentro del bloque que aplicó el UPDATE, para no cerrar jamás la alerta
+de un reparto vivo.
+
 ---
 
 ## 19-20 ago 2026 (noche) — Credenciales de Consulta Integrada creadas: las 9 boletas atascadas de Avícola por fin hablaron
