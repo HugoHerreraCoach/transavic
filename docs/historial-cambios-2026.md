@@ -49,9 +49,11 @@ SUNAT exige el **Resumen Diario** de ese día (extemporáneo). Implicancias:
   futuros `por_confirmar` de Avícola SÍ llegan a tiempo. El limbo de semanas era exclusivamente
   por la credencial faltante.
 - Para las 4 no-registradas viejas la salida práctica es **boleta NUEVA con fecha de hoy**
-  (misma serie, número siguiente): decisión de Hugo (20 ago) — las 2 de Yesica las re-emite
-  **ella misma** (instrucción enviada), y **315/274 quedan quietas** hasta hablar con el contador
-  (la 274 es del 26/07: mes cerrado, la re-emisión cruzaría el período).
+  (misma serie, número siguiente): decisión de Hugo (20 ago) — a las 2 de Yesica (318/319) el
+  admin les corrió el reintento formal ahí mismo (SUNAT las rechazó "fuera de fecha" → quedaron
+  `rechazado`, número liberado) para que a ella le quede UN solo paso: emitir la boleta nueva
+  desde el pedido (instrucción enviada); **315 ya estaba `rechazado` y 274 queda quieta** hasta
+  hablar con el contador (es del 26/07: mes cerrado, la re-emisión cruzaría el período).
 
 ### 4) Pendientes que deja esta noche
 
