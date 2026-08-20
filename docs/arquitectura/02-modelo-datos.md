@@ -87,6 +87,13 @@ CREATE TABLE users (
     password  TEXT NOT NULL,                         -- hash bcrypt
     role      VARCHAR(50) NOT NULL                   -- 'admin' | 'asesor' | 'repartidor' | 'produccion'
 );
+-- Banderas POR USUARIO agregadas después (todas viajan en el JWT ⇒ aplican al
+-- próximo login del usuario). Ver doc 03 §2.2:
+--   activo                    BOOLEAN  -- FALSE = ex-empleado: el login lo rechaza. JAMÁS borrar la fila.
+--   solo_lectura              BOOLEAN  -- observador: el middleware bloquea toda escritura (gotcha #51)
+--   vistas_permitidas         TEXT[]   -- secciones que ve. NULL = sin restricción
+--   empresas                  TEXT[]   -- marcas que atiende en el reparto de leads. NULL/[] = todas
+--   puede_editar_precio_venta BOOLEAN  -- asesora que puede cambiar productos.precio_venta (gotcha #73)
 
 -- 2. Clientes
 CREATE TABLE clientes (

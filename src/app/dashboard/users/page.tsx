@@ -11,7 +11,9 @@ async function getUsers(): Promise<User[]> {
     try {
         const connectionString = process.env.DATABASE_URL!;
         const sql = neon(connectionString);
-        const data = await sql`SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas FROM users ORDER BY activo DESC NULLS FIRST, name ASC`;
+        // ⚠️ Esta lista es la del PRIMER render: una bandera que falte acá se ve
+        // apagada en el modal hasta el primer refetch, aunque en la DB esté en TRUE.
+        const data = await sql`SELECT id, name, role, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, solo_lectura, vistas_permitidas, puede_editar_precio_venta FROM users ORDER BY activo DESC NULLS FIRST, name ASC`;
         return data as User[];
     } catch (error) {
         console.error("Database Error:", error);

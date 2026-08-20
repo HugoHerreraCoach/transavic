@@ -2,14 +2,17 @@
 import { neon } from "@neondatabase/serverless";
 import { NextResponse } from "next/server";
 import { auth } from "@/auth";
+import { evaluarEdicionCatalogo } from "@/lib/permisos-precios";
 
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // La sesión se valida ANTES de leer el body: así un body corrupto sin sesión
+    // sigue devolviendo 401 y no un 500.
     const session = await auth();
-    if (!session?.user || session.user.role !== "admin") {
+    if (!session?.user) {
       return NextResponse.json({ error: "No autorizado." }, { status: 401 });
     }
 
@@ -18,6 +21,15 @@ export async function PATCH(
     if (!connectionString) throw new Error("DATABASE_URL no está definida");
 
     const body = await request.json();
+
+    // Permiso POR CAMPO, no por endpoint: el admin edita todo; una asesora con
+    // `puede_editar_precio_venta` solo puede tocar el precio de venta. Este PATCH
+    // acepta también el costo y `activo`, así que el guard mira el body entero.
+    const permiso = evaluarEdicionCatalogo(session.user, Object.keys(body ?? {}));
+    if (!permiso.ok) {
+      return NextResponse.json({ error: permiso.error }, { status: permiso.status });
+    }
+
     const sql = neon(connectionString);
 
     // Catálogo unificado (mayo 2026): el PATCH ahora acepta también precio_venta,
@@ -183,7 +195,15 @@ export async function PATCH(
       }
     }
 
-    return NextResponse.json({ data: result[0] });
+    // El RETURNING trae `precio_compra` y el cliente hace `{...p, ...data}`: sin
+    // este filtro, quien solo puede tocar el precio de venta recibiría el COSTO
+    // en la respuesta (visible en la pestaña de red). Misma regla que el GET.
+    const producto =
+      permiso.alcance === "total"
+        ? result[0]
+        : { ...result[0], precio_compra: null };
+
+    return NextResponse.json({ data: producto });
   } catch (error) {
     console.error("Error al actualizar producto:", error);
     return NextResponse.json(

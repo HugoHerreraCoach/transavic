@@ -76,6 +76,12 @@ export type User = {
   /** Lista de hrefs de sección que puede ver/abrir. NULL = sin restricción (defaults del rol). */
   vistas_permitidas?: string[] | null;
   /**
+   * TRUE = esta asesora puede cambiar `productos.precio_venta` desde el catálogo.
+   * SOLO eso: no ve el costo ni el margen, y no crea ni desactiva productos.
+   * El admin no la necesita (puede por rol). Aplica desde su próximo login.
+   */
+  puede_editar_precio_venta?: boolean;
+  /**
    * Marcas que atiende en el REPARTO DE LEADS del CRM ('Transavic' | 'Avícola de Tony').
    * NULL o vacío = todas. No limita lo que ve en el resto del sistema: solo decide
    * a quién le pueden caer los leads nuevos de cada marca.

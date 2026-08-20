@@ -7,8 +7,17 @@
 
 import CatalogoUnificado from "./catalogo-unificado";
 
-// isAdmin=false (asesoras): catálogo en SOLO LECTURA, sin precio de compra,
-// margen ni acciones de edición — solo la lista de precios de venta.
-export default function CatalogoClient({ isAdmin }: { isAdmin: boolean }) {
-  return <CatalogoUnificado isAdmin={isAdmin} />;
+// Dos permisos DISTINTOS, a propósito:
+//   isAdmin                → gestión completa: costo, margen, historial, alta y baja.
+//   puedeEditarPrecioVenta → solo cambiar el precio de venta (admin, o una asesora
+//                            con el permiso puntual que le da Antonio).
+// Una asesora sin el permiso ve la lista en SOLO LECTURA, como siempre.
+export default function CatalogoClient({
+  isAdmin,
+  puedeEditarPrecioVenta,
+}: {
+  isAdmin: boolean;
+  puedeEditarPrecioVenta: boolean;
+}) {
+  return <CatalogoUnificado isAdmin={isAdmin} puedeEditarPrecioVenta={puedeEditarPrecioVenta} />;
 }

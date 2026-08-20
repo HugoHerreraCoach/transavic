@@ -240,6 +240,11 @@ export default function UsersClientPage({ initialUsers }: UsersClientPageProps) 
                                                                 Solo lectura
                                                             </span>
                                                         )}
+                                                        {user.puede_editar_precio_venta && (
+                                                            <span className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 align-middle">
+                                                                Precios
+                                                            </span>
+                                                        )}
                                                         {Array.isArray(user.vistas_permitidas) && user.vistas_permitidas.length > 0 && (
                                                             <span className="ml-2 inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-600 align-middle">
                                                                 {user.vistas_permitidas.length} vista{user.vistas_permitidas.length === 1 ? '' : 's'}

@@ -17,9 +17,14 @@
 // metas/reportes hasta que lo seteen).
 //
 // Modo asesora (isAdmin=false): SOLO LECTURA de la lista de precios de venta —
-// sin columna Compra/Margen, sin edición inline ni modales, sin alta de
-// productos (el backend ya devuelve precio_compra: null para ese rol).
+// sin columna Compra/Margen, sin modales, sin alta de productos (el backend ya
+// devuelve precio_compra: null para ese rol).
 // El botón/modal "Historial de precios" es SOLO admin.
+//
+// EXCEPCIÓN (20 ago 2026): una asesora con `puede_editar_precio_venta` puede
+// cambiar el PRECIO DE VENTA desde acá. Es el único permiso que se separa de
+// isAdmin: sigue sin ver costo ni margen, y sin crear ni desactivar productos.
+// Ver `src/lib/permisos-precios.ts` (el guard real vive en el servidor).
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -125,7 +130,13 @@ interface ModalNuevo {
   rendimiento_porcentaje: string;
 }
 
-export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
+export default function CatalogoUnificado({
+  isAdmin,
+  puedeEditarPrecioVenta,
+}: {
+  isAdmin: boolean;
+  puedeEditarPrecioVenta: boolean;
+}) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [loading, setLoading] = useState(true);
   // Umbrales del semáforo de margen, configurables desde /dashboard/configuracion.
@@ -283,7 +294,9 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
   // Edición inline de precio
   // ════════════════════════════════════════════════════════════════════
   const iniciarInline = (productoId: string, campo: InlineEdit["campo"], valorInicial: number | string | null | undefined) => {
-    if (!isAdmin) return; // asesora: lista de precios en solo lectura
+    if (!puedeEditarPrecioVenta) return; // asesora sin permiso: lista en solo lectura
+    // El COSTO nunca sale de admin, ni con el permiso de precio de venta.
+    if (campo === "precio_compra" && !isAdmin) return;
     setInline({
       productoId,
       campo,
@@ -316,7 +329,8 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
             `${actual?.nombre}\n` +
             `Precio venta: S/ ${ventaAnterior.toFixed(2)} → S/ ${num.toFixed(2)} ` +
             `(${pct.startsWith("-") ? "" : "+"}${pct}%)\n\n` +
-            `⚠️ Se aplicará automáticamente a todos los pedidos nuevos.`
+            `⚠️ Se aplica a todos los pedidos nuevos y es también el precio MÍNIMO ` +
+            `de venta: por debajo de este monto, cualquier asesora necesita autorización.`
         );
         if (!ok) return;
       }
@@ -634,7 +648,11 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
             Catálogo
           </h1>
           <p className="text-gray-500 mt-1 text-sm">
-            {isAdmin ? "Productos, precios y márgenes" : "Lista de precios de venta"} ·{" "}
+            {isAdmin
+              ? "Productos, precios y márgenes"
+              : puedeEditarPrecioVenta
+                ? "Lista de precios de venta · puedes actualizarlos"
+                : "Lista de precios de venta"} ·{" "}
             <span className="text-amber-700">precios <strong>con IGV incluido</strong></span>
           </p>
         </div>
@@ -764,10 +782,12 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
       ) : (
         <>
           {/* Pista de edición inline (descubrible sin tener que adivinar) */}
-          {isAdmin && (
+          {puedeEditarPrecioVenta && (
             <p className="hidden lg:flex items-center gap-1.5 text-xs text-gray-400 mb-2">
               <FiEdit2 className="h-3 w-3" />
-              Toca un precio de compra o venta para editarlo al instante.
+              {isAdmin
+                ? "Toca un precio de compra o venta para editarlo al instante."
+                : "Toca el precio de venta para cambiarlo."}
             </p>
           )}
           {/* Desktop */}
@@ -872,18 +892,18 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                         </td>
                       )}
 
-                      {/* Precio venta (admin: inline-editable; asesora: solo lectura) */}
+                      {/* Precio venta: editable por el admin y por la asesora con permiso */}
                       <td
                         className={`px-3 py-4 text-right text-sm ${
-                          isAdmin ? "group/celda cursor-pointer" : ""
+                          puedeEditarPrecioVenta ? "group/celda cursor-pointer" : ""
                         }`}
                         onClick={() =>
-                          isAdmin &&
+                          puedeEditarPrecioVenta &&
                           inline?.productoId !== p.id &&
                           iniciarInline(p.id, "precio_venta", p.precio_venta)
                         }
                       >
-                        {isAdmin && inline?.productoId === p.id && inline.campo === "precio_venta" ? (
+                        {puedeEditarPrecioVenta && inline?.productoId === p.id && inline.campo === "precio_venta" ? (
                           <CeldaInline
                             value={inline.valor}
                             onChange={(v) => setInline({ ...inline, valor: v })}
@@ -892,7 +912,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                             disabled={guardandoInline}
                           />
                         ) : sinPrecio ? (
-                          isAdmin ? (
+                          puedeEditarPrecioVenta ? (
                             <span className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 group-hover/celda:bg-amber-200 transition-colors">
                               <FiPlus className="h-3.5 w-3.5" /> Poner precio
                             </span>
@@ -903,7 +923,7 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                           <span className="inline-flex items-baseline gap-1.5 justify-end rounded-lg px-2 py-1 -mr-2 text-gray-900 tabular-nums group-hover/celda:bg-blue-50 group-hover/celda:text-blue-700 transition-colors">
                             <span className="text-xs text-gray-400 font-normal">S/</span>
                             <span className="text-base font-bold">{fmtMoney(p.precio_venta)}</span>
-                            {isAdmin && (
+                            {puedeEditarPrecioVenta && (
                               <FiEdit2 className="h-3 w-3 self-center text-gray-300 group-hover/celda:text-blue-500 transition-colors" />
                             )}
                           </span>
@@ -1027,7 +1047,21 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                       <div className="text-[11px] uppercase tracking-wide text-gray-400">
                         Precio de venta
                       </div>
-                      {sinPrecio ? (
+                      {/* En el celular no había edición inline: el admin abría el modal
+                          completo, que una asesora no puede usar (tiene costo y baja de
+                          producto). Sin esto el permiso no le serviría en el teléfono,
+                          que es donde trabaja. */}
+                      {inline?.productoId === p.id && inline.campo === "precio_venta" ? (
+                        <div className="mt-1.5">
+                          <CeldaInline
+                            value={inline.valor}
+                            onChange={(v) => setInline({ ...inline, valor: v })}
+                            onSave={guardarInline}
+                            onCancel={cancelarInline}
+                            disabled={guardandoInline}
+                          />
+                        </div>
+                      ) : sinPrecio ? (
                         isAdmin ? (
                           <button
                             onClick={() => abrirEdit(p)}
@@ -1035,9 +1069,27 @@ export default function CatalogoUnificado({ isAdmin }: { isAdmin: boolean }) {
                           >
                             <FiPlus className="h-3.5 w-3.5" /> Poner precio
                           </button>
+                        ) : puedeEditarPrecioVenta ? (
+                          <button
+                            onClick={() => iniciarInline(p.id, "precio_venta", null)}
+                            className="mt-1.5 inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold bg-amber-100 text-amber-800 active:scale-[0.97] transition"
+                          >
+                            <FiPlus className="h-3.5 w-3.5" /> Poner precio
+                          </button>
                         ) : (
                           <div className="mt-0.5 text-sm text-gray-300">—</div>
                         )
+                      ) : puedeEditarPrecioVenta ? (
+                        <button
+                          onClick={() => iniciarInline(p.id, "precio_venta", p.precio_venta)}
+                          className="flex items-baseline gap-1 tabular-nums mt-0.5 rounded-lg px-2 py-1 -ml-2 active:bg-blue-50 transition"
+                        >
+                          <span className="text-xs text-gray-400">S/</span>
+                          <span className="text-xl font-bold text-gray-900">
+                            {fmtMoney(p.precio_venta)}
+                          </span>
+                          <FiEdit2 className="h-3 w-3 self-center text-gray-300" />
+                        </button>
                       ) : (
                         <div className="flex items-baseline gap-1 tabular-nums mt-0.5">
                           <span className="text-xs text-gray-400">S/</span>

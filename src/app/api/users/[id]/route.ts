@@ -16,6 +16,8 @@ const UpdateUserSchema = z.object({
   role: z.enum(['admin', 'asesor', 'repartidor', 'produccion']).optional(),
   solo_lectura: z.boolean().optional(),
   vistas_permitidas: z.array(z.string()).nullable().optional(),
+  // Permiso puntual: cambiar SOLO productos.precio_venta desde el catálogo.
+  puede_editar_precio_venta: z.boolean().optional(),
   chofer_dni: z.string().trim().optional().nullable(),
   chofer_licencia: z.string().trim().optional().nullable(),
   vehiculo_placa: z.string().trim().optional().nullable(),
@@ -59,7 +61,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: parsedData.error.flatten().fieldErrors }, { status: 400 });
     }
     
-    const { name, password, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas } = parsedData.data;
+    const { name, password, role, solo_lectura, vistas_permitidas, puede_editar_precio_venta, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas } = parsedData.data;
 
     // Nadie puede desactivarse a sí mismo (evita dejar el sistema sin admins por accidente).
     if (activo === false && session.user.id === (new URL(request.url)).pathname.split("/").pop()) {
@@ -72,6 +74,7 @@ export async function PATCH(request: NextRequest) {
       !role &&
       solo_lectura === undefined &&
       vistas_permitidas === undefined &&
+      puede_editar_precio_venta === undefined &&
       chofer_dni === undefined &&
       chofer_licencia === undefined &&
       vehiculo_placa === undefined &&
@@ -98,6 +101,10 @@ export async function PATCH(request: NextRequest) {
     if (role) updates.role = role;
     if (solo_lectura !== undefined) updates.solo_lectura = solo_lectura;
     if (vistas_permitidas !== undefined) updates.vistas_permitidas = sanearVistas(vistas_permitidas);
+    if (puede_editar_precio_venta !== undefined) updates.puede_editar_precio_venta = puede_editar_precio_venta;
+    // Coherencia con el rol: el permiso de precios solo vive en una asesora. Si el
+    // PATCH mueve el usuario a otro rol, se apaga (el admin puede por su rol).
+    if (role && role !== "asesor") updates.puede_editar_precio_venta = false;
     if (password) {
       updates.password = await bcrypt.hash(password, 10);
     }
@@ -122,7 +129,7 @@ export async function PATCH(request: NextRequest) {
     const values = Object.values(updates);
 
     const [updatedUser] = await sql.query(
-      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, vistas_permitidas, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas`,
+      `UPDATE users SET ${setClauses} WHERE id = $${values.length + 1} RETURNING id, name, role, solo_lectura, vistas_permitidas, puede_editar_precio_venta, chofer_dni, chofer_licencia, vehiculo_placa, chofer_nombres, chofer_apellidos, activo_rotacion, orden_rotacion, leads_recibidos_hoy, activo, empresas`,
       [...values, id]
     );
 

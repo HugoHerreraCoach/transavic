@@ -26,6 +26,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
     const [choferNombres, setChoferNombres] = useState('');
     const [choferApellidos, setChoferApellidos] = useState('');
     const [soloLectura, setSoloLectura] = useState(false);
+    const [puedeEditarPrecioVenta, setPuedeEditarPrecioVenta] = useState(false);
     const [limitarVistas, setLimitarVistas] = useState(false);
     const [vistasSel, setVistasSel] = useState<string[]>([]);
     const isMouseDownInside = useRef(true);
@@ -51,6 +52,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setChoferNombres(userToEdit.chofer_nombres || '');
             setChoferApellidos(userToEdit.chofer_apellidos || '');
             setSoloLectura(Boolean(userToEdit.solo_lectura));
+            setPuedeEditarPrecioVenta(Boolean(userToEdit.puede_editar_precio_venta));
             const vistas = Array.isArray(userToEdit.vistas_permitidas) ? userToEdit.vistas_permitidas : [];
             setLimitarVistas(vistas.length > 0);
             setVistasSel(vistas);
@@ -64,6 +66,7 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             setChoferNombres('');
             setChoferApellidos('');
             setSoloLectura(false);
+            setPuedeEditarPrecioVenta(false);
             setLimitarVistas(false);
             setVistasSel([]);
         }
@@ -81,6 +84,9 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
             chofer_nombres: role === 'repartidor' ? choferNombres.trim() || null : null,
             chofer_apellidos: role === 'repartidor' ? choferApellidos.trim() || null : null,
             solo_lectura: soloLectura,
+            // Solo una asesora lo necesita: el admin puede por su rol. Si el rol cambia,
+            // la bandera se apaga sola (mismo criterio que los datos de chofer).
+            puede_editar_precio_venta: role === 'asesor' ? puedeEditarPrecioVenta : false,
             // null = sin restricción (acceso completo del rol). Solo se envía la lista
             // si el admin activó "Limitar a ciertas vistas" y seleccionó al menos una.
             vistas_permitidas: limitarVistas && vistasSel.length > 0 ? vistasSel : null,
@@ -200,6 +206,41 @@ export default function UserModal({ isOpen, onClose, onSave, userToEdit, isLoadi
                                 </span>
                             </label>
                         </div>
+
+                        {/* Permiso puntual de precios: solo tiene sentido en una asesora
+                            (el admin ya puede por su rol; producción y repartidor ni entran
+                            al catálogo). Pedido de Antonio para Yali, 20 ago 2026. */}
+                        {role === 'asesor' && (
+                            <div className="p-4 bg-amber-50/60 border border-amber-100 rounded-xl">
+                                <label htmlFor="puedeEditarPrecioVenta" className="flex items-start gap-3 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        id="puedeEditarPrecioVenta"
+                                        checked={puedeEditarPrecioVenta}
+                                        onChange={(e) => setPuedeEditarPrecioVenta(e.target.checked)}
+                                        className="mt-0.5 h-4 w-4 flex-shrink-0 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                    />
+                                    <span>
+                                        <span className="block text-sm font-semibold text-gray-800">Puede cambiar precios del catálogo</span>
+                                        <span className="block text-xs text-gray-500 leading-snug">
+                                            Podrá editar el <b>precio de venta</b> de los productos desde el Catálogo.
+                                            No ve el precio de compra ni el margen, y no puede crear ni desactivar productos.
+                                            El cambio aplica cuando vuelve a iniciar sesión.
+                                        </span>
+                                        <span className="mt-1.5 block text-xs text-amber-800 leading-snug">
+                                            ⚠️ El precio del catálogo es también el <b>precio mínimo</b> de venta: si lo baja,
+                                            baja el piso para todas las asesoras; si lo sube, los pedidos por debajo van a
+                                            necesitar autorización.
+                                        </span>
+                                        {puedeEditarPrecioVenta && soloLectura && (
+                                            <span className="mt-1.5 block text-xs font-semibold text-amber-700 leading-snug">
+                                                Con <b>Solo lectura</b> activo este permiso no tiene efecto: el sistema le bloquea toda modificación.
+                                            </span>
+                                        )}
+                                    </span>
+                                </label>
+                            </div>
+                        )}
 
                         <div className="p-4 bg-gray-50 border border-gray-100 rounded-xl">
                             <label htmlFor="limitarVistas" className="flex items-start gap-3 cursor-pointer">

@@ -9,6 +9,7 @@ declare module "next-auth" {
     role?: string;
     solo_lectura?: boolean;
     vistas_permitidas?: string[] | null;
+    puede_editar_precio_venta?: boolean;
   }
 
   interface Session {
@@ -18,6 +19,7 @@ declare module "next-auth" {
       name: string;
       solo_lectura?: boolean;
       vistas_permitidas?: string[] | null;
+      puede_editar_precio_venta?: boolean;
     };
   }
 }
@@ -40,6 +42,7 @@ export const authConfig = {
         token.name = user.name;
         token.solo_lectura = user.solo_lectura ?? false;
         token.vistas_permitidas = user.vistas_permitidas ?? null;
+        token.puede_editar_precio_venta = user.puede_editar_precio_venta ?? false;
       }
       return token;
     },
@@ -52,6 +55,7 @@ export const authConfig = {
         session.user.solo_lectura = Boolean(token.solo_lectura);
         session.user.vistas_permitidas =
           (token.vistas_permitidas as string[] | null) ?? null;
+        session.user.puede_editar_precio_venta = Boolean(token.puede_editar_precio_venta);
       }
       return session;
     },

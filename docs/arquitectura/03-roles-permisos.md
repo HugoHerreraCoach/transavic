@@ -60,6 +60,25 @@ export function hasPermission(role, permission): boolean {
 
 Al agregar una pantalla o endpoint nuevo, **preferir `hasPermission()`** en lugar de comparar strings de rol a mano — así el permiso queda declarado en un solo lugar.
 
+### 2.2 Permisos POR USUARIO (no por rol) — banderas en `users`
+
+`PERMISSIONS` responde "¿qué puede este ROL?". Hay tres cosas que se deciden **por persona**, y
+por eso viven como columnas de `users` que viajan en el JWT (⇒ **aplican al próximo login**):
+
+| Bandera | Qué hace | Dónde se aplica |
+|---|---|---|
+| `solo_lectura` | Ve todo lo de su rol pero no escribe nada | **middleware** (`auth.config.ts:authorized`), transversal por método HTTP |
+| `vistas_permitidas` | Limita QUÉ secciones ve/abre | middleware (`src/lib/vistas.ts`) |
+| `puede_editar_precio_venta` | Deja que **una asesora** cambie `productos.precio_venta` | **guard por endpoint** (`src/lib/permisos-precios.ts`) |
+
+⚠️ El de precios es **el primero que no puede vivir en el middleware**: no depende de la ruta ni
+del método, sino de **qué campos trae el body** (`PATCH /api/productos/[id]` acepta también el
+costo y `activo`). La regla está en `evaluarEdicionCatalogo()`, pura y con tests; al sumar otro
+permiso puntual de este tipo, extender ese helper en vez de comparar roles a mano.
+
+⚠️ `CAN_MANAGE_PRICES: ["admin"]` de la tabla de arriba **quedó desactualizado y sin uso**: el
+control real de precios es la bandera por usuario, no ese permiso por rol.
+
 ### Visibilidad de los módulos nuevos (expansión ERP 2026)
 
 | Módulo | Roles que lo ven |

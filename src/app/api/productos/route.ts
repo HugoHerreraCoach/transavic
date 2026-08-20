@@ -22,7 +22,13 @@ export async function GET(request: Request) {
     // El catálogo ahora lo ven también las asesoras (11 jun 2026), pero el
     // PRECIO DE COMPRA (margen del negocio) es SOLO de admin — y el control
     const session = await auth();
-    const esAdmin = session?.user?.role === "admin";
+    // Exigir sesión: el middleware solo protege /dashboard, así que sin este
+    // guard la lista completa CON PRECIOS DE VENTA se respondía a cualquiera sin
+    // login (20 ago 2026). Todos los consumidores están dentro del dashboard.
+    if (!session?.user) {
+      return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+    }
+    const esAdmin = session.user.role === "admin";
 
     const connectionString = process.env.DATABASE_URL;
     if (!connectionString) {

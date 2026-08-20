@@ -8,6 +8,77 @@
 
 ---
 
+## 20 ago 2026 — Yali puede cambiar precios: el primer permiso por usuario (no por rol)
+
+**Qué pidió Antonio.** Que **Yali**, una asesora de ventas, sea la única (además de él) que
+pueda cambiar los precios, y que el admin **elija desde el modal de usuarios** quién tiene
+ese permiso — no cablearlo al código ni dárselo a todas las asesoras.
+
+**Decisiones tomadas con Hugo:** alcance = solo el **precio de venta del catálogo** (no
+aprobar autorizaciones de precio bajo); Antonio **conserva** el permiso; Yali **no ve** el
+costo ni el margen; **sin piso de costo** (puede poner el precio que quiera, incluso bajo
+costo — libertad para ofertas).
+
+### Los dos hallazgos que condicionaron el diseño
+
+1. **El precio de catálogo ES el precio mínimo.** No existe columna `precio_minimo`: el
+   piso que dispara las autorizaciones sale de `productos.precio_venta`
+   (`lib/autorizaciones-precio.ts:85-91`). O sea que **quien cambia el precio de lista mueve
+   el piso de todo el equipo**. Quedó advertido en el `window.confirm` (para todos, también
+   para Antonio) y en el texto del permiso.
+2. **`PATCH /api/productos/[id]` edita mucho más que el precio**: acepta `precio_compra`,
+   `nombre`, `codigo`, `categoria`, `activo`… en el mismo body. Ampliar el guard del rol le
+   habría dado a Yali el **costo** y la baja de productos. Por eso el permiso terminó siendo
+   **por campo**, no por endpoint.
+
+### Cómo quedó
+
+- **`users.puede_editar_precio_venta`** (migración `migrate-permiso-precio-venta-2026-08-20.sql`),
+  réplica exacta del patrón `solo_lectura`: viaja en el JWT ⇒ **aplica al próximo login**;
+  `src/auth.ts` no se tocó porque usa `SELECT *`. Se llama `precio_venta` y no "precios" a
+  propósito, para que nadie meta el costo bajo el mismo permiso.
+- **`src/lib/permisos-precios.ts`** (nuevo, puro, 10 tests) — `evaluarEdicionCatalogo(sesion, campos)`:
+  admin = `alcance:"total"`; asesora con bandera y solo `precio_venta` = `"solo_precio_venta"`;
+  cualquier otro campo → 403 **nombrándolo**; rol distinto de `asesor` con la bandera encendida
+  (dato viejo tras un cambio de rol) → 403. Fail-closed. Es el **primer guard por endpoint del
+  proyecto**: hasta ahora el único patrón de permiso era el middleware (`solo_lectura`).
+- **Fuga de costo tapada**: el `RETURNING` del PATCH devolvía `precio_compra` y el cliente hace
+  `{...p, ...data}` — se devuelve `null` a quien no es admin, mismo criterio que el GET.
+- **UI**: `isAdmin` (costo, margen, historial, alta, baja) quedó **separado** de
+  `puedeEditarPrecioVenta` (solo la celda de precio de venta). Se agregó **edición inline en la
+  tarjeta MÓVIL**, que no existía para nadie: el admin usaba el modal completo, que una asesora
+  no puede abrir — sin eso el permiso no le servía en el teléfono, que es donde trabaja.
+- **Coherencia con el rol en 3 capas**: el modal manda `false` si el rol no es asesora; el PATCH
+  de usuarios la apaga si el rol cambia; y el helper la ignora si el rol no es `asesor`.
+
+### De paso: el catálogo estaba abierto sin login
+
+`GET /api/productos` calculaba `esAdmin` de una sesión **opcional** y seguía aunque no hubiera
+ninguna: la lista completa **con precios de venta** se respondía a cualquiera sin iniciar sesión
+(el middleware solo protege `/dashboard`). El `CLAUDE.md` afirmaba lo contrario. Se agregó el
+401. Verificado antes de tocarlo que los 8 consumidores están todos dentro del dashboard (o en
+`ProductSelector`), y que la raíz `/` redirige a `/dashboard/nuevo-pedido`: no había ninguna
+página pública que dependiera del hueco.
+
+### Consecuencia a tener presente
+
+Cuando Yali cambie su primer precio queda como autora en `precios_productos.created_by`, y
+`DELETE /api/users/[id]` bloquea con 409 a cualquiera con historial: **a partir de ahí solo se
+la puede desactivar, no borrar**. Es lo correcto (la auditoría manda), pero conviene saberlo.
+
+### Lo que NO entró (anotado para después)
+
+- `produccion` mueve `productos.precio_compra` al registrar compras, sin histórico ni auditoría
+  (`api/compras/route.ts:239`).
+- `produccion` puede reescribir el precio de venta de un pedido al pesar, **sin piso ni rastro**
+  (`produccion/pedidos/[id]/pesos/route.ts:87-103`): el bypass más silencioso del sistema de
+  autorizaciones.
+- POS de planta y ventas de campo: precio libre, sin piso.
+- Los `@deprecated` `/api/precios` y `/api/precios/[id]` siguen expuestos (admin-only). Si algún
+  día se amplían, su guard tiene que pasar por el mismo helper.
+
+---
+
 ## 20 ago 2026 — Los avisos de "motorizado en destino" perseguían pedidos ya entregados
 
 **Cómo empezó.** La misma asesora que reportó las boletas mandó un segundo audio: *"este
