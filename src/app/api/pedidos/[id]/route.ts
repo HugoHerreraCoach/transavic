@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/auth";
 import { calcularCambios, tocaCamposAuditables } from "@/lib/pedido-historial";
+import { cerrarAlertasArriboDePedido } from "@/lib/notificaciones";
 
 export const dynamic = "force-dynamic";
 
@@ -265,6 +266,15 @@ export async function PATCH(request: Request) {
       const query = `UPDATE pedidos SET ${setClauses} WHERE id = $${params.length + 1}`;
       params.push(id);
       await sql.query(query, params);
+
+      // El pedido dejó de estar en camino: sus alertas de arribo ya no describen
+      // nada. Este es el camino de la LISTA del dashboard ("Entregar" de la tabla)
+      // y del "desasignar" de Despacho — tan real como entregar/cancelar-viaje, que
+      // ya lo hacían. La condición se decide en JS, no en SQL (gotcha #45c), y la
+      // función nunca lanza: una notificación no puede romper la edición.
+      if (dataToUpdate.estado && dataToUpdate.estado !== "En_Camino") {
+        await cerrarAlertasArriboDePedido(id);
+      }
     }
 
     // ── Auditoría: guardar el historial de la corrección (no bloqueante: si
