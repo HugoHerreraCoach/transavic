@@ -104,3 +104,44 @@ actual del cliente y, si ninguno existe, los administradores.
 `/dashboard?pedido=<uuid>`. Cerrar el popup guarda su ID en `sessionStorage`: no vuelve
 a interrumpir en esa sesión, pero permanece no leído en la campana. Si la aplicación
 estaba cerrada, la fila persistente aparece al regresar.
+
+### 3.1 Vigencia del popup: una reprogramación espera, un arribo caduca (20 ago 2026)
+
+Esa persistencia es correcta para `pedido_reprogramado` (es agenda: la asesora debe
+verla aunque vuelva mañana) y **equivocada para las alertas de arribo**. Una asesora
+reportó que avisos de "motorizado en destino" de pedidos entregados uno o dos días
+antes le seguían saltando a pantalla completa, repetidos.
+
+No se re-creaban: `POST /api/repartidor/ubicacion` solo mira pedidos `En_Camino` **de
+hoy** con claim atómico, así que es imposible generar hoy una alerta de un pedido de
+ayer. El problema era que **una notificación no leída no caduca nunca**
+(`limpiarNotificacionesAntiguas` borra solo las leídas) y el popup resucitaba el
+backlog en cada sesión nueva, porque su anti-repetición vive en `sessionStorage` (muere
+al cerrar la pestaña; en celular, cada apertura desde un enlace es sesión nueva).
+
+Reglas vigentes:
+
+- **`cerrarAlertasArriboDePedido(pedidoId)`** (`src/lib/notificaciones.ts`) marca leídas
+  las alertas de arribo pendientes del pedido. La llaman las cuatro transiciones que
+  sacan al pedido de `En_Camino`: entregar/fallar, revertir entrega, cancelar viaje y
+  reprogramar. Es best-effort (nunca lanza) e idempotente — la offline-queue del
+  repartidor repite el POST de entrega.
+- **`avisoArriboVigente(createdAt, ahora)`** (`src/lib/eta-reparto.ts`, puro y con
+  tests) decide si un aviso todavía puede interrumpir: solo dentro de
+  `VIGENCIA_POPUP_ARRIBO_MS` (1 h). Fuera de esa ventana sigue en la campana, pero no
+  encima de la pantalla. Fecha inválida o futura = no vigente (fail-safe).
+- La **✕ y Escape** descartan igual que el botón: en un arribo eso significa marcarlo
+  leído. Antes solo el botón gris lo persistía y la ✕ escribía en `sessionStorage`, así
+  que el gesto más natural dejaba la alerta viva para siempre.
+- El popup **muestra la antigüedad** del aviso (`tiempoRelativoNotificacion`), como ya
+  hacía la campana: sin eso, un aviso de anteayer se lee idéntico a uno en vivo.
+- Backlog histórico: `scripts/cerrar-alertas-arribo-huerfanas-2026-08-20.sql`
+  (idempotente; solo cierra arribos no leídos cuyo pedido ya no está `En_Camino`).
+
+⚠️ **Trampa de Tailwind v4 encontrada de paso:** el botón principal del popup usaba
+`bg-emerald-650` / `bg-indigo-650`. Esos tonos **no existen** (la paleta va …600, 700) y
+no están definidos en el `@theme` de `globals.css`, así que la clase no generaba CSS: el
+botón quedaba **sin fondo y con `text-white`**, invisible sobre el modal blanco, con
+aspecto de campo de texto vacío. Al escribir un tono fuera de la escala, Tailwind no
+avisa: simplemente no pinta. Quedan usos análogos por limpiar (`border-gray-150`,
+`text-red-650`, `text-slate-650`, `text-gray-650`) que solo afectan bordes o texto.

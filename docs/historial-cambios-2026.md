@@ -8,6 +8,78 @@
 
 ---
 
+## 20 ago 2026 — Los avisos de "motorizado en destino" perseguían pedidos ya entregados
+
+**Cómo empezó.** La misma asesora que reportó las boletas mandó un segundo audio: *"este
+cliente ayer se atendió y la notificación me está llegando hoy día… y así con varios
+clientes, los pedidos que ya se entregaron ayer o antes de ayer me siguen llegando las
+notificaciones, y eso a veces confunde"*.
+
+### Lo que NO estaba pasando
+
+No se re-creaban. `POST /api/repartidor/ubicacion` solo considera pedidos `En_Camino`
+**de hoy**, con claim atómico (`WHERE notificado_llegada = FALSE AND estado='En_Camino'
+RETURNING`) y descarta pings con `capturedAt` de más de 120 s. Los pings GPS tampoco
+pasan por la offline-queue (sus tipos son entregar/fallido/iniciar-viaje/subir-foto/
+pos-venta). El productor del gotcha #69 está correcto: **es imposible generar hoy una
+alerta de un pedido de ayer**.
+
+### Lo que sí pasaba: nadie apagaba la alerta, y el popup la resucitaba
+
+Tres piezas se sumaron:
+
+1. **Una notificación no leída no caduca nunca.** `limpiarNotificacionesAntiguas` borra
+   solo `leida = TRUE` — correcto para no tragarse pendientes reales, pero nadie cerraba
+   la alerta de arribo cuando el pedido salía de `En_Camino`. Entregar creaba una
+   notificación *nueva* (`pedido_entregado`) y dejaba viva la de arribo.
+2. **`ArriboPopup` no filtraba por antigüedad ni por estado del pedido**: cualquier
+   arribo no leído del top-30 volvía a ocupar la pantalla completa.
+3. **Su anti-repetición vivía en `sessionStorage`**, que muere al cerrar la pestaña. En
+   celular cada apertura desde un enlace de WhatsApp es sesión nueva → el backlog entero
+   volvía a desfilar, uno cada 15 s (el popup toma `alertasArribo[0]`, así que al cerrar
+   uno aparecía el siguiente: el "me sigue llegando").
+
+Y una asimetría que empeoraba todo: el botón gris "Cerrar" sí marcaba leída, pero **la ✕
+y Escape solo escribían en `sessionStorage`** — el gesto más natural dejaba la alerta
+viva para siempre.
+
+### El bug visual que empujaba a usar la ✕
+
+El botón principal usaba **`bg-emerald-650`** (y `bg-indigo-650`). Esos tonos **no
+existen** en Tailwind v4 ni están definidos en el `@theme` de `globals.css`, así que la
+clase no genera CSS: el botón quedaba **sin fondo, con `text-white`**, invisible sobre el
+modal blanco. En la captura que mandó la asesora se ve como **un campo de texto vacío**
+al lado de "Cerrar" — no sabía cuál era la acción correcta. Verificado en local
+renderizando ambas variantes lado a lado: con `-650` salen dos rectángulos vacíos; con
+`-600`, los botones verde e índigo con su texto. **Tailwind no avisa cuando el tono está
+fuera de la escala: simplemente no pinta.**
+
+### El arreglo (commit `8669372`, en producción el 20 ago)
+
+- **`cerrarAlertasArriboDePedido(pedidoId)`** en `lib/notificaciones.ts`: marca leídas
+  las alertas de arribo pendientes del pedido. La llaman las cuatro transiciones que lo
+  sacan de `En_Camino` (entregar/fallar, revertir entrega, cancelar viaje, reprogramar
+  cuando resetea el reparto). Best-effort e idempotente (la offline-queue repite el POST).
+- **`avisoArriboVigente()`** en `lib/eta-reparto.ts` (puro, 7 tests): el popup solo
+  interrumpe con avisos de la última hora (`VIGENCIA_POPUP_ARRIBO_MS`); fuera de eso
+  quedan en la campana. Fecha inválida o futura = no vigente (fail-safe). La
+  reprogramación conserva su persistencia: es agenda, no un evento que se agota.
+- **✕ y Escape** ahora descartan de verdad el arribo (marcan leído); si el PATCH falla,
+  el popup igual se cierra en la sesión en vez de quedarse trabado.
+- El popup **muestra la antigüedad** del aviso, como ya hacía la campana.
+- **`PATCH /api/notificaciones/[id]/leida`** devolvía 200 aunque no actualizara nada (id
+  parseado a mano del pathname, sin `::uuid` ni `RETURNING`): ahora valida el UUID, usa
+  `params` y responde 404 si no tocó ninguna fila.
+- Backlog histórico: **`scripts/cerrar-alertas-arribo-huerfanas-2026-08-20.sql`**
+  (idempotente, acotado: solo arribos no leídos cuyo pedido ya no está `En_Camino`; una
+  alerta de un reparto vivo no se toca). **Pendiente de aplicar a producción por psql.**
+
+Verificación: `tsc --noEmit` limpio, 160/160 tests, y el render de los botones
+comprobado en el dev server. Regla que queda: *el popup interrumpe solo con lo que está
+pasando; lo demás vive en la campana.*
+
+---
+
 ## 19-20 ago 2026 (noche) — Credenciales de Consulta Integrada creadas: las 9 boletas atascadas de Avícola por fin hablaron
 
 **Cómo empezó.** Yesica reenvió el mismo síntoma del 11 ago (B002-318/319 "no las acepta SUNAT
