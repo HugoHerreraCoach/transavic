@@ -167,6 +167,8 @@ inventa una constancia. F002-413, en cambio, quedó aceptada con CDR legible.
 
 Para boleta, `estadoCp=0` se normaliza internamente como evidencia `0011`: deben existir dos consultas independientes después de la espera antes de pasar a `no_registrado`. Como Consulta Integrada no informa rechazo ni entrega CDR, una boleta aceptada por esta vía queda `aceptado` con `tieneCdr=false` sin iniciar un recuperador de CDR. Un rechazo concluyente de 03 solo puede venir del CDR recibido durante `sendBill`, no de esta consulta REST.
 
+⚠️ **El canal individual de boletas caduca a los 5 días** (verificado en producción el 20 ago 2026 con B002-315): `sendBill` de una boleta con `IssueDate` de hace más de 5 días devuelve rechazo *"Solo puede enviar el comprobante en un resumen diario - … Presentacion fuera de fecha (5 días)"*. Por eso el botón "Reintentar mismo número" de una `no_registrado` solo funciona si la boleta se destrabó a tiempo; una no-registrada vieja se resuelve emitiendo una **boleta nueva con fecha actual** (si cruza de mes tributario, consultarlo con el contador) o, si se quisiera validar el número original, con un Resumen Diario extemporáneo de ese día (hoy el RC está en modo simulación — gotcha #70). Las fallas de recepción `0130`/`0133` pueden registrar "a medias": SUNAT responde error pero la boleta queda aceptada — por eso jamás se re-emite sin consultar primero.
+
 La transición tardía a aceptado/observado ejecuta con claim de postproceso los efectos internos de la operación. Si el proceso muere en `aplicando`, el cron puede reclamarlo después y los índices únicos de deuda impiden duplicados.
 
 ### Credenciales REST de boletas

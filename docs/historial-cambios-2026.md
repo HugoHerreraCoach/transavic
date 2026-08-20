@@ -8,6 +8,66 @@
 
 ---
 
+## 19-20 ago 2026 (noche) — Credenciales de Consulta Integrada creadas: las 9 boletas atascadas de Avícola por fin hablaron
+
+**Cómo empezó.** Yesica reenvió el mismo síntoma del 11 ago (B002-318/319 "no las acepta SUNAT
+y no puedo eliminarlas; necesito subir los pagos"). Esta vez se ejecutó el pendiente no-código
+del 11 ago: crear la app de **Consulta de Validez de Comprobantes** en SOL del RUC 10.
+
+### 1) La credencial: creada, validada y en producción la misma noche
+
+- Con la sesión SOL de Antonio abierta (RUC 10), se navegó **Comprobantes de pago → Consulta de
+  Validez de Comprobante de Pago → Credenciales de API SUNAT** (en el RUC 10 el bloque cuelga de
+  "Personas"), se pulsó **HABILITAR** (sale un `confirm()` nativo del navegador — lo aceptó Hugo)
+  y se registró la app **"AVICOLA ERP CONSULTA CPE"** (URL `https://app.transavic.com`).
+  Runbook completo con las trampas del portal: [doc 11 §"Credenciales REST de boletas"](./arquitectura/11-comprobantes-sunat.md).
+- ⚠️ Trampa cazada en vivo: la entrada de menú raíz **"Credenciales de API SUNAT → Gestión…"**
+  es OTRA pantalla (registro unificado con checkboxes por API) y ahí vive la app de **GRE**
+  ("TRANSAVIC ERP", `1fcf156c-…`). No se tocó. El registro de Consulta es aparte y nació vacío.
+- La credencial se validó con `curl` ANTES de subirla (token OK al instante, sin la espera de
+  propagación que tuvieron las GRE) y hasta se consultó `validarcomprobante` a mano:
+  B002-318 y 319 → `estadoCp: 0` (NO EXISTEN). Coincide con lo que Antonio vio en SOL
+  (Consulta de envíos del 06/08: entraron 316, 317, 320 y las dos facturas; 318/319 jamás).
+- `SUNAT_AVI_CONSULTA_CLIENT_ID/SECRET` cargadas en Vercel (Sensitive) + copiadas a
+  `.env.local` y `CREDENCIALES-PRODUCCION.local.md`; deploy vía commit de docs (`07f6e6c`).
+  **Las `SUNAT_TRA_CONSULTA_*` del RUC 20 siguen pendientes** (misma receta, clave SOL de Transavic).
+
+### 2) Qué dijo SUNAT de las 9 (todas resueltas con "Verificar ahora" esa misma noche)
+
+| Boleta | Grupo (11 ago) | Resultado REAL | Estado final |
+|---|---|---|---|
+| 225, 226 (Milagros Olortegui), 230 (Norma Bedoya), 233 (Joel Arenas) | A (con reemplazos 244/235/239 aceptados) | **ACEPTADAS** — la falla 0130/0133 fue "a medias": SUNAT respondió error pero SÍ registró | `aceptado` → ⚠️ **dobles/triple emisión fiscal confirmada** (la venta de Milagros tiene 3 boletas vivas: 225+226+244). Cuadro para el contador → NC. **Nadie debe emitir nada más ahí.** |
+| 284 (Lucero Vega) | B | **ACEPTADA** | `aceptado`, limpia (sin reemplazo) |
+| 315 (Yali), 318, 319 (Yesica), 274 (Saraí) | B | **NO EXISTEN** (doble consulta ≥5 min confirmada) | `no_registrado`; a la 315 se le probó "Reintentar mismo número" y SUNAT lo **rechazó**: *"Solo puede enviar el comprobante en un resumen diario — Presentación fuera de fecha (5 días)"* → quedó `rechazado` (número liberado formalmente) |
+
+### 3) Regla nueva aprendida de SUNAT: el canal individual de boletas caduca a los 5 días
+
+`sendBill` de una boleta solo se acepta **hasta 5 días** después de su `IssueDate`; pasado eso,
+SUNAT exige el **Resumen Diario** de ese día (extemporáneo). Implicancias:
+- El reintento con el mismo número solo funciona si la boleta se destraba **dentro de esos 5 días**
+  — con las credenciales ya puestas, la reconciliación resuelve en minutos/horas, así que los
+  futuros `por_confirmar` de Avícola SÍ llegan a tiempo. El limbo de semanas era exclusivamente
+  por la credencial faltante.
+- Para las 4 no-registradas viejas la salida práctica es **boleta NUEVA con fecha de hoy**
+  (misma serie, número siguiente): decisión de Hugo (20 ago) — las 2 de Yesica las re-emite
+  **ella misma** (instrucción enviada), y **315/274 quedan quietas** hasta hablar con el contador
+  (la 274 es del 26/07: mes cerrado, la re-emisión cruzaría el período).
+
+### 4) Pendientes que deja esta noche
+
+1. **Verificar en la mañana** (cron abre a las 05:00) que el postproceso creó las cobranzas
+   retroactivas de las 5 aceptadas — a las 00:30 aún no existían filas en `facturas` para
+   Lucero ni para la venta de jul de Milagros. Si a media mañana no están: revisar
+   `sunat_postproceso_estado` de esos 5 comprobantes.
+2. **Cuadro de dobles para el contador**: 225+226+244 (Milagros), 230+235 (Norma), 233+239 (Joel)
+   — decidir NCs. No emitir nada sobre esos pedidos mientras tanto.
+3. **Crear `SUNAT_TRA_CONSULTA_*`** (RUC 20) con la misma receta del doc 11.
+4. `sunat_revision_motivo` conserva el texto viejo de "credenciales faltantes" en filas ya
+   resueltas (solo cosmético: el detalle de la UI lo muestra como "detalle técnico").
+5. Sigue pendiente **rotar la clave de Neon** filtrada (11 ago) — más urgente que todo lo anterior.
+
+---
+
 ## 11 ago 2026 (noche) — Boletas atascadas de Avícola, el Resumen Diario que nunca corrió, y una clave de producción en un repo público
 
 **Cómo empezó.** Operación reportó 2 boletas de Avícola (B002-318 y B002-319, del 6 ago) que "no
