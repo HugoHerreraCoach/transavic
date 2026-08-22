@@ -13,6 +13,7 @@ import { consultaBloqueoProveedor } from "@/lib/proveedores/pagos";
 import { neon } from "@neondatabase/serverless";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { esViolacionLlaveForanea, mensajeErrorSql } from "@/lib/errores-sql";
 
 export const dynamic = "force-dynamic";
 
@@ -201,7 +202,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: true, liberado });
   } catch (error: unknown) {
     console.error("Error al editar deuda manual:", error);
-    return NextResponse.json({ error: "Error de servidor" }, { status: 500 });
+    return NextResponse.json(
+      { error: mensajeErrorSql(error, "No se pudo guardar la deuda.") },
+      { status: esViolacionLlaveForanea(error) ? 409 : 500 }
+    );
   }
 }
 
@@ -248,6 +252,9 @@ export async function DELETE(_req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     console.error("Error al borrar deuda manual:", error);
-    return NextResponse.json({ error: "Error de servidor" }, { status: 500 });
+    return NextResponse.json(
+      { error: mensajeErrorSql(error, "No se pudo borrar la deuda.") },
+      { status: esViolacionLlaveForanea(error) ? 409 : 500 }
+    );
   }
 }

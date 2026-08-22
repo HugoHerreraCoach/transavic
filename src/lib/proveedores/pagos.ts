@@ -500,6 +500,25 @@ export async function anularPagoProveedor(
         FROM reverso r
         WHERE cb.id = r.cuenta_id
       `,
+      // El pago quedó anulado: su reparto entre documentos ya no representa nada
+      // (ningún cálculo lo suma — todos filtran por `p.estado = 'registrado'`), pero
+      // las filas seguían vivas reteniendo la FK `..._deuda_fk` (ON DELETE RESTRICT)
+      // y hacían IMPOSIBLE anular después la compra de esa deuda: el caché decía
+      // "0 pagado" y la base decía "hay referencias". Caso de Marianela, 21 ago 2026.
+      //
+      // Va DESPUÉS del contraasiento a propósito: ese usa `deuda_prioritaria_id`
+      // para la referencia del movimiento.
+      sql`
+        DELETE FROM pagos_proveedores_aplicaciones
+        WHERE pago_id = ${pagoId} AND proveedor_id = ${proveedorId}
+      `,
+      // Segundo puntero a la deuda, con la misma FK RESTRICT: bloquea aunque el pago
+      // jamás se haya llegado a aplicar.
+      sql`
+        UPDATE pagos_proveedores
+        SET deuda_prioritaria_id = NULL
+        WHERE id = ${pagoId} AND proveedor_id = ${proveedorId}
+      `,
       sql`
         UPDATE cuentas_por_pagar cpp
         SET monto_pagado = LEAST(

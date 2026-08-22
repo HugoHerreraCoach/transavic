@@ -5,6 +5,7 @@ import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
 import { esLineaSinPeso } from "@/lib/compras-lineas";
 import { consultaBloqueoProveedor } from "@/lib/proveedores/pagos";
+import { esViolacionLlaveForanea, mensajeErrorSql } from "@/lib/errores-sql";
 
 export const dynamic = "force-dynamic";
 
@@ -378,8 +379,8 @@ export async function PUT(req: Request, { params }: RouteParams) {
   } catch (error: unknown) {
     console.error("Error al actualizar la compra:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Error interno del servidor" },
-      { status: 500 }
+      { error: mensajeErrorSql(error, "No se pudo guardar la compra.") },
+      { status: esViolacionLlaveForanea(error) ? 409 : 500 }
     );
   }
 }

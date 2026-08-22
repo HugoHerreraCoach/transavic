@@ -8,6 +8,83 @@
 
 ---
 
+## 21 ago 2026 — La compra que no se dejaba anular: cuando la guarda mira un caché y la FK mira la tabla
+
+**Cómo empezó.** Marianela quiso anular una compra del proveedor NATHALY y le apareció
+en pantalla, tal cual, el texto del motor de base de datos en inglés:
+`update or delete on table "cuentas_por_pagar" violates foreign key constraint
+"pagos_proveedores_aplicaciones_deuda_fk"`. La anulación de compras existía desde el
+26 jul; lo que falló fue un caso que no contemplaba.
+
+### La causa
+
+Al **anular un pago** a proveedor, `anularPagoProveedor` marca el pago como `anulado`,
+hace el contraasiento en caja y recalcula el caché `cuentas_por_pagar.monto_pagado`
+filtrando `p.estado='registrado'` → vuelve a **0**. Pero **no tocaba ni una fila** de
+`pagos_proveedores_aplicaciones`: era diseño explícito (doc 26, gotcha #50, "un
+movimiento financiero no se edita ni se elimina"). Esas filas conservaban su `deuda_id`
+y su FK es `ON DELETE RESTRICT`.
+
+Entonces la anulación de compra: su guarda preguntaba por el **caché** (`monto_pagado >
+0.009`, ya en 0 → dejaba pasar, y el botón hasta aparecía habilitado), y el
+`DELETE FROM cuentas_por_pagar` chocaba con la **tabla real**. **La guarda y la
+restricción de la base no medían lo mismo.** El `catch` devolvía `error.message` crudo
+con status 500 y el cliente lo pintaba tal cual.
+
+Había un **segundo bloqueador** que se dispara aunque el pago nunca se haya aplicado a
+esa deuda: `pagos_proveedores.deuda_prioritaria_id`, con la misma FK RESTRICT, tampoco
+se limpiaba nunca.
+
+Y no había **ninguna** salida desde la aplicación: anular, re-anular el pago, editar la
+compra, borrar la deuda — los seis caminos terminaban bloqueados. Solo SQL manual.
+
+### El arreglo (commit de hoy)
+
+- **La causa raíz**, en `lib/proveedores/pagos.ts`: al anular un pago se borran sus
+  aplicaciones y se limpia `deuda_prioritaria_id`. Va **después** del contraasiento (que
+  usa ese puntero como referencia del movimiento) y **antes** del recálculo del caché.
+  Seguro: ningún cálculo lee esas filas — los ~12 lugares que las suman filtran por
+  `estado='registrado'`.
+- **La guarda pasa a medir la tabla, no el caché**: `compras/[id]/anular` pregunta por
+  `EXISTS` de aplicaciones de pagos **vivos** y responde 409 con el mensaje que ya
+  existía. Además limpia el rastro de pagos anulados antes del DELETE, para no depender
+  del script de arrastre.
+- **`src/lib/errores-sql.ts`** (puro, 10 tests): traduce el error de Postgres a español
+  accionable, reconociendo el constraint incluso cuando el driver de Neon solo trae el
+  texto. Se usa en los **cuatro** caminos del módulo. Regla nueva: *el `error.message`
+  del motor jamás viaja al cliente* — hoy pasaba en los 4.
+- **La ficha** ya no lista el desglose de un pago anulado ni lo suma en `total_aplicado`
+  (mostraba montos vivos dentro de una tarjeta rotulada "Anulado" — justo las filas que
+  bloqueaban).
+- Arrastre histórico: `scripts/limpiar-aplicaciones-pagos-anulados-2026-08-21.sql`,
+  idempotente, con diagnóstico antes y verificación después.
+
+### Verificación
+
+Se **reprodujo el error exacto** en `dev-hugo` simulando el estado viejo (pago anulado a
+mano sin borrar aplicaciones): Postgres devolvió palabra por palabra el mensaje que vio
+Marianela. Con la limpieza del fix aplicada, el `DELETE` de la deuda pasa y el pago
+anulado se conserva intacto; la prueba corrió dentro de una transacción con `ROLLBACK`,
+así que dev quedó igual. Confirmado además que con un pago **vivo** la guarda nueva
+devuelve `true` (bloquea con el 409 amable). `tsc` limpio, 180 tests.
+
+### Decisión de negocio
+
+Se pierde a propósito el desglose "a qué documentos se había aplicado" de un pago
+anulado. Se conservan el pago, su monto, quién lo anuló, cuándo, el motivo y el
+contraasiento en caja. La alternativa (marcar las filas en vez de borrarlas) exigía
+migración y revisar una docena de consultas, con más riesgo de que alguna quedara sin
+filtrar.
+
+### Queda anotado
+
+`compras/[id]/route.ts` hace `UPDATE cuentas_por_pagar SET proveedor_id = …` al editar
+una compra. Como la FK es compuesta `(deuda_id, proveedor_id)`, cambiar el proveedor de
+una compra con cualquier aplicación viva fallará igual — ahora al menos con un mensaje
+entendible en vez del crudo.
+
+---
+
 ## 20 ago 2026 — Yali puede cambiar precios: el primer permiso por usuario (no por rol)
 
 **Qué pidió Antonio.** Que **Yali**, una asesora de ventas, sea la única (además de él) que

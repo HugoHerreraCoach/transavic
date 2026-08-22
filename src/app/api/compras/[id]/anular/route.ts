@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
 import { esLineaSinPeso } from "@/lib/compras-lineas";
+import { esViolacionLlaveForanea, mensajeErrorSql } from "@/lib/errores-sql";
 import { consultaBloqueoProveedor } from "@/lib/proveedores/pagos";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +68,29 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       WHERE compra_id = ${id}
     `;
 
+    // El caché `monto_pagado` NO alcanza como única barrera: si un pago se anuló,
+    // vuelve a 0 aunque la base siga teniendo referencias a la deuda. Preguntamos
+    // también por filas reales de pagos VIVOS, que es lo que protege la FK.
+    const pagosVivos = (await sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pagos_proveedores_aplicaciones a
+        JOIN pagos_proveedores p ON p.id = a.pago_id
+        JOIN cuentas_por_pagar c ON c.id = a.deuda_id
+        WHERE c.compra_id = ${id} AND p.estado = 'registrado'
+      ) AS hay
+    `) as Array<{ hay: boolean }>;
+
+    if (pagosVivos[0]?.hay) {
+      return NextResponse.json(
+        {
+          error:
+            "No se puede anular la compra porque tiene pagos aplicados. Revierte primero los abonos en la Ficha del Proveedor.",
+        },
+        { status: 409 }
+      );
+    }
+
     // Si existe deuda asociada y ya tiene pagos cargados, se bloquea la anulación
     if (cxpRows.length > 0 && cxpRows[0].monto_pagado > 0.009) {
       return NextResponse.json(
@@ -97,6 +121,28 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
         SET estado = 'Anulado',
             updated_at = (NOW() AT TIME ZONE 'America/Lima')
         WHERE id = ${id}
+      `,
+
+      // Antes de borrar la deuda hay que soltar lo que la referencia. Solo puede
+      // quedar rastro de pagos ANULADOS (los vivos ya se rechazaron arriba con 409),
+      // y esas filas no las suma ningún cálculo: todos filtran por 'registrado'.
+      // Sin esto, la FK RESTRICT aborta el DELETE con un error crudo de Postgres.
+      sql`
+        DELETE FROM pagos_proveedores_aplicaciones a
+        USING pagos_proveedores p, cuentas_por_pagar c
+        WHERE a.pago_id = p.id
+          AND a.deuda_id = c.id
+          AND c.compra_id = ${id}
+          AND p.estado = 'anulado'
+      `,
+      // Segundo puntero a la deuda, misma FK RESTRICT.
+      sql`
+        UPDATE pagos_proveedores p
+        SET deuda_prioritaria_id = NULL
+        FROM cuentas_por_pagar c
+        WHERE p.deuda_prioritaria_id = c.id
+          AND c.compra_id = ${id}
+          AND p.estado = 'anulado'
       `,
 
       // Eliminar la deuda de cuentas por pagar asociada
@@ -136,9 +182,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: true, message: "Compra anulada correctamente." });
   } catch (error: unknown) {
     console.error("Error al anular compra:", error);
+    // Nunca devolvemos el mensaje del motor: a la usuaria le llegaba el texto de
+    // Postgres en inglés, con nombres de tablas (21 ago 2026).
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Error interno del servidor" },
-      { status: 500 }
+      { error: mensajeErrorSql(error, "No se pudo anular la compra.") },
+      { status: esViolacionLlaveForanea(error) ? 409 : 500 }
     );
   }
 }

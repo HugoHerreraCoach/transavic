@@ -164,9 +164,14 @@ export async function GET(
     }));
 
     const pagos: PagoProveedorFicha[] = pagoRows.map((row) => {
-      const apps = aplicaciones
-        .filter((a) => a.pago_id === row.id)
-        .map(aplicacionPublica);
+      // Un pago ANULADO no reparte nada: mostrar su desglose de documentos (y
+      // sumarlo en `total_aplicado`) hacía leer montos vivos dentro de una tarjeta
+      // rotulada "Anulado". Desde el 21 ago 2026 la anulación además borra esas
+      // filas, así que esto es el cinturón por si queda arrastre histórico.
+      const apps =
+        row.estado === "registrado"
+          ? aplicaciones.filter((a) => a.pago_id === row.id).map(aplicacionPublica)
+          : [];
       const aplicado = apps.reduce((total, a) => total + Number(a.monto), 0);
       return {
         id: String(row.id),
