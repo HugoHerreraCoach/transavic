@@ -76,6 +76,24 @@ contraasiento en caja. La alternativa (marcar las filas en vez de borrarlas) exi
 migración y revisar una docena de consultas, con más riesgo de que alguna quedara sin
 filtrar.
 
+### Aplicado a producción (21 ago 2026)
+
+El script de limpieza corrió con respaldo CSV previo: **12 aplicaciones liberadas** de 5
+pagos anulados, sobre 11 deudas de dos proveedores (CAROL S/ 10 139.40 y NATHALY
+S/ 700.00). Quedaron 0 aplicaciones y 0 punteros huérfanos, y la verificación de cierre
+dio **0 deudas con el caché descuadrado**: ningún saldo, caja ni inventario se movió.
+
+Dos correcciones al script antes de que corriera: la columna del proveedor es
+`razon_social` (no `nombre`), y el `BEGIN/COMMIT` explícito sobra porque se ejecuta con
+`psql -1`, que ya envuelve todo en una transacción ("there is already a transaction in
+progress"). El primer intento abortó por `ON_ERROR_STOP` sin tocar una sola fila.
+
+⚠️ **Matiz sobre el caso original:** entre la captura de Marianela y la limpieza, la
+deuda de S/ 341.55 recibió dos pagos **vivos** (S/ 200.00 el 14/08 y S/ 141.55 el 19/08),
+así que hoy figura pagada. Si intenta anular esa compra le saldrá — correctamente — el
+409 pidiendo revertir primero los abonos. Eso ya no es el bug: es la regla de negocio
+funcionando, ahora con un mensaje en español en vez del error del motor.
+
 ### Queda anotado
 
 `compras/[id]/route.ts` hace `UPDATE cuentas_por_pagar SET proveedor_id = …` al editar

@@ -24,7 +24,7 @@
 --   psql "$DATABASE_URL_UNPOOLED" -1 -v ON_ERROR_STOP=1 \
 --     -f scripts/limpiar-aplicaciones-pagos-anulados-2026-08-21.sql
 
-BEGIN;
+-- (sin BEGIN/COMMIT: se ejecuta con `psql -1`, que ya envuelve todo en una transacción)
 
 -- ── ANTES: que se va a tocar y a quien afecta ────────────────────────────────
 SELECT
@@ -38,14 +38,14 @@ WHERE p.estado = 'anulado';
 
 -- Detalle por proveedor, para reconocer el caso reportado.
 SELECT
-  pr.nombre                               AS proveedor,
+  pr.razon_social                         AS proveedor,
   COUNT(*)                                AS aplicaciones,
   COALESCE(SUM(a.monto), 0)               AS monto
 FROM pagos_proveedores_aplicaciones a
 JOIN pagos_proveedores p ON p.id = a.pago_id
 JOIN proveedores pr      ON pr.id = a.proveedor_id
 WHERE p.estado = 'anulado'
-GROUP BY pr.nombre
+GROUP BY pr.razon_social
 ORDER BY monto DESC;
 
 -- ── LIMPIEZA ────────────────────────────────────────────────────────────────
@@ -78,4 +78,3 @@ WHERE ROUND(cpp.monto_pagado, 2) <> ROUND(LEAST(cpp.monto_deuda, COALESCE((
         JOIN pagos_proveedores p ON p.id = a.pago_id
         WHERE a.deuda_id = cpp.id AND p.estado = 'registrado'), 0)), 2);
 
-COMMIT;
